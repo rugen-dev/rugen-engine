@@ -53,7 +53,56 @@ pub struct Stage {
     pub zoom_in: f32,
     /// rugen extension: raised ground segments players can stand on.
     pub platforms: Vec<Platform>,
+    /// rugen extension: Smash-style arena rules (`[Arena]` section).
+    pub arena: Arena,
 }
+
+/// `[Arena]` section of a stage .def (all optional):
+/// `blastzone = left, top, right, bottom` KOs players that cross it,
+/// `walls = 0` lets players leave the screen edges, `stocks = N` gives lives
+/// per round (respawn at `spawn_y`), `floor = x1, x2` limits the ground to a
+/// span (outside it players fall), and `air_jumps` / `air_dash` /
+/// `fast_fall` override the `[game]` movement options for this stage.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Arena {
+    pub blastzone: Option<[f32; 4]>,
+    pub walls: bool,
+    pub stocks: i32,
+    pub floor: Option<[f32; 2]>,
+    pub spawn_y: f32,
+    pub air_jumps: Option<i32>,
+    pub air_dash: Option<bool>,
+    pub fast_fall: Option<bool>,
+}
+
+impl Default for Arena {
+    fn default() -> Self {
+        Self {
+            blastzone: None,
+            walls: true,
+            stocks: 0,
+            floor: None,
+            spawn_y: -120.0,
+            air_jumps: None,
+            air_dash: None,
+            fast_fall: None,
+        }
+    }
+}
+
+/// Engine movement options for legacy characters (no .cns changes needed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Movement {
+    /// Extra air jumps on top of `movement.airjump.num`.
+    pub air_jumps: i32,
+    /// Double-tap forward/back in the air for a short dash.
+    pub air_dash: bool,
+    /// Hold down while falling to fall faster.
+    pub fast_fall: bool,
+}
+
+/// Ground value for a player over a pit: far below everything.
+pub const NO_GROUND: f32 = 1.0e6;
 
 /// A horizontal surface at height `y` (negative = above the floor) spanning `x1..=x2`
 /// in stage coordinates. Declared in a stage .def as
@@ -91,6 +140,7 @@ impl Default for Stage {
             zoom_out: 1.0,
             zoom_in: 1.0,
             platforms: Vec::new(),
+            arena: Arena::default(),
         }
     }
 }
@@ -144,6 +194,37 @@ impl Stage {
         }
         if let Some(v) = g("camera", "zoomin") {
             s.zoom_in = v.max(s.zoom_out);
+        }
+        if let Some(a) = def.section("arena") {
+            if let Some(v) = a.f32s("blastzone").filter(|v| v.len() >= 4) {
+                s.arena.blastzone = Some([
+                    v[0].min(v[2]),
+                    v[1].min(v[3]),
+                    v[0].max(v[2]),
+                    v[1].max(v[3]),
+                ]);
+            }
+            if let Some(v) = a.i32("walls") {
+                s.arena.walls = v != 0;
+            }
+            if let Some(v) = a.i32("stocks") {
+                s.arena.stocks = v.max(0);
+            }
+            if let Some(v) = a.f32s("floor").filter(|v| v.len() >= 2) {
+                s.arena.floor = Some([v[0].min(v[1]), v[0].max(v[1])]);
+            }
+            if let Some(v) = a.f32("spawn_y") {
+                s.arena.spawn_y = v.min(0.0);
+            }
+            if let Some(v) = a.i32("air_jumps") {
+                s.arena.air_jumps = Some(v.max(0));
+            }
+            if let Some(v) = a.i32("air_dash") {
+                s.arena.air_dash = Some(v != 0);
+            }
+            if let Some(v) = a.i32("fast_fall") {
+                s.arena.fast_fall = Some(v != 0);
+            }
         }
         for sec in def.sections_named("platform") {
             let x = sec.f32s("x").unwrap_or_default();
@@ -240,6 +321,8 @@ pub struct World {
     pub allpalfx: PalFx,
     /// BGPalFX: applied to the stage.
     pub bgpalfx: PalFx,
+    /// Engine movement options (config merged with the stage's `[Arena]`).
+    pub movement: Movement,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -271,6 +354,7 @@ impl World {
             envshake: EnvShake::default(),
             allpalfx: PalFx::default(),
             bgpalfx: PalFx::default(),
+            movement: Movement::default(),
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -781,6 +865,7 @@ impl World {
                 self.screen_bound(i);
             }
         }
+        self.check_blastzone();
 
         // 7. tick: animate, hit bookkeeping, get-hit state entry
         for i in 0..self.players.len() {
@@ -1524,8 +1609,10 @@ impl World {
                 }
             } else if st == StateType::A
                 && ub == 1
-                && p.pos[1] <= -data.konst("movement.airjump.height").unwrap_or(35.0)
-                && p.air_jump_count < data.konst("movement.airjump.num").unwrap_or(1.0) as i32
+                && p.pos[1] - p.ground <= -data.konst("movement.airjump.height").unwrap_or(35.0)
+                && p.air_jump_count
+                    < data.konst("movement.airjump.num").unwrap_or(1.0) as i32
+                        + self.movement.air_jumps
             {
                 if no != 45 || p.state_time > 0 {
                     self.players[i].air_jump_count += 1;
@@ -1554,9 +1641,12 @@ impl World {
         if p.state_no == 20 && (bb > 0) == (fb > 0) {
             self.change_state(i, 0, None, None);
         }
+        self.engine_air_moves(i, &data, fb, bb, db);
         let p = &mut self.players[i];
         if p.state_type != StateType::A {
             p.air_jump_count = 0;
+            p.air_dash_used = false;
+            p.air_dash_time = 0;
         }
         if p.hit_pause_time == 0 {
             for slot in &mut p.hitby {
@@ -2833,10 +2923,135 @@ impl World {
         fell_off
     }
 
+    /// Air dash (double tap forward/back) and fast fall (hold down), engine side.
+    fn engine_air_moves(&mut self, i: usize, data: &CharData, fb: i32, bb: i32, db: i32) {
+        let frame = self.frame;
+        let mv = self.movement;
+        let p = &mut self.players[i];
+        // remember tap times for the double-tap window
+        if fb == 1 {
+            let prev = p.tap_tick[0];
+            p.tap_tick[0] = frame + 1;
+            p.tap_pending[0] = prev != 0 && frame + 1 - prev <= 12;
+        }
+        if bb == 1 {
+            let prev = p.tap_tick[1];
+            p.tap_tick[1] = frame + 1;
+            p.tap_pending[1] = prev != 0 && frame + 1 - prev <= 12;
+        }
+        let airborne = p.state_type == StateType::A && p.ctrl && p.move_type != MoveType::H;
+        if mv.air_dash && airborne && !p.air_dash_used && (fb == 1 || bb == 1) {
+            let dir = if fb == 1 { 0 } else { 1 };
+            if p.tap_pending[dir] {
+                let speed = data
+                    .konst("velocity.run.fwd.x")
+                    .unwrap_or(4.6)
+                    .abs()
+                    .max(2.0);
+                p.vel[0] = if dir == 0 { speed } else { -speed };
+                p.vel[1] = 0.0;
+                p.air_dash_used = true;
+                p.air_dash_time = 10;
+                p.tap_pending = [false, false];
+            }
+        }
+        if p.air_dash_time > 0 {
+            p.air_dash_time -= 1;
+            // hover through the dash, then let the character fall again
+            if p.state_type == StateType::A {
+                p.vel[1] = p.vel[1].min(0.0);
+                if p.air_dash_time == 0 {
+                    p.vel[0] *= 0.35;
+                }
+            } else {
+                p.air_dash_time = 0;
+            }
+        }
+        if mv.fast_fall && airborne && db > 0 && p.vel[1] > 0.0 && p.air_dash_time == 0 {
+            let fast = data.konst("movement.yaccel").unwrap_or(0.44) * 18.0;
+            p.vel[1] = p.vel[1].max(fast);
+        }
+    }
+
+    /// Ring-outs: a root player past the arena blast zone loses a stock
+    /// (respawn) or is KO'd. Runs after the bounds phase.
+    fn check_blastzone(&mut self) {
+        let Some(bz) = self.stage.arena.blastzone else {
+            return;
+        };
+        if self.round.round_state() != 2 {
+            return;
+        }
+        for i in 0..self.players.len() {
+            let p = &self.players[i];
+            if p.removed || p.helper_index != 0 || !p.alive() {
+                continue;
+            }
+            let s = self.local_scale(i);
+            let (x, y) = (p.pos[0] * s, p.pos[1] * s);
+            if x >= bz[0] && x <= bz[2] && y >= bz[1] && y <= bz[3] {
+                continue;
+            }
+            // pull the body back to the edge so the KO / explosion is on screen
+            let cx = x.clamp(bz[0], bz[2]) / s;
+            let cy = y.clamp(bz[1], bz[3]) / s;
+            self.players[i].pos = [cx, cy];
+            self.players[i].old_pos = [cx, cy];
+            self.players[i].vel = [0.0, 0.0];
+            self.spawn_fx_anim(i, 2, [0.0, 0.0], true);
+            self.events.push(Event::Sound {
+                player: i,
+                own: false,
+                group: 5,
+                number: 2,
+                channel: -1,
+                volume: 100,
+            });
+            if self.players[i].stocks > 1 {
+                self.players[i].stocks -= 1;
+                self.respawn(i);
+            } else {
+                let p = &mut self.players[i];
+                p.stocks = 0;
+                p.life = 0;
+            }
+        }
+    }
+
+    /// Put a player back at its start position above the stage with full life.
+    fn respawn(&mut self, i: usize) {
+        let s = self.local_scale(i);
+        let (x, facing) = if self.players[i].team == 0 {
+            (self.stage.p1_start_x, 1.0)
+        } else {
+            (self.stage.p2_start_x, -1.0)
+        };
+        let spawn_y = self.stage.arena.spawn_y;
+        let p = &mut self.players[i];
+        p.pos = [x / s, spawn_y / s];
+        p.old_pos = p.pos;
+        p.vel = [0.0, 0.0];
+        p.facing = facing;
+        p.life = p.life_max;
+        p.ground = 0.0;
+        p.ghv = Default::default();
+        p.hitdef = None;
+        p.targets.clear();
+        p.hit_pause_time = 0;
+        p.move_type = MoveType::I;
+        p.unhittable_time = 90;
+        p.air_jump_count = 0;
+        p.air_dash_used = false;
+        p.air_dash_time = 0;
+        p.state_owner = p.data;
+        self.change_state(i, 50, None, Some(true));
+        self.run_current(i);
+    }
+
     /// Platforms: land on a surface crossed from above this tick, keep the
     /// surface while standing within its span, fall off when leaving it.
     fn update_ground(&mut self, i: usize) -> bool {
-        if self.stage.platforms.is_empty() {
+        if self.stage.platforms.is_empty() && self.stage.arena.floor.is_none() {
             return false;
         }
         let (x, old_y, new_y, vy, ground) = {
@@ -2845,7 +3060,16 @@ impl World {
         };
         let scale = self.local_scale(i);
         let mut landed: Option<f32> = None;
-        let mut below: f32 = 0.0;
+        // the floor exists only inside the arena's span (a pit elsewhere)
+        let on_floor_span = self
+            .stage
+            .arena
+            .floor
+            .is_none_or(|f| x * scale >= f[0] && x * scale <= f[1]);
+        let mut below: f32 = if on_floor_span { 0.0 } else { NO_GROUND };
+        if on_floor_span && vy >= 0.0 && old_y <= 0.01 && new_y >= 0.0 && ground >= NO_GROUND {
+            landed = Some(0.0);
+        }
         for pl in &self.stage.platforms {
             let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
             if x < x1 || x > x2 {
@@ -2886,7 +3110,8 @@ impl World {
     /// drift apart and back in (up to `zoomin`) when they close.
     pub(crate) fn update_camera(&mut self) {
         let st = &self.stage;
-        let (mut leftest, mut rightest, mut highest) = (f32::MAX, f32::MIN, 0.0f32);
+        let (mut leftest, mut rightest, mut highest, mut lowest) =
+            (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
         for p in self
             .players
             .iter()
@@ -2895,6 +3120,7 @@ impl World {
             leftest = leftest.min(p.pos[0]);
             rightest = rightest.max(p.pos[0]);
             highest = highest.min(p.pos[1]);
+            lowest = lowest.max(p.pos[1].min(500.0));
         }
         if leftest > rightest {
             return;
@@ -2950,7 +3176,19 @@ impl World {
             tr += dr;
         }
         let target_x = (tl + tr) / 2.0;
-        let target_scale = (half * 2.0 / (tr - tl)).clamp(st.zoom_out, max_scale);
+        let mut target_scale = (half * 2.0 / (tr - tl)).clamp(st.zoom_out, max_scale);
+        // vertical: zoom out when the highest player would leave the top even
+        // with the camera raised to boundhigh, or the lowest one falls below the floor
+        let vmargin = 40.0;
+        let top_need = st.bound_high.min(st.bound_low) - highest + vmargin;
+        if top_need > 0.0 {
+            target_scale = target_scale.min(st.zoffset / top_need);
+        }
+        let bottom_room = (st.height - st.zoffset).max(1.0);
+        if lowest + vmargin > bottom_room {
+            target_scale = target_scale.min(bottom_room / (lowest + vmargin));
+        }
+        let target_scale = target_scale.max(st.zoom_out);
         // smooth zoom, immediate pan
         let new_scale = if (target_scale - scale).abs() < 0.0005 {
             target_scale
@@ -2960,8 +3198,11 @@ impl World {
         let hw = half / new_scale;
         self.cam_zoom = new_scale;
         self.cam_x = target_x.clamp(min_left + hw, (max_right - hw).max(min_left + hw));
-        // vertical follow toward the highest player
-        let target_y = ((highest + st.floor_tension).min(0.0) * st.vertical_follow)
+        // vertical follow toward the highest player; never let it leave the top
+        let follow = (highest + st.floor_tension).min(0.0) * st.vertical_follow;
+        let keep_visible = highest + st.zoffset / new_scale - vmargin;
+        let target_y = follow
+            .min(keep_visible)
             .clamp(st.bound_high.min(st.bound_low), st.bound_low);
         self.cam_y += (target_y - self.cam_y) * 0.2;
         if (target_y - self.cam_y).abs() < 0.01 {
@@ -2973,7 +3214,7 @@ impl World {
         let (xmin, xmax) = self.screen_bounds();
         let p = &self.players[i];
         let mut x = p.pos[0];
-        if p.screen_bound && p.player_type {
+        if p.screen_bound && p.player_type && self.stage.arena.walls {
             let (mut lo, mut hi) = (p.width_edge[0], -p.width_edge[1]);
             if p.facing > 0.0 {
                 (lo, hi) = (-hi, -lo);
@@ -3218,6 +3459,204 @@ mod tests {
             }
         }
         assert!(fell, "should fall off the edge, pos {:?}", w.players[0].pos);
+    }
+
+    fn arena_world() -> Option<World> {
+        let mut w = world()?;
+        w.stage.arena = Arena {
+            blastzone: Some([-400.0, -400.0, 400.0, 150.0]),
+            walls: false,
+            stocks: 0,
+            floor: None,
+            ..Default::default()
+        };
+        w.stage.left_bound = -1000.0;
+        w.stage.right_bound = 1000.0;
+        w.start_round();
+        while w.round.round_state() != 2 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        Some(w)
+    }
+
+    #[test]
+    fn blastzone_ring_out_kos() {
+        let Some(mut w) = arena_world() else { return };
+        w.players[0].pos = [-450.0, 0.0];
+        w.players[0].old_pos = w.players[0].pos;
+        for _ in 0..3 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert_eq!(w.players[0].life, 0, "ring-out empties life");
+        assert!(!w.players[0].alive(), "ring-out KOs");
+        assert!(
+            w.players[0].pos[0] >= -400.0,
+            "body pulled back to the edge"
+        );
+        for _ in 0..200 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert_eq!(w.round.finish, Finish::KO);
+        assert_eq!(w.round.win_team, 1);
+    }
+
+    #[test]
+    fn stocks_respawn_then_ko() {
+        let Some(mut w) = arena_world() else { return };
+        w.stage.arena.stocks = 2;
+        w.start_round();
+        while w.round.round_state() != 2 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert_eq!(w.players[0].stocks, 2);
+        w.players[0].life = 300;
+        w.players[0].pos = [-450.0, 0.0];
+        w.step(&[Buttons::default(), Buttons::default()]);
+        let p = &w.players[0];
+        assert_eq!(p.stocks, 1, "one life spent");
+        assert!(p.alive());
+        assert_eq!(p.life, p.life_max, "respawn restores life");
+        assert!(
+            p.pos[1] < 0.0 && p.pos[0].abs() < 100.0,
+            "respawned above the start spot, got {:?}",
+            p.pos
+        );
+        for _ in 0..200 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert_eq!(w.players[0].pos[1], 0.0, "landed after respawn");
+        w.players[0].pos = [-450.0, 0.0];
+        w.step(&[Buttons::default(), Buttons::default()]);
+        w.step(&[Buttons::default(), Buttons::default()]);
+        assert!(!w.players[0].alive(), "last stock lost = KO");
+    }
+
+    #[test]
+    fn floor_span_makes_a_pit() {
+        let Some(mut w) = arena_world() else { return };
+        w.stage.arena.floor = Some([-100.0, 100.0]);
+        let fwd = Buttons {
+            l: true,
+            ..Default::default()
+        };
+        // P1 starts at -70 facing right; walk back (left) past the floor's edge
+        let mut fell = false;
+        for _ in 0..300 {
+            w.step(&[fwd, Buttons::default()]);
+            if w.players[0].pos[1] > 50.0 {
+                fell = true;
+                break;
+            }
+        }
+        assert!(
+            fell,
+            "walked off the floor into the pit, pos {:?}",
+            w.players[0].pos
+        );
+        for _ in 0..200 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert!(
+            !w.players[0].alive(),
+            "falling past the bottom blast zone KOs"
+        );
+    }
+
+    #[test]
+    fn extra_air_jumps() {
+        let Some(mut w) = world() else { return };
+        w.movement.air_jumps = 2;
+        run(&mut w, 5, Buttons::default());
+        let up = Buttons {
+            u: true,
+            ..Default::default()
+        };
+        run(&mut w, 1, up);
+        run(&mut w, 20, Buttons::default());
+        let mut jumps = 0;
+        for _ in 0..6 {
+            run(&mut w, 1, up);
+            run(&mut w, 18, Buttons::default());
+            jumps = jumps.max(w.players[0].air_jump_count);
+        }
+        assert_eq!(jumps, 3, "KFM's one air jump plus two extra");
+    }
+
+    #[test]
+    fn air_dash_double_tap() {
+        let Some(mut w) = world() else { return };
+        w.movement.air_dash = true;
+        run(&mut w, 5, Buttons::default());
+        let up = Buttons {
+            u: true,
+            ..Default::default()
+        };
+        run(&mut w, 1, up);
+        run(&mut w, 12, Buttons::default());
+        let fwd = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        run(&mut w, 1, fwd);
+        run(&mut w, 2, Buttons::default());
+        run(&mut w, 1, fwd);
+        let p = &w.players[0];
+        assert!(p.air_dash_used, "double tap in the air dashes");
+        assert!(p.vel[0] >= 4.0, "dash speed, got {}", p.vel[0]);
+        assert!(p.vel[1] <= 0.5, "dash hovers, vel y {}", p.vel[1]);
+    }
+
+    #[test]
+    fn fast_fall_when_holding_down() {
+        let Some(mut a) = world() else { return };
+        let mut b = a.clone();
+        b.movement.fast_fall = true;
+        let up = Buttons {
+            u: true,
+            ..Default::default()
+        };
+        let down = Buttons {
+            d: true,
+            ..Default::default()
+        };
+        for w in [&mut a, &mut b] {
+            run(w, 5, Buttons::default());
+            run(w, 1, up);
+            run(w, 30, Buttons::default());
+        }
+        assert!(a.players[0].vel[1] > 0.0, "falling by now");
+        run(&mut a, 5, down);
+        run(&mut b, 5, down);
+        assert!(
+            b.players[0].vel[1] > a.players[0].vel[1] + 2.0,
+            "fast fall {} vs normal {}",
+            b.players[0].vel[1],
+            a.players[0].vel[1]
+        );
+    }
+
+    #[test]
+    fn camera_zooms_out_for_height() {
+        let Some(mut w) = world() else { return };
+        w.stage.zoom_out = 0.5;
+        w.stage.platforms.push(Platform {
+            x1: -200.0,
+            x2: 200.0,
+            y: -260.0,
+        });
+        run(&mut w, 5, Buttons::default());
+        w.players[0].pos = [-70.0, -260.0];
+        w.players[0].old_pos = w.players[0].pos;
+        w.players[0].ground = -260.0;
+        for _ in 0..120 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+        assert!(
+            w.cam_zoom < 0.95,
+            "zoomed out for a high player, zoom {}",
+            w.cam_zoom
+        );
+        assert!(w.cam_y < -20.0, "camera raised, y {}", w.cam_y);
     }
 
     #[test]
