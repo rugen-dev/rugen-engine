@@ -838,3 +838,162 @@ mod tests {
         assert_eq!(px, [7, 7, 7, 7, 7, 9]);
     }
 }
+
+// ---------------------------------------------------------------- writer
+
+impl Sff {
+    /// Serialize as SFF v2.0.1: raw 8-bit indexed sprites (format 0) or raw
+    /// RGBA (format 0, depth 32), palettes with their alpha kept. Palettes are
+    /// written in index order with the keys from [`Sff::palette_keys`] or `(0, i)`.
+    pub fn write_v2(&self) -> Vec<u8> {
+        let mut out = vec![0u8; 512];
+        out[..12].copy_from_slice(b"ElecbyteSpr\0");
+        out[12..16].copy_from_slice(&[0, 1, 0, 2]);
+        let mut ldata: Vec<u8> = Vec::new();
+        let mut pal_nodes: Vec<u8> = Vec::new();
+        let mut key_of: Vec<Key> = (0..self.palettes.len()).map(|i| (0, i as u16)).collect();
+        for (k, &i) in &self.palette_keys {
+            if let Some(slot) = key_of.get_mut(i) {
+                *slot = *k;
+            }
+        }
+        for (i, pal) in self.palettes.iter().enumerate() {
+            let ofs = ldata.len() as u32;
+            for c in pal.iter().take(256) {
+                ldata.extend_from_slice(c);
+            }
+            let len = (pal.len().min(256) * 4) as u32;
+            let (g, n) = key_of[i];
+            pal_nodes.extend_from_slice(&g.to_le_bytes());
+            pal_nodes.extend_from_slice(&n.to_le_bytes());
+            pal_nodes.extend_from_slice(&(pal.len().min(256) as u16).to_le_bytes());
+            pal_nodes.extend_from_slice(&0u16.to_le_bytes());
+            pal_nodes.extend_from_slice(&ofs.to_le_bytes());
+            pal_nodes.extend_from_slice(&len.to_le_bytes());
+        }
+        let mut spr_nodes: Vec<u8> = Vec::new();
+        for ((g, n), s) in &self.sprites {
+            let ofs = ldata.len() as u32;
+            let (fmt, depth, len) = match &s.pixels {
+                Pixels::Indexed(px) => {
+                    ldata.extend_from_slice(px);
+                    (0u8, 8u8, px.len() as u32)
+                }
+                Pixels::Rgba(px) => {
+                    ldata.extend_from_slice(px);
+                    (0u8, 32u8, px.len() as u32)
+                }
+            };
+            spr_nodes.extend_from_slice(&g.to_le_bytes());
+            spr_nodes.extend_from_slice(&n.to_le_bytes());
+            spr_nodes.extend_from_slice(&s.width.to_le_bytes());
+            spr_nodes.extend_from_slice(&s.height.to_le_bytes());
+            spr_nodes.extend_from_slice(&s.offset[0].to_le_bytes());
+            spr_nodes.extend_from_slice(&s.offset[1].to_le_bytes());
+            spr_nodes.extend_from_slice(&0u16.to_le_bytes());
+            spr_nodes.push(fmt);
+            spr_nodes.push(depth);
+            spr_nodes.extend_from_slice(&ofs.to_le_bytes());
+            spr_nodes.extend_from_slice(&len.to_le_bytes());
+            spr_nodes.extend_from_slice(&(s.palette.unwrap_or(0) as u16).to_le_bytes());
+            spr_nodes.extend_from_slice(&0u16.to_le_bytes());
+        }
+        let spr_ofs = out.len() as u32;
+        out.extend_from_slice(&spr_nodes);
+        let pal_ofs = out.len() as u32;
+        out.extend_from_slice(&pal_nodes);
+        let ldata_ofs = out.len() as u32;
+        out.extend_from_slice(&ldata);
+        let put = |out: &mut Vec<u8>, at: usize, v: u32| {
+            out[at..at + 4].copy_from_slice(&v.to_le_bytes())
+        };
+        put(&mut out, 36, spr_ofs);
+        put(&mut out, 40, self.sprites.len() as u32);
+        put(&mut out, 44, pal_ofs);
+        put(&mut out, 48, self.palettes.len() as u32);
+        put(&mut out, 52, ldata_ofs);
+        put(&mut out, 56, ldata.len() as u32);
+        put(&mut out, 60, ldata_ofs + ldata.len() as u32);
+        put(&mut out, 64, 0);
+        out
+    }
+
+    /// Add an indexed sprite using palette slot `pal`.
+    pub fn push_indexed(
+        &mut self,
+        key: Key,
+        w: u16,
+        h: u16,
+        axis: [i16; 2],
+        pal: usize,
+        px: Vec<u8>,
+    ) {
+        self.sprites.insert(
+            key,
+            Sprite {
+                group: key.0,
+                number: key.1,
+                width: w,
+                height: h,
+                offset: axis,
+                palette: Some(pal),
+                pixels: Pixels::Indexed(px),
+            },
+        );
+    }
+
+    /// Add an RGBA sprite.
+    pub fn push_rgba(&mut self, key: Key, w: u16, h: u16, axis: [i16; 2], px: Vec<u8>) {
+        self.sprites.insert(
+            key,
+            Sprite {
+                group: key.0,
+                number: key.1,
+                width: w,
+                height: h,
+                offset: axis,
+                palette: None,
+                pixels: Pixels::Rgba(px),
+            },
+        );
+    }
+
+    /// Add a palette under `key`, returning its slot.
+    pub fn push_palette(&mut self, key: Key, pal: Palette) -> usize {
+        self.palettes.push(pal);
+        let i = self.palettes.len() - 1;
+        self.palette_keys.insert(key, i);
+        i
+    }
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+
+    #[test]
+    fn v2_roundtrip() {
+        let mut sff = Sff {
+            version: Some(Version::V2 { patch: 1 }),
+            ..Default::default()
+        };
+        let mut pal = vec![[0u8; 4]; 256];
+        pal[1] = [255, 0, 0, 255];
+        pal[2] = [0, 255, 0, 128];
+        let p = sff.push_palette((0, 0), pal.clone());
+        sff.push_indexed((0, 65), 3, 2, [1, -2], p, vec![0, 1, 2, 2, 1, 0]);
+        sff.push_rgba((9, 1), 2, 1, [0, 0], vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let bytes = sff.write_v2();
+        let back = Sff::parse(&bytes, false).expect("parse");
+        assert_eq!(back.version, Some(Version::V2 { patch: 1 }));
+        assert_eq!(back.palettes.len(), 1);
+        assert_eq!(back.palettes[0][2], [0, 255, 0, 128]);
+        let a = back.get(0, 65).unwrap();
+        assert_eq!((a.width, a.height, a.offset), (3, 2, [1, -2]));
+        assert_eq!(a.pixels, Pixels::Indexed(vec![0, 1, 2, 2, 1, 0]));
+        assert_eq!(a.palette, Some(0));
+        let b = back.get(9, 1).unwrap();
+        assert_eq!(b.pixels, Pixels::Rgba(vec![1, 2, 3, 4, 5, 6, 7, 8]));
+        assert_eq!(back.palette_keys.get(&(0, 0)), Some(&0));
+    }
+}

@@ -125,6 +125,38 @@ impl Text {
     }
 }
 
+/// `[Combo]` per team: counter font, label text and where to show them.
+#[derive(Clone, Debug)]
+struct Combo {
+    pos: [f32; 2],
+    counter_font: Option<FontRef>,
+    text: String,
+    text_font: Option<FontRef>,
+    text_offset: [f32; 2],
+    displaytime: i32,
+}
+
+impl Combo {
+    fn parse(s: &Section, p: &str) -> Self {
+        let pos2 = |k: &str, d: [f32; 2]| {
+            s.f32s(k)
+                .filter(|v| v.len() >= 2)
+                .map_or(d, |v| [v[0], v[1]])
+        };
+        Self {
+            pos: pos2(&format!("{p}.pos"), [10.0, 80.0]),
+            counter_font: FontRef::parse(s, &format!("{p}.counter.font")),
+            text: s
+                .raw(&format!("{p}.text.text"))
+                .map(|t| t.trim().to_string())
+                .unwrap_or_else(|| "Hit".into()),
+            text_font: FontRef::parse(s, &format!("{p}.text.font")),
+            text_offset: pos2(&format!("{p}.text.offset"), [3.0, 0.0]),
+            displaytime: s.i32(&format!("{p}.displaytime")).unwrap_or(90),
+        }
+    }
+}
+
 /// A transient announcement being shown.
 #[derive(Clone, Debug)]
 enum Shown {
@@ -144,6 +176,10 @@ pub struct Lifebar {
     names: [([f32; 2], Option<FontRef>); 2],
     time_pos: [f32; 2],
     time_counter: ([f32; 2], Option<FontRef>),
+    /// rugen / Ikemen: `[Time] bg.spr` plate behind the clock.
+    time_bg: Elem,
+    /// rugen: `pN.empty.spr` placeholder for rounds not yet won.
+    winicon_empty: [Elem; 2],
     round_text: Text,
     round_offset_time: i32,
     fight: Elem,
@@ -159,17 +195,26 @@ pub struct Lifebar {
     winicon: [HashMap<String, Elem>; 2],
     shown: Vec<(Shown, i32)>,
     tick: i32,
+    /// Text versions of FIGHT / KO for screenpacks without animations.
+    fight_text: Text,
+    ko_text: Text,
+    combo: [Combo; 2],
+    /// Per team: hits shown and ticks left to keep showing them.
+    combo_state: [(i32, i32); 2],
 }
 
 impl Lifebar {
-    pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
-        let fight_path = rugen_sim::chardata::resolve(data_dir, "fight.def")?;
+    /// `motif` holds the screenpack (fight.def, fight.sff, fonts); anything
+    /// missing there is looked up in `data_dir`.
+    pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
+        let dirs: [&Path; 2] = [motif, data_dir];
+        let fight_path = rugen_sim::chardata::resolve_in(&dirs, "fight.def")?;
         let def = Def::open(&fight_path).with_context(|| fight_path.display().to_string())?;
         let text = rugen_formats::text::decode(&std::fs::read(&fight_path)?);
         let air = Air::parse(&text);
         let files = def.section("files").context("fight.def has no [Files]")?;
         let spr = files.raw("sff").unwrap_or("fight.sff");
-        let sff = Sff::open(rugen_sim::chardata::resolve(data_dir, spr)?, false)
+        let sff = Sff::open(rugen_sim::chardata::resolve_in(&dirs, spr)?, false)
             .with_context(|| spr.to_string())?;
         let mut fonts = HashMap::new();
         let root = data_dir.parent().unwrap_or(data_dir);
@@ -179,6 +224,8 @@ impl Lifebar {
             };
             let name = name.trim();
             let candidates = [
+                motif.join(name),
+                motif.join("font").join(name),
                 data_dir.join(name),
                 root.join("font").join(name),
                 root.join(name),
@@ -261,6 +308,8 @@ impl Lifebar {
                 ),
             ],
             time_pos: pos2(tm, "pos", [160.0, 23.0]),
+            time_bg: Elem::parse(tm, "bg"),
+            winicon_empty: [Elem::parse(wi, "p1.empty"), Elem::parse(wi, "p2.empty")],
             time_counter: (
                 pos2(tm, "counter.offset", [0.0, 0.0]),
                 FontRef::parse(tm, "counter.font"),
@@ -286,6 +335,13 @@ impl Lifebar {
             winicon: [icons("p1"), icons("p2")],
             shown: Vec::new(),
             tick: 0,
+            fight_text: Text::parse(rd, "fight", "FIGHT!", 45),
+            ko_text: Text::parse(rd, "ko", "K.O.", 90),
+            combo: [
+                Combo::parse(sec("combo"), "team1"),
+                Combo::parse(sec("combo"), "team2"),
+            ],
+            combo_state: [(0, 0); 2],
         })
     }
 
@@ -306,6 +362,11 @@ impl Lifebar {
                     }
                     let pos = self.fight_offset;
                     self.shown.push((Shown::Anim { elem: e, pos }, 60));
+                } else if self.fight_text.font.is_some() {
+                    let t = self.fight_text.clone();
+                    let line = t.text.clone();
+                    let time = t.displaytime;
+                    self.shown.push((Shown::Text { text: t, line }, time));
                 }
             }
             Event::KO => {
@@ -316,6 +377,11 @@ impl Lifebar {
                     }
                     let pos = self.ko_offset;
                     self.shown.push((Shown::Anim { elem: e, pos }, 120));
+                } else if self.ko_text.font.is_some() {
+                    let t = self.ko_text.clone();
+                    let line = t.text.clone();
+                    let time = t.displaytime;
+                    self.shown.push((Shown::Text { text: t, line }, time));
                 }
             }
             Event::TimeOver => {
@@ -367,6 +433,33 @@ impl Lifebar {
             }
         }
         self.shown.retain(|(_, t)| *t > 0);
+        for (_, timer) in &mut self.combo_state {
+            if *timer > 0 {
+                *timer -= 1;
+            }
+        }
+    }
+
+    /// Draw `line` with fight font `index` at a world position (used by the
+    /// tutorial and other engine prompts). Returns false when the font is missing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_at(
+        &mut self,
+        r: &mut Renderer,
+        index: i32,
+        line: &str,
+        pos: [f32; 2],
+        bank: i32,
+        align: i32,
+        scale: f32,
+    ) -> bool {
+        match self.fonts.get_mut(&index) {
+            Some(font) => {
+                font.draw(r, line, pos, bank, align, scale);
+                true
+            }
+            None => false,
+        }
     }
 
     fn draw_elem(
@@ -496,6 +589,19 @@ impl Lifebar {
                 .get(p.team as usize)
                 .cloned()
                 .unwrap_or_default();
+            // empty marks for the rounds still needed
+            let needed = w.round.config.match_wins as usize;
+            if self.winicon_empty[side].present() {
+                for k in wins..needed {
+                    let e = self.winicon_empty[side].clone();
+                    let pos = [
+                        self.winicon_pos[side][0] + self.winicon_offset[side][0] * k as f32,
+                        self.winicon_pos[side][1] + self.winicon_offset[side][1] * k as f32,
+                    ];
+                    let base = hud(pos[0], pos[1]);
+                    self.draw_elem(r, &e, base, u, None);
+                }
+            }
             for k in 0..wins {
                 let kind = kinds.get(k).cloned().unwrap_or_else(|| "n".into());
                 let Some(e) = self.winicon[side].get(&kind).cloned() else {
@@ -523,6 +629,11 @@ impl Lifebar {
         // clock
         let clock = w.round.clock();
         let (off, font) = self.time_counter;
+        if self.time_bg.present() {
+            let e = self.time_bg.clone();
+            let base = hud(self.time_pos[0], self.time_pos[1]);
+            self.draw_elem(r, &e, base, u, None);
+        }
         let base = hud(self.time_pos[0] + off[0], self.time_pos[1] + off[1]);
         let line = if clock < 0 {
             "o".to_string()
@@ -530,6 +641,28 @@ impl Lifebar {
             format!("{clock:02}")
         };
         self.text(r, font, &line, base, u);
+        // combo counters: hits the other team has taken in its current combo
+        for (side, &pi) in roots.iter().enumerate() {
+            let Some(&other) = roots.get(1 - side) else {
+                continue;
+            };
+            let _ = pi;
+            let hits = w.players[other].received_hits;
+            let c = self.combo[side].clone();
+            let st = &mut self.combo_state[side];
+            if hits >= 2 {
+                *st = (hits, c.displaytime);
+            }
+            if st.1 <= 0 || st.0 < 2 {
+                continue;
+            }
+            let (shown_hits, _) = *st;
+            let base = hud(c.pos[0], c.pos[1]);
+            self.text(r, c.counter_font, &shown_hits.to_string(), base, u);
+            let tpos = hud(c.pos[0] + c.text_offset[0], c.pos[1] + c.text_offset[1]);
+            let label = c.text.replace("%i", &shown_hits.to_string());
+            self.text(r, c.text_font, &label, tpos, u);
+        }
         // announcements
         let shown = self.shown.clone();
         for (s, _) in &shown {

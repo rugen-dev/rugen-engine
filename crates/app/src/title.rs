@@ -136,6 +136,7 @@ impl TitleScreen {
             t.active_font,
             t.box_cursor,
         );
+        let (item_bg, active_bg, bg_offset) = (t.item_bg, t.active_bg, t.bg_offset);
         for (i, (_, label)) in items.iter().enumerate().skip(self.top).take(visible) {
             let row = (i - self.top) as f32;
             let p = [pos[0] + spacing[0] * row, pos[1] + spacing[1] * row];
@@ -144,6 +145,23 @@ impl TitleScreen {
             } else {
                 item_font
             };
+            // rugen: slanted panel behind each item, lit one under the cursor
+            let bg = if i == self.cursor {
+                active_bg.or(item_bg)
+            } else {
+                item_bg
+            };
+            if let Some((g, n)) = bg
+                && let Some(spr) = sys.sheet.get(r, g, n)
+            {
+                let d = rugen_render::Draw::new(
+                    spr.tex,
+                    spr.pal,
+                    [p[0] + bg_offset[0] - lc[0] / 2.0, p[1] + bg_offset[1]],
+                    spr.axis,
+                );
+                r.draw(d);
+            }
             sys.text(r, font, label, p);
             if i == self.cursor
                 && let Some(c) = box_cursor
@@ -160,7 +178,7 @@ impl TitleScreen {
             Camera {
                 screen: [sw, lc[1]],
                 center: [0.0, lc[1] / 2.0],
-                zoom: 1.0,
+                zoom: (sw / lc[0]).min(1.0),
             },
             clear,
         )

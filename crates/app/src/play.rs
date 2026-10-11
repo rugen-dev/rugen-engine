@@ -157,7 +157,12 @@ pub struct Match {
 }
 
 impl Match {
-    pub fn load(setup: &FightSetup, data_dir: &Path, cfg: &Config) -> anyhow::Result<Self> {
+    pub fn load(
+        setup: &FightSetup,
+        motif: &Path,
+        data_dir: &Path,
+        cfg: &Config,
+    ) -> anyhow::Result<Self> {
         let (stage, visual) = match &setup.stage {
             Some(p) => {
                 let def =
@@ -190,7 +195,7 @@ impl Match {
             }
         }
         let mut world = World::new(stage, 1);
-        match FxData::load(data_dir) {
+        match FxData::load_with_motif(motif, data_dir) {
             Ok(fx) => {
                 world.round = rugen_sim::RoundState::new(fx.round.clone());
                 world.fx = Some(fx);
@@ -273,7 +278,7 @@ impl Match {
                 .into_iter()
                 .find(|c| c.exists())
         });
-        let lifebar = match crate::lifebar::Lifebar::load(data_dir) {
+        let lifebar = match crate::lifebar::Lifebar::load(motif, data_dir) {
             Ok(lb) => Some(lb),
             Err(e) => {
                 log::warn!("fight.def HUD not loaded: {e:#}");
@@ -1095,31 +1100,25 @@ impl Match {
         if let Some(t) = self.tutorial.as_ref() {
             let lines = t.text();
             r.rect(
-                hud(screen_w / 2.0 - 150.0, 42.0),
-                hud(screen_w / 2.0 + 150.0, 78.0),
+                hud(screen_w / 2.0 - 150.0, 64.0),
+                hud(screen_w / 2.0 + 150.0, 108.0),
                 [0.0, 0.0, 0.0, 0.55],
             );
-            draw_text(
-                r,
-                &lines[0],
-                hud(screen_w / 2.0, 46.0),
-                2.0 * u,
-                [1.0, 0.9, 0.3, 1.0],
-            );
-            draw_text(
-                r,
-                &lines[1],
-                hud(screen_w / 2.0, 60.0),
-                1.2 * u,
-                [1.0, 1.0, 1.0, 1.0],
-            );
-            draw_text(
-                r,
-                &lines[2],
-                hud(screen_w / 2.0, 70.0),
-                u,
-                [0.7, 0.8, 1.0, 1.0],
-            );
+            // screenpack fonts when the fight.def has them, else the built-in 3x5 font
+            let fonts = [(4, 0, 88.0), (3, 1, 98.0), (1, 5, 106.0)];
+            for (k, (index, bank, y)) in fonts.iter().enumerate() {
+                let drawn = lifebar.as_mut().is_some_and(|lb| {
+                    lb.text_at(r, *index, &lines[k], hud(screen_w / 2.0, *y), *bank, 0, u)
+                });
+                if !drawn {
+                    let (px, y, col) = match k {
+                        0 => (2.0, 70.0, [1.0, 0.9, 0.3, 1.0]),
+                        1 => (1.2, 86.0, [1.0, 1.0, 1.0, 1.0]),
+                        _ => (1.0, 98.0, [0.7, 0.8, 1.0, 1.0]),
+                    };
+                    draw_text(r, &lines[k], hud(screen_w / 2.0, y), px * u, col);
+                }
+            }
         }
         if brightness < 1.0 {
             r.rect(
@@ -1131,7 +1130,8 @@ impl Match {
         if let Some(lb) = lifebar.as_mut() {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
-            let ratio = stage.height / lc[1].max(1.0);
+            // never wider than the window: narrow windows shrink the HUD instead of cutting it
+            let ratio = (stage.height / lc[1].max(1.0)).min(screen_w / lc[0].max(1.0));
             let x_off = (screen_w - lc[0] * ratio) / 2.0;
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
             lb.draw(r, &self.world, &lb_hud, u * ratio, portraits);
