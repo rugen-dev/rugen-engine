@@ -18,7 +18,11 @@ pub struct Rng(u64);
 
 impl Rng {
     pub fn new(seed: u64) -> Self {
-        Self(if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed })
+        Self(if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        })
     }
     pub fn next_u64(&mut self) -> u64 {
         let mut x = self.0;
@@ -43,7 +47,10 @@ pub struct State {
 
 impl State {
     pub fn new(seed: u64) -> Self {
-        Self { frame: 0, rng: Rng::new(seed) }
+        Self {
+            frame: 0,
+            rng: Rng::new(seed),
+        }
     }
     /// Advance one 60 Hz tick.
     pub fn step(&mut self) {
