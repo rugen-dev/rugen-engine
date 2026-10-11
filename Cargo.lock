@@ -2217,6 +2217,7 @@ dependencies = [
  "log",
  "rugen-cns",
  "rugen-formats",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

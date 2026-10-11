@@ -5,10 +5,25 @@
 //! - no `mul_add`
 //! - no `HashMap` iteration; use `Vec`, `BTreeMap`, `IndexMap`
 //! - no I/O, no time, no randomness outside [`Rng`]
-//! - state must be plain data: `Clone`, no `Rc`, no `Box<dyn>`
+//! - [`World`] is plain data: `Clone`, no `Rc`, no `Box<dyn>`. Immutable
+//!   character assets live in [`CharData`] behind `Arc`, referenced by index.
 
 #![forbid(unsafe_code)]
-#![deny(clippy::suboptimal_flops, clippy::imprecise_flops)]
+// Transcendentals and mul_add are banned through clippy.toml `disallowed-methods`.
+
+pub mod anim;
+pub mod chardata;
+pub mod command;
+pub mod context;
+pub mod input;
+pub mod player;
+pub mod sctrl;
+pub mod world;
+
+pub use chardata::CharData;
+pub use input::Buttons;
+pub use player::Player;
+pub use world::{Stage, World};
 
 /// Deterministic PRNG living inside simulation state (xorshift64*).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,35 +45,30 @@ impl Rng {
         self.0 = x;
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
-    /// Uniform in `0..n` (n > 0), like MUGEN's `Random` trigger range helper.
+    /// Uniform in `0..n` (n > 0).
     pub fn below(&mut self, n: u32) -> u32 {
-        (self.next_u64() % u64::from(n)) as u32
+        (self.next_u64() % u64::from(n.max(1))) as u32
+    }
+    /// MUGEN `Random`: 0..=999.
+    pub fn random(&mut self) -> i32 {
+        self.below(1000) as i32
+    }
+    pub fn state(&self) -> u64 {
+        self.0
     }
 }
 
-/// Whole-match state. Everything rollback snapshots is in here.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct State {
-    pub frame: u32,
-    pub rng: Rng,
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{0}")]
+    Load(String),
+    #[error(transparent)]
+    Format(#[from] rugen_formats::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
-impl State {
-    pub fn new(seed: u64) -> Self {
-        Self {
-            frame: 0,
-            rng: Rng::new(seed),
-        }
-    }
-    /// Advance one 60 Hz tick.
-    pub fn step(&mut self) {
-        self.frame += 1;
-    }
-    /// Cheap hash for desync detection across peers.
-    pub fn checksum(&self) -> u64 {
-        self.frame as u64 ^ self.rng.0.rotate_left(17)
-    }
-}
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod tests {
@@ -69,15 +79,5 @@ mod tests {
         for _ in 0..1000 {
             assert_eq!(a.next_u64(), b.next_u64());
         }
-    }
-    #[test]
-    fn step_is_deterministic() {
-        let (mut a, mut b) = (State::new(7), State::new(7));
-        for _ in 0..100 {
-            a.step();
-            b.step();
-        }
-        assert_eq!(a, b);
-        assert_eq!(a.checksum(), b.checksum());
     }
 }

@@ -1,0 +1,379 @@
+//! Trigger evaluation: implements `rugen_cns::Context` over the world for one
+//! player (with redirection to parent/root/p2/...).
+
+use rugen_cns::state::{MoveType, StateType};
+use rugen_cns::trigger::{Axis, NameWhich, TeamMode, Trigger, flags};
+use rugen_cns::{Context, Redirect, Value, VarKind};
+
+use crate::world::World;
+
+pub struct Ctx<'a> {
+    pub w: &'a mut World,
+    /// Player whose state controllers are running.
+    pub owner: usize,
+    /// Player triggers currently read from (changes under redirection).
+    pub cur: usize,
+    stack: Vec<usize>,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn new(w: &'a mut World, player: usize) -> Self {
+        Self {
+            w,
+            owner: player,
+            cur: player,
+            stack: Vec::new(),
+        }
+    }
+
+    fn p(&self) -> &crate::Player {
+        &self.w.players[self.cur]
+    }
+
+    fn p2(&self) -> Option<usize> {
+        self.w.nearest_enemy(self.cur)
+    }
+
+    fn state_type_mask(t: StateType) -> u32 {
+        match t {
+            StateType::S => flags::ST_S,
+            StateType::C => flags::ST_C,
+            StateType::A => flags::ST_A,
+            StateType::L => flags::ST_L,
+            StateType::U => flags::ST_U,
+        }
+    }
+    fn move_type_mask(t: MoveType) -> u32 {
+        match t {
+            MoveType::I => flags::MT_I,
+            MoveType::A => flags::MT_A,
+            MoveType::H => flags::MT_H,
+            MoveType::U => flags::MT_U,
+        }
+    }
+
+    fn f(v: f32) -> Value {
+        Value::Float(v)
+    }
+    fn i(v: i32) -> Value {
+        Value::Int(v)
+    }
+    fn b(v: bool) -> Value {
+        Value::bool(v)
+    }
+}
+
+impl Context for Ctx<'_> {
+    fn trigger(&mut self, t: &Trigger, args: &[Value]) -> Value {
+        use Trigger as T;
+        let p = self.p();
+        let data = &self.w.data[p.data];
+        let arg = |n: usize| args.get(n).copied().unwrap_or(Value::Bottom);
+        match t {
+            T::AILevel => Self::i(0),
+            T::Alive => Self::b(p.life > 0),
+            T::Anim => Self::i(p.anim.action),
+            T::AnimTime => match data.air.get(p.anim.action) {
+                Some(a) => Self::i(p.anim.anim_time(a)),
+                None => Self::i(0),
+            },
+            T::AnimElemTime => match data
+                .air
+                .get(p.anim.action)
+                .and_then(|a| p.anim.anim_elem_time(a, arg(0).to_i()))
+            {
+                Some(v) => Self::i(v),
+                None => Value::Bottom,
+            },
+            T::AnimElemNo => match data
+                .air
+                .get(p.anim.action)
+                .and_then(|a| p.anim.anim_elem_no(a, arg(0).to_i()))
+            {
+                Some(v) => Self::i(v),
+                None => Value::Bottom,
+            },
+            T::AnimExist | T::SelfAnimExist => Self::b(data.air.get(arg(0).to_i()).is_some()),
+            T::BackEdge
+            | T::FrontEdge
+            | T::LeftEdge
+            | T::RightEdge
+            | T::BackEdgeDist
+            | T::BackEdgeBodyDist
+            | T::FrontEdgeDist
+            | T::FrontEdgeBodyDist => {
+                let (xmin, xmax) = self.w.screen_bounds();
+                let x = p.pos[0];
+                let front = if p.facing > 0.0 { xmax } else { xmin };
+                let back = if p.facing > 0.0 { xmin } else { xmax };
+                let (wf, wb) = self.w.player_width(self.cur);
+                match t {
+                    T::LeftEdge => Self::f(xmin - self.w.cam_x),
+                    T::RightEdge => Self::f(xmax - self.w.cam_x),
+                    T::FrontEdge => Self::f(front - self.w.cam_x),
+                    T::BackEdge => Self::f(back - self.w.cam_x),
+                    T::FrontEdgeDist => Self::i(((front - x) * p.facing) as i32),
+                    T::BackEdgeDist => Self::i(((x - back) * p.facing) as i32),
+                    T::FrontEdgeBodyDist => Self::i(((front - x) * p.facing - wf) as i32),
+                    _ => Self::i(((x - back) * p.facing - wb) as i32),
+                }
+            }
+            T::BottomEdge => Self::f(self.w.stage.height),
+            T::TopEdge => Self::f(0.0),
+            T::CameraPos(Axis::X) => Self::f(self.w.cam_x),
+            T::CameraPos(Axis::Y) => Self::f(0.0),
+            T::CameraZoom => Self::f(1.0),
+            T::CanRecover => Self::b(false),
+            T::Ctrl => Self::b(p.ctrl),
+            T::DrawGame => Self::b(false),
+            T::Facing => Self::i(if p.facing < 0.0 { -1 } else { 1 }),
+            T::GameHeight => Self::f(self.w.stage.height),
+            T::GameWidth => Self::f(self.w.stage.width),
+            T::GameTime => Self::i(self.w.frame as i32),
+            T::HitCount | T::UniqHitCount => Self::i(0),
+            T::HitFall => Self::b(false),
+            T::HitOver => Self::b(true),
+            T::HitPauseTime => Self::i(p.hit_pause),
+            T::HitShakeOver => Self::b(true),
+            T::HitVel(_) => Self::f(0.0),
+            T::Id => Self::i(p.id),
+            T::InGuardDist => Self::b(false),
+            T::IsHomeTeam => Self::b(p.team == 0),
+            T::Life => Self::i(p.life),
+            T::LifeMax => Self::i(p.life_max),
+            T::Lose | T::Win | T::MatchOver => Self::b(false),
+            T::MatchNo | T::RoundNo => Self::i(1),
+            T::MoveContact | T::MoveGuarded | T::MoveHit | T::MoveReversed => Self::i(0),
+            T::NumEnemy => {
+                Self::i(self.w.players.iter().filter(|o| o.team != p.team).count() as i32)
+            }
+            T::NumPartner
+            | T::NumProj
+            | T::NumHelper
+            | T::NumExplod
+            | T::NumTarget
+            | T::NumProjId => Self::i(0),
+            T::P2BodyDist(a) | T::P2Dist(a) => match self.p2() {
+                Some(e) => {
+                    let o = &self.w.players[e];
+                    match a {
+                        Axis::X => {
+                            let mut d = (o.pos[0] - p.pos[0]) * p.facing;
+                            if matches!(t, T::P2BodyDist(_)) {
+                                let (wf, _) = self.w.player_width(self.cur);
+                                let (of, ob) = self.w.player_width(e);
+                                let ow = if (o.facing > 0.0) != (p.facing > 0.0) {
+                                    of
+                                } else {
+                                    ob
+                                };
+                                d -= wf + ow;
+                            }
+                            Self::f(d)
+                        }
+                        Axis::Y => Self::f(o.pos[1] - p.pos[1]),
+                    }
+                }
+                None => Value::Bottom,
+            },
+            T::P2Life => self
+                .p2()
+                .map_or(Value::Bottom, |e| Self::i(self.w.players[e].life)),
+            T::P2StateNo => self
+                .p2()
+                .map_or(Value::Bottom, |e| Self::i(self.w.players[e].state_no)),
+            T::PalNo => Self::i(p.pal_no),
+            T::ParentDist(_) | T::RootDist(_) => Value::Bottom,
+            T::Pos(Axis::X) => Self::f(p.pos[0] - self.w.cam_x),
+            T::Pos(Axis::Y) => Self::f(p.pos[1]),
+            T::Power => Self::i(p.power),
+            T::PowerMax => Self::i(p.power_max),
+            T::PrevStateNo => Self::i(p.prev_state_no),
+            T::Random => {
+                let r = self.w.rng.random();
+                Self::i(r)
+            }
+            T::RoundsExisted => Self::i(0),
+            T::RoundState => Self::i(2),
+            T::ScreenPos(Axis::X) => Self::f(p.pos[0] - self.w.screen_left()),
+            T::ScreenPos(Axis::Y) => Self::f(p.pos[1] + self.w.stage.zoffset),
+            T::ScreenHeight => Self::f(self.w.stage.height),
+            T::ScreenWidth => Self::f(self.w.stage.width),
+            T::StateNo => Self::i(p.state_no),
+            T::TeamSide => Self::i(p.team as i32 + 1),
+            T::TicksPerSecond => Self::i(60),
+            T::Time => Self::i(p.state_time),
+            T::Vel(Axis::X) => Self::f(p.vel[0]),
+            T::Vel(Axis::Y) => Self::f(p.vel[1]),
+            T::StateType => Self::i(Self::state_type_mask(p.state_type) as i32),
+            T::MoveType => Self::i(Self::move_type_mask(p.move_type) as i32),
+            T::P2StateType => self.p2().map_or(Value::Bottom, |e| {
+                Self::i(Self::state_type_mask(self.w.players[e].state_type) as i32)
+            }),
+            T::P2MoveType => self.p2().map_or(Value::Bottom, |e| {
+                Self::i(Self::move_type_mask(self.w.players[e].move_type) as i32)
+            }),
+            T::TeamModeRaw => Self::i(0),
+            T::StateTypeIs { p2, mask } => {
+                let who = if *p2 { self.p2() } else { Some(self.cur) };
+                match who {
+                    Some(i) => {
+                        Self::b(Self::state_type_mask(self.w.players[i].state_type) & mask != 0)
+                    }
+                    None => Value::Bottom,
+                }
+            }
+            T::MoveTypeIs { p2, mask } => {
+                let who = if *p2 { self.p2() } else { Some(self.cur) };
+                match who {
+                    Some(i) => {
+                        Self::b(Self::move_type_mask(self.w.players[i].move_type) & mask != 0)
+                    }
+                    None => Value::Bottom,
+                }
+            }
+            T::TeamModeIs(m) => Self::b(*m == TeamMode::Single),
+            T::HitDefAttrIs { .. } => Self::b(false),
+            T::NameIs { which, text } => {
+                let who = match which {
+                    NameWhich::Name | NameWhich::P1Name | NameWhich::AuthorName => Some(self.cur),
+                    NameWhich::P2Name => self.p2(),
+                    _ => None,
+                };
+                match who {
+                    Some(i) => {
+                        let d = &self.w.data[self.w.players[i].data];
+                        let s = if *which == NameWhich::AuthorName {
+                            &d.author
+                        } else {
+                            &d.name
+                        };
+                        Self::b(s.eq_ignore_ascii_case(text))
+                    }
+                    None => Self::b(false),
+                }
+            }
+            T::StageVarIs { name, text } => Self::b(match name.as_str() {
+                "info.name" => self.w.stage.name.eq_ignore_ascii_case(text),
+                "info.displayname" => self.w.stage.display_name.eq_ignore_ascii_case(text),
+                "info.author" => self.w.stage.author.eq_ignore_ascii_case(text),
+                _ => false,
+            }),
+            T::Command(name) => Self::b(p.cmds.active(name)),
+            T::Const(name) => match data.konst(name) {
+                Some(v) => {
+                    // ints stay ints so `const(data.life)` compares like MUGEN
+                    if name.starts_with("data.") && name != "data.fall.defence_mul"
+                        || name.starts_with("size.") && !name.contains("scale")
+                    {
+                        Self::i(v as i32)
+                    } else {
+                        Self::f(v)
+                    }
+                }
+                None => {
+                    log::debug!("unknown const {name}");
+                    Value::Bottom
+                }
+            },
+            T::GetHitVar(name) => match name.as_str() {
+                "hittime" | "slidetime" | "ctrltime" | "recovertime" | "hitshaketime"
+                | "hitcount" | "fallcount" | "damage" | "type" | "animtype" | "airtype"
+                | "groundtype" | "guarded" | "isbound" | "fall" | "fall.damage"
+                | "fall.recover" | "fall.kill" | "fall.recovertime" | "fall.time" | "chainid"
+                | "hitid" => Self::i(0),
+                _ => Self::f(0.0),
+            },
+            T::PlayerIdExist => Self::b(self.w.players.iter().any(|o| o.id == arg(0).to_i())),
+            T::ProjHitTime | T::ProjGuardedTime | T::ProjContactTime | T::ProjCancelTime => {
+                Self::i(-1)
+            }
+            T::IsHelper => Self::b(false),
+            T::ConstCoord(h) => Self::f(data.localcoord[1] / *h as f32 * arg(0).to_f()),
+        }
+    }
+
+    fn get_var(&mut self, kind: VarKind, index: i32) -> Value {
+        let p = self.p();
+        let i = index as usize;
+        match kind {
+            VarKind::Var if index >= 0 => p.vars.get(i).map_or(Value::Bottom, |&v| Value::Int(v)),
+            VarKind::FVar if index >= 0 => {
+                p.fvars.get(i).map_or(Value::Bottom, |&v| Value::Float(v))
+            }
+            VarKind::SysVar if index >= 0 => {
+                p.sysvars.get(i).map_or(Value::Bottom, |&v| Value::Int(v))
+            }
+            VarKind::SysFVar if index >= 0 => p
+                .sysfvars
+                .get(i)
+                .map_or(Value::Bottom, |&v| Value::Float(v)),
+            _ => Value::Bottom,
+        }
+    }
+
+    fn set_var(&mut self, kind: VarKind, index: i32, value: Value) -> Value {
+        if index < 0 {
+            return Value::Bottom;
+        }
+        let i = index as usize;
+        // assignment always targets the owner of the running state, never a redirect target
+        let p = &mut self.w.players[self.owner];
+        match kind {
+            VarKind::Var => {
+                if let Some(v) = p.vars.get_mut(i) {
+                    *v = value.to_i();
+                    return Value::Int(*v);
+                }
+            }
+            VarKind::FVar => {
+                if let Some(v) = p.fvars.get_mut(i) {
+                    *v = value.to_f();
+                    return Value::Float(*v);
+                }
+            }
+            VarKind::SysVar => {
+                if let Some(v) = p.sysvars.get_mut(i) {
+                    *v = value.to_i();
+                    return Value::Int(*v);
+                }
+            }
+            VarKind::SysFVar => {
+                if let Some(v) = p.sysfvars.get_mut(i) {
+                    *v = value.to_f();
+                    return Value::Float(*v);
+                }
+            }
+        }
+        Value::Bottom
+    }
+
+    fn redirect(&mut self, kind: Redirect, id: Option<i32>) -> bool {
+        let target = match kind {
+            Redirect::P2 | Redirect::Enemy | Redirect::EnemyNear => match id {
+                None | Some(0) => self.p2(),
+                Some(_) => None,
+            },
+            Redirect::PlayerId => id.and_then(|id| self.w.players.iter().position(|o| o.id == id)),
+            Redirect::Root
+            | Redirect::Parent
+            | Redirect::Helper
+            | Redirect::Target
+            | Redirect::Partner => None,
+        };
+        match target {
+            Some(t) => {
+                self.stack.push(self.cur);
+                self.cur = t;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn end_redirect(&mut self) {
+        if let Some(c) = self.stack.pop() {
+            self.cur = c;
+        }
+    }
+}

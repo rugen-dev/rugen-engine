@@ -106,11 +106,12 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - `render`: wgpu, palette-on-GPU, logical camera with zoom, offscreen readback.
 - `app`: `rugen view` sprite/anim viewer with Clsn boxes and `--shot`.
 
-### Phase 1 — one character stands
-- CNS lexer, parser, bytecode VM.
-- Trigger + state controller coverage tracked in `docs/cns-coverage.md`.
-- KFM loads, idles, walks, attacks a dummy on a flat stage.
-- `ggrs` sync-test running every frame in debug builds.
+### Phase 1 — one character stands ✅ (2026-10-11)
+- CNS lexer, parser, bytecode VM (`cns` crate).
+- `sim`: char loading (def/cns/cmd/common1, constants), MUGEN frame order, Ikemen-exact animation timing, input buffer and command matching, state machine with persistent/trigger logic, ~25 state controllers, 100+ triggers, screen bounds, camera.
+- KFM loads, idles, walks, attacks, jumps and lands on a flat stage; `rugen play` drives it with the keyboard.
+- Headless tests cover all of the above and confirm clone-determinism.
+- Still open from this phase: `ggrs` sync-test in debug builds (Phase 3 prerequisite).
 
 ### Phase 2 — a real match
 - Hit detection, juggle, hitpause, guard, projectiles, helpers, explods.
