@@ -57,6 +57,21 @@ lists what the engine cannot run yet.
 
 Linux needs `libudev` and `alsa` headers, see [BUILDING.md](BUILDING.md). The `reference/` tree comes from `reference/fetch.sh`.
 
+## Screenpack
+
+The UI is an ordinary MUGEN motif in `motif/` (system.def, fight.def, SFF v2
+art, FNT v2 fonts) for a 426x240 pixel grid: dark slanted panels, slashed
+accents, pixel italic type. It is generated, not hand-drawn:
+
+```
+rugen screenpack-gen [--font bold.ttf] [--out motif]   # regenerate art, fonts and defs
+rugen fontgen bold.ttf --size 13 --italic 3 --rim --out motif/font/my.def --preview my.png
+```
+
+Edit the `.def` files to re-layout, swap sprites in the SFFs to retheme, or
+drop a classic MUGEN screenpack into `data/`; anything missing in `motif/`
+falls back to `data/`.
+
 ## Status
 
 Playable. Every MUGEN file format loads (SFF v1/v2, AIR, SND, ACT, DEF, FNT,
