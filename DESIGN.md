@@ -113,8 +113,10 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - Headless tests cover all of the above and confirm clone-determinism.
 - Still open from this phase: `ggrs` sync-test in debug builds (Phase 3 prerequisite).
 
-### Phase 2 — a real match
-- Hit detection, juggle, hitpause, guard, projectiles, helpers, explods.
+### Phase 2 — a real match (in progress)
+- ✅ Player push, Clsn1/Clsn2 hit detection, HitDef with MUGEN defaults, hit pause, guard, get-hit variables and states, damage/KO, targets (TargetState/LifeAdd/Vel/Facing/Bind/Drop), HitBy/NotHitBy, corner push, custom states (p2stateno).
+- Verified against community characters (`reference/testchars`, gitignored): load with zero errors and survive random input.
+- Next: hit sparks + fightfx, sounds, projectiles, helpers, explods, Pause/SuperPause.
 - Stage loader with camera bounds, parallax, native smooth zoom.
 - Rounds, timer, win/lose. Local versus.
 - Frame-by-frame diff harness against Ikemen GO recordings.

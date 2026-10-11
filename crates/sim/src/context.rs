@@ -5,6 +5,7 @@ use rugen_cns::state::{MoveType, StateType};
 use rugen_cns::trigger::{Axis, NameWhich, TeamMode, Trigger, flags};
 use rugen_cns::{Context, Redirect, Value, VarKind};
 
+use crate::hit::{HitType, attr};
 use crate::world::World;
 
 pub struct Ctx<'a> {
@@ -123,36 +124,59 @@ impl Context for Ctx<'_> {
             T::CameraPos(Axis::X) => Self::f(self.w.cam_x),
             T::CameraPos(Axis::Y) => Self::f(0.0),
             T::CameraZoom => Self::f(1.0),
-            T::CanRecover => Self::b(false),
+            T::CanRecover => Self::b(
+                p.ghv.fallflag && p.ghv.fall_recover && p.ghv.fall_time >= p.ghv.fall_recovertime,
+            ),
             T::Ctrl => Self::b(p.ctrl),
             T::DrawGame => Self::b(false),
             T::Facing => Self::i(if p.facing < 0.0 { -1 } else { 1 }),
             T::GameHeight => Self::f(self.w.stage.height),
             T::GameWidth => Self::f(self.w.stage.width),
             T::GameTime => Self::i(self.w.frame as i32),
-            T::HitCount | T::UniqHitCount => Self::i(0),
-            T::HitFall => Self::b(false),
-            T::HitOver => Self::b(true),
-            T::HitPauseTime => Self::i(p.hit_pause),
-            T::HitShakeOver => Self::b(true),
-            T::HitVel(_) => Self::f(0.0),
+            T::HitCount => Self::i(p.hit_count),
+            T::UniqHitCount => Self::i(p.uniq_hit_count),
+            T::HitFall => Self::b(p.ghv.fallflag),
+            T::HitOver => Self::b(p.ghv.hittime < 0),
+            T::HitPauseTime => Self::i(p.hit_pause_time),
+            T::HitShakeOver => Self::b(p.ghv.hitshaketime <= 0),
+            T::HitVel(Axis::X) => Self::f(p.ghv.xvel),
+            T::HitVel(Axis::Y) => Self::f(p.ghv.yvel),
             T::Id => Self::i(p.id),
-            T::InGuardDist => Self::b(false),
+            T::InGuardDist => Self::b(p.inguarddist),
             T::IsHomeTeam => Self::b(p.team == 0),
             T::Life => Self::i(p.life),
             T::LifeMax => Self::i(p.life_max),
-            T::Lose | T::Win | T::MatchOver => Self::b(false),
+            T::Lose
+            | T::Win
+            | T::MatchOver
+            | T::WinKO
+            | T::WinTime
+            | T::WinPerfect
+            | T::LoseKO
+            | T::LoseTime => Self::b(false),
             T::MatchNo | T::RoundNo => Self::i(1),
-            T::MoveContact | T::MoveGuarded | T::MoveHit | T::MoveReversed => Self::i(0),
+            T::MoveContact => Self::i(p.move_contact()),
+            T::MoveGuarded => Self::i(p.move_guarded()),
+            T::MoveHit => Self::i(p.move_hit()),
+            T::MoveReversed => Self::i(0),
             T::NumEnemy => {
                 Self::i(self.w.players.iter().filter(|o| o.team != p.team).count() as i32)
             }
-            T::NumPartner
-            | T::NumProj
-            | T::NumHelper
-            | T::NumExplod
-            | T::NumTarget
-            | T::NumProjId => Self::i(0),
+            T::NumPartner | T::NumProj | T::NumHelper | T::NumExplod | T::NumProjId => Self::i(0),
+            T::NumTarget => {
+                let id = arg(0).to_i();
+                let n = p
+                    .targets
+                    .iter()
+                    .filter(|&&tid| {
+                        self.w
+                            .players
+                            .iter()
+                            .any(|o| o.id == tid && (id < 0 || o.ghv.hitid == id))
+                    })
+                    .count();
+                Self::i(n as i32)
+            }
             T::P2BodyDist(a) | T::P2Dist(a) => match self.p2() {
                 Some(e) => {
                     let o = &self.w.players[e];
@@ -233,7 +257,17 @@ impl Context for Ctx<'_> {
                 }
             }
             T::TeamModeIs(m) => Self::b(*m == TeamMode::Single),
-            T::HitDefAttrIs { .. } => Self::b(false),
+            T::HitDefAttrIs { st, at } => {
+                // cns flags: ST bits match ours; attack-class bits are 1<<0.. there and 1<<6.. here
+                let want = st | (at << 6);
+                Self::b(
+                    p.move_type == MoveType::A
+                        && p.hitdef.as_ref().is_some_and(|h| {
+                            let a = h.attr & want;
+                            a & attr::ST_MASK != 0 && a & !attr::ST_MASK != 0
+                        }),
+                )
+            }
             T::NameIs { which, text } => {
                 let who = match which {
                     NameWhich::Name | NameWhich::P1Name | NameWhich::AuthorName => Some(self.cur),
@@ -276,14 +310,60 @@ impl Context for Ctx<'_> {
                     Value::Bottom
                 }
             },
-            T::GetHitVar(name) => match name.as_str() {
-                "hittime" | "slidetime" | "ctrltime" | "recovertime" | "hitshaketime"
-                | "hitcount" | "fallcount" | "damage" | "type" | "animtype" | "airtype"
-                | "groundtype" | "guarded" | "isbound" | "fall" | "fall.damage"
-                | "fall.recover" | "fall.kill" | "fall.recovertime" | "fall.time" | "chainid"
-                | "hitid" => Self::i(0),
-                _ => Self::f(0.0),
-            },
+            T::GetHitVar(name) => {
+                let g = &p.ghv;
+                let ht = |t: HitType| Self::i(t as i32);
+                match name.as_str() {
+                    "xveladd" => Self::f(g.xveladd),
+                    "yveladd" => Self::f(g.yveladd),
+                    "type" => ht(g.hit_type),
+                    "animtype" => Self::i(g.animtype as i32),
+                    "airtype" => ht(g.airtype),
+                    "groundtype" => ht(g.groundtype),
+                    "damage" => Self::i(g.damage),
+                    "hitcount" => Self::i(g.hitcount),
+                    "guardcount" => Self::i(g.guardcount),
+                    "fallcount" => Self::i(g.fallcount),
+                    "hitshaketime" => Self::i(g.hitshaketime),
+                    "hittime" => Self::i(g.hittime),
+                    "slidetime" => Self::i(g.slidetime),
+                    "ctrltime" => Self::i(g.ctrltime),
+                    "recovertime" => Self::i(g.down_recovertime),
+                    "xoff" => Self::f(g.xoff),
+                    "yoff" => Self::f(g.yoff),
+                    "xvel" => Self::f(g.xvel),
+                    "yvel" => Self::f(g.yvel),
+                    "yaccel" => Self::f(g.yaccel),
+                    "hitid" | "chainid" => Self::i(g.chain_id()),
+                    "guarded" => Self::b(g.guarded),
+                    "isbound" => Self::b(p.bind.is_some()),
+                    "fall" => Self::b(g.fallflag),
+                    "fall.damage" => Self::i(g.fall_damage),
+                    "fall.xvel" => Self::f(g.fall_xvelocity.unwrap_or(0.0)),
+                    "fall.yvel" => Self::f(g.fall_yvelocity),
+                    "fall.recover" => Self::b(g.fall_recover),
+                    "fall.time" => Self::i(g.fall_time),
+                    "fall.recovertime" => Self::i(g.fall_recovertime),
+                    "fall.kill" => Self::b(g.fall_kill),
+                    "fall.envshake.time" => Self::i(g.fall_envshake_time),
+                    "fall.envshake.freq" => Self::f(60.0),
+                    "fall.envshake.ampl" => Self::i(-4),
+                    "fall.envshake.phase" => Self::f(0.0),
+                    "playerno" => Self::i(
+                        self.w
+                            .players
+                            .iter()
+                            .position(|o| o.id == g.playerid)
+                            .map_or(0, |i| i as i32 + 1),
+                    ),
+                    "id" | "playerid" => Self::i(g.playerid),
+                    "attr" => Self::i(g.attr as i32),
+                    _ => {
+                        log::debug!("unknown gethitvar {name}");
+                        Value::Bottom
+                    }
+                }
+            }
             T::PlayerIdExist => Self::b(self.w.players.iter().any(|o| o.id == arg(0).to_i())),
             T::ProjHitTime | T::ProjGuardedTime | T::ProjContactTime | T::ProjCancelTime => {
                 Self::i(-1)

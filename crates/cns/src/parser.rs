@@ -982,9 +982,8 @@ impl Parser<'_> {
             }
             // old-style clauses
             "animelem" => {
-                if !self.eat_op("=") {
-                    return Err(Error::new("AnimElem needs '='"));
-                }
+                // `AnimElem != n` is tolerated by MUGEN; we read it as the negation
+                let ne = self.eq_or_ne("AnimElem")?;
                 let n = self.integer()?;
                 if n <= 0 {
                     return Err(Error::new("AnimElem must be greater than 0"));
@@ -995,6 +994,9 @@ impl Parser<'_> {
                 self.emit(Op::Jbottom(0));
                 self.old_comparison(false)?;
                 self.patch_jump(jb);
+                if ne {
+                    self.emit(Op::LNot);
+                }
                 Ok(())
             }
             "timemod" => {
@@ -1122,6 +1124,11 @@ impl Parser<'_> {
                     "topedge" => T::TopEdge,
                     "uniqhitcount" => T::UniqHitCount,
                     "win" => T::Win,
+                    "winko" => T::WinKO,
+                    "wintime" => T::WinTime,
+                    "winperfect" => T::WinPerfect,
+                    "loseko" => T::LoseKO,
+                    "losetime" => T::LoseTime,
                     _ => return Err(Error::new(format!("unknown trigger {name:?}"))),
                 };
                 nullary(self, t)

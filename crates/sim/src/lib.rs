@@ -13,8 +13,10 @@
 
 pub mod anim;
 pub mod chardata;
+pub mod collision;
 pub mod command;
 pub mod context;
+pub mod hit;
 pub mod input;
 pub mod player;
 pub mod sctrl;

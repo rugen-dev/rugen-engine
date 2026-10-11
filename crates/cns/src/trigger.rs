@@ -129,6 +129,11 @@ pub enum Trigger {
     UniqHitCount,
     Vel(Axis),
     Win,
+    WinKO,
+    WinTime,
+    WinPerfect,
+    LoseKO,
+    LoseTime,
     // --- enum-valued; bare use returns the raw flag bits
     StateType,
     P2StateType,

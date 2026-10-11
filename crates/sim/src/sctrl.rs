@@ -3,6 +3,8 @@
 use rugen_cns::state::Controller;
 use rugen_cns::{Code, Error, Result, VarKind, compile, compile_list};
 
+use crate::hit::{HitDefSpec, attr};
+
 #[derive(Clone, Debug)]
 pub enum Sctrl {
     Null,
@@ -109,6 +111,76 @@ pub enum Sctrl {
         value: Code,
     },
     Gravity,
+    HitDef(Box<HitDefSpec>),
+    HitVelSet {
+        x: Option<Code>,
+        y: Option<Code>,
+    },
+    HitFallSet {
+        value: Option<Code>,
+        xvel: Option<Code>,
+        yvel: Option<Code>,
+    },
+    HitFallVel,
+    HitFallDamage,
+    HitAdd {
+        value: Code,
+    },
+    MoveHitReset,
+    /// `NotHitBy` (`not = true`) / `HitBy`: slot 0 or 1, attr bits, time.
+    HitBy {
+        not: bool,
+        slot: usize,
+        attr: u32,
+        time: Option<Code>,
+    },
+    TargetState {
+        value: Code,
+        id: Option<Code>,
+    },
+    TargetLifeAdd {
+        value: Code,
+        kill: Option<Code>,
+        absolute: Option<Code>,
+        id: Option<Code>,
+    },
+    TargetPowerAdd {
+        value: Code,
+        id: Option<Code>,
+    },
+    TargetVelSet {
+        x: Option<Code>,
+        y: Option<Code>,
+        id: Option<Code>,
+    },
+    TargetVelAdd {
+        x: Option<Code>,
+        y: Option<Code>,
+        id: Option<Code>,
+    },
+    TargetFacing {
+        value: Code,
+        id: Option<Code>,
+    },
+    TargetBind {
+        time: Option<Code>,
+        pos: Option<Vec<Code>>,
+        id: Option<Code>,
+    },
+    TargetDrop {
+        excludeid: Option<Code>,
+        keepone: Option<Code>,
+    },
+    PlayerPush {
+        value: Option<Code>,
+    },
+    AttackMulSet {
+        value: Code,
+    },
+    DefenceMulSet {
+        value: Code,
+    },
+    FallEnvShake,
     /// Recognised but not implemented yet; runs as a no-op.
     Unsupported(String),
 }
@@ -294,6 +366,86 @@ impl Sctrl {
                 value: req(c, "value")?,
             },
             "gravity" => Sctrl::Gravity,
+            "hitdef" => Sctrl::HitDef(Box::new(HitDefSpec::compile(c)?)),
+            "hitvelset" => Sctrl::HitVelSet {
+                x: one(c, "x")?,
+                y: one(c, "y")?,
+            },
+            "hitfallset" => Sctrl::HitFallSet {
+                value: one(c, "value")?,
+                xvel: one(c, "xvel")?,
+                yvel: one(c, "yvel")?,
+            },
+            "hitfallvel" => Sctrl::HitFallVel,
+            "hitfalldamage" => Sctrl::HitFallDamage,
+            "hitadd" => Sctrl::HitAdd {
+                value: req(c, "value")?,
+            },
+            "movehitreset" => Sctrl::MoveHitReset,
+            "nothitby" | "hitby" => {
+                let (slot, v) = if let Some(v) = c.param("value") {
+                    (0, v)
+                } else if let Some(v) = c.param("value2") {
+                    (1, v)
+                } else {
+                    return Err(Error::new("missing value / value2"));
+                };
+                let bits =
+                    attr::parse(v, true).ok_or_else(|| Error::new(format!("bad attr {v:?}")))?;
+                Sctrl::HitBy {
+                    not: c.kind == "nothitby",
+                    slot,
+                    attr: bits,
+                    time: one(c, "time")?,
+                }
+            }
+            "targetstate" => Sctrl::TargetState {
+                value: req(c, "value")?,
+                id: one(c, "id")?,
+            },
+            "targetlifeadd" => Sctrl::TargetLifeAdd {
+                value: req(c, "value")?,
+                kill: one(c, "kill")?,
+                absolute: one(c, "absolute")?,
+                id: one(c, "id")?,
+            },
+            "targetpoweradd" => Sctrl::TargetPowerAdd {
+                value: req(c, "value")?,
+                id: one(c, "id")?,
+            },
+            "targetvelset" => Sctrl::TargetVelSet {
+                x: one(c, "x")?,
+                y: one(c, "y")?,
+                id: one(c, "id")?,
+            },
+            "targetveladd" => Sctrl::TargetVelAdd {
+                x: one(c, "x")?,
+                y: one(c, "y")?,
+                id: one(c, "id")?,
+            },
+            "targetfacing" => Sctrl::TargetFacing {
+                value: req(c, "value")?,
+                id: one(c, "id")?,
+            },
+            "targetbind" => Sctrl::TargetBind {
+                time: one(c, "time")?,
+                pos: c.exprs("pos")?,
+                id: one(c, "id")?,
+            },
+            "targetdrop" => Sctrl::TargetDrop {
+                excludeid: one(c, "excludeid")?,
+                keepone: one(c, "keepone")?,
+            },
+            "playerpush" => Sctrl::PlayerPush {
+                value: one(c, "value")?,
+            },
+            "attackmulset" => Sctrl::AttackMulSet {
+                value: req(c, "value")?,
+            },
+            "defencemulset" => Sctrl::DefenceMulSet {
+                value: req(c, "value")?,
+            },
+            "fallenvshake" => Sctrl::FallEnvShake,
             other => {
                 // make sure the parameters at least compile where they are expressions
                 let _ = compile_list;

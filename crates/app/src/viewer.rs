@@ -128,8 +128,9 @@ fn resolve(dir: &Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
 type Loaded = (TextureId, Option<usize>);
 
 struct Gpu {
-    window: Arc<Window>,
+    // declared before `window` so the surface is dropped first
     renderer: Renderer,
+    window: Arc<Window>,
     textures: HashMap<(u16, u16), Option<Loaded>>,
     palettes: Vec<PaletteId>,
 }

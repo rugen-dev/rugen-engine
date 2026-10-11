@@ -9,10 +9,12 @@ use rugen_cns::{Code, Context, Value};
 use crate::Rng;
 use crate::anim::AnimState;
 use crate::chardata::{CharData, Ctrl};
+use crate::collision;
 use crate::command::CommandList;
 use crate::context::Ctx;
+use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
-use crate::player::{Player, assert};
+use crate::player::{Bind, HitBySlot, Player, assert};
 use crate::sctrl::Sctrl;
 
 /// Stage geometry in the stage's own coordinate space (320 wide by default).
@@ -123,6 +125,14 @@ pub enum Event {
         channel: i32,
         volume: i32,
     },
+    /// Hit/guard spark at a stage position. `own` = from the player's AIR, else fightfx.
+    Spark {
+        player: usize,
+        own: bool,
+        anim: i32,
+        pos: [f32; 2],
+        facing: f32,
+    },
 }
 
 #[derive(Clone)]
@@ -230,7 +240,7 @@ impl World {
 
     // ------------------------------------------------------------ state changes
 
-    fn eval(&mut self, i: usize, code: &Code) -> Value {
+    pub(crate) fn eval(&mut self, i: usize, code: &Code) -> Value {
         let mut ctx = Ctx::new(self, i);
         code.eval(&mut ctx)
     }
@@ -250,7 +260,7 @@ impl World {
         p.prev_state_no = p.state_no;
         p.state_no = no.max(0);
         p.state_time = 0;
-        let n = self.data[p.data]
+        let n = self.data[p.state_owner]
             .states
             .get(&p.state_no)
             .map_or(0, |s| s.ctrls.len());
@@ -258,12 +268,19 @@ impl World {
         p.pending_state = Some(p.state_no);
     }
 
+    /// `SelfState`: back to the player's own states.
+    pub fn self_state(&mut self, i: usize, no: i32, anim: Option<i32>, ctrl: Option<bool>) {
+        let own = self.players[i].data;
+        self.players[i].state_owner = own;
+        self.change_state(i, no, anim, ctrl);
+    }
+
     /// `stateChange2`: apply the statedef of the buffered state.
     fn apply_pending(&mut self, i: usize) -> bool {
         let Some(no) = self.players[i].pending_state.take() else {
             return false;
         };
-        let data = self.data[self.players[i].data].clone();
+        let data = self.data[self.players[i].state_owner].clone();
         let Some(state) = data.states.get(&no) else {
             self.warn(format!("P{} changed to invalid state {no}", i + 1));
             let p = &mut self.players[i];
@@ -317,6 +334,29 @@ impl World {
                 self.change_anim(i, a, None);
             }
         }
+        if def
+            .hitdefpersist
+            .as_ref()
+            .is_none_or(|c| !self.eval(i, c).to_b())
+        {
+            self.players[i].hitdef = None;
+        }
+        if def
+            .movehitpersist
+            .as_ref()
+            .is_none_or(|c| !self.eval(i, c).to_b())
+        {
+            self.players[i].mctype = MoveContact::None;
+            self.players[i].mctime = 0;
+        }
+        if def
+            .hitcountpersist
+            .as_ref()
+            .is_none_or(|c| !self.eval(i, c).to_b())
+        {
+            self.players[i].hit_count = 0;
+            self.players[i].guard_count = 0;
+        }
         if let Some(c) = &def.ctrl {
             let v = self.eval(i, c).to_b();
             self.players[i].ctrl = v;
@@ -328,12 +368,23 @@ impl World {
         true
     }
 
-    pub fn change_anim(&mut self, i: usize, mut no: i32, elem: Option<(i32, i32)>) {
+    pub fn change_anim(&mut self, i: usize, no: i32, elem: Option<(i32, i32)>) {
+        let own = self.players[i].data;
+        self.change_anim_from(i, own, no, elem);
+    }
+
+    /// `ChangeAnim2`: animation from the state owner's AIR.
+    pub fn change_anim2(&mut self, i: usize, no: i32, elem: Option<(i32, i32)>) {
+        let owner = self.players[i].state_owner;
+        self.change_anim_from(i, owner, no, elem);
+    }
+
+    fn change_anim_from(&mut self, i: usize, owner: usize, mut no: i32, elem: Option<(i32, i32)>) {
         if no < 0 {
             self.warn(format!("P{} attempted change to negative anim {no}", i + 1));
             no = 0;
         }
-        let data = self.data[self.players[i].data].clone();
+        let data = self.data[owner].clone();
         let Some(action) = data.air.get(no) else {
             self.warn(format!(
                 "P{} attempted to change to invalid action {no}",
@@ -344,6 +395,7 @@ impl World {
         let p = &mut self.players[i];
         p.prev_anim_no = p.anim.action;
         p.anim = AnimState::start(no);
+        p.anim_owner = owner;
         if let Some((e, t)) = elem {
             p.anim.set_elem(action, e, t);
         }
@@ -352,6 +404,35 @@ impl World {
     fn power_add(&mut self, i: usize, v: i32) {
         let p = &mut self.players[i];
         p.power = (p.power + v).clamp(0, p.power_max);
+    }
+
+    /// Indices of `i`'s targets, optionally filtered by hit id.
+    fn target_indices(&self, i: usize, hit_id: i32) -> Vec<usize> {
+        let p = &self.players[i];
+        p.targets
+            .iter()
+            .filter_map(|&tid| self.players.iter().position(|o| o.id == tid))
+            .filter(|&t| hit_id < 0 || self.players[t].ghv.hitid == hit_id)
+            .collect()
+    }
+
+    fn apply_bind(&mut self, i: usize) {
+        let Some(b) = self.players[i].bind else {
+            return;
+        };
+        let Some(to) = self.players.iter().position(|o| o.id == b.to) else {
+            self.players[i].bind = None;
+            return;
+        };
+        let (tx, ty, tf) = (
+            self.players[to].pos[0],
+            self.players[to].pos[1],
+            self.players[to].facing,
+        );
+        let p = &mut self.players[i];
+        p.pos[0] = tx + b.pos[0] * tf;
+        p.pos[1] = ty + b.pos[1];
+        p.old_pos = p.pos;
     }
 
     fn should_face_p2(&self, i: usize) -> bool {
@@ -423,24 +504,152 @@ impl World {
             self.run(i);
         }
 
-        // 4. bounds
+        // 4. finish: KO
+        for i in 0..n {
+            self.finish(i);
+        }
+
+        // 5. collision
+        collision::push_detection(self);
+        collision::hit_detection(self);
+
+        // 6. bounds
         self.update_camera();
         for i in 0..n {
             self.screen_bound(i);
         }
 
-        // 5. animate
+        // 7. tick: animate, hit bookkeeping, get-hit state entry
         for i in 0..n {
-            let data = self.data[self.players[i].data].clone();
+            self.tick(i);
+        }
+        self.frame += 1;
+    }
+
+    fn finish(&mut self, i: usize) {
+        self.players[i].inguarddist = false;
+        self.players[i].prev_fallflag = self.players[i].ghv.fallflag;
+        let p = &self.players[i];
+        if p.hit_pause_time == 0
+            && p.alive()
+            && p.life <= 0
+            && !p.asserted(assert::NOKO)
+            && (!p.ghv.guarded)
+        {
+            self.events.push(Event::Sound {
+                player: i,
+                own: false,
+                group: 11,
+                number: 0,
+                channel: -1,
+                volume: 100,
+            });
             let p = &mut self.players[i];
-            if p.hit_pause == 0
+            p.ko = true;
+            p.ctrl = false;
+            if p.pending_state.is_none() && p.move_type != MoveType::H {
+                p.ghv.fallflag = true;
+                self.self_state(i, 5030, None, Some(false));
+                self.run_current(i);
+                self.players[i].state_time = 1;
+            }
+        }
+    }
+
+    fn tick(&mut self, i: usize) {
+        // animate (not during hit pause)
+        let data = self.data[self.players[i].anim_owner].clone();
+        {
+            let p = &mut self.players[i];
+            if p.hit_pause_time == 0
                 && let Some(a) = data.air.get(p.anim.action)
             {
                 p.anim.step(a);
             }
             p.old_pos = p.pos;
+            p.pushed = false;
         }
-        self.frame += 1;
+        // contact bookkeeping
+        {
+            let p = &mut self.players[i];
+            if p.mctime < 0 {
+                p.mctime = 1;
+                let numhits = p.hitdef.as_ref().map_or(1, |h| h.numhits);
+                match p.mctype {
+                    MoveContact::Hit => p.hit_count += numhits,
+                    MoveContact::Guarded => p.guard_count += numhits,
+                    _ => {}
+                }
+            }
+            if !p.hitdef_targets.is_empty() {
+                let add = std::mem::take(&mut p.hitdef_targets);
+                for id in add {
+                    if !p.targets.contains(&id) {
+                        p.targets.push(id);
+                    }
+                }
+                // keep them as "already hit by this HitDef" too
+                p.hitdef_targets = p.targets.clone();
+            }
+        }
+        // enter the get-hit state
+        if self.players[i].gethit {
+            let p = &mut self.players[i];
+            p.move_type = MoveType::H;
+            p.hit_pause_time = 0;
+            let custom = p.pending_state.is_some();
+            let st = p.state_type;
+            let on_ground_down = st == StateType::L && p.pos[1] == 0.0;
+            let trip = p.ghv.hit_type == HitType::Trip;
+            if custom {
+                p.prev_state_no = if on_ground_down {
+                    5080
+                } else if trip {
+                    5070
+                } else {
+                    match st {
+                        StateType::S => 5000,
+                        StateType::C => 5010,
+                        _ => 5020,
+                    }
+                };
+            } else if p.ghv.guarded && (p.ghv.damage < p.life || p.asserted(assert::NOKO)) {
+                let no = match st {
+                    StateType::S => 150,
+                    StateType::C => 152,
+                    _ => 154,
+                };
+                self.self_state(i, no, None, Some(false));
+            } else if on_ground_down {
+                self.change_state(i, 5080, None, Some(false));
+            } else if trip {
+                self.change_state(i, 5070, None, Some(false));
+            } else {
+                if p.ghv.forcestand && st == StateType::C {
+                    p.state_type = StateType::S;
+                }
+                let no = match p.state_type {
+                    StateType::S => 5000,
+                    StateType::C => {
+                        if p.ghv.damage >= p.life && !p.asserted(assert::NOKO) {
+                            5000
+                        } else {
+                            5010
+                        }
+                    }
+                    _ => 5020,
+                };
+                self.change_state(i, no, None, Some(false));
+            }
+            let p = &mut self.players[i];
+            if p.state_type == StateType::L && p.pos[1] == 0.0 && p.ghv.yvel != 0.0 {
+                p.down_hit_offset = true;
+            }
+        }
+        let p = &mut self.players[i];
+        if p.hit_pause_time > 0 {
+            p.hit_pause_time -= 1;
+        }
     }
 
     fn prepare(&mut self, i: usize) {
@@ -450,7 +659,9 @@ impl World {
         if p.ctrl {
             let st = p.state_type;
             let no = p.state_no;
-            if st == StateType::S && ub > 0 {
+            if p.guarding && p.inguarddist && !p.in_guard_state() && st != StateType::L && bb > 0 {
+                self.change_state(i, 120, None, None);
+            } else if st == StateType::S && ub > 0 {
                 if no != 40 {
                     self.change_state(i, 40, None, None);
                 }
@@ -490,21 +701,49 @@ impl World {
         if p.state_type != StateType::A {
             p.air_jump_count = 0;
         }
+        if p.hit_pause_time == 0 {
+            for slot in &mut p.hitby {
+                if slot.time > 0 {
+                    slot.time -= 1;
+                    if slot.time == 0 {
+                        *slot = HitBySlot::default();
+                    }
+                }
+            }
+            p.width_edge = [0.0, 0.0];
+            p.width_player = [0.0, 0.0];
+            p.screen_bound = true;
+            p.move_camera = [true, true];
+            p.player_push = p.alive() || p.state_no != 5150;
+        }
+        if p.unhittable_time > 0 {
+            p.unhittable_time -= 1;
+        }
         p.assert_flags = 0;
         p.pos_freeze = false;
-        p.width_edge = [0.0, 0.0];
-        p.width_player = [0.0, 0.0];
-        p.screen_bound = true;
-        p.move_camera = [true, true];
+        // step binds
+        if let Some(b) = p.bind {
+            if b.time > 0 {
+                p.bind = Some(Bind {
+                    time: b.time - 1,
+                    ..b
+                });
+            }
+            if p.bind.is_some_and(|b| b.time == 0) {
+                p.bind = None;
+            }
+        }
     }
 
     fn run(&mut self, i: usize) {
-        let data = self.data[self.players[i].data].clone();
+        let data = self.data[self.players[i].state_owner].clone();
+        let own = self.data[self.players[i].data].clone();
         for neg in [-3, -2, -1] {
-            if let Some(state) = data.states.get(&neg) {
-                if neg == -1 && !self.players[i].ctrl && self.players[i].state_type != StateType::U
-                {
-                    // [State -1] still runs in MUGEN; its controllers gate on ctrl themselves
+            // -1 and -3 come from the player's own files even in a custom state; -2 always runs
+            let src = if neg == -2 { &data } else { &own };
+            if let Some(state) = src.states.get(&neg) {
+                if neg == -1 && self.players[i].state_owner != self.players[i].data {
+                    continue;
                 }
                 self.players[i].minus = neg as i8;
                 let mut persist = vec![0; state.ctrls.len()];
@@ -513,7 +752,16 @@ impl World {
         }
         self.players[i].minus = 0;
         self.run_current(i);
-        if self.players[i].hit_pause == 0 {
+        // guarding flag for next tick's hit checks and guard entry
+        let guarding = collision::compute_guard_flag(&self.players[i]);
+        self.players[i].guarding = guarding;
+        if self.players[i].hit_pause_time == 0 {
+            // forced stay in 5110 then get up
+            let p = &self.players[i];
+            if p.state_no == 5110 && p.state_time >= 1 && p.ghv.down_recovertime <= 0 && p.alive() {
+                self.change_state(i, 5120, None, None);
+                self.run_current(i);
+            }
             self.pos_update(i);
             let p = &self.players[i];
             if p.physics == Physics::A && p.vel[1] > 0.0 && p.pos[1] >= 0.0 && p.state_no != 105 {
@@ -521,17 +769,89 @@ impl World {
                 self.change_state(i, 52, None, None);
                 self.run_current(i);
             }
+            let f = self.players[i].p1facing;
+            self.players[i].set_facing(f);
+            self.players[i].p1facing = 0.0;
             self.players[i].state_time += 1;
+            if self.players[i].mctime > 0 {
+                self.players[i].mctime += 1;
+            }
         }
+        // pending damage from hits lands here
+        let liedown = own.konst("data.liedown.time").unwrap_or(60.0) as i32;
+        let p = &mut self.players[i];
+        if p.ghv.damage != 0 {
+            if p.move_type == MoveType::H {
+                let d = p.ghv.damage;
+                p.life = (p.life - d).max(0);
+            }
+            p.ghv.damage = 0;
+        }
+        if p.hit_pause_time == 0 {
+            if p.move_type == MoveType::H {
+                if p.ghv.guarded {
+                    p.received_hits = 0;
+                }
+                if p.ghv.hitshaketime > 0 {
+                    p.ghv.hitshaketime -= 1;
+                }
+                if p.ghv.fallflag {
+                    p.ghv.fall_time += 1;
+                }
+                p.hittmp = p.ghv.fallflag as i8 + 1;
+            } else {
+                if p.hittmp > 0 {
+                    p.hittmp = 0;
+                }
+                p.ghv.hitshaketime = 0;
+                p.fall_defence_mul = 1.0;
+                p.ghv.fallflag = false;
+                p.ghv.fallcount = 0;
+                p.ghv.hitid >>= 31;
+                p.ghv.guardcount = 0;
+                p.received_hits = 0;
+                p.ghv.down_recovertime = liedown;
+                p.ghv.fall_envshake_time = 0;
+            }
+            if p.ghv.hitshaketime <= 0 && p.ghv.hittime >= 0 {
+                p.ghv.hittime -= 1;
+            }
+            if p.ghv.down_recovertime > 0 && p.state_no == 5110 {
+                p.ghv.down_recovertime -= 1;
+            }
+        }
+        let gp = std::mem::take(&mut p.ghv.power);
+        let mp = std::mem::take(&mut p.mhv.power);
+        if gp != 0 {
+            self.power_add(i, gp);
+        }
+        if mp != 0 {
+            self.power_add(i, mp);
+        }
+        // drop targets that left their hit state
+        let my_id = self.players[i].id;
+        let keep: Vec<i32> = self.players[i]
+            .targets
+            .iter()
+            .copied()
+            .filter(|&tid| {
+                self.players.iter().any(|o| {
+                    o.id == tid
+                        && (o.move_type == MoveType::H || o.gethit)
+                        && o.ghv.targeted_by.iter().any(|t| t.0 == my_id)
+                })
+            })
+            .collect();
+        self.players[i].targets = keep;
     }
 
     /// Apply a buffered state change and run the current state's controllers,
     /// following ChangeStates from inside the body immediately (Ikemen `changeStateEx`).
     fn run_current(&mut self, i: usize) {
-        let data = self.data[self.players[i].data].clone();
         self.apply_pending(i);
         let mut loops = 0;
         loop {
+            let data = self.data[self.players[i].state_owner].clone();
             let no = self.players[i].state_no;
             let Some(state) = data.states.get(&no) else {
                 break;
@@ -558,7 +878,7 @@ impl World {
     /// Run a controller list. Returns true if the state changed (stop processing).
     fn run_ctrls(&mut self, i: usize, ctrls: &[Ctrl], persist: &mut [i32]) -> bool {
         for (ci, c) in ctrls.iter().enumerate() {
-            if self.players[i].hit_pause > 0 && !c.ignorehitpause {
+            if self.players[i].hit_pause_time > 0 && !c.ignorehitpause {
                 continue;
             }
             if let Some(ps) = persist.get_mut(ci) {
@@ -613,17 +933,231 @@ impl World {
     fn exec(&mut self, i: usize, op: &Sctrl) -> bool {
         match op {
             Sctrl::Null | Sctrl::Unsupported(_) => {}
-            Sctrl::ChangeState { value, ctrl, anim } | Sctrl::SelfState { value, ctrl, anim } => {
+            Sctrl::ChangeState { value, ctrl, anim } => {
                 let v = self.eval(i, value).to_i();
                 let a = anim.as_ref().map(|c| self.eval(i, c).to_i());
                 let c = ctrl.as_ref().map(|c| self.eval(i, c).to_b());
                 self.change_state(i, v, a, c);
                 return true;
             }
-            Sctrl::ChangeAnim { value, elem } | Sctrl::ChangeAnim2 { value, elem } => {
+            Sctrl::SelfState { value, ctrl, anim } => {
+                let v = self.eval(i, value).to_i();
+                let a = anim.as_ref().map(|c| self.eval(i, c).to_i());
+                let c = ctrl.as_ref().map(|c| self.eval(i, c).to_b());
+                self.self_state(i, v, a, c);
+                return true;
+            }
+            Sctrl::ChangeAnim { value, elem } => {
                 let v = self.eval(i, value).to_i();
                 let e = elem.as_ref().map(|c| (self.eval(i, c).to_i(), 0));
                 self.change_anim(i, v, e);
+            }
+            Sctrl::ChangeAnim2 { value, elem } => {
+                let v = self.eval(i, value).to_i();
+                let e = elem.as_ref().map(|c| (self.eval(i, c).to_i(), 0));
+                self.change_anim2(i, v, e);
+            }
+            Sctrl::HitDef(spec) => {
+                let hd = collision::eval_hitdef(self, i, spec);
+                let p = &mut self.players[i];
+                p.hitdef = Some(hd);
+                p.hitdef_targets.clear();
+            }
+            Sctrl::HitVelSet { x, y } => {
+                let sx = x.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let sy = y.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let p = &mut self.players[i];
+                if sx {
+                    p.vel[0] = p.ghv.xvel * p.facing;
+                }
+                if sy {
+                    p.vel[1] = p.ghv.yvel;
+                }
+            }
+            Sctrl::HitFallSet { value, xvel, yvel } => {
+                let v = value.as_ref().map(|c| self.eval(i, c).to_i());
+                let xv = xvel.as_ref().map(|c| self.eval(i, c).to_f());
+                let yv = yvel.as_ref().map(|c| self.eval(i, c).to_f());
+                let p = &mut self.players[i];
+                if let Some(f) = v
+                    && f >= 0
+                {
+                    p.ghv.fallflag = f != 0;
+                }
+                if let Some(x) = xv {
+                    p.ghv.fall_xvelocity = Some(x);
+                }
+                if let Some(y) = yv {
+                    p.ghv.fall_yvelocity = y;
+                }
+            }
+            Sctrl::HitFallVel => {
+                let p = &mut self.players[i];
+                if p.move_type == MoveType::H {
+                    if let Some(x) = p.ghv.fall_xvelocity {
+                        p.vel[0] = x;
+                    }
+                    p.vel[1] = p.ghv.fall_yvelocity;
+                }
+            }
+            Sctrl::HitFallDamage => {
+                let p = &mut self.players[i];
+                if p.move_type == MoveType::H {
+                    let d = p.ghv.fall_damage;
+                    p.ghv.fall_damage = 0;
+                    let kill = p.ghv.fall_kill;
+                    p.life = (p.life - d).max(if kill { 0 } else { 1 });
+                }
+            }
+            Sctrl::HitAdd { value } => {
+                let v = self.eval(i, value).to_i();
+                let p = &mut self.players[i];
+                p.hit_count += v;
+                p.uniq_hit_count += v;
+            }
+            Sctrl::MoveHitReset => {
+                let p = &mut self.players[i];
+                p.mctype = MoveContact::None;
+                p.mctime = 0;
+            }
+            Sctrl::HitBy {
+                not,
+                slot,
+                attr,
+                time,
+            } => {
+                let t = time.as_ref().map_or(1, |c| self.eval(i, c).to_i());
+                self.players[i].hitby[*slot] = HitBySlot {
+                    attr: *attr,
+                    time: t,
+                    not: *not,
+                };
+            }
+            Sctrl::TargetState { value, id } => {
+                let v = self.eval(i, value).to_i();
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let owner = self.players[i].state_owner;
+                for t in self.target_indices(i, tid) {
+                    self.players[t].state_owner = owner;
+                    self.change_state(t, v, None, Some(false));
+                    self.players[t].move_type = MoveType::H;
+                }
+            }
+            Sctrl::TargetLifeAdd {
+                value,
+                kill,
+                absolute,
+                id,
+            } => {
+                let v = self.eval(i, value).to_i();
+                let kill = kill.as_ref().is_none_or(|c| self.eval(i, c).to_b());
+                let abs = absolute.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                for t in self.target_indices(i, tid) {
+                    let d = if abs {
+                        v
+                    } else {
+                        -collision_damage(self, t, i, -v, kill)
+                    };
+                    let p = &mut self.players[t];
+                    p.life = (p.life + d).min(p.life_max).max(if kill { 0 } else { 1 });
+                }
+            }
+            Sctrl::TargetPowerAdd { value, id } => {
+                let v = self.eval(i, value).to_i();
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                for t in self.target_indices(i, tid) {
+                    self.power_add(t, v);
+                }
+            }
+            Sctrl::TargetVelSet { x, y, id } | Sctrl::TargetVelAdd { x, y, id } => {
+                let add = matches!(op, Sctrl::TargetVelAdd { .. });
+                let xv = self.evf(i, x);
+                let yv = self.evf(i, y);
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let f = self.players[i].facing;
+                for t in self.target_indices(i, tid) {
+                    let p = &mut self.players[t];
+                    if let Some(v) = xv {
+                        let v = if add { v * p.facing } else { v * f * p.facing };
+                        if add {
+                            p.vel[0] += v;
+                        } else {
+                            p.vel[0] = v;
+                        }
+                    }
+                    if let Some(v) = yv {
+                        if add {
+                            p.vel[1] += v;
+                        } else {
+                            p.vel[1] = v;
+                        }
+                    }
+                }
+            }
+            Sctrl::TargetFacing { value, id } => {
+                let v = self.eval(i, value).to_i();
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let f = self.players[i].facing;
+                for t in self.target_indices(i, tid) {
+                    let nf = if v > 0 { f } else { -f };
+                    self.players[t].set_facing(nf);
+                }
+            }
+            Sctrl::TargetBind { time, pos, id } => {
+                let t = time.as_ref().map_or(1, |c| self.eval(i, c).to_i());
+                let px = pos
+                    .as_ref()
+                    .and_then(|p| p.first())
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let py = pos
+                    .as_ref()
+                    .and_then(|p| p.get(1))
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let tid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let my = self.players[i].id;
+                for tg in self.target_indices(i, tid) {
+                    self.players[tg].bind = Some(Bind {
+                        to: my,
+                        time: t,
+                        pos: [px, py],
+                    });
+                    self.apply_bind(tg);
+                }
+            }
+            Sctrl::TargetDrop { excludeid, keepone } => {
+                let ex = excludeid.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let keep = keepone.as_ref().is_none_or(|c| self.eval(i, c).to_b());
+                let my = self.players[i].id;
+                let mut kept = Vec::new();
+                for &tid in &self.players[i].targets.clone() {
+                    let hid = self
+                        .players
+                        .iter()
+                        .find(|o| o.id == tid)
+                        .map_or(-1, |o| o.ghv.hitid);
+                    if ex >= 0 && hid == ex && (!keep || kept.is_empty()) {
+                        kept.push(tid);
+                    } else if let Some(o) = self.players.iter_mut().find(|o| o.id == tid) {
+                        o.ghv.targeted_by.retain(|t| t.0 != my);
+                    }
+                }
+                self.players[i].targets = kept;
+            }
+            Sctrl::PlayerPush { value } => {
+                let v = value.as_ref().is_none_or(|c| self.eval(i, c).to_b());
+                self.players[i].player_push = v;
+            }
+            Sctrl::AttackMulSet { value } => {
+                let v = self.eval(i, value).to_f();
+                self.players[i].attack_mul = v;
+            }
+            Sctrl::DefenceMulSet { value } => {
+                let v = self.eval(i, value).to_f();
+                self.players[i].defence_mul = v;
+            }
+            Sctrl::FallEnvShake => {
+                self.players[i].ghv.fall_envshake_time = 0;
             }
             Sctrl::VelSet { x, y } => {
                 if let Some(v) = self.evf(i, x) {
@@ -840,12 +1374,69 @@ impl World {
         false
     }
 
+    /// Corner push: when the opponent we hit is stuck on the screen edge, we move back instead.
+    fn corner_push(&self, i: usize) -> f32 {
+        let p = &self.players[i];
+        if p.mhv.cornerpush_veloff == 0.0 {
+            return 0.0;
+        }
+        let (xmin, xmax) = self.screen_bounds();
+        for o in &self.players {
+            if o.move_type != MoveType::H || o.ghv.playerid != p.id {
+                continue;
+            }
+            if o.ghv.hitshaketime > 0 {
+                continue;
+            }
+            let next = o.pos[0] + o.vel[0] * o.facing;
+            if next > xmin && next < xmax || !o.screen_bound {
+                continue;
+            }
+            let mut push = p.mhv.cornerpush_veloff;
+            let mut mv = next - o.pos[0];
+            if next > xmax {
+                mv = xmax - o.pos[0];
+            } else if next < xmin {
+                mv = xmin - o.pos[0];
+            }
+            if mv.abs() < push.abs() {
+                push -= push.signum() * mv.abs();
+            } else {
+                push = 0.0;
+            }
+            return push;
+        }
+        0.0
+    }
+
     fn pos_update(&mut self, i: usize) {
         let data = self.data[self.players[i].data].clone();
+        let push = self.corner_push(i);
+        let bound = self.players[i].bind.is_some();
+        if bound {
+            self.apply_bind(i);
+        }
         let p = &mut self.players[i];
         p.old_pos = p.pos;
-        if !p.pos_freeze {
-            p.pos[0] += p.vel[0] * p.facing;
+        if p.down_hit_offset {
+            let ox = data.konst("movement.down.bounce.offset.x").unwrap_or(0.0);
+            let oy = data.konst("movement.down.bounce.offset.y").unwrap_or(20.0);
+            p.pos[0] += ox * p.facing;
+            p.pos[1] += oy;
+            p.down_hit_offset = false;
+        }
+        if p.move_type == MoveType::H && (p.ghv.xoff != 0.0 || p.ghv.yoff != 0.0) {
+            p.pos[0] += p.ghv.xoff;
+            p.pos[1] += p.ghv.yoff;
+            p.ghv.xoff = 0.0;
+            p.ghv.yoff = 0.0;
+        }
+        if p.pos_freeze {
+            if !bound {
+                p.pos[0] = p.old_pos[0] + push;
+            }
+        } else if !bound {
+            p.pos[0] += p.vel[0] * p.facing + push;
             p.pos[1] += p.vel[1];
         }
         match p.physics {
@@ -863,6 +1454,17 @@ impl World {
             }
             Physics::N | Physics::U => {}
         }
+        if p.mhv.cornerpush_veloff != 0.0 {
+            let fr = if matches!(p.state_type, StateType::C | StateType::L) {
+                data.konst("movement.crouch.friction").unwrap_or(0.82)
+            } else {
+                data.konst("movement.stand.friction").unwrap_or(0.85)
+            };
+            p.mhv.cornerpush_veloff *= fr;
+            if p.mhv.cornerpush_veloff.abs() < 1.0 {
+                p.mhv.cornerpush_veloff = 0.0;
+            }
+        }
     }
 
     fn update_camera(&mut self) {
@@ -879,7 +1481,7 @@ impl World {
         self.cam_x = mid.clamp(self.stage.bound_left, self.stage.bound_right);
     }
 
-    fn screen_bound(&mut self, i: usize) {
+    pub(crate) fn screen_bound(&mut self, i: usize) {
         let (xmin, xmax) = self.screen_bounds();
         let p = &self.players[i];
         let mut x = p.pos[0];
@@ -897,7 +1499,25 @@ impl World {
             p.old_pos[0] = x;
         }
     }
+}
 
+/// Damage scaled like a hit (`TargetLifeAdd` with absolute = 0).
+fn collision_damage(w: &World, getter: usize, attacker: usize, damage: i32, kill: bool) -> i32 {
+    let a = &w.players[attacker];
+    let g = &w.players[getter];
+    let atk = a.attack_mul * w.data[a.data].konst("data.attack").unwrap_or(100.0) / 100.0;
+    let def = w.data[g.data].konst("data.defence").unwrap_or(100.0) / 100.0 * g.defence_mul;
+    let mut d = damage as f32 * atk / def.max(0.0001);
+    if d > 0.0 && d < 1.0 {
+        d = 1.0;
+    }
+    if !kill && d >= g.life as f32 {
+        d = (g.life - 1) as f32;
+    }
+    libm::roundf(d) as i32
+}
+
+impl World {
     /// Hash of the gameplay state, for desync detection.
     pub fn checksum(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -1079,6 +1699,192 @@ mod tests {
         assert_eq!(p.state_no, 0);
         assert_eq!(p.pos[1], 0.0);
         assert!(w.warnings.is_empty(), "{:?}", w.warnings);
+    }
+
+    fn walk_until_close(w: &mut World) {
+        // walk P1 toward P2 until push contact
+        for _ in 0..200 {
+            w.step(&[
+                Buttons {
+                    r: true,
+                    ..Default::default()
+                },
+                Buttons::default(),
+            ]);
+            if w.players[0].pushed {
+                break;
+            }
+        }
+        for _ in 0..10 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+        }
+    }
+
+    #[test]
+    fn push_keeps_players_apart() {
+        let Some(mut w) = world() else { return };
+        walk_until_close(&mut w);
+        let (a, b) = (&w.players[0], &w.players[1]);
+        assert!(
+            w.players[0].pushed || (b.pos[0] - a.pos[0]) >= 25.0,
+            "bodies do not overlap: {} {}",
+            a.pos[0],
+            b.pos[0]
+        );
+        assert!(b.pos[0] > a.pos[0]);
+    }
+
+    #[test]
+    fn light_punch_connects() {
+        let Some(mut w) = world() else { return };
+        walk_until_close(&mut w);
+        let life0 = w.players[1].life;
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        let mut hit_frame = None;
+        for f in 0..30 {
+            run(&mut w, 1, Buttons::default());
+            if w.players[1].state_no == 5000 && hit_frame.is_none() {
+                hit_frame = Some(f);
+            }
+        }
+        assert!(
+            hit_frame.is_some(),
+            "P2 entered state 5000; P2 state {} life {}",
+            w.players[1].state_no,
+            w.players[1].life
+        );
+        assert!(
+            w.players[1].life < life0,
+            "damage applied: {} -> {}",
+            life0,
+            w.players[1].life
+        );
+        assert!(
+            w.players[0].move_hit() > 0 || w.players[0].hit_count > 0,
+            "MoveHit / HitCount on attacker"
+        );
+        run(&mut w, 90, Buttons::default());
+        assert_eq!(w.players[1].state_no, 0, "P2 recovered to stand");
+        assert!(w.players[1].ctrl);
+        assert_eq!(w.players[1].move_type, MoveType::I);
+        assert!(w.warnings.is_empty(), "{:?}", w.warnings);
+    }
+
+    #[test]
+    fn guard_blocks_damage() {
+        let Some(mut w) = world() else { return };
+        walk_until_close(&mut w);
+        let life0 = w.players[1].life;
+        // P2 holds back (P2 faces left, so back = right)
+        let hold = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            w.step(&[Buttons::default(), hold]);
+        }
+        w.step(&[
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+            hold,
+        ]);
+        let mut guarded = false;
+        for _ in 0..40 {
+            w.step(&[Buttons::default(), hold]);
+            if (150..=155).contains(&w.players[1].state_no) {
+                guarded = true;
+            }
+        }
+        assert!(
+            guarded,
+            "P2 went through a guard-hit state, was in {}",
+            w.players[1].state_no
+        );
+        assert_eq!(w.players[1].life, life0, "no chip damage from a normal");
+        assert!(w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0);
+    }
+
+    #[test]
+    fn knockout() {
+        let Some(mut w) = world() else { return };
+        w.players[1].life = 5;
+        w.players[1].life_max = 1000;
+        walk_until_close(&mut w);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        run(&mut w, 40, Buttons::default());
+        assert_eq!(w.players[1].life, 0);
+        assert!(w.players[1].ko);
+        run(&mut w, 200, Buttons::default());
+        assert_eq!(
+            w.players[1].state_no, 5150,
+            "lying defeated: in {}",
+            w.players[1].state_no
+        );
+    }
+
+    /// Community characters from reference/testchars: random inputs must never panic or warn.
+    #[test]
+    fn soak_test_chars() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/testchars");
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            return;
+        };
+        let mut defs = Vec::new();
+        for e in rd.flatten() {
+            let d = e.path();
+            if let Ok(inner) = std::fs::read_dir(&d) {
+                for f in inner.flatten() {
+                    let sub = f.path();
+                    if sub.is_dir() {
+                        let name = sub.file_name().unwrap().to_string_lossy().to_string();
+                        let def = sub.join(format!("{name}.def"));
+                        if def.exists() {
+                            defs.push(def);
+                        }
+                    }
+                }
+            }
+        }
+        if defs.len() < 2 {
+            return;
+        }
+        let d1 = CharData::load(&defs[0]).unwrap();
+        let d2 = CharData::load(&defs[1]).unwrap();
+        let mut w = World::new(Stage::default(), 7);
+        w.add_player(d1, 0, 1);
+        w.add_player(d2, 1, 2);
+        let mut rng = Rng::new(99);
+        for _ in 0..1800 {
+            let r = |rng: &mut Rng| Buttons::from_bits((rng.next_u64() & 0x7ff) as u16);
+            let a = r(&mut rng);
+            let b = r(&mut rng);
+            w.step(&[a, b]);
+        }
+        for p in &w.players {
+            assert!(p.pos[0].is_finite() && p.pos[1].is_finite());
+        }
+        let bad: Vec<&String> = w
+            .warnings
+            .iter()
+            .filter(|m| m.contains("invalid") || m.contains("stuck"))
+            .collect();
+        assert!(bad.is_empty(), "{bad:?}");
     }
 
     #[test]

@@ -4,7 +4,24 @@ use rugen_cns::state::{MoveType, Physics, StateType};
 
 use crate::anim::AnimState;
 use crate::command::CommandList;
+use crate::hit::{GetHitVar, HitDef, MoveContact, MoveHitVar};
 use crate::input::InputBuffer;
+
+/// `HitBy` / `NotHitBy` slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HitBySlot {
+    pub attr: u32,
+    pub time: i32,
+    pub not: bool,
+}
+
+/// `TargetBind` state: bound to `to` at `pos` for `time` more ticks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bind {
+    pub to: i32,
+    pub time: i32,
+    pub pos: [f32; 2],
+}
 
 /// AssertSpecial flags, reset every tick.
 pub mod assert {
@@ -76,6 +93,8 @@ pub struct Player {
     pub move_type: MoveType,
     pub physics: Physics,
     pub anim: AnimState,
+    /// Data index whose AIR the current animation comes from.
+    pub anim_owner: usize,
     pub prev_anim_no: i32,
     pub ctrl: bool,
     pub life: i32,
@@ -101,10 +120,46 @@ pub struct Player {
     pub move_camera: [bool; 2],
     pub juggle: i32,
     pub air_jump_count: i32,
-    pub hit_pause: i32,
     pub pal_no: i32,
     /// Set while a negative-state block or current state is being run; -1,-2,-3 or 0.
     pub minus: i8,
+    // ---- hits
+    /// Data index whose states (and ChangeAnim2 anims) this player runs; `data` unless in a custom state.
+    pub state_owner: usize,
+    pub hitdef: Option<HitDef>,
+    pub hitdef_targets: Vec<i32>,
+    pub targets: Vec<i32>,
+    pub ghv: GetHitVar,
+    pub mhv: MoveHitVar,
+    pub mctype: MoveContact,
+    pub mctime: i32,
+    pub hit_pause_time: i32,
+    /// Hit this tick (`CSF_gethit`).
+    pub gethit: bool,
+    /// 0 idle, -1 just hit, 1 in hit state, 2 falling.
+    pub hittmp: i8,
+    pub prev_fallflag: bool,
+    pub hit_count: i32,
+    pub guard_count: i32,
+    pub uniq_hit_count: i32,
+    pub unhittable_time: i32,
+    pub hitby: [HitBySlot; 2],
+    pub inguarddist: bool,
+    /// `SCF_guard`: holding back in a state that may guard.
+    pub guarding: bool,
+    pub attack_mul: f32,
+    pub defence_mul: f32,
+    pub fall_defence_mul: f32,
+    pub player_push: bool,
+    pub pushed: bool,
+    pub received_hits: i32,
+    pub down_hit_offset: bool,
+    /// Facing to apply after hit processing (`p1facing`).
+    pub p1facing: f32,
+    pub counter_hit: bool,
+    pub ko: bool,
+    pub bind: Option<Bind>,
+    pub pause_move_time: i32,
 }
 
 impl Player {
@@ -134,6 +189,7 @@ impl Player {
             move_type: MoveType::I,
             physics: Physics::S,
             anim: AnimState::start(0),
+            anim_owner: data,
             prev_anim_no: 0,
             ctrl: false,
             life,
@@ -157,9 +213,70 @@ impl Player {
             move_camera: [true, true],
             juggle: 0,
             air_jump_count: 0,
-            hit_pause: 0,
             pal_no,
             minus: 0,
+            state_owner: data,
+            hitdef: None,
+            hitdef_targets: Vec::new(),
+            targets: Vec::new(),
+            ghv: GetHitVar::default(),
+            mhv: MoveHitVar::default(),
+            mctype: MoveContact::None,
+            mctime: 0,
+            hit_pause_time: 0,
+            gethit: false,
+            hittmp: 0,
+            prev_fallflag: false,
+            hit_count: 0,
+            guard_count: 0,
+            uniq_hit_count: 0,
+            unhittable_time: 0,
+            hitby: [HitBySlot::default(); 2],
+            inguarddist: false,
+            guarding: false,
+            attack_mul: 1.0,
+            defence_mul: 1.0,
+            fall_defence_mul: 1.0,
+            player_push: true,
+            pushed: false,
+            received_hits: 0,
+            down_hit_offset: false,
+            p1facing: 0.0,
+            counter_hit: false,
+            ko: false,
+            bind: None,
+            pause_move_time: 0,
+        }
+    }
+
+    pub fn alive(&self) -> bool {
+        !self.ko
+    }
+    pub fn hit_pause(&self) -> bool {
+        self.hit_pause_time > 0
+    }
+    pub fn in_guard_state(&self) -> bool {
+        crate::hit::is_guard_state(self.state_no)
+    }
+    pub fn move_hit(&self) -> i32 {
+        if self.mctype == MoveContact::Hit {
+            self.mctime.abs()
+        } else {
+            0
+        }
+    }
+    pub fn move_guarded(&self) -> i32 {
+        if self.mctype == MoveContact::Guarded {
+            self.mctime.abs()
+        } else {
+            0
+        }
+    }
+    pub fn move_contact(&self) -> i32 {
+        if self.mctype != MoveContact::None {
+            self.mctime.abs()
+        } else {
+            0
         }
     }
 

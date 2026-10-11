@@ -64,8 +64,9 @@ struct CharGpu {
 }
 
 struct Gpu {
-    window: Arc<Window>,
+    // declared before `window` so the surface is dropped first
     renderer: Renderer,
+    window: Arc<Window>,
     chars: Vec<CharGpu>,
 }
 
