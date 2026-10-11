@@ -16,3 +16,4 @@ Cargo.lock.orig
 /data/
 /cache/
 rugen.toml
+replays/

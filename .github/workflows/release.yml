@@ -26,17 +26,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
-      - run: cargo build --release -p rugen
+      - run: cargo build --release -p rugen -p rugen-relay
       - name: Package
         shell: bash
         run: |
           mkdir -p dist
+          cp README.md rugen.toml.example dist/ 2>/dev/null || cp README.md dist/
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/rugen.exe dist/
+            cp target/release/rugen.exe target/release/rugen-relay.exe dist/
             7z a rugen-${{ matrix.name }}.zip ./dist/*
           else
-            cp target/release/rugen dist/
-            tar -C dist -czf rugen-${{ matrix.name }}.tar.gz rugen
+            cp target/release/rugen target/release/rugen-relay dist/
+            tar -C dist -czf rugen-${{ matrix.name }}.tar.gz .
           fi
       - name: RPM (Fedora)
         if: runner.os == 'Linux'
