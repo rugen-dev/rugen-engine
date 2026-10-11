@@ -121,32 +121,32 @@ impl Default for PlayerKeys {
 impl PlayerKeys {
     fn p1() -> Self {
         Self {
-            up: "ArrowUp".into(),
-            down: "ArrowDown".into(),
-            left: "ArrowLeft".into(),
-            right: "ArrowRight".into(),
-            a: "a".into(),
-            b: "s".into(),
-            c: "d".into(),
-            x: "z".into(),
-            y: "x".into(),
-            z: "c".into(),
-            start: "Enter".into(),
+            up: "z".into(),
+            down: "s".into(),
+            left: "q".into(),
+            right: "d".into(),
+            a: "j".into(),
+            b: "k".into(),
+            c: "l".into(),
+            x: "u".into(),
+            y: "i".into(),
+            z: "o".into(),
+            start: "m".into(),
         }
     }
     fn p2() -> Self {
         Self {
-            up: "i".into(),
-            down: "k".into(),
-            left: "j".into(),
-            right: "l".into(),
-            a: "b".into(),
-            b: "n".into(),
-            c: "m".into(),
-            x: "t".into(),
-            y: "y".into(),
-            z: "u".into(),
-            start: "Shift".into(),
+            up: "ArrowUp".into(),
+            down: "ArrowDown".into(),
+            left: "ArrowLeft".into(),
+            right: "ArrowRight".into(),
+            a: "1".into(),
+            b: "2".into(),
+            c: "3".into(),
+            x: "4".into(),
+            y: "5".into(),
+            z: "6".into(),
+            start: "Enter".into(),
         }
     }
     /// Mapping in Buttons order: u d l r a b c x y z s.
@@ -218,7 +218,7 @@ mod tests {
         let c = Config::default();
         let text = toml::to_string_pretty(&c).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
-        assert_eq!(back.input.p1.up, "ArrowUp");
+        assert_eq!(back.input.p1.up, "z");
         assert_eq!(back.net.port, 7000);
     }
 

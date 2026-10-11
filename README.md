@@ -25,8 +25,9 @@ they are extracted and converted into `cache/` on first use. `data/` holds the
 screenpack (`system.def`, `fight.def`, `common1.cns`, ...); without one the
 bundled MUGEN 1.1 data in `reference/` is used.
 
-Keys live in `rugen.toml` (written on first run). Defaults: P1 arrows +
-`a s d` / `z x c` / Enter, P2 `i j k l` + `b n m` / `t y u` / Shift. Gamepads
+Keys live in `rugen.toml` (written on first run). Defaults: P1 `z q s d` to
+move, `j k l` = a b c, `u i o` = x y z, `m` = start (`p` is free); P2 arrows +
+numpad `1 2 3` / `4 5 6`, Enter = start. Gamepads
 work out of the box. In a match: Space pause, `.` step, F2 hitboxes and
 platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
 Esc back.
