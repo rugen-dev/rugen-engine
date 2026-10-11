@@ -82,7 +82,7 @@ impl SelectScreen {
         let human = match mode {
             Mode::Versus => [true, true],
             Mode::Arcade | Mode::Training => [true, false],
-            Mode::Watch | Mode::Exit => [false, false],
+            Mode::Watch | Mode::Netplay | Mode::Exit => [false, false],
         };
         let s = &sys.select;
         let n = cells.len() as i32;
@@ -314,7 +314,7 @@ impl SelectScreen {
             Mode::Versus => "VS Mode",
             Mode::Training => "Training",
             Mode::Watch => "Watch",
-            Mode::Exit => "",
+            Mode::Netplay | Mode::Exit => "",
         };
         sys.text(r, s.title_font, title, s.title_offset);
         // grid

@@ -32,6 +32,7 @@ pub enum Mode {
     Versus,
     Training,
     Watch,
+    Netplay,
     Exit,
 }
 
@@ -39,6 +40,8 @@ pub enum Mode {
 pub enum Transition {
     Title,
     Select(Mode),
+    /// Online match from the `[net]` section of rugen.toml.
+    Netplay,
     /// Show the VS screen, then fight.
     Versus(FightSetup, [Portrait; 2]),
     Fight(FightSetup),
@@ -59,6 +62,8 @@ pub struct Harness {
     pub shot: Option<PathBuf>,
     pub frames: Option<u32>,
     pub script: Option<Vec<Buttons>>,
+    /// Write a replay of every match here (quick play) or into `replays/`.
+    pub record: Option<PathBuf>,
 }
 
 pub struct Shell {
@@ -80,6 +85,8 @@ pub struct Shell {
     shot_armed: bool,
     ticks: u32,
     quit: bool,
+    /// Replay to feed into the next match.
+    replay: Option<crate::replay::Replay>,
 }
 
 impl Shell {
@@ -89,6 +96,7 @@ impl Shell {
         start: Transition,
         quick: bool,
         harness: Harness,
+        replay: Option<crate::replay::Replay>,
     ) -> Self {
         let data_dir = lib.data_dir();
         let system = match SystemData::load(&data_dir) {
@@ -122,6 +130,7 @@ impl Shell {
             shot_armed: false,
             ticks: 0,
             quit: false,
+            replay,
         }
     }
 
@@ -130,6 +139,31 @@ impl Shell {
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut self)?;
         Ok(())
+    }
+
+    /// Write the current match's recording (quick play: to `--record`, else `replays/`).
+    fn save_replay(&mut self) {
+        let Screen::Match(m) = &mut self.screen else {
+            return;
+        };
+        let Some(rec) = m.record.take() else { return };
+        if rec.inputs.len() < 60 {
+            return;
+        }
+        let path = match &self.harness.record {
+            Some(p) => p.clone(),
+            None => {
+                let t = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                self.lib.root.join("replays").join(format!("{t}.json"))
+            }
+        };
+        match rec.save(&path) {
+            Ok(()) => log::info!("replay saved to {}", path.display()),
+            Err(e) => log::warn!("replay not saved: {e}"),
+        }
     }
 
     fn system_sfx(&mut self, snd: Option<(i32, i32)>) {
@@ -154,9 +188,59 @@ impl Shell {
     fn transition(&mut self, t: Transition) {
         match t {
             Transition::Quit => self.quit = true,
+            Transition::Netplay => {
+                let n = self.config.net.clone();
+                let resolve = |me: &Self, id: &str| -> Option<PathBuf> {
+                    let e = me.lib.find_char(id)?;
+                    me.lib
+                        .prepare_char(&e)
+                        .map(|(d, m)| d.join(m.def))
+                        .map_err(|err| log::error!("{id}: {err}"))
+                        .ok()
+                };
+                let remote = match n.remote.parse::<std::net::SocketAddr>() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::error!("[net] remote {:?}: {e}", n.remote);
+                        self.transition(Transition::Title);
+                        return;
+                    }
+                };
+                let (Some(p1), Some(p2)) = (resolve(self, &n.p1), resolve(self, &n.p2)) else {
+                    self.transition(Transition::Title);
+                    return;
+                };
+                let stage = self
+                    .lib
+                    .stages()
+                    .into_iter()
+                    .find(|e| e.id.eq_ignore_ascii_case(&n.stage))
+                    .or_else(|| self.lib.stages().into_iter().next())
+                    .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| d.join(m.def)))
+                    .or_else(|| {
+                        let p = self
+                            .lib
+                            .root
+                            .join("reference/mugen-1.1b1/stages/stage0.def");
+                        p.exists().then_some(p)
+                    });
+                self.transition(Transition::Fight(FightSetup {
+                    p1,
+                    p2,
+                    stage,
+                    ai: [0, 0],
+                    net: Some(crate::play::NetMode::P2P {
+                        port: n.port,
+                        remote,
+                        side: usize::from(n.side == 2),
+                    }),
+                }));
+            }
             Transition::Title => {
+                self.save_replay();
+                let netplay = !self.config.net.remote.trim().is_empty();
                 self.screen = match self.system.as_ref() {
-                    Some(sys) => Screen::Title(TitleScreen::new(sys)),
+                    Some(sys) => Screen::Title(TitleScreen::new(sys, netplay)),
                     None => {
                         log::error!("no system.def: cannot show the title screen");
                         self.quit = true;
@@ -181,6 +265,12 @@ impl Shell {
             }
             Transition::Fight(setup) => match Match::load(&setup, &self.data_dir, &self.config) {
                 Ok(mut m) => {
+                    if setup.net.is_none() {
+                        m.record = Some(crate::replay::Replay::new(&setup));
+                    }
+                    if let Some(r) = self.replay.take() {
+                        m.playback = Some((r.inputs, 0));
+                    }
                     let initial = m.world.events.clone();
                     m.handle_events(initial, &mut self.audio);
                     if let Some(g) = self.gpu.as_mut() {
@@ -258,6 +348,9 @@ impl Shell {
                 }
             }
         }
+        if matches!(next, Some(Transition::Quit)) {
+            self.save_replay();
+        }
         for s in sfx_queue {
             self.system_sfx(s);
         }
@@ -278,6 +371,11 @@ impl Shell {
     }
 
     fn render(&mut self) {
+        if let Screen::Match(m) = &mut self.screen
+            && let Some(g) = self.gpu.as_mut()
+        {
+            m.refresh_gpu(&mut g.renderer);
+        }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
         r.begin();
@@ -352,6 +450,12 @@ impl Shell {
                 }
             }
         }
+    }
+}
+
+impl Drop for Shell {
+    fn drop(&mut self) {
+        self.save_replay();
     }
 }
 

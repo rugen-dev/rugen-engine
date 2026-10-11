@@ -127,6 +127,20 @@ pub struct Match {
     over_ticks: i32,
     /// Start pressed after the match ended.
     pub leave: bool,
+    /// Inputs recorded this match (local play only).
+    pub record: Option<crate::replay::Replay>,
+    /// Inputs to replay instead of live input, with a cursor.
+    pub playback: Option<(Vec<[u16; 2]>, usize)>,
+    /// F3: state / frame data / input history overlay.
+    overlay: bool,
+    input_history: [Vec<Buttons>; 2],
+    setup: FightSetup,
+    data_dir: PathBuf,
+    /// Hot reload: character dirs and the newest mtime seen there.
+    watch: Vec<(usize, PathBuf, u64)>,
+    reload_tick: u32,
+    /// Data slots whose textures must be re-uploaded (after a reload).
+    gpu_dirty: Vec<usize>,
 }
 
 impl Match {
@@ -216,7 +230,84 @@ impl Match {
             lifebar,
             over_ticks: 0,
             leave: false,
+            record: None,
+            playback: None,
+            overlay: std::env::var_os("RUGEN_OVERLAY").is_some(),
+            input_history: [Vec::new(), Vec::new()],
+            watch: [(0usize, &setup.p1), (1, &setup.p2)]
+                .into_iter()
+                .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
+                .map(|(i, p)| {
+                    let dir = p.parent().unwrap_or(Path::new(".")).to_path_buf();
+                    let m = newest_mtime(&dir);
+                    (i, dir, m)
+                })
+                .collect(),
+            setup: setup.clone(),
+            data_dir: data_dir.to_path_buf(),
+            reload_tick: 0,
+            gpu_dirty: Vec::new(),
         })
+    }
+
+    /// Re-upload palettes/textures for data slots touched by a hot reload.
+    pub fn refresh_gpu(&mut self, r: &mut Renderer) {
+        if self.chars.is_empty() {
+            self.init_gpu(r);
+            return;
+        }
+        for i in std::mem::take(&mut self.gpu_dirty) {
+            let Some(d) = self.world.data.get(i) else {
+                continue;
+            };
+            let mut palettes: Vec<PaletteId> =
+                d.sff.palettes.iter().map(|p| r.add_palette(p)).collect();
+            if palettes.is_empty() {
+                palettes.push(r.add_palette(&[[0; 4]; 256]));
+            }
+            if let Some(cg) = self.chars.get_mut(i) {
+                cg.textures.clear();
+                cg.palettes = palettes;
+            }
+        }
+    }
+
+    /// Reload a character whose source files changed on disk (creator workflow).
+    fn check_reload(&mut self) {
+        self.reload_tick += 1;
+        if self.reload_tick % 60 != 0 || self.net.is_some() {
+            return;
+        }
+        for k in 0..self.watch.len() {
+            let (slot, dir, seen) = self.watch[k].clone();
+            let now = newest_mtime(&dir);
+            if now <= seen {
+                continue;
+            }
+            self.watch[k].2 = now;
+            let def = if slot == 0 {
+                &self.setup.p1
+            } else {
+                &self.setup.p2
+            };
+            let def = def.clone();
+            match CharData::load_with_data(&def, &self.data_dir) {
+                Ok(d) => {
+                    for w in &d.warnings {
+                        log::warn!("{}: {w}", d.name);
+                    }
+                    log::info!("reloaded {}", d.name);
+                    // both slots share data when the same character fights itself
+                    for (i, slot_data) in self.world.data.iter_mut().enumerate() {
+                        if i == slot || (self.setup.p1 == self.setup.p2 && i < 2) {
+                            *slot_data = d.clone();
+                            self.gpu_dirty.push(i);
+                        }
+                    }
+                }
+                Err(e) => log::error!("reload failed: {e}"),
+            }
+        }
     }
 
     /// Upload palettes once the renderer exists.
@@ -255,6 +346,26 @@ impl Match {
             return false;
         }
         self.step = false;
+        self.check_reload();
+        let mut inputs = inputs;
+        if let Some((frames, cursor)) = self.playback.as_mut() {
+            match frames.get(*cursor) {
+                Some(f) => {
+                    inputs = [Buttons::from_bits(f[0]), Buttons::from_bits(f[1])];
+                    *cursor += 1;
+                }
+                None => self.leave = true,
+            }
+        }
+        if let Some(rec) = self.record.as_mut() {
+            rec.inputs.push([inputs[0].bits(), inputs[1].bits()]);
+        }
+        for (h, b) in self.input_history.iter_mut().zip(inputs) {
+            h.push(b);
+            if h.len() > 24 {
+                h.remove(0);
+            }
+        }
         let advanced = match self.net.as_mut() {
             Some(net) => {
                 net.poll();
@@ -329,6 +440,7 @@ impl Match {
             Key::Character(".") => self.step = true,
             Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
             Key::Named(NamedKey::F1) => self.debug = !self.debug,
+            Key::Named(NamedKey::F3) => self.overlay = !self.overlay,
             Key::Character("+") | Key::Character("=") => self.zoom = (self.zoom * 1.25).min(8.0),
             Key::Character("-") => self.zoom = (self.zoom / 1.25).max(0.25),
             _ => return false,
@@ -690,6 +802,96 @@ impl Match {
         items
     }
 
+    /// F3 overlay: state and frame data per player plus recent inputs.
+    fn draw_overlay(
+        &self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        screen_w: f32,
+    ) {
+        let w = &self.world;
+        let roots: Vec<usize> = w
+            .players
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.helper_index == 0)
+            .map(|(i, _)| i)
+            .take(2)
+            .collect();
+        for (side, &pi) in roots.iter().enumerate() {
+            let p = &w.players[pi];
+            let d = &w.data[p.anim_owner];
+            let anim = d.air.get(p.anim.action);
+            let lines = [
+                format!(
+                    "P{} ST {} T {} {:?} {:?} CTRL {}",
+                    side + 1,
+                    p.state_no,
+                    p.state_time,
+                    p.state_type,
+                    p.move_type,
+                    p.ctrl as u8
+                ),
+                format!(
+                    "ANIM {} EL {}/{} AT {}",
+                    p.anim.action,
+                    p.anim.elem + 1,
+                    anim.map_or(0, |a| a.frames.len()),
+                    anim.map_or(0, |a| p.anim.anim_time(a))
+                ),
+                format!(
+                    "POS {:.1} {:.1} VEL {:.2} {:.2}",
+                    p.pos[0], p.pos[1], p.vel[0], p.vel[1]
+                ),
+                format!(
+                    "LIFE {} POW {} HIT {} JUG {}",
+                    p.life, p.power, p.hit_count, p.juggle
+                ),
+            ];
+            let x = if side == 0 { 6.0 } else { screen_w - 6.0 };
+            for (k, line) in lines.iter().enumerate() {
+                let y = 40.0 + k as f32 * 7.0;
+                let wpx = line.len() as f32 * 4.0;
+                let cx = if side == 0 {
+                    x + wpx / 2.0
+                } else {
+                    x - wpx / 2.0
+                };
+                draw_text(r, line, hud(cx, y), u, [1.0, 1.0, 0.6, 0.95]);
+            }
+            // input history, newest at the bottom
+            let hist = &self.input_history[side];
+            for (k, b) in hist.iter().rev().take(12).enumerate() {
+                let mut s = String::new();
+                for (on, ch) in [
+                    (b.u, 'U'),
+                    (b.d, 'D'),
+                    (b.l, 'L'),
+                    (b.r, 'R'),
+                    (b.a, 'A'),
+                    (b.b, 'B'),
+                    (b.c, 'C'),
+                    (b.x, 'X'),
+                    (b.y, 'Y'),
+                    (b.z, 'Z'),
+                    (b.s, 'S'),
+                ] {
+                    s.push(if on { ch } else { '.' });
+                }
+                let y = 160.0 - k as f32 * 6.0;
+                let wpx = s.len() as f32 * 4.0;
+                let cx = if side == 0 {
+                    x + wpx / 2.0
+                } else {
+                    x - wpx / 2.0
+                };
+                let alpha = 1.0 - k as f32 * 0.07;
+                draw_text(r, &s, hud(cx, y), u, [0.8, 0.9, 1.0, alpha]);
+            }
+        }
+    }
+
     /// Queue this frame's draws; the shell calls `begin` before and `end` after.
     pub fn render(&mut self, r: &mut Renderer) -> (Camera, [f64; 4]) {
         let stage = self.world.stage.clone();
@@ -804,6 +1006,9 @@ impl Match {
                 screen_w * u,
                 bg_tint,
             );
+        }
+        if self.overlay {
+            self.draw_overlay(r, &hud, u, screen_w);
         }
         if brightness < 1.0 {
             r.rect(
@@ -1018,6 +1223,34 @@ fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f3
 
 fn draw_number(r: &mut Renderer, n: i32, center: [f32; 2], px: f32, color: [f32; 4]) {
     draw_text(r, &format!("{n:02}"), center, px, color);
+}
+
+/// Newest modification time (seconds) of any state/anim/command file under `dir`.
+fn newest_mtime(dir: &Path) -> u64 {
+    let mut newest = 0u64;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        let ext = p
+            .extension()
+            .map(|x| x.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if !matches!(
+            ext.as_str(),
+            "cns" | "cmd" | "air" | "def" | "st" | "sff" | "snd"
+        ) {
+            continue;
+        }
+        if let Ok(m) = e.metadata()
+            && let Ok(t) = m.modified()
+            && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
+        {
+            newest = newest.max(d.as_secs());
+        }
+    }
+    newest
 }
 
 pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()> {

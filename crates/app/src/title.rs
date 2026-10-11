@@ -12,10 +12,11 @@ pub struct TitleScreen {
     bg: Option<StageVisual>,
     /// First visible item when the menu scrolls.
     top: usize,
+    netplay: bool,
 }
 
 impl TitleScreen {
-    pub fn new(sys: &SystemData) -> Self {
+    pub fn new(sys: &SystemData, netplay: bool) -> Self {
         let bg = match StageVisual::load_prefixed(&sys.def_path, "titlebg", Some(&sys.sff_path)) {
             Ok(b) => Some(b),
             Err(e) => {
@@ -27,12 +28,14 @@ impl TitleScreen {
             cursor: 0,
             bg,
             top: 0,
+            netplay,
         }
     }
 
-    /// Menu entries we can actually run.
-    fn items(sys: &SystemData) -> Vec<(Mode, String)> {
-        sys.title
+    /// Menu entries we can actually run; NETPLAY is added before EXIT when configured.
+    fn items(sys: &SystemData, netplay: bool) -> Vec<(Mode, String)> {
+        let mut out: Vec<(Mode, String)> = sys
+            .title
             .items
             .iter()
             .filter_map(|(k, label)| {
@@ -46,7 +49,15 @@ impl TitleScreen {
                 };
                 Some((mode, label.clone()))
             })
-            .collect()
+            .collect();
+        if netplay {
+            let at = out
+                .iter()
+                .position(|(m, _)| *m == Mode::Exit)
+                .unwrap_or(out.len());
+            out.insert(at, (Mode::Netplay, "NETPLAY".into()));
+        }
+        out
     }
 
     /// `pressed` = buttons that went down this tick, per player.
@@ -56,7 +67,7 @@ impl TitleScreen {
         sys: &SystemData,
         sfx: &mut dyn FnMut(Option<(i32, i32)>),
     ) -> Option<Transition> {
-        let items = Self::items(sys);
+        let items = Self::items(sys, self.netplay);
         if items.is_empty() {
             return Some(Transition::Select(Mode::Versus));
         }
@@ -82,6 +93,7 @@ impl TitleScreen {
             sfx(sys.title.done_snd);
             return Some(match items[self.cursor].0 {
                 Mode::Exit => Transition::Quit,
+                Mode::Netplay => Transition::Netplay,
                 m => Transition::Select(m),
             });
         }
@@ -100,7 +112,7 @@ impl TitleScreen {
         if let Some(b) = self.bg.as_mut() {
             b.draw(r, 0, [0.0, 0.0], 1.0, sw, Default::default());
         }
-        let items = Self::items(sys);
+        let items = Self::items(sys, self.netplay);
         let t = &sys.title;
         let visible = t.visible_items.max(1);
         let (pos, spacing, item_font, active_font, box_cursor) = (

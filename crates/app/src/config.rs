@@ -58,6 +58,14 @@ pub struct Net {
     /// Frames of local input delay.
     pub input_delay: usize,
     pub max_prediction: usize,
+    /// Peer `ip:port` used by the NETPLAY menu entry (empty = entry hidden).
+    pub remote: String,
+    /// Which side this machine plays in the NETPLAY menu entry: 1 or 2.
+    pub side: u8,
+    /// Characters and stage for the NETPLAY menu entry (ids from chars/ and stages/).
+    pub p1: String,
+    pub p2: String,
+    pub stage: String,
 }
 
 impl Default for Video {
@@ -143,6 +151,11 @@ impl Default for Net {
             port: 7000,
             input_delay: 2,
             max_prediction: 8,
+            remote: String::new(),
+            side: 1,
+            p1: "kfm".into(),
+            p2: "kfm".into(),
+            stage: String::new(),
         }
     }
 }

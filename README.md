@@ -27,8 +27,19 @@ bundled MUGEN 1.1 data in `reference/` is used.
 
 Keys live in `rugen.toml` (written on first run). Defaults: P1 arrows +
 `a s d` / `z x c` / Enter, P2 `i j k l` + `b n m` / `t y u` / Shift. Gamepads
-work out of the box. In a match: Space pause, `.` step, F2 hitboxes, F1 debug
-title, +/- zoom, Esc back.
+work out of the box. In a match: Space pause, `.` step, F2 hitboxes and
+platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
+Esc back.
+
+Online from the menu: set `[net] remote = "ip:port"`, `side = 1` or `2`, and
+the `p1` / `p2` / `stage` ids in `rugen.toml`; a NETPLAY entry then appears on
+the title screen (both machines need the same content). Menu matches are
+recorded into `replays/`; `rugen play ... --record file.json` records quick
+play and `rugen replay file.json` plays a recording back.
+
+For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
+match runs reloads it in place (checked once a second), and `rugen check`
+lists what the engine cannot run yet.
 
 Linux needs `libudev` and `alsa` headers, see [BUILDING.md](BUILDING.md). The `reference/` tree comes from `reference/fetch.sh`.
 

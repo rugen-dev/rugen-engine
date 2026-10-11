@@ -125,11 +125,14 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 ### Phase 3 — online (core ✅)
 - ✅ ggrs P2P over UDP (`--net ip:port [--port n] [--p2]`), input delay / prediction window from `rugen.toml`, desync detection, rollback-muted sound events, connection status HUD.
 - ✅ Sync-test session (`--synctest`, and a 600-frame automated test) proves the sim is deterministic under rollback.
-- Open: matchmaking / relay, content hash handshake, replays, spectator, in-game netplay menu.
+- ✅ Replays (setup + per-tick inputs, JSON) with byte-identical playback; NETPLAY title entry from `rugen.toml [net]`.
+- Open: matchmaking / relay, content hash handshake, spectator, synced online character select.
 
 ### Phase 4 — creator tools (started)
-- ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title (state, anim, pos, vel).
-- Open: frame data overlay, input display, hot reload, CNS debugger.
+- ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title.
+- ✅ F3 overlay: state, state time, type/movetype, ctrl, anim/elem/animtime, pos/vel, life/power/hit count/juggle and the last inputs per player.
+- ✅ Hot reload: a character's source files are re-read in place when they change on disk.
+- Open: CNS debugger (break on state, watch triggers), frame-advantage display.
 
 ### Phase 5 — new engine features (started)
 - ✅ `[Platform]` stage sections: per-player ground level, landing on surfaces, walking off edges; `Pos Y`/`PosSet` stay ground-relative so legacy characters work unchanged (`stages/README.md`).

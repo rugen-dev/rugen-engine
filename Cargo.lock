@@ -2256,6 +2256,7 @@ dependencies = [
  "rugen-render",
  "rugen-sim",
  "serde",
+ "serde_json",
  "toml",
  "winit",
 ]

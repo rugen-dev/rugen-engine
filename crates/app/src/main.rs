@@ -10,6 +10,8 @@
 //!   --watch                                                     both sides computer controlled
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
+//! rugen replay <file.json>                                      play back a recorded match
+//!   (quick play records to --record file.json, menu matches to replays/)
 //!
 //! `<char>` is an id from chars/ (file stem of a .zip/.rar/folder) or a path.
 //! ```
@@ -24,6 +26,7 @@ mod gpu;
 mod input;
 mod lifebar;
 mod play;
+mod replay;
 mod select;
 mod sprites;
 mod stage;
@@ -75,6 +78,7 @@ fn main() -> anyhow::Result<()> {
             let port = opt("--port");
             let frames = opt("--frames");
             let ai = opt("--ai");
+            let record = opt("--record");
             let taken = [
                 stage.clone(),
                 shot.clone(),
@@ -84,6 +88,7 @@ fn main() -> anyhow::Result<()> {
                 port.clone(),
                 frames.clone(),
                 ai.clone(),
+                record.clone(),
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let watch = args.iter().any(|a| a == "--watch");
@@ -168,8 +173,51 @@ fn main() -> anyhow::Result<()> {
                     .map(|f| f.parse::<u32>().context("--frames expects a number"))
                     .transpose()?,
                 script: script.as_deref().map(play::parse_script),
+                record: record.map(std::path::PathBuf::from),
             };
-            game::Shell::new(config, lib, game::Transition::Fight(setup), true, harness).run()
+            game::Shell::new(
+                config,
+                lib,
+                game::Transition::Fight(setup),
+                true,
+                harness,
+                None,
+            )
+            .run()
+        }
+        Some("replay") => {
+            let path = args.get(1).ok_or_else(|| {
+                anyhow::anyhow!("usage: rugen replay <file.json> [--shot out.png] [--frames n]")
+            })?;
+            let r = replay::Replay::load(std::path::Path::new(path))
+                .with_context(|| path.to_string())?;
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let lib = rugen_content::Library::discover(
+                opt("--root").as_deref().map(std::path::Path::new),
+            );
+            let config = config::Config::load(&lib.root);
+            let harness = game::Harness {
+                shot: opt("--shot").map(std::path::PathBuf::from),
+                frames: opt("--frames")
+                    .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                    .transpose()?,
+                script: None,
+                record: None,
+            };
+            let setup = r.setup();
+            game::Shell::new(
+                config,
+                lib,
+                game::Transition::Fight(setup),
+                true,
+                harness,
+                Some(r),
+            )
+            .run()
         }
         Some("check") => {
             let opt = |name: &str| {
@@ -253,8 +301,9 @@ fn main() -> anyhow::Result<()> {
                     .map(|f| f.parse::<u32>().context("--frames expects a number"))
                     .transpose()?,
                 script: opt("--script").as_deref().map(play::parse_script),
+                record: None,
             };
-            game::Shell::new(config, lib, game::Transition::Title, false, harness).run()
+            game::Shell::new(config, lib, game::Transition::Title, false, harness, None).run()
         }
         _ => {
             eprintln!(
