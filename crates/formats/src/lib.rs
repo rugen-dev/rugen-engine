@@ -7,8 +7,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod act;
 pub mod air;
+pub mod def;
 pub mod sff;
+pub mod snd;
 pub mod text;
 
 #[cfg(test)]
