@@ -60,7 +60,7 @@ impl ggrs::Config for NetConfig {
 
 enum Session {
     P2P(Box<P2PSession<NetConfig>>),
-    SyncTest(SyncTestSession<NetConfig>),
+    SyncTest(Box<SyncTestSession<NetConfig>>),
 }
 
 /// Options for a two-player session.
@@ -164,7 +164,7 @@ impl Netplay {
             b = b.add_player(PlayerType::Local, handle)?;
         }
         Ok(Self {
-            session: Session::SyncTest(b.start_synctest_session()?),
+            session: Session::SyncTest(Box::new(b.start_synctest_session()?)),
             local_handle: 0,
             highest_frame: 0,
             stats: Stats {
