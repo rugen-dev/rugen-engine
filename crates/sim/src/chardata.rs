@@ -285,11 +285,29 @@ pub struct FxData {
     pub round: crate::round::RoundConfig,
 }
 
+/// Resolve `name` in `dirs` in order (screenpack first, then data).
+pub fn resolve_in(dirs: &[&Path], name: &str) -> Result<PathBuf> {
+    let mut last = Err(Error::Load(format!("{name}: no directories")));
+    for d in dirs {
+        match resolve(d, name) {
+            Ok(p) => return Ok(p),
+            Err(e) => last = Err(e),
+        }
+    }
+    last
+}
+
 impl FxData {
     pub fn load(data_dir: &Path) -> Result<Arc<Self>> {
-        let fight = resolve(data_dir, "fight.def")
-            .ok()
-            .and_then(|p| Def::open(p).ok());
+        Self::load_with_motif(data_dir, data_dir)
+    }
+
+    /// `fight.def` (round timings, file names) comes from the motif when it
+    /// has one; referenced files resolve in the motif first, then `data_dir`.
+    pub fn load_with_motif(motif: &Path, data_dir: &Path) -> Result<Arc<Self>> {
+        let dirs: [&Path; 2] = [motif, data_dir];
+        let resolve = |name: &str| resolve_in(&dirs, name);
+        let fight = resolve("fight.def").ok().and_then(|p| Def::open(p).ok());
         let files = fight.as_ref().and_then(|d| d.section("files").cloned());
         let name = |key: &str, default: &str| {
             files
@@ -297,23 +315,19 @@ impl FxData {
                 .and_then(|f| f.raw(key).map(str::to_string))
                 .unwrap_or_else(|| default.to_string())
         };
-        let sff = Sff::open(
-            resolve(data_dir, &name("fightfx.sff", "fightfx.sff"))?,
-            false,
-        )?;
-        let air = Air::open(resolve(data_dir, &name("fightfx.air", "fightfx.air"))?)?;
-        let snd = resolve(data_dir, &name("common.snd", "common.snd"))
+        let sff = Sff::open(resolve(&name("fightfx.sff", "fightfx.sff"))?, false)?;
+        let air = Air::open(resolve(&name("fightfx.air", "fightfx.air"))?)?;
+        let snd = resolve(&name("common.snd", "common.snd"))
             .ok()
             .and_then(|p| rugen_formats::snd::Snd::open(p).ok());
-        let fight_snd = resolve(data_dir, &name("snd", "fight.snd"))
+        let fight_snd = resolve(&name("snd", "fight.snd"))
             .ok()
             .and_then(|p| rugen_formats::snd::Snd::open(p).ok());
         let mut round = fight
             .as_ref()
             .map(crate::round::RoundConfig::from_fight_def)
             .unwrap_or_default();
-        if let Ok(cfg) =
-            resolve(data_dir, "mugen.cfg").and_then(|p| Def::open(p).map_err(Into::into))
+        if let Ok(cfg) = resolve("mugen.cfg").and_then(|p| Def::open(p).map_err(Into::into))
             && let Some(t) = cfg.section("options").and_then(|o| o.i32("time"))
         {
             round.round_time = t;

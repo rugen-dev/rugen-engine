@@ -75,6 +75,7 @@ pub struct Shell {
     config: Config,
     lib: Library,
     data_dir: PathBuf,
+    motif_dir: PathBuf,
     gpu: Option<Gpu>,
     input: InputState,
     prev: [Buttons; 2],
@@ -95,6 +96,8 @@ pub struct Shell {
     /// Arcade ladder: P1's character and wins so far.
     arcade: Option<(PathBuf, u32)>,
     fullscreen: bool,
+    /// Black overlay alpha for screen fades (1 = black).
+    fade: f32,
 }
 
 impl Shell {
@@ -107,8 +110,9 @@ impl Shell {
         replay: Option<crate::replay::Replay>,
     ) -> Self {
         let data_dir = lib.data_dir();
+        let motif_dir = lib.motif_dir();
         let config_fullscreen = config.video.fullscreen;
-        let system = match SystemData::load(&data_dir) {
+        let system = match SystemData::load(&motif_dir, &data_dir) {
             Ok(s) => Some(s),
             Err(e) => {
                 log::warn!("system.def not loaded: {e:#}");
@@ -131,6 +135,7 @@ impl Shell {
             config,
             lib,
             data_dir,
+            motif_dir,
             gpu: None,
             prev: [Buttons::default(); 2],
             audio,
@@ -147,6 +152,7 @@ impl Shell {
             replay,
             arcade: None,
             fullscreen: config_fullscreen,
+            fade: 1.0,
         }
     }
 
@@ -318,6 +324,8 @@ impl Shell {
     }
 
     fn transition(&mut self, t: Transition) {
+        // every new screen fades in from black
+        self.fade = 1.0;
         match t {
             Transition::Quit => self.quit = true,
             Transition::Netplay => {
@@ -435,53 +443,58 @@ impl Shell {
                     }
                 };
             }
-            Transition::Fight(setup) => match Match::load(&setup, &self.data_dir, &self.config) {
-                Ok(mut m) => {
-                    if setup.tutorial {
-                        m.tutorial = Some(crate::tutorial::Tutorial::new(
-                            &m.world.data[0],
-                            &self.config.input.p1,
-                        ));
-                    }
-                    if let Some(a) = self.audio.as_mut() {
-                        a.play_music(m.bgm.as_deref(), 1.0, true);
-                    }
-                    if setup.net.is_none() {
-                        m.record = Some(crate::replay::Replay::new(&setup));
-                    }
-                    if let Some(r) = self.replay.take() {
-                        m.playback = Some((r.inputs, 0));
-                    }
-                    let initial = m.world.events.clone();
-                    m.handle_events(initial, &mut self.audio);
-                    if let Some(g) = self.gpu.as_mut() {
-                        m.init_gpu(&mut g.renderer);
-                    }
-                    // scripted screenshots start once the round is live
-                    if self.harness.script.is_some() && self.harness.frames.is_none() {
-                        let mut guard = 0;
-                        while m.world.round.round_state() != 2 && guard < 2000 {
-                            m.world.step(&[Buttons::default(), Buttons::default()]);
-                            guard += 1;
+            Transition::Fight(setup) => {
+                match Match::load(&setup, &self.motif_dir, &self.data_dir, &self.config) {
+                    Ok(mut m) => {
+                        if setup.tutorial {
+                            m.tutorial = Some(crate::tutorial::Tutorial::new(
+                                &m.world.data[0],
+                                &self.config.input.p1,
+                            ));
                         }
-                        let p = &mut m.world.players[0];
-                        p.power = p.power_max;
+                        if let Some(a) = self.audio.as_mut() {
+                            a.play_music(m.bgm.as_deref(), 1.0, true);
+                        }
+                        if setup.net.is_none() {
+                            m.record = Some(crate::replay::Replay::new(&setup));
+                        }
+                        if let Some(r) = self.replay.take() {
+                            m.playback = Some((r.inputs, 0));
+                        }
+                        let initial = m.world.events.clone();
+                        m.handle_events(initial, &mut self.audio);
+                        if let Some(g) = self.gpu.as_mut() {
+                            m.init_gpu(&mut g.renderer);
+                        }
+                        // scripted screenshots start once the round is live
+                        if self.harness.script.is_some() && self.harness.frames.is_none() {
+                            let mut guard = 0;
+                            while m.world.round.round_state() != 2 && guard < 2000 {
+                                m.world.step(&[Buttons::default(), Buttons::default()]);
+                                guard += 1;
+                            }
+                            let p = &mut m.world.players[0];
+                            p.power = p.power_max;
+                        }
+                        self.screen = Screen::Match(Box::new(m));
                     }
-                    self.screen = Screen::Match(Box::new(m));
-                }
-                Err(e) => {
-                    log::error!("could not start the match: {e:#}");
-                    if self.quick {
-                        self.quit = true;
-                    } else {
-                        self.transition(Transition::Title);
+                    Err(e) => {
+                        log::error!("could not start the match: {e:#}");
+                        if self.quick {
+                            self.quit = true;
+                        } else {
+                            self.transition(Transition::Title);
+                        }
                     }
                 }
-            },
+            }
         }
     }
 
     fn tick(&mut self) {
+        if self.fade > 0.0 {
+            self.fade -= 1.0 / 12.0;
+        }
         self.input.poll();
         let mut now = self.input.buttons();
         if let Some(script) = self.harness.script.as_mut() {
@@ -598,6 +611,13 @@ impl Shell {
             && let Some(t) = m.debug_title()
         {
             gpu.window.set_title(&t);
+        }
+        if self.fade > 0.0 {
+            r.rect(
+                [-100_000.0, -100_000.0],
+                [100_000.0, 100_000.0],
+                [0.0, 0.0, 0.0, self.fade.min(1.0)],
+            );
         }
         if self.shot_armed
             && let Some(path) = self.harness.shot.take()

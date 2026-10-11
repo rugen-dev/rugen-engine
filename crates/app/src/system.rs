@@ -38,6 +38,10 @@ pub struct TitleInfo {
     pub items: Vec<(String, String)>,
     pub visible_items: usize,
     pub box_cursor: Option<[f32; 4]>,
+    /// rugen: panel sprites drawn behind each item / the selected item.
+    pub item_bg: Option<(i32, i32)>,
+    pub active_bg: Option<(i32, i32)>,
+    pub bg_offset: [f32; 2],
     pub move_snd: SndRef,
     pub done_snd: SndRef,
     #[allow(dead_code)]
@@ -105,16 +109,18 @@ pub struct SystemData {
 }
 
 impl SystemData {
-    pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
-        let def_path = rugen_sim::chardata::resolve(data_dir, "system.def")?;
+    /// `motif` holds the screenpack; files missing there come from `data_dir`.
+    pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
+        let dirs: [&Path; 2] = [motif, data_dir];
+        let def_path = rugen_sim::chardata::resolve_in(&dirs, "system.def")?;
         let def = Def::open(&def_path).with_context(|| def_path.display().to_string())?;
         let files = def.section("files").context("system.def has no [Files]")?;
         let sff_name = files.raw("spr").unwrap_or("system.sff").trim();
-        let sff_path = rugen_sim::chardata::resolve(data_dir, sff_name)?;
+        let sff_path = rugen_sim::chardata::resolve_in(&dirs, sff_name)?;
         let sff = Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?;
         let sounds = files
             .raw("snd")
-            .and_then(|n| rugen_sim::chardata::resolve(data_dir, n.trim()).ok())
+            .and_then(|n| rugen_sim::chardata::resolve_in(&dirs, n.trim()).ok())
             .and_then(|p| Snd::open(p).ok());
         let root = data_dir.parent().unwrap_or(data_dir);
         let mut fonts = HashMap::new();
@@ -124,6 +130,8 @@ impl SystemData {
             };
             let name = name.trim();
             let candidates = [
+                motif.join(name),
+                motif.join("font").join(name),
                 data_dir.join(name),
                 root.join("font").join(name),
                 root.join(name),
@@ -197,6 +205,9 @@ impl SystemData {
                 .f32s("menu.boxcursor.coords")
                 .filter(|v| v.len() >= 4 && ti.i32("menu.boxcursor.visible").unwrap_or(1) != 0)
                 .map(|v| [v[0], v[1], v[2], v[3]]),
+            item_bg: spr(ti, "menu.item.bg.spr"),
+            active_bg: spr(ti, "menu.item.active.bg.spr"),
+            bg_offset: pos2(ti, "menu.item.bg.offset", [0.0, 0.0]),
             move_snd: snd(ti, "cursor.move.snd"),
             done_snd: snd(ti, "cursor.done.snd"),
             cancel_snd: snd(ti, "cancel.snd"),

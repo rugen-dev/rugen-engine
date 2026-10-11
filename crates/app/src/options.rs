@@ -265,7 +265,7 @@ impl OptionsScreen {
             Camera {
                 screen: [sw, lc[1]],
                 center: [0.0, lc[1] / 2.0],
-                zoom: 1.0,
+                zoom: (sw / lc[0]).min(1.0),
             },
             clear,
         )

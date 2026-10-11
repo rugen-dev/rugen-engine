@@ -128,7 +128,7 @@ pub struct Net {
 impl Default for Video {
     fn default() -> Self {
         Self {
-            width: 960,
+            width: 1280,
             height: 720,
             fullscreen: false,
         }
@@ -285,6 +285,6 @@ mod tests {
     fn partial_file_fills_defaults() {
         let back: Config = toml::from_str("[net]\nport = 9000\n").unwrap();
         assert_eq!(back.net.port, 9000);
-        assert_eq!(back.video.width, 960);
+        assert_eq!(back.video.width, 1280);
     }
 }

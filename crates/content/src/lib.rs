@@ -134,6 +134,17 @@ impl Library {
         }
         d
     }
+    /// Screenpack (motif) directory: `<root>/motif` when it holds a `system.def`,
+    /// else `<root>/data`, else the data dir. Files missing from the motif fall
+    /// back to [`Library::data_dir`].
+    pub fn motif_dir(&self) -> PathBuf {
+        for d in [self.root.join("motif"), self.root.join("data")] {
+            if d.join("system.def").exists() {
+                return d;
+            }
+        }
+        self.data_dir()
+    }
     pub fn cache_dir(&self) -> PathBuf {
         self.root.join("cache")
     }
