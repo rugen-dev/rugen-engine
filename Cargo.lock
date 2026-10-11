@@ -2201,6 +2201,7 @@ dependencies = [
  "env_logger",
  "gilrs",
  "log",
+ "png",
  "pollster",
  "rugen-audio",
  "rugen-cns",
@@ -2261,6 +2262,7 @@ dependencies = [
  "bytemuck",
  "log",
  "rugen-sim",
+ "thiserror 2.0.21",
  "wgpu",
 ]
 

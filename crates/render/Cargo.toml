@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 rugen-sim.workspace = true
 wgpu.workspace = true
+thiserror.workspace = true
 bytemuck.workspace = true
 log.workspace = true
 

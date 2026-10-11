@@ -1,3 +1,648 @@
-//! wgpu renderer, camera, palette-on-GPU
+//! wgpu renderer: 2D sprites in a logical coordinate space with camera zoom.
+//! Indexed sprites stay 8-bit on the GPU and are resolved through a palette
+//! texture, so palette swaps never touch pixel data.
 
 #![forbid(unsafe_code)]
+
+use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("no suitable GPU adapter")]
+    NoAdapter,
+    #[error("surface: {0}")]
+    Surface(#[from] wgpu::CreateSurfaceError),
+    #[error("device: {0}")]
+    Device(#[from] wgpu::RequestDeviceError),
+    #[error("surface not supported by adapter")]
+    SurfaceConfig,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CameraUniform {
+    screen: [f32; 2],
+    center: [f32; 2],
+    zoom: f32,
+    _pad: f32,
+    _pad2: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+struct Vertex {
+    pos: [f32; 2],
+    uv: [f32; 2],
+    color: [f32; 4],
+}
+
+/// Camera over the logical space. `screen` is the logical viewport
+/// (e.g. 320x240 for a classic char), `center` where it looks, `zoom` 1 = native.
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    pub screen: [f32; 2],
+    pub center: [f32; 2],
+    pub zoom: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextureId(usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PaletteId(usize);
+
+enum Kind {
+    Indexed { view: wgpu::TextureView },
+    Rgba { bind: wgpu::BindGroup },
+}
+
+struct Tex {
+    kind: Kind,
+    width: u32,
+    height: u32,
+}
+
+/// One sprite draw. Positions are logical pixels; `pos` is where the sprite's
+/// axis lands, `axis` the sprite's own axis offset (SFF `offset`).
+#[derive(Clone, Copy, Debug)]
+pub struct Draw {
+    pub tex: TextureId,
+    pub pal: Option<PaletteId>,
+    pub pos: [f32; 2],
+    pub axis: [f32; 2],
+    pub scale: [f32; 2],
+    pub hflip: bool,
+    pub vflip: bool,
+    pub color: [f32; 4],
+}
+
+impl Draw {
+    pub fn new(tex: TextureId, pal: Option<PaletteId>, pos: [f32; 2], axis: [f32; 2]) -> Self {
+        Self {
+            tex,
+            pal,
+            pos,
+            axis,
+            scale: [1.0, 1.0],
+            hflip: false,
+            vflip: false,
+            color: [1.0; 4],
+        }
+    }
+}
+
+pub struct Renderer {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    cam_buf: wgpu::Buffer,
+    cam_bind: wgpu::BindGroup,
+    indexed_layout: wgpu::BindGroupLayout,
+    rgba_layout: wgpu::BindGroupLayout,
+    indexed_pipe: wgpu::RenderPipeline,
+    rgba_pipe: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    textures: Vec<Tex>,
+    palettes: Vec<wgpu::TextureView>,
+    /// (tex, pal) → bind group, built lazily.
+    indexed_binds: std::collections::HashMap<(usize, usize), wgpu::BindGroup>,
+    white: TextureId,
+    verts: Vec<Vertex>,
+    runs: Vec<(usize, usize, Option<usize>, u32)>, // (tex, pal or usize::MAX, vertex start)
+}
+
+impl Renderer {
+    pub async fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, Error> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(target)?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .map_err(|_| Error::NoAdapter)?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await?;
+        let mut config = surface
+            .get_default_config(&adapter, width.max(1), height.max(1))
+            .ok_or(Error::SurfaceConfig)?;
+        config.present_mode = wgpu::PresentMode::AutoVsync;
+        surface.configure(&device, &config);
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sprite"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let cam_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("camera"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let cam_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("camera"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                screen: [320.0, 240.0],
+                center: [0.0, 0.0],
+                zoom: 1.0,
+                _pad: 0.0,
+                _pad2: [0.0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let cam_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera"),
+            layout: &cam_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cam_buf.as_entire_binding(),
+            }],
+        });
+
+        let tex_entry = |binding, sample_type| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let indexed_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("indexed"),
+            entries: &[
+                tex_entry(0, wgpu::TextureSampleType::Uint),
+                tex_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
+            ],
+        });
+        let rgba_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("rgba"),
+            entries: &[
+                tex_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+        };
+        let make_pipe = |label, bgl: &wgpu::BindGroupLayout, fs| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[&cam_layout, bgl],
+                push_constant_ranges: &[],
+            });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: std::slice::from_ref(&vertex_layout),
+                    compilation_options: Default::default(),
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let indexed_pipe = make_pipe("indexed", &indexed_layout, "fs_indexed");
+        let rgba_pipe = make_pipe("rgba", &rgba_layout, "fs_rgba");
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let mut r = Self {
+            surface,
+            device,
+            queue,
+            config,
+            cam_buf,
+            cam_bind,
+            indexed_layout,
+            rgba_layout,
+            indexed_pipe,
+            rgba_pipe,
+            sampler,
+            textures: Vec::new(),
+            palettes: Vec::new(),
+            indexed_binds: Default::default(),
+            white: TextureId(0),
+            verts: Vec::new(),
+            runs: Vec::new(),
+        };
+        r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
+        Ok(r)
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    fn make_texture(
+        &self,
+        w: u32,
+        h: u32,
+        format: wgpu::TextureFormat,
+        bpp: u32,
+        data: &[u8],
+    ) -> wgpu::Texture {
+        let size = wgpu::Extent3d {
+            width: w.max(1),
+            height: h.max(1),
+            depth_or_array_layers: 1,
+        };
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        if w > 0 && h > 0 && data.len() >= (w * h * bpp) as usize {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * bpp),
+                    rows_per_image: Some(h),
+                },
+                size,
+            );
+        }
+        tex
+    }
+
+    /// Upload 8-bit indices (`w*h` bytes).
+    pub fn add_indexed(&mut self, w: u32, h: u32, indices: &[u8]) -> TextureId {
+        let tex = self.make_texture(w, h, wgpu::TextureFormat::R8Uint, 1, indices);
+        let view = tex.create_view(&Default::default());
+        self.textures.push(Tex {
+            kind: Kind::Indexed { view },
+            width: w,
+            height: h,
+        });
+        TextureId(self.textures.len() - 1)
+    }
+
+    /// Upload straight RGBA8 (`w*h*4` bytes).
+    pub fn add_rgba(&mut self, w: u32, h: u32, rgba: &[u8]) -> TextureId {
+        let tex = self.make_texture(w, h, wgpu::TextureFormat::Rgba8UnormSrgb, 4, rgba);
+        let view = tex.create_view(&Default::default());
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.rgba_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.textures.push(Tex {
+            kind: Kind::Rgba { bind },
+            width: w,
+            height: h,
+        });
+        TextureId(self.textures.len() - 1)
+    }
+
+    /// Upload a palette (up to 256 RGBA entries; shorter ones are zero-padded).
+    pub fn add_palette(&mut self, colors: &[[u8; 4]]) -> PaletteId {
+        let mut data = vec![0u8; 256 * 4];
+        for (i, c) in colors.iter().take(256).enumerate() {
+            data[i * 4..i * 4 + 4].copy_from_slice(c);
+        }
+        let tex = self.make_texture(256, 1, wgpu::TextureFormat::Rgba8UnormSrgb, 4, &data);
+        self.palettes.push(tex.create_view(&Default::default()));
+        PaletteId(self.palettes.len() - 1)
+    }
+
+    pub fn texture_size(&self, id: TextureId) -> (u32, u32) {
+        let t = &self.textures[id.0];
+        (t.width, t.height)
+    }
+
+    pub fn white(&self) -> TextureId {
+        self.white
+    }
+
+    pub fn begin(&mut self) {
+        self.verts.clear();
+        self.runs.clear();
+    }
+
+    pub fn draw(&mut self, d: Draw) {
+        let (w, h) = self.texture_size(d.tex);
+        let (w, h) = (w as f32 * d.scale[0], h as f32 * d.scale[1]);
+        let ax = d.axis[0] * d.scale[0];
+        let ay = d.axis[1] * d.scale[1];
+        let (x0, x1) = if d.hflip {
+            (d.pos[0] + ax - w, d.pos[0] + ax)
+        } else {
+            (d.pos[0] - ax, d.pos[0] - ax + w)
+        };
+        let (y0, y1) = if d.vflip {
+            (d.pos[1] + ay - h, d.pos[1] + ay)
+        } else {
+            (d.pos[1] - ay, d.pos[1] - ay + h)
+        };
+        let (u0, u1) = if d.hflip { (1.0, 0.0) } else { (0.0, 1.0) };
+        let (v0, v1) = if d.vflip { (1.0, 0.0) } else { (0.0, 1.0) };
+        self.quad(
+            [x0, y0],
+            [x1, y1],
+            [u0, v0],
+            [u1, v1],
+            d.color,
+            d.tex,
+            d.pal,
+        );
+    }
+
+    /// Axis-aligned filled rectangle in logical coords.
+    pub fn rect(&mut self, min: [f32; 2], max: [f32; 2], color: [f32; 4]) {
+        let w = self.white;
+        self.quad(min, max, [0.0, 0.0], [1.0, 1.0], color, w, None);
+    }
+
+    /// Rectangle outline, `t` logical pixels thick.
+    pub fn rect_outline(&mut self, min: [f32; 2], max: [f32; 2], t: f32, color: [f32; 4]) {
+        self.rect(min, [max[0], min[1] + t], color);
+        self.rect([min[0], max[1] - t], max, color);
+        self.rect(min, [min[0] + t, max[1]], color);
+        self.rect([max[0] - t, min[1]], max, color);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn quad(
+        &mut self,
+        a: [f32; 2],
+        b: [f32; 2],
+        uv0: [f32; 2],
+        uv1: [f32; 2],
+        color: [f32; 4],
+        tex: TextureId,
+        pal: Option<PaletteId>,
+    ) {
+        let pal = pal.map(|p| p.0);
+        let start = self.verts.len() as u32;
+        match self.runs.last_mut() {
+            Some(r) if r.0 == tex.0 && r.2 == pal => {}
+            _ => self.runs.push((tex.0, 0, pal, start)),
+        }
+        let v = |pos, uv| Vertex { pos, uv, color };
+        self.verts.extend_from_slice(&[
+            v(a, uv0),
+            v([b[0], a[1]], [uv1[0], uv0[1]]),
+            v(b, uv1),
+            v(a, uv0),
+            v(b, uv1),
+            v([a[0], b[1]], [uv0[0], uv1[1]]),
+        ]);
+    }
+
+    /// Build bind groups for this frame's runs, upload camera, build vertex buffer.
+    fn prepare(&mut self, cam: &Camera) -> wgpu::Buffer {
+        for &(t, _, p, _) in &self.runs {
+            if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p) {
+                let key = (t, p);
+                if !self.indexed_binds.contains_key(&key) {
+                    let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &self.indexed_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&self.palettes[p]),
+                            },
+                        ],
+                    });
+                    self.indexed_binds.insert(key, bind);
+                }
+            }
+        }
+        self.queue.write_buffer(
+            &self.cam_buf,
+            0,
+            bytemuck::bytes_of(&CameraUniform {
+                screen: cam.screen,
+                center: cam.center,
+                zoom: cam.zoom,
+                _pad: 0.0,
+                _pad2: [0.0; 2],
+            }),
+        );
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("verts"),
+                contents: if self.verts.is_empty() {
+                    &[0u8; 32]
+                } else {
+                    bytemuck::cast_slice(&self.verts)
+                },
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+    }
+
+    fn encode_pass(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        vbuf: &wgpu::Buffer,
+        clear: [f64; 4],
+    ) {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("main"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear[0],
+                        g: clear[1],
+                        b: clear[2],
+                        a: clear[3],
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_bind_group(0, &self.cam_bind, &[]);
+        pass.set_vertex_buffer(0, vbuf.slice(..));
+        let total = self.verts.len() as u32;
+        for (i, &(t, _, p, start)) in self.runs.iter().enumerate() {
+            let end = self.runs.get(i + 1).map_or(total, |r| r.3);
+            match (&self.textures[t].kind, p) {
+                (Kind::Indexed { .. }, Some(p)) => {
+                    pass.set_pipeline(&self.indexed_pipe);
+                    pass.set_bind_group(1, &self.indexed_binds[&(t, p)], &[]);
+                }
+                (Kind::Rgba { bind }, _) => {
+                    pass.set_pipeline(&self.rgba_pipe);
+                    pass.set_bind_group(1, bind, &[]);
+                }
+                (Kind::Indexed { .. }, None) => continue,
+            }
+            pass.draw(start..end, 0..1);
+        }
+    }
+
+    /// Present the frame queued since [`begin`](Self::begin).
+    pub fn end(&mut self, cam: &Camera, clear: [f64; 4]) -> Result<(), wgpu::SurfaceError> {
+        let vbuf = self.prepare(cam);
+        let frame = self.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&Default::default());
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        self.encode_pass(&mut enc, &view, &vbuf, clear);
+        self.queue.submit([enc.finish()]);
+        frame.present();
+        Ok(())
+    }
+
+    /// Render the queued frame into an offscreen `w x h` image and read it
+    /// back as straight RGBA8 (sRGB-encoded). For screenshots and tests.
+    pub fn end_to_image(&mut self, cam: &Camera, clear: [f64; 4], w: u32, h: u32) -> Vec<u8> {
+        let vbuf = self.prepare(cam);
+        let size = wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        };
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        let bpr = (w * 4).div_ceil(256) * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (bpr * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        self.encode_pass(&mut enc, &view, &vbuf, clear);
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bpr),
+                    rows_per_image: Some(h),
+                },
+            },
+            size,
+        );
+        self.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = self.device.poll(wgpu::PollType::wait());
+        let _ = rx.recv();
+        let data = slice.get_mapped_range();
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for row in 0..h {
+            let r = &data[(row * bpr) as usize..(row * bpr + w * 4) as usize];
+            if bgra {
+                for px in r.chunks_exact(4) {
+                    out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+                }
+            } else {
+                out.extend_from_slice(r);
+            }
+        }
+        drop(data);
+        buf.unmap();
+        out
+    }
+}
+
+pub use wgpu::{SurfaceError, SurfaceTarget};
