@@ -30,6 +30,7 @@ mod lifebar;
 mod options;
 mod play;
 mod replay;
+mod screenpack;
 mod select;
 mod sprites;
 mod stage;
@@ -210,6 +211,25 @@ fn main() -> anyhow::Result<()> {
             )
             .run()
         }
+        Some("screenpack-gen") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let ttf = opt("--font")
+                .map(std::path::PathBuf::from)
+                .or_else(fontgen::default_ttf)
+                .ok_or_else(|| anyhow::anyhow!("no bold TTF found; pass --font file.ttf"))?;
+            let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
+            let out = opt("--out").unwrap_or_else(|| "motif".into());
+            screenpack::generate(&bytes, std::path::Path::new(&out))?;
+            println!(
+                "wrote the rugen screenpack to {out}/ (font {})",
+                ttf.display()
+            );
+            Ok(())
+        }
         Some("fontgen") => {
             let opt = |name: &str| {
                 args.iter()
@@ -223,15 +243,18 @@ fn main() -> anyhow::Result<()> {
                 .or_else(fontgen::default_ttf)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "usage: rugen fontgen [font.ttf] --size N [--depth D] [--pixel P] --out font.def [--preview x.png]"
+                        "usage: rugen fontgen [font.ttf] --size N [--italic rows] [--condense f] [--rim] --out font.def [--preview x.png]"
                     )
                 })?;
             let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
             let style = fontgen::Style {
                 size: opt("--size").and_then(|v| v.parse().ok()).unwrap_or(16),
-                depth: opt("--depth").and_then(|v| v.parse().ok()).unwrap_or(2),
-                pixel: opt("--pixel").and_then(|v| v.parse().ok()).unwrap_or(1),
-                shadow: true,
+                italic: opt("--italic").and_then(|v| v.parse().ok()).unwrap_or(3),
+                condense: opt("--condense")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.9),
+                rim: args.iter().any(|a| a == "--rim"),
+                highlight: true,
             };
             let generator = fontgen::Generator::new(&bytes, style)?;
             let out = opt("--out").unwrap_or_else(|| "font.def".into());
