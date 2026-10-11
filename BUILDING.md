@@ -25,3 +25,9 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
+
+## Releases
+
+Push a tag `vX.Y.Z` (or run the Release workflow manually). It builds release binaries for Linux, Windows and macOS, a Fedora `.rpm` via `cargo-generate-rpm`, and attaches them to a GitHub release. CI itself never does release builds, to keep free-tier minutes low.
+
+Local rpm: `cargo install cargo-generate-rpm && cargo build --release && cargo generate-rpm -p crates/app`.

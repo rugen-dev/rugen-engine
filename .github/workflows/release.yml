@@ -1,0 +1,70 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: windows-latest
+            name: windows-x86_64
+          - os: macos-latest
+            name: macos-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
+      - run: cargo build --release -p rugen
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/rugen.exe dist/
+            7z a rugen-${{ matrix.name }}.zip ./dist/*
+          else
+            cp target/release/rugen dist/
+            tar -C dist -czf rugen-${{ matrix.name }}.tar.gz rugen
+          fi
+      - name: RPM (Fedora)
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-generate-rpm
+          cargo generate-rpm -p crates/app
+          cp target/generate-rpm/*.rpm .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rugen-${{ matrix.name }}
+          path: |
+            rugen-*.zip
+            rugen-*.tar.gz
+            *.rpm
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rugen-*.zip
+            rugen-*.tar.gz
+            *.rpm

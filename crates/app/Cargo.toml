@@ -25,3 +25,16 @@ toml.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.generate-rpm]
+summary = "MUGEN-compatible 2D fighting game engine"
+license = "MIT OR Apache-2.0"
+assets = [
+  { source = "target/release/rugen", dest = "/usr/bin/rugen", mode = "755" },
+  { source = "LICENSE-MIT", dest = "/usr/share/licenses/rugen/LICENSE-MIT", mode = "644", doc = true },
+  { source = "LICENSE-APACHE", dest = "/usr/share/licenses/rugen/LICENSE-APACHE", mode = "644", doc = true },
+  { source = "README.md", dest = "/usr/share/doc/rugen/README.md", mode = "644", doc = true },
+]
+[package.metadata.generate-rpm.requires]
+systemd-libs = "*"
+alsa-lib = "*"
