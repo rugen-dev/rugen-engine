@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp README.md rugen.toml.example dist/ 2>/dev/null || cp README.md dist/
+          cp README.md dist/
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/rugen.exe target/release/rugen-relay.exe dist/
             7z a rugen-${{ matrix.name }}.zip ./dist/*
