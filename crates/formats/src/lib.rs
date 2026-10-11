@@ -10,6 +10,7 @@
 pub mod act;
 pub mod air;
 pub mod def;
+pub mod fnt;
 pub mod sff;
 pub mod snd;
 pub mod text;

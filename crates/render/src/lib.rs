@@ -155,6 +155,8 @@ pub struct Draw {
     /// Rotation in degrees around `pos`, counter-clockwise on screen (MUGEN AngleDraw).
     pub angle: f32,
     pub tint: Tint,
+    /// Texel sub-rectangle `[x, y, w, h]` to draw instead of the whole texture.
+    pub src: Option<[u32; 4]>,
 }
 
 impl Draw {
@@ -171,6 +173,7 @@ impl Draw {
             blend: Blend::Alpha,
             angle: 0.0,
             tint: Tint::default(),
+            src: None,
         }
     }
 }
@@ -498,8 +501,20 @@ impl Renderer {
     }
 
     pub fn draw(&mut self, d: Draw) {
-        let (w, h) = self.texture_size(d.tex);
-        let (w, h) = (w as f32 * d.scale[0], h as f32 * d.scale[1]);
+        let (tw, th) = self.texture_size(d.tex);
+        let src = d.src.unwrap_or([0, 0, tw, th]);
+        let (w, h) = (src[2] as f32 * d.scale[0], src[3] as f32 * d.scale[1]);
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let (su0, su1) = (
+            src[0] as f32 / tw.max(1) as f32,
+            (src[0] + src[2]) as f32 / tw.max(1) as f32,
+        );
+        let (sv0, sv1) = (
+            src[1] as f32 / th.max(1) as f32,
+            (src[1] + src[3]) as f32 / th.max(1) as f32,
+        );
         let ax = d.axis[0] * d.scale[0];
         let ay = d.axis[1] * d.scale[1];
         let (x0, x1) = if d.hflip {
@@ -512,8 +527,8 @@ impl Renderer {
         } else {
             (d.pos[1] - ay, d.pos[1] - ay + h)
         };
-        let (u0, u1) = if d.hflip { (1.0, 0.0) } else { (0.0, 1.0) };
-        let (v0, v1) = if d.vflip { (1.0, 0.0) } else { (0.0, 1.0) };
+        let (u0, u1) = if d.hflip { (su1, su0) } else { (su0, su1) };
+        let (v0, v1) = if d.vflip { (sv1, sv0) } else { (sv0, sv1) };
         let mut corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
         if d.angle != 0.0 {
             let rad = d.angle * (std::f32::consts::PI / 180.0);

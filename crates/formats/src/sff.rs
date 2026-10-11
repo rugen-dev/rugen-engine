@@ -277,7 +277,7 @@ fn push_pal(sff: &mut Sff, pal: Palette) -> usize {
 }
 
 /// PCX RLE with scanline padding (`bpl` bytes per encoded row).
-fn pcx_decode(rle: &[u8], w: u16, h: u16, bpl: usize) -> Vec<u8> {
+pub(crate) fn pcx_decode(rle: &[u8], w: u16, h: u16, bpl: usize) -> Vec<u8> {
     let total = w as usize * h as usize;
     if rle.is_empty() || bpl == 0 {
         return rle.to_vec();

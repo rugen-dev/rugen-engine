@@ -87,6 +87,9 @@ pub struct RoundState {
     /// Winning team (0/1) or -1.
     pub win_team: i32,
     pub wins: [u8; 2],
+    /// Per team, how each round was won: `n` normal, `s` special, `h` hyper,
+    /// `throw`, `t` time over, `perfect`, `suicide` (fight.def WinIcon keys).
+    pub win_kinds: [Vec<String>; 2],
     pub draws: i32,
     pub winposetime: i32,
     pub match_over: bool,
@@ -110,6 +113,7 @@ impl RoundState {
             finish: Finish::NotYet,
             win_team: -1,
             wins: [0, 0],
+            win_kinds: [Vec::new(), Vec::new()],
             draws: 0,
             match_over: false,
             over_flagged: Vec::new(),
@@ -147,6 +151,42 @@ impl RoundState {
 }
 
 impl World {
+    /// Classify a round win for the WinIcon display.
+    fn win_kind(&self, roots: &[usize], team: usize) -> String {
+        use crate::hit::attr;
+        let winner = roots
+            .iter()
+            .copied()
+            .find(|&i| self.players[i].team as usize == team);
+        let loser = roots
+            .iter()
+            .copied()
+            .find(|&i| self.players[i].team as usize != team);
+        if self.round.finish == Finish::TimeOver {
+            return "t".into();
+        }
+        if let Some(w) = winner
+            && self.players[w].life >= self.players[w].life_max
+        {
+            return "perfect".into();
+        }
+        let Some(l) = loser else { return "n".into() };
+        let lp = &self.players[l];
+        if lp.ghv.playerid == lp.id {
+            return "suicide".into();
+        }
+        let a = lp.ghv.attr;
+        if a & attr::AT_AH != 0 {
+            "h".into()
+        } else if a & (attr::AT_SA | attr::AT_ST | attr::AT_SP) != 0 {
+            "s".into()
+        } else if a & attr::AT_NT != 0 {
+            "throw".into()
+        } else {
+            "n".into()
+        }
+    }
+
     /// Reset players and timers for round `round.round_no` and run the 5900 init state.
     pub fn start_round(&mut self) {
         let cfg = self.round.config.clone();
@@ -319,6 +359,8 @@ impl World {
                     Finish::KO | Finish::TimeOver if self.round.win_team >= 0 => {
                         let t = self.round.win_team as usize;
                         self.round.wins[t] += 1;
+                        let kind = self.win_kind(&roots, t);
+                        self.round.win_kinds[t].push(kind);
                         self.events.push(Event::RoundWon(t as u8));
                     }
                     _ => {

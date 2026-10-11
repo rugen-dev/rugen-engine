@@ -128,10 +128,20 @@ pub fn run(
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(world, &opts.config);
     app.stage_visual = visual;
+    app.lifebar = match crate::lifebar::Lifebar::load(data_dir) {
+        Ok(lb) => Some(lb),
+        Err(e) => {
+            log::warn!("fight.def HUD not loaded: {e:#}");
+            None
+        }
+    };
     app.shot = opts.shot;
     app.frames = opts.frames;
     app.script = opts.script.as_deref().map(parse_script);
     app.net = net;
+    // the round-start announcement was queued by start_round() above
+    let initial = app.world.events.clone();
+    app.handle_events(initial);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -231,6 +241,7 @@ struct App {
     /// Announcement text and ticks left to show it.
     banner: Option<(String, i32)>,
     stage_visual: Option<crate::stage::StageVisual>,
+    lifebar: Option<crate::lifebar::Lifebar>,
 }
 
 impl App {
@@ -264,6 +275,7 @@ impl App {
             },
             banner: None,
             stage_visual: None,
+            lifebar: None,
         }
     }
 
@@ -332,6 +344,11 @@ impl App {
     }
 
     fn handle_events(&mut self, events: Vec<Event>) {
+        if let Some(lb) = self.lifebar.as_mut() {
+            for e in &events {
+                lb.event(&self.world, e);
+            }
+        }
         for e in events {
             match e {
                 Event::Sound {
@@ -626,7 +643,12 @@ impl App {
         let cam_y = self.world.cam_y + shake[1];
         let zoom = self.world.cam_zoom * self.zoom;
         let bg_tint = tint(self.world.bgpalfx.sample());
+        let portraits = [
+            self.sprite_from(Some(self.world.players[0].data), 9000, 0),
+            self.sprite_from(Some(self.world.players[1].data), 9000, 0),
+        ];
         let mut stage_visual = self.stage_visual.take();
+        let mut lifebar = self.lifebar.take();
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
         r.begin();
@@ -725,83 +747,92 @@ impl App {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        // life bars (screen units via `hud`)
-        for (i, p) in self
-            .world
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.helper_index == 0)
-        {
-            let frac = (p.life.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
-            let bar_w = screen_w * 0.4;
-            let (x0, x1) = if i == 0 {
-                (10.0, 10.0 + bar_w)
-            } else {
-                (screen_w - 10.0 - bar_w, screen_w - 10.0)
-            };
-            r.rect(hud(x0, 8.0), hud(x1, 16.0), [0.1, 0.1, 0.1, 0.9]);
-            let (fx0, fx1) = if i == 0 {
-                (x1 - bar_w * frac, x1)
-            } else {
-                (x0, x0 + bar_w * frac)
-            };
-            r.rect(hud(fx0, 8.0), hud(fx1, 16.0), [0.9, 0.8, 0.2, 1.0]);
-            let pf = (p.power as f32 / p.power_max.max(1) as f32).clamp(0.0, 1.0);
-            let (px0, px1) = if i == 0 {
-                (x0, x0 + bar_w * pf)
-            } else {
-                (x1 - bar_w * pf, x1)
-            };
-            r.rect(
-                hud(x0, stage.height - 14.0),
-                hud(x1, stage.height - 10.0),
-                [0.1, 0.1, 0.1, 0.9],
-            );
-            r.rect(
-                hud(px0, stage.height - 14.0),
-                hud(px1, stage.height - 10.0),
-                [0.3, 0.6, 1.0, 1.0],
-            );
-        }
-        // round clock, win marks, announcements
-        let clock = self.world.round.clock();
-        if clock >= 0 {
-            draw_number(
-                r,
-                clock,
-                hud(screen_w / 2.0, 8.0),
-                2.0 * u,
-                [1.0, 1.0, 1.0, 1.0],
-            );
-        }
-        for (i, wins) in self.world.round.wins.iter().enumerate() {
-            for k in 0..*wins {
-                let x = if i == 0 {
-                    10.0 + k as f32 * 8.0
+        if let Some(lb) = lifebar.as_mut() {
+            // fight.def space (usually 320x240) scaled to the stage height and centred
+            let lc = lb.localcoord;
+            let ratio = stage.height / lc[1].max(1.0);
+            let x_off = (screen_w - lc[0] * ratio) / 2.0;
+            let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
+            lb.draw(r, &self.world, &lb_hud, u * ratio, portraits);
+        } else {
+            // life bars (screen units via `hud`)
+            for (i, p) in self
+                .world
+                .players
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.helper_index == 0)
+            {
+                let frac = (p.life.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
+                let bar_w = screen_w * 0.4;
+                let (x0, x1) = if i == 0 {
+                    (10.0, 10.0 + bar_w)
                 } else {
-                    screen_w - 15.0 - k as f32 * 8.0
+                    (screen_w - 10.0 - bar_w, screen_w - 10.0)
                 };
-                r.rect(hud(x, 20.0), hud(x + 5.0, 25.0), [1.0, 0.9, 0.3, 1.0]);
+                r.rect(hud(x0, 8.0), hud(x1, 16.0), [0.1, 0.1, 0.1, 0.9]);
+                let (fx0, fx1) = if i == 0 {
+                    (x1 - bar_w * frac, x1)
+                } else {
+                    (x0, x0 + bar_w * frac)
+                };
+                r.rect(hud(fx0, 8.0), hud(fx1, 16.0), [0.9, 0.8, 0.2, 1.0]);
+                let pf = (p.power as f32 / p.power_max.max(1) as f32).clamp(0.0, 1.0);
+                let (px0, px1) = if i == 0 {
+                    (x0, x0 + bar_w * pf)
+                } else {
+                    (x1 - bar_w * pf, x1)
+                };
+                r.rect(
+                    hud(x0, stage.height - 14.0),
+                    hud(x1, stage.height - 10.0),
+                    [0.1, 0.1, 0.1, 0.9],
+                );
+                r.rect(
+                    hud(px0, stage.height - 14.0),
+                    hud(px1, stage.height - 10.0),
+                    [0.3, 0.6, 1.0, 1.0],
+                );
             }
-        }
-        if !self.net_status.is_empty() {
-            draw_text(
-                r,
-                &self.net_status,
-                hud(screen_w / 2.0, stage.height - 4.0),
-                u,
-                [0.8, 0.9, 1.0, 0.9],
-            );
-        }
-        if let Some((text, _)) = &self.banner {
-            draw_text(
-                r,
-                text,
-                hud(screen_w / 2.0, stage.height * 0.35),
-                3.0 * u,
-                [1.0, 1.0, 1.0, 1.0],
-            );
+            // round clock, win marks, announcements
+            let clock = self.world.round.clock();
+            if clock >= 0 {
+                draw_number(
+                    r,
+                    clock,
+                    hud(screen_w / 2.0, 8.0),
+                    2.0 * u,
+                    [1.0, 1.0, 1.0, 1.0],
+                );
+            }
+            for (i, wins) in self.world.round.wins.iter().enumerate() {
+                for k in 0..*wins {
+                    let x = if i == 0 {
+                        10.0 + k as f32 * 8.0
+                    } else {
+                        screen_w - 15.0 - k as f32 * 8.0
+                    };
+                    r.rect(hud(x, 20.0), hud(x + 5.0, 25.0), [1.0, 0.9, 0.3, 1.0]);
+                }
+            }
+            if !self.net_status.is_empty() {
+                draw_text(
+                    r,
+                    &self.net_status,
+                    hud(screen_w / 2.0, stage.height - 4.0),
+                    u,
+                    [0.8, 0.9, 1.0, 0.9],
+                );
+            }
+            if let Some((text, _)) = &self.banner {
+                draw_text(
+                    r,
+                    text,
+                    hud(screen_w / 2.0, stage.height * 0.35),
+                    3.0 * u,
+                    [1.0, 1.0, 1.0, 1.0],
+                );
+            }
         }
         let _ = hud_w;
         let cam = Camera {
@@ -810,6 +841,7 @@ impl App {
             zoom,
         };
         self.stage_visual = stage_visual;
+        self.lifebar = lifebar;
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
         if self.shot_armed
@@ -1011,6 +1043,9 @@ impl ApplicationHandler for App {
                 }
                 if let Some(sv) = self.stage_visual.as_mut() {
                     sv.step();
+                }
+                if let Some(lb) = self.lifebar.as_mut() {
+                    lb.step();
                 }
                 if let Some((_, t)) = self.banner.as_mut() {
                     *t -= 1;

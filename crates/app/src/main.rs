@@ -18,7 +18,9 @@ use anyhow::Context;
 
 mod config;
 mod input;
+mod lifebar;
 mod play;
+mod sprites;
 mod stage;
 mod viewer;
 
