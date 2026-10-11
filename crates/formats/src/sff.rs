@@ -802,7 +802,7 @@ mod tests {
         let Some(root) = reference("") else { return };
         let mut n = 0;
         for dir in ["mugen-1.1b1", "ikemen-go-v1.0.0"] {
-            for entry in walk(&root.join(dir)) {
+            for entry in crate::fixtures::walk(&root.join(dir)) {
                 if entry
                     .extension()
                     .is_some_and(|e| e.eq_ignore_ascii_case("sff"))
@@ -816,21 +816,6 @@ mod tests {
             }
         }
         assert!(n > 20, "found only {n} sff files");
-    }
-
-    fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-        let mut out = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    out.extend(walk(&p));
-                } else {
-                    out.push(p);
-                }
-            }
-        }
-        out
     }
 
     #[test]

@@ -7,7 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod air;
 pub mod sff;
+pub mod text;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
