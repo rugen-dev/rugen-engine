@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub video: Video,
@@ -58,16 +58,6 @@ pub struct Net {
     /// Frames of local input delay.
     pub input_delay: usize,
     pub max_prediction: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            video: Video::default(),
-            input: Input::default(),
-            net: Net::default(),
-        }
-    }
 }
 
 impl Default for Video {
