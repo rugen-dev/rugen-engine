@@ -1,0 +1,17 @@
+[package]
+name = "rugen-render"
+description = "wgpu renderer, camera, palette-on-GPU"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rugen-sim.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

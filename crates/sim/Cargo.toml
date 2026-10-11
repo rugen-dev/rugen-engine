@@ -1,0 +1,18 @@
+[package]
+name = "rugen-sim"
+description = "Deterministic fighting game simulation (no I/O, no floats)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rugen-formats.workspace = true
+rugen-cns.workspace = true
+fixed.workspace = true
+indexmap.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true
