@@ -99,9 +99,11 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 
 ## Phase plan
 
-### Phase 0 — skeleton
+### Phase 0 — skeleton ✅ (2026-10-11)
 - Workspace, crates above, CI green on all three OS with a window showing one sprite.
-- `formats`: SFF v1/v2 + AIR loader. Sprite/anim viewer in `app`.
+- `formats`: SFF v1/v2, AIR, DEF, SND, ACT loaders, tested against every file in the reference tree.
+- `render`: wgpu, palette-on-GPU, logical camera with zoom, offscreen readback.
+- `app`: `rugen view` sprite/anim viewer with Clsn boxes and `--shot`.
 
 ### Phase 1 — one character stands
 - CNS lexer, parser, bytecode VM.

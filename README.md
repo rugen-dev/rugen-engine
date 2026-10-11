@@ -12,8 +12,14 @@ See [DESIGN.md](DESIGN.md) for architecture and phase plan, [reference/README.md
 
 ```
 cargo build --release
-cargo run -p rugen
+cargo run -p rugen -- view reference/mugen-1.1b1/chars/kfm/kfm.def 200
 ```
+
+Linux needs `libudev` and `alsa` headers, see [BUILDING.md](BUILDING.md). The `reference/` tree comes from `reference/fetch.sh`.
+
+## Status
+
+Phase 0 done: all MUGEN file formats load, a wgpu viewer plays character animations with collision boxes. Next: the CNS state machine. See DESIGN.md.
 
 ## License
 
