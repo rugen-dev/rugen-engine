@@ -61,6 +61,10 @@ pub enum ProjEvent {
 pub enum Trigger {
     // --- nullary, player state
     AILevel,
+    /// rugen: height of the surface under the player (0 on the floor, negative on a platform).
+    GroundY,
+    /// rugen: 1 while standing on a platform.
+    OnPlatform,
     Alive,
     Anim,
     AnimTime,

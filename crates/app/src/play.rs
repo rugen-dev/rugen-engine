@@ -33,6 +33,13 @@ pub enum NetMode {
         remote: SocketAddr,
         side: usize,
     },
+    /// Online through a `rugen-relay` rendezvous: server, room code, side.
+    Rendezvous {
+        port: u16,
+        server: SocketAddr,
+        room: String,
+        side: usize,
+    },
     /// Local two-player game that rolls back every frame to prove determinism.
     SyncTest,
 }
@@ -141,6 +148,8 @@ pub struct Match {
     reload_tick: u32,
     /// Data slots whose textures must be re-uploaded (after a reload).
     gpu_dirty: Vec<usize>,
+    /// Stage music file, if any.
+    pub bgm: Option<PathBuf>,
 }
 
 impl Match {
@@ -205,9 +214,45 @@ impl Match {
                 );
                 Some(n)
             }
+            Some(NetMode::Rendezvous {
+                port,
+                server,
+                room,
+                side,
+            }) => {
+                let o = NetOptions {
+                    input_delay: cfg.net.input_delay,
+                    max_prediction: cfg.net.max_prediction,
+                    ..Default::default()
+                };
+                let mut socket = rugen_net::Socket::bind(*port)?;
+                let remote = socket.rendezvous(
+                    *server,
+                    room,
+                    *side,
+                    std::time::Duration::from_secs(90),
+                    &mut |s| log::info!("netplay: {s}"),
+                )?;
+                let n = Netplay::p2p_with_socket(socket, remote, *side, &o)
+                    .with_context(|| format!("netplay with {remote}"))?;
+                Some(n)
+            }
             Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
             None => None,
         };
+        // stage music: paths are relative to the game root (`sound/x.mp3`), else the stage dir
+        let bgm = setup.stage.as_ref().and_then(|p| {
+            let def = rugen_formats::def::Def::open(p).ok()?;
+            let name = def.section("music")?.raw("bgmusic")?.trim().to_string();
+            if name.is_empty() {
+                return None;
+            }
+            let root = data_dir.parent().unwrap_or(data_dir);
+            let stage_dir = p.parent().unwrap_or(Path::new("."));
+            [root.join(&name), stage_dir.join(&name)]
+                .into_iter()
+                .find(|c| c.exists())
+        });
         let lifebar = match crate::lifebar::Lifebar::load(data_dir) {
             Ok(lb) => Some(lb),
             Err(e) => {
@@ -247,6 +292,7 @@ impl Match {
             data_dir: data_dir.to_path_buf(),
             reload_tick: 0,
             gpu_dirty: Vec::new(),
+            bgm,
         })
     }
 

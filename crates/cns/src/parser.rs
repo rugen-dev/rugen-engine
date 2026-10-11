@@ -136,6 +136,8 @@ pub fn is_known_name(name: &str) -> bool {
         "playerid",
         "p2",
         "ailevel",
+        "groundy",
+        "onplatform",
         "alive",
         "anim",
         "animtime",
@@ -1065,6 +1067,8 @@ impl Parser<'_> {
             _ => {
                 let t = match name {
                     "ailevel" => T::AILevel,
+                    "groundy" => T::GroundY,
+                    "onplatform" => T::OnPlatform,
                     "alive" => T::Alive,
                     "anim" => T::Anim,
                     "animtime" => T::AnimTime,

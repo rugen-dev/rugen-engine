@@ -33,7 +33,13 @@ Esc back.
 
 Online from the menu: set `[net] remote = "ip:port"`, `side = 1` or `2`, and
 the `p1` / `p2` / `stage` ids in `rugen.toml`; a NETPLAY entry then appears on
-the title screen (both machines need the same content). Menu matches are
+the title screen (both machines need the same content). Behind NAT, run the
+tiny `rugen-relay` binary on any reachable host and set `[net] relay =
+"host:7777"` and `room = "some-code"` on both sides instead of `remote` (or
+`rugen play kfm --room code --relay host:7777 [--p2]`); the relay only swaps
+addresses, the match itself stays peer to peer. Music: stage `bgmusic` and
+system.def `[Music]` entries play when they are mp3/ogg/flac/wav (MIDI is
+skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick
 play and `rugen replay file.json` plays a recording back.
 

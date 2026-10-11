@@ -201,6 +201,10 @@ impl SelectScreen {
         ))
     }
 
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
     pub fn tick(
         &mut self,
         pressed: [Buttons; 2],

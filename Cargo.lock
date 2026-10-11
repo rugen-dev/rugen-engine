@@ -2266,6 +2266,7 @@ name = "rugen-audio"
 version = "0.1.0"
 dependencies = [
  "kira",
+ "libm",
  "log",
  "thiserror 2.0.21",
 ]
@@ -2310,11 +2311,20 @@ dependencies = [
 name = "rugen-net"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "ggrs",
  "log",
  "rugen-sim",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rugen-relay"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
 ]
 
 [[package]]

@@ -8,8 +8,26 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Config {
     pub video: Video,
+    pub audio: AudioCfg,
     pub input: Input,
     pub net: Net,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioCfg {
+    /// 0..1
+    pub master: f32,
+    pub music: f32,
+}
+
+impl Default for AudioCfg {
+    fn default() -> Self {
+        Self {
+            master: 1.0,
+            music: 0.8,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,6 +84,10 @@ pub struct Net {
     pub p1: String,
     pub p2: String,
     pub stage: String,
+    /// `rugen-relay` server `ip:port` and room code; when set, the peer address is
+    /// discovered through the relay instead of `remote`.
+    pub relay: String,
+    pub room: String,
 }
 
 impl Default for Video {
@@ -156,6 +178,8 @@ impl Default for Net {
             p1: "kfm".into(),
             p2: "kfm".into(),
             stage: String::new(),
+            relay: String::new(),
+            room: String::new(),
         }
     }
 }

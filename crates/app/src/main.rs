@@ -5,6 +5,7 @@
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
+//!   --room code --relay ip:port [--p2]                          same, peer found through rugen-relay
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
@@ -76,6 +77,8 @@ fn main() -> anyhow::Result<()> {
             let script = opt("--script");
             let net = opt("--net");
             let port = opt("--port");
+            let relay = opt("--relay");
+            let room = opt("--room");
             let frames = opt("--frames");
             let ai = opt("--ai");
             let record = opt("--record");
@@ -86,6 +89,8 @@ fn main() -> anyhow::Result<()> {
                 script.clone(),
                 net.clone(),
                 port.clone(),
+                relay.clone(),
+                room.clone(),
                 frames.clone(),
                 ai.clone(),
                 record.clone(),
@@ -138,7 +143,23 @@ fn main() -> anyhow::Result<()> {
                 })
                 .transpose()?;
             let config = config::Config::load(&lib.root);
-            let net_mode = if let Some(remote) = net {
+            let net_mode = if let Some(room) = room {
+                let server = relay
+                    .as_deref()
+                    .unwrap_or(config.net.relay.as_str())
+                    .parse::<std::net::SocketAddr>()
+                    .context("--room needs --relay ip:port (or [net] relay in rugen.toml)")?;
+                let port = match port {
+                    Some(p) => p.parse().context("--port expects a number")?,
+                    None => config.net.port,
+                };
+                Some(play::NetMode::Rendezvous {
+                    port,
+                    server,
+                    room,
+                    side: usize::from(p2_side),
+                })
+            } else if let Some(remote) = net {
                 let remote: std::net::SocketAddr = remote
                     .parse()
                     .with_context(|| format!("--net expects ip:port, got {remote:?}"))?;

@@ -13,6 +13,7 @@ ggrs.workspace = true
 log.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+bincode = "1"
 
 [lints]
 workspace = true

@@ -126,7 +126,8 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - ✅ ggrs P2P over UDP (`--net ip:port [--port n] [--p2]`), input delay / prediction window from `rugen.toml`, desync detection, rollback-muted sound events, connection status HUD.
 - ✅ Sync-test session (`--synctest`, and a 600-frame automated test) proves the sim is deterministic under rollback.
 - ✅ Replays (setup + per-tick inputs, JSON) with byte-identical playback; NETPLAY title entry from `rugen.toml [net]`.
-- Open: matchmaking / relay, content hash handshake, spectator, synced online character select.
+- ✅ `rugen-relay`: UDP rendezvous by room code with NAT hole punching; the ggrs socket is reused so the learned mapping is the game's.
+- Open: traffic relay fallback, content hash handshake (desync detection catches mismatches today), spectator, synced online character select.
 
 ### Phase 4 — creator tools (started)
 - ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title.
@@ -136,7 +137,9 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 
 ### Phase 5 — new engine features (started)
 - ✅ `[Platform]` stage sections: per-player ground level, landing on surfaces, walking off edges; `Pos Y`/`PosSet` stay ground-relative so legacy characters work unchanged (`stages/README.md`).
-- Open: `[Zone]` / `[Interact]`, new triggers (`GroundY`, `OnPlatform`), stage transitions, tag/assist, scripting, mod packs, wasm.
+- ✅ Triggers `GroundY` and `OnPlatform` for new characters (legacy characters never use them).
+- ✅ Arcade ladder (six random opponents), stage / screen music, fullscreen toggle.
+- Open: `[Zone]` / `[Interact]`, stage transitions, tag/assist, scripting, mod packs, wasm.
 
 ## Open questions
 

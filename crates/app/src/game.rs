@@ -87,6 +87,9 @@ pub struct Shell {
     quit: bool,
     /// Replay to feed into the next match.
     replay: Option<crate::replay::Replay>,
+    /// Arcade ladder: P1's character and wins so far.
+    arcade: Option<(PathBuf, u32)>,
+    fullscreen: bool,
 }
 
 impl Shell {
@@ -99,10 +102,22 @@ impl Shell {
         replay: Option<crate::replay::Replay>,
     ) -> Self {
         let data_dir = lib.data_dir();
+        let config_fullscreen = config.video.fullscreen;
         let system = match SystemData::load(&data_dir) {
             Ok(s) => Some(s),
             Err(e) => {
                 log::warn!("system.def not loaded: {e:#}");
+                None
+            }
+        };
+        let audio = match Audio::new() {
+            Ok(mut a) => {
+                a.set_master_volume(config.audio.master);
+                a.set_music_volume(config.audio.music);
+                Some(a)
+            }
+            Err(e) => {
+                log::warn!("audio disabled: {e}");
                 None
             }
         };
@@ -113,13 +128,7 @@ impl Shell {
             data_dir,
             gpu: None,
             prev: [Buttons::default(); 2],
-            audio: match Audio::new() {
-                Ok(a) => Some(a),
-                Err(e) => {
-                    log::warn!("audio disabled: {e}");
-                    None
-                }
-            },
+            audio,
             system,
             screen: Screen::Blank,
             start: Some(start),
@@ -131,6 +140,8 @@ impl Shell {
             ticks: 0,
             quit: false,
             replay,
+            arcade: None,
+            fullscreen: config_fullscreen,
         }
     }
 
@@ -139,6 +150,92 @@ impl Shell {
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut self)?;
         Ok(())
+    }
+
+    /// system.def `[Music]`: `<screen>.bgm`, `<screen>.bgm.volume`, `<screen>.bgm.loop`.
+    fn play_system_music(&mut self, screen: &str) {
+        let Some(sys) = self.system.as_ref() else {
+            return;
+        };
+        let Some(audio) = self.audio.as_mut() else {
+            return;
+        };
+        let def = rugen_formats::def::Def::open(&sys.def_path).ok();
+        let music = def.as_ref().and_then(|d| d.section("music"));
+        let name = music
+            .and_then(|m| m.raw(&format!("{screen}.bgm")))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if name.is_empty() {
+            audio.stop_music();
+            return;
+        }
+        let volume = music
+            .and_then(|m| m.f32(&format!("{screen}.bgm.volume")))
+            .unwrap_or(100.0)
+            / 100.0;
+        let looping = music
+            .and_then(|m| m.i32(&format!("{screen}.bgm.loop")))
+            .unwrap_or(1)
+            != 0;
+        let root = self.data_dir.parent().unwrap_or(&self.data_dir);
+        let path = [root.join(&name), self.data_dir.join(&name)]
+            .into_iter()
+            .find(|p| p.exists());
+        audio.play_music(path.as_deref(), volume, looping);
+    }
+
+    /// Arcade: after a win, line up the next random opponent; after a loss, the title.
+    fn arcade_next(&mut self) -> Option<Transition> {
+        let (p1, wins) = self.arcade.clone()?;
+        let Screen::Match(m) = &self.screen else {
+            return None;
+        };
+        let won = m.world.round.wins[0] > m.world.round.wins[1];
+        if !won || wins + 1 >= 6 {
+            return None;
+        }
+        self.arcade = Some((p1.clone(), wins + 1));
+        let chars = self.lib.chars();
+        if chars.is_empty() {
+            return None;
+        }
+        let pick = chars[(wins as usize * 7 + 3) % chars.len()].clone();
+        let (dir, man) = self.lib.prepare_char(&pick).ok()?;
+        let p2 = dir.join(&man.def);
+        let stages = self.lib.stages();
+        let stage = stages
+            .get((wins as usize) % stages.len().max(1))
+            .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| d.join(m.def)))
+            .or_else(|| {
+                let p = self
+                    .lib
+                    .root
+                    .join("reference/mugen-1.1b1/stages/stage0.def");
+                p.exists().then_some(p)
+            });
+        let portrait = |def: &PathBuf| {
+            let dir = def.parent()?;
+            let text = std::fs::read_to_string(dir.join("rugen.json")).ok()?;
+            let man: rugen_content::Manifest = serde_json::from_str(&text).ok()?;
+            let pb = man.portrait_big.as_ref()?;
+            let (w, h, rgba) = rugen_content::read_png(&dir.join(&pb.file)).ok()?;
+            Some((man.display_name.clone(), (w, h, rgba, pb.axis)))
+        };
+        let side = |def: &PathBuf| match portrait(def) {
+            Some((name, img)) => Portrait::new(name, Some(img)),
+            None => Portrait::new(String::new(), None),
+        };
+        Some(Transition::Versus(
+            FightSetup {
+                p1: p1.clone(),
+                p2: p2.clone(),
+                stage,
+                ai: [0, 4],
+                net: None,
+            },
+            [side(&p1), side(&p2)],
+        ))
     }
 
     /// Write the current match's recording (quick play: to `--record`, else `replays/`).
@@ -198,12 +295,37 @@ impl Shell {
                         .map_err(|err| log::error!("{id}: {err}"))
                         .ok()
                 };
-                let remote = match n.remote.parse::<std::net::SocketAddr>() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log::error!("[net] remote {:?}: {e}", n.remote);
-                        self.transition(Transition::Title);
-                        return;
+                let side = usize::from(n.side == 2);
+                let net = if !n.relay.trim().is_empty() {
+                    match n.relay.parse::<std::net::SocketAddr>() {
+                        Ok(server) => crate::play::NetMode::Rendezvous {
+                            port: n.port,
+                            server,
+                            room: if n.room.trim().is_empty() {
+                                "rugen".into()
+                            } else {
+                                n.room.trim().to_string()
+                            },
+                            side,
+                        },
+                        Err(e) => {
+                            log::error!("[net] relay {:?}: {e}", n.relay);
+                            self.transition(Transition::Title);
+                            return;
+                        }
+                    }
+                } else {
+                    match n.remote.parse::<std::net::SocketAddr>() {
+                        Ok(remote) => crate::play::NetMode::P2P {
+                            port: n.port,
+                            remote,
+                            side,
+                        },
+                        Err(e) => {
+                            log::error!("[net] remote {:?}: {e}", n.remote);
+                            self.transition(Transition::Title);
+                            return;
+                        }
                     }
                 };
                 let (Some(p1), Some(p2)) = (resolve(self, &n.p1), resolve(self, &n.p2)) else {
@@ -229,16 +351,15 @@ impl Shell {
                     p2,
                     stage,
                     ai: [0, 0],
-                    net: Some(crate::play::NetMode::P2P {
-                        port: n.port,
-                        remote,
-                        side: usize::from(n.side == 2),
-                    }),
+                    net: Some(net),
                 }));
             }
             Transition::Title => {
                 self.save_replay();
-                let netplay = !self.config.net.remote.trim().is_empty();
+                self.arcade = None;
+                self.play_system_music("title");
+                let netplay = !self.config.net.remote.trim().is_empty()
+                    || !self.config.net.relay.trim().is_empty();
                 self.screen = match self.system.as_ref() {
                     Some(sys) => Screen::Title(TitleScreen::new(sys, netplay)),
                     None => {
@@ -249,12 +370,14 @@ impl Shell {
                 };
             }
             Transition::Select(mode) => {
+                self.play_system_music("select");
                 self.screen = match self.system.as_ref() {
                     Some(sys) => Screen::Select(SelectScreen::new(mode, sys, &self.lib)),
                     None => Screen::Blank,
                 };
             }
             Transition::Versus(setup, sides) => {
+                self.play_system_music("vs");
                 self.screen = match self.system.as_ref() {
                     Some(sys) => Screen::Versus(VersusScreen::new(setup, sides, sys)),
                     None => {
@@ -265,6 +388,9 @@ impl Shell {
             }
             Transition::Fight(setup) => match Match::load(&setup, &self.data_dir, &self.config) {
                 Ok(mut m) => {
+                    if let Some(a) = self.audio.as_mut() {
+                        a.play_music(m.bgm.as_deref(), 1.0, true);
+                    }
                     if setup.net.is_none() {
                         m.record = Some(crate::replay::Replay::new(&setup));
                     }
@@ -335,6 +461,11 @@ impl Shell {
                 if let Some(sys) = self.system.as_ref() {
                     next = s.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
                 }
+                if let Some(Transition::Versus(setup, _)) = &next
+                    && s.mode() == Mode::Arcade
+                {
+                    self.arcade = Some((setup.p1.clone(), 0));
+                }
             }
             Screen::Versus(v) => next = v.tick(pressed),
             Screen::Match(m) => {
@@ -347,6 +478,12 @@ impl Shell {
                     });
                 }
             }
+        }
+        if matches!(next, Some(Transition::Title))
+            && let Some(t) = self.arcade_next()
+        {
+            self.save_replay();
+            next = Some(t);
         }
         if matches!(next, Some(Transition::Quit)) {
             self.save_replay();
@@ -431,6 +568,16 @@ impl Shell {
         if let Screen::Match(m) = &mut self.screen
             && m.key(key, pressed)
         {
+            return;
+        }
+        if pressed && key == &Key::Named(NamedKey::F11) {
+            self.fullscreen = !self.fullscreen;
+            if let Some(g) = &self.gpu {
+                g.window.set_fullscreen(
+                    self.fullscreen
+                        .then_some(winit::window::Fullscreen::Borderless(None)),
+                );
+            }
             return;
         }
         if pressed && key == &Key::Named(NamedKey::Escape) {

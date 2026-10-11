@@ -6,11 +6,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
+use std::time::{Duration, Instant};
 
 use ggrs::{
-    DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, P2PSession, PlayerType, SessionBuilder,
-    SessionState, SyncTestSession, UdpNonBlockingSocket,
+    DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, NonBlockingSocket, P2PSession, PlayerType,
+    SessionBuilder, SessionState, SyncTestSession,
 };
 use rugen_sim::world::Event;
 use rugen_sim::{Buttons, World};
@@ -28,6 +29,8 @@ pub enum Error {
         local: u128,
         remote: u128,
     },
+    #[error("rendezvous: {0}")]
+    Rendezvous(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -61,6 +64,102 @@ impl ggrs::Config for NetConfig {
 enum Session {
     P2P(Box<P2PSession<NetConfig>>),
     SyncTest(Box<SyncTestSession<NetConfig>>),
+}
+
+/// Non-blocking UDP socket for ggrs that can first be used for the
+/// rendezvous handshake, so the NAT mapping the peer learns is the one the
+/// game traffic uses.
+pub struct Socket {
+    socket: UdpSocket,
+    buffer: [u8; 4096],
+}
+
+impl Socket {
+    pub fn bind(port: u16) -> Result<Self> {
+        let socket = UdpSocket::bind(("0.0.0.0", port))?;
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            socket,
+            buffer: [0; 4096],
+        })
+    }
+
+    /// Ask a `rugen-relay` server for the peer in `room`. Blocks up to `timeout`,
+    /// calling `progress` with status lines. Returns the peer's public address.
+    pub fn rendezvous(
+        &mut self,
+        server: SocketAddr,
+        room: &str,
+        side: usize,
+        timeout: Duration,
+        progress: &mut dyn FnMut(&str),
+    ) -> Result<SocketAddr> {
+        let hello = format!("rugen1 hello {room} {}", side + 1);
+        let start = Instant::now();
+        let mut last_send = Instant::now() - Duration::from_secs(1);
+        let mut buf = [0u8; 512];
+        progress(&format!("waiting for a peer in room {room} via {server}"));
+        while start.elapsed() < timeout {
+            if last_send.elapsed() >= Duration::from_millis(300) {
+                self.socket.send_to(hello.as_bytes(), server)?;
+                last_send = Instant::now();
+            }
+            match self.socket.recv_from(&mut buf) {
+                Ok((n, from)) if from == server => {
+                    let text = String::from_utf8_lossy(&buf[..n]);
+                    let mut it = text.split_whitespace();
+                    if it.next() == Some("rugen1")
+                        && it.next() == Some("peer")
+                        && let Some(addr) = it.next().and_then(|a| a.parse::<SocketAddr>().ok())
+                    {
+                        progress(&format!("peer found at {addr}"));
+                        // open the NAT mapping toward the peer before ggrs starts
+                        for _ in 0..3 {
+                            let _ = self.socket.send_to(b"rugen1 punch", addr);
+                        }
+                        return Ok(addr);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(Error::Rendezvous(format!(
+            "no peer joined room {room} within {} s",
+            timeout.as_secs()
+        )))
+    }
+}
+
+impl NonBlockingSocket<SocketAddr> for Socket {
+    fn send_to(&mut self, msg: &ggrs::Message, addr: &SocketAddr) {
+        if let Ok(buf) = bincode::serialize(msg) {
+            let _ = self.socket.send_to(&buf, addr);
+        }
+    }
+
+    fn receive_all_messages(&mut self) -> Vec<(SocketAddr, ggrs::Message)> {
+        let mut out = Vec::new();
+        loop {
+            match self.socket.recv_from(&mut self.buffer) {
+                Ok((n, from)) => {
+                    // text datagrams (rendezvous / punch) are not game messages
+                    if let Ok(msg) = bincode::deserialize(&self.buffer[..n]) {
+                        out.push((from, msg));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return out,
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => continue,
+                Err(e) => {
+                    log::warn!("udp recv: {e}");
+                    return out;
+                }
+            }
+        }
+    }
 }
 
 /// Options for a two-player session.
@@ -123,7 +222,17 @@ impl Netplay {
         local_handle: usize,
         opts: &Options,
     ) -> Result<Self> {
-        let socket = UdpNonBlockingSocket::bind_to_port(local_port)?;
+        let socket = Socket::bind(local_port)?;
+        Self::p2p_with_socket(socket, remote, local_handle, opts)
+    }
+
+    /// Peer-to-peer session over an already bound [`Socket`] (after a rendezvous).
+    pub fn p2p_with_socket(
+        socket: Socket,
+        remote: SocketAddr,
+        local_handle: usize,
+        opts: &Options,
+    ) -> Result<Self> {
         let mut b = SessionBuilder::<NetConfig>::new()
             .with_num_players(2)
             .with_input_delay(opts.input_delay)
