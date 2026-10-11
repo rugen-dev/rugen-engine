@@ -5,6 +5,7 @@ use rugen_cns::{Code, Error, Result, VarKind, compile, compile_list};
 
 use crate::explod::{PosType, Space, Trans};
 use crate::hit::{HitDefSpec, attr};
+use crate::projectile::ProjectileSpec;
 
 /// Compiled Explod / ModifyExplod parameters.
 #[derive(Clone, Debug)]
@@ -302,6 +303,22 @@ pub enum Sctrl {
         poweradd: Option<Code>,
         unhittable: Option<Code>,
     },
+    Projectile(Box<ProjectileSpec>),
+    Helper {
+        stateno: Option<Code>,
+        id: Option<Code>,
+        pos: Option<Vec<Code>>,
+        postype: Option<PosType>,
+        facing: Option<Code>,
+        keyctrl: Option<Code>,
+        player_type: bool,
+        supermovetime: Option<Code>,
+        pausemovetime: Option<Code>,
+    },
+    DestroySelf {
+        recursive: Option<Code>,
+        removeexplods: Option<Code>,
+    },
     /// Recognised but not implemented yet; runs as a no-op.
     Unsupported(String),
 }
@@ -580,6 +597,24 @@ impl Sctrl {
             "pause" => Sctrl::Pause {
                 time: req(c, "time")?,
                 movetime: one(c, "movetime")?,
+            },
+            "projectile" => Sctrl::Projectile(Box::new(ProjectileSpec::compile(c)?)),
+            "helper" => Sctrl::Helper {
+                stateno: one(c, "stateno")?,
+                id: one(c, "id")?,
+                pos: c.exprs("pos")?,
+                postype: c.param("postype").and_then(PosType::parse),
+                facing: one(c, "facing")?,
+                keyctrl: one(c, "keyctrl")?,
+                player_type: c
+                    .param("helpertype")
+                    .is_some_and(|t| t.trim().eq_ignore_ascii_case("player")),
+                supermovetime: one(c, "supermovetime")?,
+                pausemovetime: one(c, "pausemovetime")?,
+            },
+            "destroyself" => Sctrl::DestroySelf {
+                recursive: one(c, "recursive")?,
+                removeexplods: one(c, "removeexplods")?,
             },
             "superpause" => {
                 let anim = match c.exprs_fx("anim")? {

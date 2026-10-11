@@ -184,6 +184,9 @@ impl App {
         let mut items: Vec<Item> = Vec::new();
         for i in 0..self.world.players.len() {
             let p = &self.world.players[i];
+            if p.removed {
+                continue;
+            }
             let d = &self.world.data[p.anim_owner];
             let scale = stage.width / d.localcoord[0];
             let Some(frame) = d
@@ -255,6 +258,39 @@ impl App {
                     0
                 },
                 prio: e.sprpriority,
+                seq: items.len(),
+            });
+        }
+        let projs: Vec<rugen_sim::projectile::Projectile> = self
+            .world
+            .projs
+            .iter()
+            .filter(|p| !p.removed && p.anim_no >= 0)
+            .cloned()
+            .collect();
+        for pr in projs {
+            let d = self.world.players[pr.owner].data;
+            let lc = self.world.data[d].localcoord[0];
+            let Some(frame) = self.world.data[d]
+                .air
+                .get(pr.anim_no)
+                .and_then(|a| pr.anim.frame(a))
+                .cloned()
+            else {
+                continue;
+            };
+            let spr = self.sprite_from(Some(d), frame.group, frame.number);
+            let scale = stage.width / lc;
+            items.push(Item {
+                spr,
+                pos: pr.pos,
+                facing: pr.facing,
+                vfacing: 1.0,
+                scale: [scale * pr.scale[0], scale * pr.scale[1]],
+                frame,
+                boxes: true,
+                layer: 0,
+                prio: pr.sprpriority,
                 seq: items.len(),
             });
         }
@@ -332,7 +368,13 @@ impl App {
         let aspect = w as f32 / h as f32;
         let screen_w = stage.height * aspect;
         let left = cam_x - screen_w / 2.0;
-        for (i, p) in self.world.players.iter().enumerate() {
+        for (i, p) in self
+            .world
+            .players
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.helper_index == 0)
+        {
             let frac = (p.life.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
             let bar_w = screen_w * 0.4;
             let (x0, x1) = if i == 0 {

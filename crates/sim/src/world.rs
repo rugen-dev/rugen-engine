@@ -16,6 +16,7 @@ use crate::explod::{AnimSrc, Explod, PosType, Space};
 use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
 use crate::player::{Bind, HitBySlot, Player, assert};
+use crate::projectile::{ProjStatus, Projectile, ProjectileSpec};
 use crate::sctrl::ExplodSpec;
 use crate::sctrl::Sctrl;
 
@@ -143,6 +144,7 @@ pub struct World {
     pub fx: Option<Arc<FxData>>,
     pub players: Vec<Player>,
     pub explods: Vec<Explod>,
+    pub projs: Vec<Projectile>,
     pub stage: Stage,
     pub frame: u32,
     pub rng: Rng,
@@ -169,6 +171,7 @@ impl World {
             fx: None,
             players: Vec::new(),
             explods: Vec::new(),
+            projs: Vec::new(),
             stage,
             frame: 0,
             rng: Rng::new(seed),
@@ -239,7 +242,7 @@ impl World {
         self.players
             .iter()
             .enumerate()
-            .filter(|(i, o)| *i != me && o.team != p.team)
+            .filter(|(i, o)| *i != me && !o.removed && o.player_type && o.team != p.team)
             .min_by(|(_, a), (_, b)| {
                 let da = (a.pos[0] - p.pos[0]).abs();
                 let db = (b.pos[0] - p.pos[0]).abs();
@@ -543,10 +546,30 @@ impl World {
         }
 
         // 1. commands
-        for i in 0..n {
+        let mut i = 0;
+        while i < self.players.len() {
+            if self.players[i].removed {
+                i += 1;
+                continue;
+            }
             let p = &self.players[i];
-            if p.ctrl && !p.pause_bool && matches!(p.state_no, 0 | 11 | 20) {
+            if p.helper_index == 0 && p.ctrl && !p.pause_bool && matches!(p.state_no, 0 | 11 | 20) {
                 self.auto_turn(i);
+            }
+            let p = &self.players[i];
+            if p.helper_index > 0 {
+                // helpers with keyctrl read their root's buffer and commands
+                if p.keyctrl {
+                    let root = p.root;
+                    let (input, cmds) = (
+                        self.players[root].input.clone(),
+                        self.players[root].cmds.clone(),
+                    );
+                    self.players[i].input = input;
+                    self.players[i].cmds = cmds;
+                }
+                i += 1;
+                continue;
             }
             let p = &mut self.players[i];
             let b = inputs.get(i).copied().unwrap_or_default();
@@ -559,39 +582,313 @@ impl World {
                 .update(b.u, b.d, back, fwd, b.a, b.b, b.c, b.x, b.y, b.z, b.s);
             let input = p.input.clone();
             p.cmds.step(&input);
+            i += 1;
         }
 
         // 2. prepare: hardcoded key behaviour and per-tick resets
-        for i in 0..n {
-            self.prepare(i);
+        let mut i = 0;
+        while i < self.players.len() {
+            if !self.players[i].removed {
+                self.prepare(i);
+            }
+            i += 1;
         }
 
-        // 3. run states, physics, landing
-        for i in 0..n {
-            self.run(i);
+        // 3. run states, physics, landing (helpers spawned mid-loop run this tick too)
+        let mut i = 0;
+        while i < self.players.len() {
+            if !self.players[i].removed {
+                self.run(i);
+            }
+            i += 1;
         }
 
         // 4. finish: KO
-        for i in 0..n {
-            self.finish(i);
+        for i in 0..self.players.len() {
+            if !self.players[i].removed {
+                self.finish(i);
+            }
         }
+        self.update_projectiles();
 
         // 5. collision
         collision::push_detection(self);
         collision::hit_detection(self);
+        collision::projectile_hit_detection(self);
 
         // 6. bounds
         self.update_camera();
-        for i in 0..n {
-            self.screen_bound(i);
+        for i in 0..self.players.len() {
+            if !self.players[i].removed {
+                self.screen_bound(i);
+            }
         }
 
         // 7. tick: animate, hit bookkeeping, get-hit state entry
-        for i in 0..n {
-            self.tick(i);
+        for i in 0..self.players.len() {
+            if !self.players[i].removed {
+                self.tick(i);
+            }
         }
+        self.tick_projectiles();
         self.update_explods();
+        let _ = n;
         self.frame += 1;
+    }
+
+    /// Position for a helper / projectile relative to player `i` (Ikemen `helperPos`).
+    fn spawn_pos(
+        &self,
+        i: usize,
+        pt: PosType,
+        off: [f32; 2],
+        facing_param: i32,
+        is_proj: bool,
+    ) -> ([f32; 2], f32) {
+        let p = &self.players[i];
+        let mut facing = if facing_param < 0 { -1.0 } else { 1.0 };
+        let (xmin, xmax) = (self.screen_left(), self.screen_left() + self.stage.width);
+        let ls = self.local_scale(i);
+        let pos = match pt {
+            PosType::P1 => {
+                facing *= p.facing;
+                [p.pos[0] + off[0] * p.facing, p.pos[1] + off[1]]
+            }
+            PosType::P2 => match self.nearest_enemy(i) {
+                Some(e) => {
+                    let o = &self.players[e];
+                    facing *= if is_proj { p.facing } else { o.facing };
+                    let os = self.local_scale(e) / ls;
+                    [o.pos[0] * os + off[0] * o.facing, o.pos[1] * os + off[1]]
+                }
+                None => [p.pos[0], p.pos[1]],
+            },
+            PosType::Front | PosType::Back => {
+                facing *= p.facing;
+                let right = (p.facing > 0.0 && pt == PosType::Front)
+                    || (p.facing < 0.0 && pt == PosType::Back);
+                let edge = if right { xmax } else { xmin } / ls;
+                [edge + off[0] * p.facing, off[1]]
+            }
+            PosType::Left => {
+                if is_proj {
+                    facing *= p.facing;
+                }
+                [xmin / ls + off[0], off[1]]
+            }
+            PosType::Right => {
+                if is_proj {
+                    facing *= p.facing;
+                }
+                [xmax / ls + off[0], off[1]]
+            }
+            PosType::None => {
+                if is_proj {
+                    facing *= p.facing;
+                }
+                off
+            }
+        };
+        (pos, facing)
+    }
+
+    /// Spawn a projectile for player `i`.
+    pub fn spawn_projectile(&mut self, i: usize, spec: &ProjectileSpec) {
+        let hd = collision::eval_hitdef(self, i, &spec.hitdef);
+        let ls = self.local_scale(i);
+        let data = self.data[self.players[i].data].clone();
+        let one = |w: &mut World, c: &Option<Code>| c.as_ref().map(|c| w.eval(i, c));
+        let two = |w: &mut World, v: &Option<Vec<Code>>| -> Option<[f32; 2]> {
+            let v = v.as_ref()?;
+            let a = v.first().map_or(0.0, |c| w.eval(i, c).to_f());
+            let b = v.get(1).map_or(0.0, |c| w.eval(i, c).to_f());
+            Some([a, b])
+        };
+        let anim_no = one(self, &spec.projanim).map_or(0, |v| v.to_i());
+        if data.air.get(anim_no).is_none() {
+            self.warn(format!(
+                "P{} projectile with invalid action {anim_no}",
+                i + 1
+            ));
+            return;
+        }
+        let off = two(self, &spec.offset).unwrap_or([0.0, 0.0]);
+        let pt = spec.postype.unwrap_or(PosType::P1);
+        let (pos, facing) = self.spawn_pos(i, pt, off, 1, true);
+        let root = self.players[i].root;
+        let owner = if self.players[i].helper_index == 0 {
+            i
+        } else {
+            root
+        };
+        let mut p = Projectile {
+            owner,
+            owner_id: self.players[owner].id,
+            id: one(self, &spec.projid).map_or(0, |v| v.to_i()),
+            status: ProjStatus::Active,
+            hitdef: hd,
+            anim: AnimState::start(anim_no),
+            anim_no,
+            hitanim: one(self, &spec.projhitanim).map_or(-1, |v| v.to_i()),
+            remanim: one(self, &spec.projremanim).map_or(i32::MIN, |v| v.to_i().max(-2)),
+            cancelanim: one(self, &spec.projcancelanim).map_or(i32::MIN, |v| v.to_i().max(-1)),
+            scale: two(self, &spec.projscale).unwrap_or([1.0, 1.0]),
+            remove: one(self, &spec.projremove).is_none_or(|v| v.to_b()),
+            removetime: one(self, &spec.projremovetime).map_or(-1, |v| v.to_i()),
+            velocity: two(self, &spec.velocity).map_or([0.0, 0.0], |v| [v[0] * ls, v[1] * ls]),
+            remvelocity: two(self, &spec.remvelocity)
+                .map_or([0.0, 0.0], |v| [v[0] * ls, v[1] * ls]),
+            accel: two(self, &spec.accel).map_or([0.0, 0.0], |v| [v[0] * ls, v[1] * ls]),
+            velmul: two(self, &spec.velmul).unwrap_or([1.0, 1.0]),
+            hits: one(self, &spec.projhits).map_or(1, |v| v.to_i()),
+            misstime: one(self, &spec.projmisstime).map_or(0, |v| v.to_i()),
+            priority: one(self, &spec.projpriority).map_or(1, |v| v.to_i()),
+            sprpriority: one(self, &spec.projsprpriority).map_or(3, |v| v.to_i()),
+            edgebound: one(self, &spec.projedgebound).map_or(40.0, |v| v.to_f()) * ls,
+            stagebound: one(self, &spec.projstagebound).map_or(40.0, |v| v.to_f()) * ls,
+            heightbound: two(self, &spec.projheightbound)
+                .map_or([-240.0 * ls, 1.0 * ls], |v| [v[0] * ls, v[1] * ls]),
+            pos: [pos[0] * ls, pos[1] * ls],
+            facing,
+            removefacing: facing,
+            supermovetime: one(self, &spec.supermovetime).map_or(0, |v| {
+                if v.to_i() >= 0 {
+                    v.to_i() + 1
+                } else {
+                    v.to_i()
+                }
+            }),
+            pausemovetime: one(self, &spec.pausemovetime).map_or(0, |v| {
+                if v.to_i() >= 0 {
+                    v.to_i() + 1
+                } else {
+                    v.to_i()
+                }
+            }),
+            curmisstime: 0,
+            hitpause: 0,
+            contactflag: false,
+            freezeflag: false,
+            time: 0,
+            remove_done: false,
+            removed: false,
+        };
+        if p.hitdef.hitonce < 0 {
+            p.hitdef.hitonce = 0;
+        }
+        p.hitdef.attr |= 0; // keep as evaluated
+        self.projs.push(p);
+    }
+
+    /// Spawn a helper of player `i`. Returns its index.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_helper(
+        &mut self,
+        i: usize,
+        stateno: i32,
+        helper_id: i32,
+        pos: [f32; 2],
+        pt: PosType,
+        facing_param: i32,
+        keyctrl: bool,
+        player_type: bool,
+    ) -> Option<usize> {
+        let helpers = self
+            .players
+            .iter()
+            .filter(|p| !p.removed && p.helper_index > 0)
+            .count();
+        if helpers >= 56 {
+            self.warn(format!("P{} reached the helper limit", i + 1));
+            return None;
+        }
+        let parent = self.players[i].clone();
+        let (p0, facing) = self.spawn_pos(i, pt, pos, facing_param, false);
+        let id = self.players.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+        let mut h = Player::new(
+            parent.data,
+            parent.team,
+            id,
+            parent.life_max,
+            parent.power_max,
+            p0[0],
+            facing,
+            parent.pal_no,
+        );
+        h.pos[1] = p0[1];
+        h.old_pos = h.pos;
+        h.helper_index = helpers as i32 + 1;
+        h.helper_id = helper_id.max(0);
+        h.parent_id = parent.id;
+        h.root = parent.root;
+        h.player_type = player_type;
+        h.keyctrl = keyctrl;
+        h.life = parent.life_max;
+        h.cmds = parent.cmds.clone();
+        h.input = parent.input.clone();
+        h.ctrl = false;
+        let roots = self.players.iter().filter(|p| p.helper_index == 0).count();
+        let slot = self
+            .players
+            .iter()
+            .enumerate()
+            .skip(roots)
+            .find(|(_, p)| p.removed)
+            .map(|(k, _)| k);
+        let idx = match slot {
+            Some(k) => {
+                self.players[k] = h;
+                k
+            }
+            None => {
+                self.players.push(h);
+                self.players.len() - 1
+            }
+        };
+        self.players[i].children.push(id);
+        self.change_state(idx, stateno, Some(0), Some(true));
+        self.run_current(idx);
+        Some(idx)
+    }
+
+    /// Remove helper `i` (and optionally its explods / children).
+    pub fn destroy_helper(&mut self, i: usize, recursive: bool, remove_explods: bool) {
+        if self.players[i].helper_index == 0 || self.players[i].removed {
+            return;
+        }
+        let id = self.players[i].id;
+        self.players[i].removed = true;
+        for o in &mut self.players {
+            o.targets.retain(|&t| t != id);
+            o.hitdef_targets.retain(|&t| t != id);
+            o.ghv.targeted_by.retain(|t| t.0 != id);
+            o.children.retain(|&c| c != id);
+            if o.parent_id == id {
+                o.parent_id = -1;
+            }
+            if o.bind.is_some_and(|b| b.to == id) {
+                o.bind = None;
+            }
+        }
+        if remove_explods {
+            self.remove_explods(id, -1);
+        }
+        if recursive {
+            let kids: Vec<usize> = self
+                .players
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| !o.removed && o.parent_id == id)
+                .map(|(k, _)| k)
+                .collect();
+            for k in kids {
+                self.destroy_helper(k, true, remove_explods);
+            }
+        }
+    }
+
+    pub fn player_by_id(&self, id: i32) -> Option<usize> {
+        self.players.iter().position(|p| !p.removed && p.id == id)
     }
 
     pub fn set_pause_time(&mut self, i: usize, pausetime: i32, movetime: i32) {
@@ -1083,6 +1380,9 @@ impl World {
             if self.players[i].mctime > 0 {
                 self.players[i].mctime += 1;
             }
+            if self.players[i].pctime >= 0 {
+                self.players[i].pctime += 1;
+            }
         }
         // pending damage from hits lands here
         let liedown = own.konst("data.liedown.time").unwrap_or(60.0) as i32;
@@ -1469,6 +1769,53 @@ impl World {
             }
             Sctrl::Explod(spec) => {
                 self.spawn_explod(i, spec);
+            }
+            Sctrl::Projectile(spec) => {
+                self.spawn_projectile(i, spec);
+            }
+            Sctrl::Helper {
+                stateno,
+                id,
+                pos,
+                postype,
+                facing,
+                keyctrl,
+                player_type,
+                supermovetime,
+                pausemovetime,
+            } => {
+                let st = stateno.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let hid = id.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let px = pos
+                    .as_ref()
+                    .and_then(|p| p.first())
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let py = pos
+                    .as_ref()
+                    .and_then(|p| p.get(1))
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let f = facing.as_ref().map_or(1, |c| self.eval(i, c).to_i());
+                let kc = keyctrl.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let smt = supermovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let pmt = pausemovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let pt = postype.unwrap_or(PosType::P1);
+                if let Some(h) = self.spawn_helper(i, st, hid, [px, py], pt, f, kc, *player_type) {
+                    self.players[h].super_move_time = smt;
+                    self.players[h].pause_move_time = pmt;
+                }
+            }
+            Sctrl::DestroySelf {
+                recursive,
+                removeexplods,
+            } => {
+                let rec = recursive.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let rem = removeexplods
+                    .as_ref()
+                    .is_some_and(|c| self.eval(i, c).to_b());
+                if self.players[i].helper_index > 0 {
+                    self.destroy_helper(i, rec, rem);
+                    return true;
+                }
             }
             Sctrl::ModifyExplod { id, spec } => {
                 let eid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
@@ -1890,9 +2237,13 @@ impl World {
         let (min, max) = self
             .players
             .iter()
+            .filter(|p| !p.removed && p.helper_index == 0)
             .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
                 (lo.min(p.pos[0]), hi.max(p.pos[0]))
             });
+        if min > max {
+            return;
+        }
         let mid = (min + max) / 2.0;
         self.cam_x = mid.clamp(self.stage.bound_left, self.stage.bound_right);
     }
@@ -1901,7 +2252,7 @@ impl World {
         let (xmin, xmax) = self.screen_bounds();
         let p = &self.players[i];
         let mut x = p.pos[0];
-        if p.screen_bound {
+        if p.screen_bound && p.player_type {
             let (mut lo, mut hi) = (p.width_edge[0], -p.width_edge[1]);
             if p.facing > 0.0 {
                 (lo, hi) = (-hi, -lo);
@@ -2351,6 +2702,83 @@ mod tests {
         run(&mut w, 30, Buttons::default());
         assert_eq!(w.pausetime, 0);
         assert!(w.players[1].state_time > t2, "P2 resumes");
+    }
+
+    #[test]
+    fn projectile_hits_and_is_counted() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1000]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n[State 1000, p]\ntype = Projectile\ntrigger1 = time = 0\nprojanim = 200\nprojid = 5\noffset = 20, 0\nvelocity = 4\nattr = S, NP\ndamage = 30\npausetime = 2, 8\nground.velocity = -4\nhitflag = MAF\n[State 1000, back]\ntype = ChangeState\ntrigger1 = time > 60\nvalue = 0\nctrl = 1\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1000, None, None);
+        run(&mut w, 1, Buttons::default());
+        assert_eq!(w.projs.len(), 1, "projectile spawned");
+        assert_eq!(w.num_proj(1, 5), 1);
+        assert_eq!(w.num_proj(1, 6), 0);
+        let x0 = w.projs[0].pos[0];
+        run(&mut w, 3, Buttons::default());
+        assert!(w.projs[0].pos[0] > x0, "it moves forward");
+        let life0 = w.players[1].life;
+        let mut hit = false;
+        for _ in 0..90 {
+            run(&mut w, 1, Buttons::default());
+            if w.players[1].state_no == 5000 {
+                hit = true;
+                break;
+            }
+        }
+        assert!(hit, "projectile hit P2 (state {})", w.players[1].state_no);
+        run(&mut w, 5, Buttons::default());
+        assert!(w.players[1].life < life0);
+        assert!(w.players[0].pctime >= 0, "ProjHitTime ticks on the owner");
+        assert!(
+            w.projs.is_empty() || !w.projs[0].is_active(),
+            "single-hit projectile is spent"
+        );
+    }
+
+    #[test]
+    fn helper_spawns_runs_and_destroys_itself() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n[State 1001, h]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 77\npos = 30, 0\n[State 1001, back]\ntype = ChangeState\ntrigger1 = time > 60\nvalue = 0\nctrl = 1\n[Statedef 1002]\ntype = S\nphysics = N\nanim = 0\n[State 1002, v]\ntype = VarSet\ntrigger1 = 1\nvar(5) = parentdist x\n[State 1002, d]\ntype = DestroySelf\ntrigger1 = time >= 10\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1001, None, None);
+        run(&mut w, 2, Buttons::default());
+        let h = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.helper_index > 0)
+            .expect("helper exists");
+        assert_eq!(w.players[h].helper_id, 77);
+        assert_eq!(w.players[h].state_no, 1002);
+        assert_eq!(w.players[h].parent_id, w.players[0].id);
+        assert!(
+            (w.players[h].pos[0] - (w.players[0].pos[0] + 30.0)).abs() < 0.01,
+            "placed 30 in front of the parent"
+        );
+        assert_eq!(
+            w.players[h].vars[5], -30,
+            "parentdist x from the helper's view"
+        );
+        assert_eq!(w.players.len(), 3);
+        run(&mut w, 15, Buttons::default());
+        assert!(w.players[h].removed, "DestroySelf after 10 ticks");
+        assert!(w.players.iter().filter(|p| !p.removed).count() == 2);
     }
 
     #[test]

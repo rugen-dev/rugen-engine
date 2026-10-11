@@ -20,6 +20,7 @@ pub mod explod;
 pub mod hit;
 pub mod input;
 pub mod player;
+pub mod projectile;
 pub mod sctrl;
 pub mod world;
 

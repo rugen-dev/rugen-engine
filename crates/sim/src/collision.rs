@@ -274,7 +274,11 @@ pub fn push_detection(w: &mut World) {
     let n = w.players.len();
     for a in 0..n {
         for b in (a + 1)..n {
-            if !w.players[a].player_push || !w.players[b].player_push {
+            let (pa_, pb_) = (&w.players[a], &w.players[b]);
+            if pa_.removed || pb_.removed || !pa_.player_type || !pb_.player_type {
+                continue;
+            }
+            if !pa_.player_push || !pb_.player_push {
                 continue;
             }
             if w.players[a].team == w.players[b].team {
@@ -491,7 +495,7 @@ pub fn hit_detection(w: &mut World) {
     });
     for &c in &order {
         let p = &w.players[c];
-        if p.move_type == MoveType::I {
+        if p.removed || p.move_type == MoveType::I {
             continue;
         }
         let Some(hd) = p.hitdef.clone() else { continue };
@@ -544,7 +548,7 @@ pub fn hit_detection(w: &mut World) {
             if !clsn_contact(w, c, g) {
                 continue;
             }
-            let result = hit_result(w, c, g);
+            let result = hit_result(w, c, g, &hd, None);
             if result == 0 {
                 continue;
             }
@@ -578,8 +582,9 @@ pub fn hit_detection(w: &mut World) {
 }
 
 /// Apply `attacker`'s HitDef to `getter`. Returns 1 hit, 2 guarded, negative = no reaction, 0 = no contact.
-fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
-    let hd = w.players[c].hitdef.clone().unwrap();
+fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize>) -> i32 {
+    let hd = hd.clone();
+    let is_proj = proj.is_some();
     {
         let gp = &w.players[g];
         if gp.pending_state.is_some() && gp.state_owner != w.players[c].data {
@@ -591,7 +596,7 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
                 return 0;
             }
         }
-        if hd.p1stateno >= 0 && w.players[c].gethit {
+        if !is_proj && hd.p1stateno >= 0 && w.players[c].gethit {
             return 0;
         }
         if gp.gethit && gp.ghv.attr & attr::AT_AT != 0 {
@@ -645,7 +650,9 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
         p2s = true;
     }
     let gid = w.players[g].id;
-    w.players[c].hitdef_targets.push(gid);
+    if !is_proj {
+        w.players[c].hitdef_targets.push(gid);
+    }
 
     let ghvset = !w.players[g].gethit || w.players[g].pending_state.is_none() || p2s;
     if ghvset {
@@ -658,11 +665,16 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
         } else {
             hd.ground_type
         };
-        w.players[c].spr_priority = hd.p1sprpriority;
+        if !is_proj {
+            w.players[c].spr_priority = hd.p1sprpriority;
+        }
         w.players[g].spr_priority = hd.p2sprpriority;
     }
-    let mut byf = w.players[c].facing;
-    if result == 1 {
+    let mut byf = match proj {
+        Some(k) => w.projs[k].facing,
+        None => w.players[c].facing,
+    };
+    if !is_proj && result == 1 {
         if hd.p1getp2facing != 0 {
             byf = w.players[g].facing;
             if hd.p1getp2facing < 0 {
@@ -785,7 +797,10 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
             ghv.fall_animtype = hd.fall_animtype;
             ghv.animtype = hit::gethit_animtype(ghv, gst);
             // mindist / maxdist snapping
-            let by_x = w.players[c].pos[0] * local_scale(w, c);
+            let by_x = match proj {
+                Some(k) => w.projs[k].pos[0],
+                None => w.players[c].pos[0] * local_scale(w, c),
+            };
             let g_x = w.players[g].pos[0] * local_scale(w, g);
             let mut snap: Option<f32> = None;
             if let Some(md) = hd.mindist[0] {
@@ -809,7 +824,10 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
                 w.players[g].ghv.xoff = sx / gs - w.players[g].pos[0];
             }
             if result == 1 || gst == StateType::A {
-                let by_y = w.players[c].pos[1];
+                let by_y = match proj {
+                    Some(k) => w.projs[k].pos[1] / local_scale(w, c),
+                    None => w.players[c].pos[1],
+                };
                 let g_y = w.players[g].pos[1];
                 let mut sy: Option<f32> = None;
                 if let Some(md) = hd.mindist[1]
@@ -863,7 +881,9 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
         }
     }
     if result == 1 {
-        w.players[c].counter_hit = w.players[g].move_type == MoveType::A;
+        if !is_proj {
+            w.players[c].counter_hit = w.players[g].move_type == MoveType::A;
+        }
         let no_reaction = (hd.air_type == HitType::None && gst == StateType::A)
             || (gst != StateType::A && hd.ground_type == HitType::None);
         if (ghvset || w.players[g].gethit) && !no_reaction {
@@ -908,7 +928,7 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
             });
         }
     }
-    if hd.hitonce > 0 {
+    if !is_proj && hd.hitonce > 0 {
         let keep = w.players[g].id;
         w.players[c].targets.retain(|&t| t == keep);
     }
@@ -926,7 +946,7 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
     }
     w.players[g].p1facing = 0.0;
     if result.abs() == 1 {
-        if (hd.p1getp2facing != 0 || hd.p1facing < 0) && w.players[c].facing != byf {
+        if !is_proj && (hd.p1getp2facing != 0 || hd.p1facing < 0) && w.players[c].facing != byf {
             w.players[c].p1facing = byf;
         }
         if hd.p2facing < 0 {
@@ -938,17 +958,23 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
             w.players[g].p1facing = 0.0;
         }
         w.players[g].ghv.facing = hd.p2facing;
-        if hd.p1stateno >= 0 {
+        if !is_proj && hd.p1stateno >= 0 {
             w.change_state(c, hd.p1stateno, None, Some(false));
         }
         if w.players[g].prev_fallflag || w.players[g].ghv.fallflag {
-            let jug = w.players[c].juggle;
+            let jug = if is_proj {
+                hd.air_juggle
+            } else {
+                w.players[c].juggle
+            };
             if let Some(t) = w.players[g].ghv.targeted_by.last_mut() {
                 t.1 -= jug;
             }
-            w.players[c].juggle = 0;
+            if !is_proj {
+                w.players[c].juggle = 0;
+            }
         }
-        if result > 0 {
+        if !is_proj && result > 0 {
             w.players[c].mhv.cornerpush_veloff = match gst {
                 StateType::A => hd.air_cornerpush_veloff,
                 StateType::L => hd.down_cornerpush_veloff,
@@ -956,7 +982,7 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
             } * w.players[c].facing;
         }
     }
-    if result == 2 {
+    if !is_proj && result == 2 {
         w.players[c].mhv.cornerpush_veloff = if gst == StateType::A {
             hd.airguard_cornerpush_veloff
         } else {
@@ -994,4 +1020,122 @@ pub fn compute_guard_flag(p: &Player) -> bool {
             StateType::A => !p.asserted(crate::player::assert::NOAIRGUARD),
             _ => false,
         }
+}
+
+/// Projectile Clsn1 boxes in stage space.
+fn proj_clsn(w: &World, k: usize, group: u8) -> Vec<[f32; 4]> {
+    let p = &w.projs[k];
+    let d = &w.data[w.players[p.owner].data];
+    let Some(frame) = d.air.get(p.anim_no).and_then(|a| p.anim.frame(a)) else {
+        return Vec::new();
+    };
+    let s = w.stage.width / d.localcoord[0];
+    let boxes = if group == 1 {
+        &frame.clsn1
+    } else {
+        &frame.clsn2
+    };
+    boxes
+        .iter()
+        .map(|b| {
+            [
+                b[0] as f32 * s * p.scale[0],
+                b[1] as f32 * s * p.scale[1],
+                b[2] as f32 * s * p.scale[0],
+                b[3] as f32 * s * p.scale[1],
+            ]
+        })
+        .collect()
+}
+
+pub fn projectile_hit_detection(w: &mut World) {
+    let n = w.players.len();
+    for g in 0..n {
+        if w.players[g].removed {
+            continue;
+        }
+        for k in 0..w.projs.len() {
+            let p = w.projs[k].clone();
+            if p.removed || p.hits <= 0 || !p.is_active() {
+                continue;
+            }
+            let c = p.owner;
+            if w.players[c].removed {
+                continue;
+            }
+            // a root player's own projectile never hits it
+            if g == w.players[c].root
+                && w.players[g].helper_index == 0
+                && w.players[g].team == w.players[c].team
+            {
+                continue;
+            }
+            let hd = &p.hitdef;
+            if hd.attr == 0 {
+                continue;
+            }
+            let team_ok = hd.affectteam == 0
+                || ((w.players[g].team != w.players[c].team) == (hd.affectteam > 0));
+            if !team_ok {
+                continue;
+            }
+            let gs = local_scale(w, g);
+            let dist_x = (w.players[g].pos[0] * gs - p.pos[0]) * p.facing;
+            if !w.players[g].inguarddist
+                && dist_x < hd.guard_dist * local_scale(w, c)
+                && dist_x > -hd.guard_dist * local_scale(w, c)
+            {
+                w.players[g].inguarddist = true;
+            }
+            let airjuggle = w.data[w.players[c].data]
+                .konst("data.airjuggle")
+                .unwrap_or(15.0) as i32;
+            let can_juggle =
+                hd.air_juggle <= w.players[g].ghv.juggle_for(w.players[c].id, airjuggle);
+            let getter_busy = w.players[g].pending_state.is_some()
+                && (w.players[g].gethit || w.players[g].hit_pause_time == 0);
+            if !can_juggle
+                || getter_busy
+                || !(p.hitpause <= 0 || p.contactflag)
+                || p.curmisstime > 0
+                || hd.hitonce < 0
+            {
+                continue;
+            }
+            if !attr_check(w, g, c, hd) {
+                continue;
+            }
+            let a = proj_clsn(w, k, 1);
+            let b = clsn_world(w, g, 2);
+            if boxes_overlap(
+                &a,
+                p.pos,
+                p.facing,
+                &b,
+                stage_pos(w, g),
+                w.players[g].facing,
+            )
+            .is_none()
+            {
+                continue;
+            }
+            let hd = hd.clone();
+            let result = hit_result(w, c, g, &hd, Some(k));
+            if result == 0 {
+                continue;
+            }
+            let pr = &mut w.projs[k];
+            pr.contactflag = true;
+            let owner = &mut w.players[c];
+            if result.abs() == 1 {
+                owner.pctype = crate::projectile::ProjContact::Hit;
+                pr.hitpause = hd.pausetime[0].max(0);
+            } else {
+                owner.pctype = crate::projectile::ProjContact::Guarded;
+                pr.hitpause = hd.guard_pausetime[0].max(0);
+            }
+            owner.pctime = 0;
+            owner.pcid = pr.id;
+        }
+    }
 }

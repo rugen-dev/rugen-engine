@@ -6,6 +6,7 @@ use crate::anim::AnimState;
 use crate::command::CommandList;
 use crate::hit::{GetHitVar, HitDef, MoveContact, MoveHitVar};
 use crate::input::InputBuffer;
+use crate::projectile::ProjContact;
 
 /// `HitBy` / `NotHitBy` slot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -165,6 +166,22 @@ pub struct Player {
     pub pause_bool: bool,
     pub super_defence_mul: f32,
     pub super_defence_mul_buffer: f32,
+    // ---- helpers
+    /// 0 = root player, >0 = helper.
+    pub helper_index: i32,
+    pub helper_id: i32,
+    pub parent_id: i32,
+    /// Index of the root player this entity belongs to.
+    pub root: usize,
+    /// `helpertype = player`: pushes, is screen-bound and counted as a player.
+    pub player_type: bool,
+    pub keyctrl: bool,
+    pub children: Vec<i32>,
+    pub removed: bool,
+    // ---- projectiles
+    pub pctype: ProjContact,
+    pub pctime: i32,
+    pub pcid: i32,
 }
 
 impl Player {
@@ -255,11 +272,25 @@ impl Player {
             pause_bool: false,
             super_defence_mul: 1.0,
             super_defence_mul_buffer: 1.0,
+            helper_index: 0,
+            helper_id: 0,
+            parent_id: -1,
+            root: 0,
+            player_type: true,
+            keyctrl: true,
+            children: Vec::new(),
+            removed: false,
+            pctype: ProjContact::None,
+            pctime: -1,
+            pcid: 0,
         }
     }
 
     pub fn alive(&self) -> bool {
         !self.ko
+    }
+    pub fn is_helper(&self) -> bool {
+        self.helper_index > 0
     }
     pub fn hit_pause(&self) -> bool {
         self.hit_pause_time > 0

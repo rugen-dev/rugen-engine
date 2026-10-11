@@ -38,7 +38,7 @@ pub struct State {
     pub file: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CharData {
     pub name: String,
     pub display_name: String,
@@ -214,6 +214,35 @@ impl CharData {
 
     pub fn konst(&self, name: &str) -> Option<f32> {
         self.consts.get(name).copied()
+    }
+
+    /// Copy with extra states parsed from `text` (overriding existing numbers). For tests and tools.
+    pub fn with_states(&self, file: &str, text: &str) -> Result<Arc<Self>> {
+        let mut d = self.clone();
+        let parsed = rugen_cns::state::parse_states(file, text);
+        if !parsed.errors.is_empty() {
+            return Err(Error::Load(parsed.errors.join("\n")));
+        }
+        for st in parsed.states {
+            let mut warnings = Vec::new();
+            let ctrls = st
+                .controllers
+                .iter()
+                .map(|c| compile_ctrl(c, &mut warnings, file))
+                .collect();
+            if !warnings.is_empty() {
+                return Err(Error::Load(warnings.join("\n")));
+            }
+            d.states.insert(
+                st.no,
+                State {
+                    ctrls,
+                    def: st,
+                    file: file.to_string(),
+                },
+            );
+        }
+        Ok(Arc::new(d))
     }
 }
 

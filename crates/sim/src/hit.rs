@@ -186,9 +186,16 @@ pub struct HitDefSpec {
 
 impl HitDefSpec {
     pub fn compile(c: &Controller) -> Result<Self> {
-        let attr_s = c
-            .param("attr")
-            .ok_or_else(|| Error::new("HitDef needs attr"))?;
+        Self::compile_with_attr_default(c, "")
+    }
+
+    /// `default_attr` is used when `attr` is missing (projectiles); empty = required.
+    pub fn compile_with_attr_default(c: &Controller, default_attr: &str) -> Result<Self> {
+        let attr_s = match c.param("attr") {
+            Some(a) => a,
+            None if !default_attr.is_empty() => default_attr,
+            None => return Err(Error::new("HitDef needs attr")),
+        };
         let attr =
             attr::parse(attr_s, false).ok_or_else(|| Error::new(format!("bad attr {attr_s:?}")))?;
         let mut spec = HitDefSpec {
@@ -223,7 +230,22 @@ impl HitDefSpec {
         for (k, v) in &c.params {
             match k.as_str() {
                 "attr" | "hitflag" | "guardflag" | "affectteam" | "animtype" | "air.animtype"
-                | "fall.animtype" | "ground.type" | "air.type" => {}
+                | "fall.animtype" | "ground.type" | "air.type" | "postype" => {}
+                k if k.starts_with("proj")
+                    || matches!(
+                        k,
+                        "velocity"
+                            | "remvelocity"
+                            | "accel"
+                            | "velmul"
+                            | "offset"
+                            | "supermovetime"
+                            | "pausemovetime"
+                            | "ownpal"
+                            | "remappal"
+                            | "afterimage.time"
+                            | "afterimage.length"
+                    ) => {}
                 "priority" => {
                     let mut it = v.split(',');
                     let n = it.next().unwrap_or("4").trim();

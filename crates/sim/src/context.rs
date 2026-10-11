@@ -6,6 +6,7 @@ use rugen_cns::trigger::{Axis, NameWhich, TeamMode, Trigger, flags};
 use rugen_cns::{Context, Redirect, Value, VarKind};
 
 use crate::hit::{HitType, attr};
+use crate::projectile::ProjContact;
 use crate::world::World;
 
 pub struct Ctx<'a> {
@@ -162,7 +163,24 @@ impl Context for Ctx<'_> {
             T::NumEnemy => {
                 Self::i(self.w.players.iter().filter(|o| o.team != p.team).count() as i32)
             }
-            T::NumPartner | T::NumProj | T::NumHelper | T::NumProjId => Self::i(0),
+            T::NumPartner => Self::i(0),
+            T::NumProj => Self::i(self.w.num_proj(self.w.players[p.root].id, -1)),
+            T::NumProjId => Self::i(self.w.num_proj(self.w.players[p.root].id, arg(0).to_i())),
+            T::NumHelper => {
+                let id = arg(0).to_i();
+                let n = self
+                    .w
+                    .players
+                    .iter()
+                    .filter(|o| {
+                        !o.removed
+                            && o.helper_index > 0
+                            && o.root == p.root
+                            && (id <= 0 || o.helper_id == id)
+                    })
+                    .count();
+                Self::i(n as i32)
+            }
             T::NumExplod => Self::i(self.w.num_explod(p.id, arg(0).to_i())),
             T::NumTarget => {
                 let id = arg(0).to_i();
@@ -208,7 +226,23 @@ impl Context for Ctx<'_> {
                 .p2()
                 .map_or(Value::Bottom, |e| Self::i(self.w.players[e].state_no)),
             T::PalNo => Self::i(p.pal_no),
-            T::ParentDist(_) | T::RootDist(_) => Value::Bottom,
+            T::ParentDist(a) | T::RootDist(a) => {
+                let who = if matches!(t, T::ParentDist(_)) {
+                    self.w.player_by_id(p.parent_id)
+                } else {
+                    Some(p.root)
+                };
+                match who {
+                    Some(o) if p.helper_index > 0 => {
+                        let o = &self.w.players[o];
+                        Self::f(match a {
+                            Axis::X => (o.pos[0] - p.pos[0]) * p.facing,
+                            Axis::Y => o.pos[1] - p.pos[1],
+                        })
+                    }
+                    _ => Value::Bottom,
+                }
+            }
             T::Pos(Axis::X) => Self::f(p.pos[0] - self.w.cam_x),
             T::Pos(Axis::Y) => Self::f(p.pos[1]),
             T::Power => Self::i(p.power),
@@ -367,9 +401,26 @@ impl Context for Ctx<'_> {
             }
             T::PlayerIdExist => Self::b(self.w.players.iter().any(|o| o.id == arg(0).to_i())),
             T::ProjHitTime | T::ProjGuardedTime | T::ProjContactTime | T::ProjCancelTime => {
-                Self::i(-1)
+                let id = arg(0).to_i();
+                let o = &self.w.players[p.root];
+                let kind_ok = match t {
+                    T::ProjHitTime => o.pctype == ProjContact::Hit,
+                    T::ProjGuardedTime => o.pctype == ProjContact::Guarded,
+                    T::ProjContactTime => {
+                        matches!(o.pctype, ProjContact::Hit | ProjContact::Guarded)
+                    }
+                    _ => o.pctype == ProjContact::Cancel,
+                };
+                if kind_ok && o.pctime >= 0 && (id <= 0 || o.pcid == id) {
+                    Self::i(o.pctime)
+                } else {
+                    Self::i(-1)
+                }
             }
-            T::IsHelper => Self::b(false),
+            T::IsHelper => {
+                let id = arg(0).to_i();
+                Self::b(p.helper_index > 0 && (id == i32::MIN || id <= 0 || p.helper_id == id))
+            }
             T::ConstCoord(h) => Self::f(data.localcoord[1] / *h as f32 * arg(0).to_f()),
         }
     }
@@ -436,11 +487,42 @@ impl Context for Ctx<'_> {
                 Some(_) => None,
             },
             Redirect::PlayerId => id.and_then(|id| self.w.players.iter().position(|o| o.id == id)),
-            Redirect::Root
-            | Redirect::Parent
-            | Redirect::Helper
-            | Redirect::Target
-            | Redirect::Partner => None,
+            Redirect::Target => {
+                let p = self.p();
+                let want = id.unwrap_or(-1);
+                p.targets.iter().find_map(|&tid| {
+                    self.w.players.iter().position(|o| {
+                        !o.removed && o.id == tid && (want < 0 || o.ghv.hitid == want)
+                    })
+                })
+            }
+            Redirect::Root => {
+                let p = self.p();
+                if p.helper_index > 0 {
+                    Some(p.root)
+                } else {
+                    None
+                }
+            }
+            Redirect::Parent => {
+                let p = self.p();
+                if p.helper_index > 0 {
+                    self.w.player_by_id(p.parent_id)
+                } else {
+                    None
+                }
+            }
+            Redirect::Helper => {
+                let p = self.p();
+                let want = id.unwrap_or(0);
+                self.w.players.iter().position(|o| {
+                    !o.removed
+                        && o.helper_index > 0
+                        && o.root == p.root
+                        && (want <= 0 || o.helper_id == want)
+                })
+            }
+            Redirect::Partner => None,
         };
         match target {
             Some(t) => {
