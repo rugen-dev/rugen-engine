@@ -18,12 +18,25 @@ pub struct HitBySlot {
     pub not: bool,
 }
 
-/// `TargetBind` state: bound to `to` at `pos` for `time` more ticks.
+/// `TargetBind` / `BindToParent` state: bound to `to` at `pos` for `time` more ticks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bind {
     pub to: i32,
     pub time: i32,
     pub pos: [f32; 2],
+    /// Facing to force while bound (0 = keep).
+    pub facing: f32,
+}
+
+/// One `HitOverride` slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HitOverride {
+    pub attr: u32,
+    pub stateno: i32,
+    /// Ticks left; 0 = inactive, -1 = forever.
+    pub time: i32,
+    pub forceair: bool,
+    pub forceguard: bool,
 }
 
 /// AssertSpecial flags, reset every tick.
@@ -149,6 +162,9 @@ pub struct Player {
     pub uniq_hit_count: i32,
     pub unhittable_time: i32,
     pub hitby: [HitBySlot; 2],
+    pub hover: [HitOverride; 8],
+    /// Slot chosen by the last hit this tick, -1 = none.
+    pub hover_idx: i32,
     pub inguarddist: bool,
     /// `SCF_guard`: holding back in a state that may guard.
     pub guarding: bool,
@@ -268,6 +284,8 @@ impl Player {
             uniq_hit_count: 0,
             unhittable_time: 0,
             hitby: [HitBySlot::default(); 2],
+            hover: [HitOverride::default(); 8],
+            hover_idx: -1,
             inguarddist: false,
             guarding: false,
             attack_mul: 1.0,

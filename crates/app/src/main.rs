@@ -4,6 +4,7 @@
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match, keyboard P1
 //! rugen list [--root dir]                                       list chars/ and stages/
+//! rugen check <char> [--root dir]                               report unsupported controllers
 //!
 //! `<char>` is an id from chars/ (file stem of a .zip/.rar/folder) or a path.
 //! ```
@@ -105,6 +106,56 @@ fn main() -> anyhow::Result<()> {
                 &lib.data_dir(),
             )
         }
+        Some("check") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let root = opt("--root");
+            let name = args[1..]
+                .iter()
+                .filter(|a| !a.starts_with("--"))
+                .find(|a| Some(*a) != root.as_ref())
+                .ok_or_else(|| anyhow::anyhow!("usage: rugen check <char> [--root dir]"))?;
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let entry = lib
+                .find_char(name)
+                .ok_or_else(|| anyhow::anyhow!("character {name:?} not found"))?;
+            let (dir, m) = lib.prepare_char(&entry)?;
+            let t = std::time::Instant::now();
+            let data = rugen_sim::CharData::load_with_data(&dir.join(&m.def), &lib.data_dir())?;
+            println!(
+                "{} by {} — {} states, {} sprites, loaded in {:.2?}",
+                data.display_name,
+                data.author,
+                data.states.len(),
+                data.sff.sprites.len(),
+                t.elapsed()
+            );
+            let mut unsupported: std::collections::BTreeMap<String, usize> = Default::default();
+            let mut total = 0usize;
+            for st in data.states.values() {
+                for c in &st.ctrls {
+                    total += 1;
+                    if let rugen_sim::sctrl::Sctrl::Unsupported(k) = &c.op {
+                        *unsupported.entry(k.clone()).or_default() += 1;
+                    }
+                }
+            }
+            println!(
+                "{total} controllers, {} unsupported kinds:",
+                unsupported.len()
+            );
+            for (k, n) in &unsupported {
+                println!("  {k:<24} x{n}");
+            }
+            println!("{} warnings:", data.warnings.len());
+            for w in &data.warnings {
+                println!("  {w}");
+            }
+            Ok(())
+        }
         Some("list") => {
             let root = args
                 .iter()
@@ -124,7 +175,7 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!(
-                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]\n  rugen list [--root dir]",
+                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]\n  rugen list [--root dir]\n  rugen check <char> [--root dir]",
                 env!("CARGO_PKG_VERSION")
             );
             Ok(())

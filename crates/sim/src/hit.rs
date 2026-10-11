@@ -171,6 +171,7 @@ pub enum Trade {
 #[derive(Clone, Debug)]
 pub struct HitDefSpec {
     pub attr: u32,
+    pub reversal_attr: u32,
     pub hitflag: u32,
     pub guardflag: u32,
     pub affectteam: i32,
@@ -189,6 +190,19 @@ impl HitDefSpec {
         Self::compile_with_attr_default(c, "")
     }
 
+    /// `ReversalDef`: a HitDef that fires when an attack matching `reversal.attr` touches our Clsn1.
+    pub fn compile_reversal(c: &Controller) -> Result<Self> {
+        let ra = c
+            .param("reversal.attr")
+            .ok_or_else(|| Error::new("ReversalDef needs reversal.attr"))?;
+        let reversal_attr = attr::parse(ra, false)
+            .ok_or_else(|| Error::new(format!("bad reversal.attr {ra:?}")))?;
+        let mut spec = Self::compile_with_attr_default(c, "S")?;
+        spec.attr = 0;
+        spec.reversal_attr = reversal_attr;
+        Ok(spec)
+    }
+
     /// `default_attr` is used when `attr` is missing (projectiles); empty = required.
     pub fn compile_with_attr_default(c: &Controller, default_attr: &str) -> Result<Self> {
         let attr_s = match c.param("attr") {
@@ -200,6 +214,7 @@ impl HitDefSpec {
             attr::parse(attr_s, false).ok_or_else(|| Error::new(format!("bad attr {attr_s:?}")))?;
         let mut spec = HitDefSpec {
             attr,
+            reversal_attr: 0,
             hitflag: c
                 .param("hitflag")
                 .map_or(hf::H | hf::L | hf::A | hf::F, hf::parse),
@@ -230,7 +245,7 @@ impl HitDefSpec {
         for (k, v) in &c.params {
             match k.as_str() {
                 "attr" | "hitflag" | "guardflag" | "affectteam" | "animtype" | "air.animtype"
-                | "fall.animtype" | "ground.type" | "air.type" | "postype" => {}
+                | "fall.animtype" | "ground.type" | "air.type" | "postype" | "reversal.attr" => {}
                 k if k.starts_with("proj")
                     || matches!(
                         k,
@@ -281,6 +296,8 @@ impl HitDefSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HitDef {
     pub attr: u32,
+    /// ReversalDef: attributes of attacks this HitDef reverses (0 = ordinary HitDef).
+    pub reversal_attr: u32,
     pub hitflag: u32,
     pub guardflag: u32,
     pub affectteam: i32,

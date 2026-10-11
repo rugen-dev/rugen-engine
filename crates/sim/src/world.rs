@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use rugen_cns::state::{MoveType, Physics, StateType};
-use rugen_cns::{Code, Context, Value};
+use rugen_cns::{Code, Context, Value, VarKind};
 
 use crate::Rng;
 use crate::anim::AnimState;
@@ -16,7 +16,7 @@ use crate::explod::{AnimSrc, Explod, PosType, Space};
 use crate::fx::{AfterImage, AfterImg, EnvShake, PalFx};
 use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
-use crate::player::{Bind, HitBySlot, Player, assert};
+use crate::player::{Bind, HitBySlot, HitOverride, Player, assert};
 use crate::projectile::{ProjStatus, Projectile, ProjectileSpec};
 use crate::round::{RoundConfig, RoundState};
 use crate::sctrl::{ExplodSpec, PalFxSpec, Sctrl};
@@ -128,6 +128,11 @@ pub enum Event {
         number: i32,
         channel: i32,
         volume: i32,
+    },
+    /// Stop sounds on `channel` of `player` (-1 = all channels).
+    StopSound {
+        player: usize,
+        channel: i32,
     },
     RoundStart(i32),
     Fight,
@@ -500,6 +505,57 @@ impl World {
         p.pos[0] = tx + b.pos[0] * tf;
         p.pos[1] = ty + b.pos[1];
         p.old_pos = p.pos;
+        if b.facing != 0.0 {
+            p.set_facing(b.facing);
+        }
+    }
+
+    /// Spawn a fightfx explod at a position relative to player `i` (GameMakeAnim / MakeDust).
+    fn spawn_fx_anim(&mut self, i: usize, anim: i32, rel: [f32; 2], ontop: bool) {
+        let owner_id = self.players[i].id;
+        let mut e = Explod::new(i, owner_id, AnimSrc::Fx, anim);
+        if e.air(self).and_then(|a| a.get(anim)).is_none() {
+            return;
+        }
+        let ls = self.local_scale(i);
+        e.id = 0;
+        e.rel = [rel[0] * ls, rel[1] * ls];
+        e.ontop = ontop;
+        e.sprpriority = i32::MIN;
+        e.facing = self.players[i].facing;
+        self.explod_set_pos(&mut e, i);
+        self.explods.push(e);
+    }
+
+    /// Write a variable on `target` directly (ParentVarSet / ParentVarAdd).
+    fn write_var(&mut self, target: usize, kind: VarKind, idx: i32, v: Value, add: bool) {
+        if idx < 0 {
+            return;
+        }
+        let p = &mut self.players[target];
+        let k = idx as usize;
+        match kind {
+            VarKind::Var | VarKind::SysVar => {
+                let slot = if kind == VarKind::Var {
+                    p.vars.get_mut(k)
+                } else {
+                    p.sysvars.get_mut(k)
+                };
+                if let Some(s) = slot {
+                    *s = if add { *s + v.to_i() } else { v.to_i() };
+                }
+            }
+            VarKind::FVar | VarKind::SysFVar => {
+                let slot = if kind == VarKind::FVar {
+                    p.fvars.get_mut(k)
+                } else {
+                    p.sysfvars.get_mut(k)
+                };
+                if let Some(s) = slot {
+                    *s = if add { *s + v.to_f() } else { v.to_f() };
+                }
+            }
+        }
     }
 
     fn should_face_p2(&self, i: usize) -> bool {
@@ -1355,6 +1411,17 @@ impl World {
                 p.down_hit_offset = true;
             }
         }
+        // HitOverride state (does not require actually getting hit)
+        let hi = self.players[i].hover_idx;
+        if hi >= 0 {
+            let ho = self.players[i].hover[hi as usize];
+            self.players[i].hover_idx = -1;
+            if ho.stateno >= 0 {
+                let own = self.players[i].data;
+                self.players[i].state_owner = own;
+                self.change_state(i, ho.stateno, None, None);
+            }
+        }
         let p = &mut self.players[i];
         if p.hit_pause_time > 0 {
             p.hit_pause_time -= 1;
@@ -1422,6 +1489,14 @@ impl World {
                     }
                 }
             }
+            for ho in &mut p.hover {
+                if ho.time > 0 {
+                    ho.time -= 1;
+                    if ho.time == 0 {
+                        *ho = HitOverride::default();
+                    }
+                }
+            }
             p.width_edge = [0.0, 0.0];
             p.width_player = [0.0, 0.0];
             p.screen_bound = true;
@@ -1455,6 +1530,7 @@ impl World {
             if b.time > 0 {
                 p.bind = Some(Bind {
                     time: b.time - 1,
+                    facing: b.facing,
                     ..b
                 });
             }
@@ -1861,6 +1937,7 @@ impl World {
                         to: my,
                         time: t,
                         pos: [px, py],
+                        facing: 0.0,
                     });
                     self.apply_bind(tg);
                 }
@@ -1895,6 +1972,147 @@ impl World {
             Sctrl::DefenceMulSet { value } => {
                 let v = self.eval(i, value).to_f();
                 self.players[i].defence_mul = v;
+            }
+            Sctrl::HitOverride {
+                attr,
+                slot,
+                stateno,
+                time,
+                forceair,
+                forceguard,
+            } => {
+                let mut sl = slot.as_ref().map_or(0, |c| self.eval(i, c).to_i()).max(0);
+                if sl > 7 {
+                    sl = 0;
+                }
+                let ho = HitOverride {
+                    attr: *attr,
+                    stateno: stateno.as_ref().map_or(-1, |c| self.eval(i, c).to_i()),
+                    time: time.as_ref().map_or(1, |c| self.eval(i, c).to_i()),
+                    forceair: forceair.as_ref().is_some_and(|c| self.eval(i, c).to_b()),
+                    forceguard: forceguard.as_ref().is_some_and(|c| self.eval(i, c).to_b()),
+                };
+                self.players[i].hover[sl as usize] = ho;
+            }
+            Sctrl::BindToParent {
+                root,
+                time,
+                facing,
+                pos,
+            } => {
+                let t = time.as_ref().map_or(1, |c| self.eval(i, c).to_i());
+                let f = facing.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let px = pos
+                    .as_ref()
+                    .and_then(|p| p.first())
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let py = pos
+                    .as_ref()
+                    .and_then(|p| p.get(1))
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let p = &self.players[i];
+                let to = if *root {
+                    self.players.get(p.root).map(|r| r.id)
+                } else if p.parent_id >= 0 {
+                    Some(p.parent_id)
+                } else {
+                    None
+                };
+                if let Some(to) = to
+                    && to != p.id
+                {
+                    if t == 0 {
+                        self.players[i].bind = None;
+                    } else {
+                        self.players[i].bind = Some(Bind {
+                            to,
+                            time: t,
+                            pos: [px, py],
+                            facing: f.signum() as f32,
+                        });
+                        self.apply_bind(i);
+                    }
+                }
+            }
+            Sctrl::ParentVarSet {
+                kind,
+                index,
+                value,
+                add,
+            } => {
+                let idx = self.eval(i, index).to_i();
+                let v = self.eval(i, value);
+                let pid = self.players[i].parent_id;
+                if let Some(t) = self.players.iter().position(|o| o.id == pid && pid >= 0) {
+                    self.write_var(t, *kind, idx, v, *add);
+                }
+            }
+            Sctrl::StopSnd { channel } => {
+                let ch = channel.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                if ch < 0 {
+                    for p in 0..self.players.len() {
+                        self.events.push(Event::StopSound {
+                            player: p,
+                            channel: -1,
+                        });
+                    }
+                } else {
+                    self.events.push(Event::StopSound {
+                        player: i,
+                        channel: ch,
+                    });
+                }
+            }
+            Sctrl::VarRandom { v, range } => {
+                let idx = self.eval(i, v).to_i();
+                let (mut lo, mut hi) = (0, 1000);
+                if let Some(r) = range {
+                    if let Some(c) = r.first() {
+                        hi = self.eval(i, c).to_i();
+                    }
+                    if let Some(c) = r.get(1) {
+                        lo = hi;
+                        hi = self.eval(i, c).to_i();
+                    }
+                }
+                let (lo, hi) = (lo.min(hi), lo.max(hi));
+                let val = lo + self.rng.below((hi - lo + 1) as u32) as i32;
+                self.write_var(i, VarKind::Var, idx, Value::Int(val), false);
+            }
+            Sctrl::GameMakeAnim {
+                value,
+                under,
+                pos,
+                random,
+            } => {
+                let anim = value.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let under = under.as_ref().is_some_and(|c| self.eval(i, c).to_b());
+                let mut px = pos
+                    .as_ref()
+                    .and_then(|p| p.first())
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                let py = pos
+                    .as_ref()
+                    .and_then(|p| p.get(1))
+                    .map_or(0.0, |c| self.eval(i, c).to_f());
+                if let Some(c) = random {
+                    let r = self.eval(i, c).to_f() / 2.0;
+                    if r > 0.0 {
+                        let u = self.rng.below(1000) as f32 / 999.0;
+                        px += -r + 2.0 * r * u;
+                    }
+                }
+                self.spawn_fx_anim(i, anim, [px, py], !under);
+            }
+            Sctrl::MakeDust { pos, pos2 } => {
+                for p in [pos, pos2].into_iter().flatten() {
+                    let px = p.first().map_or(0.0, |c| self.eval(i, c).to_f());
+                    let py = p.get(1).map_or(0.0, |c| self.eval(i, c).to_f());
+                    self.spawn_fx_anim(i, 120, [px, py], false);
+                }
+                if pos.is_none() && pos2.is_none() {
+                    self.spawn_fx_anim(i, 120, [0.0, 0.0], false);
+                }
             }
             Sctrl::FallEnvShake => {
                 let g = &self.players[i].ghv;
@@ -2875,6 +3093,82 @@ mod tests {
         );
         assert_eq!(w.players[1].life, life0, "no chip damage from a normal");
         assert!(w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0);
+    }
+
+    /// P2 overrides P1's standing normal with a custom state via HitOverride.
+    #[test]
+    fn hitoverride_redirects_to_state() {
+        let Some(mut w) = world() else { return };
+        walk_until_close(&mut w);
+        w.players[1].hover[0] = HitOverride {
+            attr: crate::hit::attr::parse("SCA, NA", false).unwrap(),
+            stateno: 11,
+            time: -1,
+            forceair: false,
+            forceguard: false,
+        };
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        let mut seen = false;
+        for _ in 0..30 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+            if w.players[1].state_no == 11 {
+                seen = true;
+            }
+            assert!(
+                !(5000..=5020).contains(&w.players[1].state_no),
+                "override must replace the get-hit state"
+            );
+        }
+        assert!(seen, "P2 never entered the HitOverride state");
+    }
+
+    /// A ReversalDef on P2 catches P1's punch: P1 is the one who gets hit.
+    #[test]
+    fn reversaldef_catches_attack() {
+        let Some(mut w) = world() else { return };
+        walk_until_close(&mut w);
+        let text = "[Statedef 900]\ntype = S\nmovetype = A\nphysics = S\nanim = 200\nctrl = 0\n\n\
+                    [State 900, r]\ntype = ReversalDef\ntrigger1 = 1\nreversal.attr = SCA, NA\n\
+                    pausetime = 0, 0\np2stateno = 5000\n";
+        let d = w.data[0]
+            .with_states("test", text)
+            .expect("reversal state compiles");
+        // give the reversal anim a Clsn1 on every frame so timing can't miss
+        let mut d = (*d).clone();
+        if let Some(a) = d.air.actions.get_mut(&200) {
+            for f in &mut a.frames {
+                f.clsn1 = vec![[-10, -80, 40, 0]];
+            }
+        }
+        let d = Arc::new(d);
+        w.data[0] = d.clone();
+        w.data[1] = d;
+        w.change_state(1, 900, None, Some(false));
+        let life1 = w.players[1].life;
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        let mut p1_hit = false;
+        for _ in 0..20 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+            if w.players[0].move_type == MoveType::H {
+                p1_hit = true;
+            }
+        }
+        assert!(p1_hit, "P1 should be reversed into a hit state");
+        assert_eq!(w.players[1].life, life1, "the reversed attack never lands");
     }
 
     #[test]

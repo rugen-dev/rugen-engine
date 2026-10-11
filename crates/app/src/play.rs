@@ -279,6 +279,11 @@ impl App {
                     channel,
                     volume,
                 } => self.play_sound(player, own, group, number, channel, volume, false),
+                Event::StopSound { player, channel } => {
+                    if let Some(a) = self.audio.as_mut() {
+                        a.stop_channel(player, channel);
+                    }
+                }
                 Event::RoundStart(n) => {
                     self.banner = Some((format!("ROUND {n}"), 90));
                     self.play_sound(0, false, 0, n, -1, 100, true);

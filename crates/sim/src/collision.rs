@@ -24,6 +24,7 @@ pub fn eval_hitdef(w: &mut World, i: usize, spec: &HitDefSpec) -> HitDef {
     };
     let mut hd = HitDef {
         attr: spec.attr,
+        reversal_attr: spec.reversal_attr,
         hitflag: spec.hitflag,
         guardflag: spec.guardflag,
         affectteam: spec.affectteam,
@@ -490,7 +491,9 @@ pub fn hit_detection(w: &mut World) {
     let n = w.players.len();
     for p in &mut w.players {
         p.gethit = false;
+        p.hover_idx = -1;
     }
+    reversal_detection(w);
     // attackers with a HitDef first, by id
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by_key(|&i| {
@@ -587,6 +590,73 @@ pub fn hit_detection(w: &mut World) {
     }
 }
 
+/// ReversalDef: a player whose HitDef has `reversal.attr` catches any matching
+/// attack whose Clsn1 touches its own Clsn1; the reversal HitDef then hits the attacker.
+fn reversal_detection(w: &mut World) {
+    let n = w.players.len();
+    for g in 0..n {
+        let Some(rhd) = w.players[g].hitdef.clone() else {
+            continue;
+        };
+        if rhd.reversal_attr == 0 || w.players[g].removed {
+            continue;
+        }
+        for c in 0..n {
+            if c == g || w.players[c].removed || w.players[c].move_type != MoveType::A {
+                continue;
+            }
+            let Some(hd) = w.players[c].hitdef.clone() else {
+                continue;
+            };
+            if hd.attr == 0
+                || hd.attr & rhd.reversal_attr & attr::ST_MASK == 0
+                || hd.attr & rhd.reversal_attr & !attr::ST_MASK == 0
+                || w.players[g].hitdef_targets.contains(&w.players[c].id)
+            {
+                continue;
+            }
+            let team_ok = rhd.affectteam == 0
+                || ((w.players[c].team != w.players[g].team) == (rhd.affectteam > 0));
+            if !team_ok {
+                continue;
+            }
+            let a = clsn_world(w, c, 1);
+            let b = clsn_world(w, g, 1);
+            if boxes_overlap(
+                &a,
+                stage_pos(w, c),
+                w.players[c].facing,
+                &b,
+                stage_pos(w, g),
+                w.players[g].facing,
+            )
+            .is_none()
+            {
+                continue;
+            }
+            let result = hit_result(w, g, c, &rhd, None);
+            if result == 0 {
+                continue;
+            }
+            // the reversed attack is spent
+            if let Some(h) = w.players[c].hitdef.as_mut() {
+                h.attr = 0;
+            }
+            w.players[c].hittmp = -1;
+            let cid = w.players[c].id;
+            let p = &mut w.players[g];
+            p.mctype = MoveContact::Hit;
+            p.mctime = -1;
+            if !p.gethit {
+                p.hit_pause_time = (rhd.pausetime[0] + 1).max(1);
+            }
+            p.mhv.frame = true;
+            p.mhv.playerid = cid;
+            p.uniq_hit_count += 1;
+        }
+    }
+}
+
 /// Apply `attacker`'s HitDef to `getter`. Returns 1 hit, 2 guarded, negative = no reaction, 0 = no contact.
 fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize>) -> i32 {
     let hd = hd.clone();
@@ -637,6 +707,50 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
     }
     if w.players[g].ghv.damage >= w.players[g].life {
         w.players[g].ghv.kill = true;
+    }
+
+    // HitOverride slots on the getter
+    if w.players[g].pending_state.is_none() || !w.players[g].gethit {
+        let attacker_st = attr::state_bits(w.players[c].state_type);
+        let mut chosen = -1;
+        for (k, ho) in w.players[g].hover.iter().enumerate() {
+            if ho.time == 0 || ho.attr & hd.attr & !attr::ST_MASK == 0 {
+                continue;
+            }
+            let st_ok = if is_proj {
+                ho.attr & hd.attr & attr::ST_MASK != 0
+            } else {
+                ho.attr & attacker_st != 0
+            };
+            if !st_ok {
+                continue;
+            }
+            // p1stateno / p2stateno together with HitOverride: the attack misses
+            if !is_proj && (hd.p1stateno >= 0 || hd.p2stateno >= 0) {
+                return 0;
+            }
+            chosen = k as i32;
+            break;
+        }
+        if chosen >= 0 {
+            let ho = w.players[g].hover[chosen as usize];
+            w.players[g].hover_idx = chosen;
+            if ho.forceair {
+                if (result > 0 && hd.air_type == HitType::None)
+                    || (result < 0
+                        && hd.ground_type == HitType::None
+                        && hd.air_type != HitType::None)
+                {
+                    result = -result;
+                }
+                if result.abs() == 1 {
+                    w.players[g].state_type = StateType::A;
+                }
+            }
+            if result > 0 {
+                result = if ho.forceguard { 2 } else { 1 };
+            }
+        }
     }
 
     // custom state

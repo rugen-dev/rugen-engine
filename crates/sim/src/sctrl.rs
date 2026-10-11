@@ -296,6 +296,43 @@ pub enum Sctrl {
     },
     MoveHitReset,
     /// `NotHitBy` (`not = true`) / `HitBy`: slot 0 or 1, attr bits, time.
+    HitOverride {
+        attr: u32,
+        slot: Option<Code>,
+        stateno: Option<Code>,
+        time: Option<Code>,
+        forceair: Option<Code>,
+        forceguard: Option<Code>,
+    },
+    BindToParent {
+        root: bool,
+        time: Option<Code>,
+        facing: Option<Code>,
+        pos: Option<Vec<Code>>,
+    },
+    ParentVarSet {
+        kind: VarKind,
+        index: Code,
+        value: Code,
+        add: bool,
+    },
+    StopSnd {
+        channel: Option<Code>,
+    },
+    VarRandom {
+        v: Code,
+        range: Option<Vec<Code>>,
+    },
+    GameMakeAnim {
+        value: Option<Code>,
+        under: Option<Code>,
+        pos: Option<Vec<Code>>,
+        random: Option<Code>,
+    },
+    MakeDust {
+        pos: Option<Vec<Code>>,
+        pos2: Option<Vec<Code>>,
+    },
     HitBy {
         not: bool,
         slot: usize,
@@ -687,6 +724,62 @@ impl Sctrl {
                 value: req(c, "value")?,
             },
             "fallenvshake" => Sctrl::FallEnvShake,
+            "forcefeedback" | "remappal" => Sctrl::Null,
+            "reversaldef" => Sctrl::HitDef(Box::new(HitDefSpec::compile_reversal(c)?)),
+            "hitoverride" => {
+                let a = c
+                    .param("attr")
+                    .ok_or_else(|| Error::new("HitOverride needs attr"))?;
+                let attr =
+                    attr::parse(a, false).ok_or_else(|| Error::new(format!("bad attr {a:?}")))?;
+                Sctrl::HitOverride {
+                    attr,
+                    slot: one(c, "slot")?,
+                    stateno: one(c, "stateno")?,
+                    time: one(c, "time")?,
+                    forceair: one(c, "forceair")?,
+                    forceguard: one(c, "forceguard")?,
+                }
+            }
+            "bindtoparent" | "bindtoroot" => Sctrl::BindToParent {
+                root: c.kind == "bindtoroot",
+                time: one(c, "time")?,
+                facing: one(c, "facing")?,
+                pos: c.exprs("pos")?,
+            },
+            "parentvarset" | "parentvaradd" => {
+                let add = c.kind == "parentvaradd";
+                let (kind, index) = if let Some(v) = one(c, "v")? {
+                    (VarKind::Var, v)
+                } else if let Some(v) = one(c, "fv")? {
+                    (VarKind::FVar, v)
+                } else {
+                    return Err(Error::new("missing v= / fv="));
+                };
+                Sctrl::ParentVarSet {
+                    kind,
+                    index,
+                    value: req(c, "value")?,
+                    add,
+                }
+            }
+            "stopsnd" => Sctrl::StopSnd {
+                channel: one(c, "channel")?,
+            },
+            "varrandom" => Sctrl::VarRandom {
+                v: req(c, "v")?,
+                range: c.exprs("range")?,
+            },
+            "gamemakeanim" => Sctrl::GameMakeAnim {
+                value: one(c, "value")?,
+                under: one(c, "under")?,
+                pos: c.exprs("pos")?,
+                random: one(c, "random")?,
+            },
+            "makedust" => Sctrl::MakeDust {
+                pos: c.exprs("pos")?,
+                pos2: c.exprs("pos2")?,
+            },
             "envshake" => Sctrl::EnvShake {
                 time: req(c, "time")?,
                 freq: one(c, "freq")?,
