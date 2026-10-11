@@ -9,9 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use rugen_audio::{Audio, SoundKey};
 use rugen_formats::sff::Pixels;
 use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
 use rugen_sim::explod::AnimSrc;
+use rugen_sim::world::Event;
 use rugen_sim::world::Stage;
 use rugen_sim::{Buttons, CharData, FxData, World};
 use winit::application::ApplicationHandler;
@@ -49,11 +51,15 @@ pub fn run(
     }
     let mut world = World::new(stage, 1);
     match FxData::load(data_dir) {
-        Ok(fx) => world.fx = Some(fx),
+        Ok(fx) => {
+            world.round = rugen_sim::RoundState::new(fx.round.clone());
+            world.fx = Some(fx);
+        }
         Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
     }
     world.add_player(d1, 0, 1);
     world.add_player(d2, 1, 2);
+    world.start_round();
     log::info!("{} vs {}", world.data[0].name, world.data[1].name);
 
     let event_loop = EventLoop::new()?;
@@ -108,6 +114,9 @@ struct App {
     /// Screenshot after a scripted sequence, then quit.
     shot: Option<PathBuf>,
     quit: bool,
+    audio: Option<Audio>,
+    /// Announcement text and ticks left to show it.
+    banner: Option<(String, i32)>,
 }
 
 impl App {
@@ -125,6 +134,125 @@ impl App {
             debug: true,
             shot: None,
             quit: false,
+            audio: match Audio::new() {
+                Ok(a) => Some(a),
+                Err(e) => {
+                    log::warn!("audio disabled: {e}");
+                    None
+                }
+            },
+            banner: None,
+        }
+    }
+
+    /// Play one sound event through the audio crate.
+    #[allow(clippy::too_many_arguments)]
+    fn play_sound(
+        &mut self,
+        player: usize,
+        own: bool,
+        group: i32,
+        number: i32,
+        channel: i32,
+        volume: i32,
+        announcer: bool,
+    ) {
+        let Some(audio) = self.audio.as_mut() else {
+            return;
+        };
+        let (source, bytes) = if announcer {
+            (
+                u32::MAX - 1,
+                self.world
+                    .fx
+                    .as_ref()
+                    .and_then(|f| f.fight_snd.as_ref())
+                    .and_then(|s| s.get(group, number)),
+            )
+        } else if own {
+            let d = self.world.players[player].data;
+            (
+                d as u32,
+                self.world.data[d]
+                    .snd
+                    .as_ref()
+                    .and_then(|s| s.get(group, number)),
+            )
+        } else {
+            (
+                u32::MAX,
+                self.world
+                    .fx
+                    .as_ref()
+                    .and_then(|f| f.snd.as_ref())
+                    .and_then(|s| s.get(group, number)),
+            )
+        };
+        let key = SoundKey {
+            source,
+            group,
+            number,
+        };
+        if !audio.is_loaded(key) {
+            match bytes {
+                Some(b) => {
+                    audio.load(key, b);
+                }
+                None => return,
+            }
+        }
+        let root = self.world.players[player].root;
+        let pan = ((self.world.players[player].pos[0] - self.world.cam_x)
+            / (self.world.stage.width / 2.0))
+            .clamp(-1.0, 1.0)
+            * 0.5;
+        audio.play(key, root, channel, volume, pan, false);
+    }
+
+    fn handle_events(&mut self) {
+        let events: Vec<Event> = self.world.events.clone();
+        for e in events {
+            match e {
+                Event::Sound {
+                    player,
+                    own,
+                    group,
+                    number,
+                    channel,
+                    volume,
+                } => self.play_sound(player, own, group, number, channel, volume, false),
+                Event::RoundStart(n) => {
+                    self.banner = Some((format!("ROUND {n}"), 90));
+                    self.play_sound(0, false, 0, n, -1, 100, true);
+                }
+                Event::Fight => {
+                    self.banner = Some(("FIGHT".into(), 45));
+                    self.play_sound(0, false, 1, 0, -1, 100, true);
+                }
+                Event::KO => {
+                    self.banner = Some(("K.O.".into(), 90));
+                    self.play_sound(0, false, 2, 0, -1, 100, true);
+                }
+                Event::TimeOver => {
+                    self.banner = Some(("TIME OVER".into(), 90));
+                    self.play_sound(0, false, 2, 2, -1, 100, true);
+                }
+                Event::RoundWon(_) => {}
+                Event::MatchOver(t) => {
+                    let name = if t >= 0 {
+                        self.world.data[self.world.players[t as usize].data]
+                            .display_name
+                            .clone()
+                    } else {
+                        "DRAW".into()
+                    };
+                    self.banner = Some((format!("{name} WINS"), 100_000));
+                }
+                Event::Spark { .. } => {}
+            }
+        }
+        if let Some(a) = self.audio.as_mut() {
+            a.gc();
         }
     }
 
@@ -406,6 +534,30 @@ impl App {
                 [0.3, 0.6, 1.0, 1.0],
             );
         }
+        // round clock, win marks, announcements
+        let clock = self.world.round.clock();
+        if clock >= 0 {
+            draw_number(r, clock, [cam_x, 8.0], 2.0, [1.0, 1.0, 1.0, 1.0]);
+        }
+        for (i, wins) in self.world.round.wins.iter().enumerate() {
+            for k in 0..*wins {
+                let x = if i == 0 {
+                    left + 10.0 + k as f32 * 8.0
+                } else {
+                    left + screen_w - 15.0 - k as f32 * 8.0
+                };
+                r.rect([x, 20.0], [x + 5.0, 25.0], [1.0, 0.9, 0.3, 1.0]);
+            }
+        }
+        if let Some((text, _)) = &self.banner {
+            draw_text(
+                r,
+                text,
+                [cam_x, stage.height * 0.35],
+                3.0,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+        }
         let cam = Camera {
             screen: [screen_w, stage.height],
             center: [cam_x, stage.height / 2.0],
@@ -512,6 +664,11 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 // scripted input for screenshots: walk forward, then punch, capture during the spark
                 if self.shot.is_some() {
+                    let mut guard = 0;
+                    while self.world.round.round_state() != 2 && guard < 2000 {
+                        self.world.step(&[Buttons::default(), Buttons::default()]);
+                        guard += 1;
+                    }
                     for t in 0..66 {
                         let b = if t < 40 {
                             Buttons {
@@ -553,6 +710,13 @@ impl ApplicationHandler for App {
             if !self.paused || self.step {
                 let inputs = [self.held, Buttons::default()];
                 self.world.step(&inputs);
+                self.handle_events();
+                if let Some((_, t)) = self.banner.as_mut() {
+                    *t -= 1;
+                }
+                if self.banner.as_ref().is_some_and(|(_, t)| *t <= 0) {
+                    self.banner = None;
+                }
                 self.step = false;
                 ticked = true;
             }
@@ -578,4 +742,72 @@ fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()> {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()?.write_image_data(rgba)?;
     Ok(())
+}
+
+/// 3x5 pixel font, enough for the HUD.
+fn glyph(c: char) -> [u8; 5] {
+    match c.to_ascii_uppercase() {
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+        'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+        'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
+        'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+        'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
+        'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
+        'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
+        'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+        'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+        'J' => [0b001, 0b001, 0b001, 0b101, 0b010],
+        'K' => [0b101, 0b101, 0b110, 0b101, 0b101],
+        'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+        'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
+        'N' => [0b110, 0b101, 0b101, 0b101, 0b101],
+        'O' => [0b010, 0b101, 0b101, 0b101, 0b010],
+        'P' => [0b110, 0b101, 0b110, 0b100, 0b100],
+        'Q' => [0b010, 0b101, 0b101, 0b111, 0b011],
+        'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+        'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
+        'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
+        'U' => [0b101, 0b101, 0b101, 0b101, 0b111],
+        'V' => [0b101, 0b101, 0b101, 0b101, 0b010],
+        'W' => [0b101, 0b101, 0b111, 0b111, 0b101],
+        'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
+        'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
+        'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
+        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+        '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+        _ => [0; 5],
+    }
+}
+
+/// Draw centered text with the pixel font; `px` = pixel size in logical units.
+fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f32; 4]) {
+    let w = text.chars().count() as f32 * 4.0 * px;
+    let mut x = center[0] - w / 2.0;
+    for c in text.chars() {
+        let g = glyph(c);
+        for (row, bits) in g.iter().enumerate() {
+            for col in 0..3 {
+                if bits & (0b100 >> col) != 0 {
+                    let x0 = x + col as f32 * px;
+                    let y0 = center[1] + row as f32 * px;
+                    r.rect([x0, y0], [x0 + px, y0 + px], color);
+                }
+            }
+        }
+        x += 4.0 * px;
+    }
+}
+
+fn draw_number(r: &mut Renderer, n: i32, center: [f32; 2], px: f32, color: [f32; 4]) {
+    draw_text(r, &format!("{n:02}"), center, px, color);
 }

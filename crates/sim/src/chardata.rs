@@ -272,28 +272,60 @@ fn compile_ctrl(c: &Controller, warnings: &mut Vec<String>, file: &str) -> Ctrl 
     }
 }
 
-/// Shared fight effects: `data/fightfx.sff` + `.air` and `data/common.snd`.
+/// Shared fight effects: `data/fightfx.sff` + `.air`, `common.snd`, `fight.snd`, round timings.
 #[derive(Debug)]
 pub struct FxData {
     pub sff: Sff,
     pub air: Air,
+    /// `common.snd` (PlaySnd with the `F` prefix, hit sounds).
     pub snd: Option<rugen_formats::snd::Snd>,
+    /// `fight.snd` (announcer: round, fight, KO).
+    pub fight_snd: Option<rugen_formats::snd::Snd>,
     pub localcoord: [f32; 2],
+    pub round: crate::round::RoundConfig,
 }
 
 impl FxData {
     pub fn load(data_dir: &Path) -> Result<Arc<Self>> {
-        let sff = Sff::open(resolve(data_dir, "fightfx.sff")?, false)?;
-        let air = Air::open(resolve(data_dir, "fightfx.air")?)?;
-        let snd = resolve(data_dir, "common.snd")
+        let fight = resolve(data_dir, "fight.def")
+            .ok()
+            .and_then(|p| Def::open(p).ok());
+        let files = fight.as_ref().and_then(|d| d.section("files").cloned());
+        let name = |key: &str, default: &str| {
+            files
+                .as_ref()
+                .and_then(|f| f.raw(key).map(str::to_string))
+                .unwrap_or_else(|| default.to_string())
+        };
+        let sff = Sff::open(
+            resolve(data_dir, &name("fightfx.sff", "fightfx.sff"))?,
+            false,
+        )?;
+        let air = Air::open(resolve(data_dir, &name("fightfx.air", "fightfx.air"))?)?;
+        let snd = resolve(data_dir, &name("common.snd", "common.snd"))
             .ok()
             .and_then(|p| rugen_formats::snd::Snd::open(p).ok());
+        let fight_snd = resolve(data_dir, &name("snd", "fight.snd"))
+            .ok()
+            .and_then(|p| rugen_formats::snd::Snd::open(p).ok());
+        let mut round = fight
+            .as_ref()
+            .map(crate::round::RoundConfig::from_fight_def)
+            .unwrap_or_default();
+        if let Ok(cfg) =
+            resolve(data_dir, "mugen.cfg").and_then(|p| Def::open(p).map_err(Into::into))
+            && let Some(t) = cfg.section("options").and_then(|o| o.i32("time"))
+        {
+            round.round_time = t;
+        }
         // fightfx.air carries no localcoord; MUGEN 1.1's fight.def is 320x240
         Ok(Arc::new(Self {
             sff,
             air,
             snd,
+            fight_snd,
             localcoord: [320.0, 240.0],
+            round,
         }))
     }
 }

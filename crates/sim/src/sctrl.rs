@@ -463,7 +463,7 @@ impl Sctrl {
                     return Err(Error::new("value needs group, number"));
                 }
                 Sctrl::PlaySnd {
-                    own: prefix == Some('s'),
+                    own: prefix != Some('f'),
                     group: codes[0].clone(),
                     number: codes[1].clone(),
                     channel: one(c, "channel")?,

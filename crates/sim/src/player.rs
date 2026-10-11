@@ -46,6 +46,7 @@ pub mod assert {
     pub const TIMERFREEZE: u32 = 1 << 17;
     pub const UNGUARDABLE: u32 = 1 << 18;
     pub const NOKO: u32 = 1 << 19;
+    pub const NOINTRORESET: u32 = 1 << 20;
 
     pub fn parse(name: &str) -> Option<u32> {
         Some(match name {
@@ -69,6 +70,7 @@ pub mod assert {
             "timerfreeze" => TIMERFREEZE,
             "unguardable" => UNGUARDABLE,
             "noko" => NOKO,
+            "nointroreset" => NOINTRORESET,
             _ => return None,
         })
     }

@@ -2265,7 +2265,7 @@ version = "0.1.0"
 dependencies = [
  "kira",
  "log",
- "rugen-sim",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

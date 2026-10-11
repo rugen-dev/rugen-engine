@@ -21,12 +21,14 @@ pub mod hit;
 pub mod input;
 pub mod player;
 pub mod projectile;
+pub mod round;
 pub mod sctrl;
 pub mod world;
 
 pub use chardata::{CharData, FxData};
 pub use input::Buttons;
 pub use player::Player;
+pub use round::{Finish, RoundConfig, RoundState};
 pub use world::{Stage, World};
 
 /// Deterministic PRNG living inside simulation state (xorshift64*).

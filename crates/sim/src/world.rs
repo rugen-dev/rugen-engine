@@ -17,6 +17,7 @@ use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
 use crate::player::{Bind, HitBySlot, Player, assert};
 use crate::projectile::{ProjStatus, Projectile, ProjectileSpec};
+use crate::round::{RoundConfig, RoundState};
 use crate::sctrl::ExplodSpec;
 use crate::sctrl::Sctrl;
 
@@ -128,6 +129,13 @@ pub enum Event {
         channel: i32,
         volume: i32,
     },
+    RoundStart(i32),
+    Fight,
+    KO,
+    TimeOver,
+    RoundWon(u8),
+    /// Winning team or -1 for a draw.
+    MatchOver(i32),
     /// Hit/guard spark at a stage position. `own` = from the player's AIR, else fightfx.
     Spark {
         player: usize,
@@ -158,6 +166,7 @@ pub struct World {
     pub super_player: i32,
     /// 0..1 screen brightness during super pause.
     pub superbrightness: f32,
+    pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
 }
@@ -183,6 +192,7 @@ impl World {
             pause_player: -1,
             super_player: -1,
             superbrightness: 1.0,
+            round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
         }
@@ -229,11 +239,12 @@ impl World {
         );
         p.cmds = CommandList::compile(&data.cmd);
         self.players.push(p);
-        // round start: MUGEN runs state 5900 then 0 and grants control once the round begins
+        // tests and tools can fight right away; `start_round` does the real intro sequence
         self.change_state(idx, 5900, None, None);
         self.apply_pending(idx);
         self.change_state(idx, 0, None, Some(true));
         self.apply_pending(idx);
+        self.round.intro = 0;
         idx
     }
 
@@ -543,6 +554,11 @@ impl World {
         for i in 0..n {
             let pb = self.compute_pause_bool(i);
             self.players[i].pause_bool = pb;
+        }
+        self.step_round();
+        if self.round.match_over {
+            self.frame += 1;
+            return;
         }
 
         // 1. commands
@@ -1453,6 +1469,10 @@ impl World {
         self.players[i].targets = keep;
     }
 
+    pub(crate) fn run_current_pub(&mut self, i: usize) {
+        self.run_current(i);
+    }
+
     /// Apply a buffered state change and run the current state's controllers,
     /// following ChangeStates from inside the body immediately (Ikemen `changeStateEx`).
     fn run_current(&mut self, i: usize) {
@@ -2230,7 +2250,7 @@ impl World {
         }
     }
 
-    fn update_camera(&mut self) {
+    pub(crate) fn update_camera(&mut self) {
         if self.players.is_empty() {
             return;
         }
@@ -2315,6 +2335,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::round::{Finish, RoundConfig, RoundState};
     use std::path::PathBuf;
 
     fn kfm() -> Option<Arc<CharData>> {
@@ -2779,6 +2800,101 @@ mod tests {
         run(&mut w, 15, Buttons::default());
         assert!(w.players[h].removed, "DestroySelf after 10 ticks");
         assert!(w.players.iter().filter(|p| !p.removed).count() == 2);
+    }
+
+    #[test]
+    fn full_round_flow_to_match_over() {
+        let Some(mut w) = world() else { return };
+        w.round = RoundState::new(RoundConfig {
+            round_time: 99,
+            ..Default::default()
+        });
+        w.start_round();
+        assert_eq!(w.round.round_state(), 0, "pre-intro");
+        assert!(!w.players[0].ctrl);
+        run(&mut w, 40, Buttons::default());
+        assert_eq!(
+            w.round.round_state(),
+            1,
+            "KFM's intro pose holds the round (AssertSpecial intro)"
+        );
+        let mut waited = 0;
+        while w.round.round_state() != 2 && waited < 1200 {
+            run(&mut w, 1, Buttons::default());
+            waited += 1;
+        }
+        assert_eq!(w.round.round_state(), 2, "fighting once the intro ends");
+        assert!(w.players[0].ctrl && w.players[1].ctrl);
+        assert_eq!(w.round.clock(), 99);
+        // P2 dies to one punch
+        w.players[1].life = 1;
+        walk_until_close(&mut w);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        run(&mut w, 30, Buttons::default());
+        assert!(w.players[1].ko);
+        assert_eq!(w.round.finish, Finish::KO);
+        assert_eq!(w.round.win_team, 0);
+        assert_eq!(w.round.round_state(), 3);
+        run(&mut w, 120, Buttons::default());
+        assert_eq!(w.round.round_state(), 4);
+        assert!(
+            (180..=189).contains(&w.players[0].state_no),
+            "winner in a win pose: {}",
+            w.players[0].state_no
+        );
+        assert_eq!(w.round.wins, [1, 0]);
+        run(&mut w, 250, Buttons::default());
+        assert_eq!(w.round.round_no, 2, "second round started");
+        assert_eq!(w.players[1].life, w.players[1].life_max, "life restored");
+        assert!(!w.players[1].ko);
+        assert!(w.explods.is_empty());
+        // round 2: no intro pose, straight to the fight
+        let mut waited = 0;
+        while w.round.round_state() != 2 && waited < 1200 {
+            run(&mut w, 1, Buttons::default());
+            waited += 1;
+        }
+        w.players[1].life = 1;
+        walk_until_close(&mut w);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        run(&mut w, 400, Buttons::default());
+        assert!(w.round.match_over, "two wins end the match");
+        assert_eq!(w.round.wins, [2, 0]);
+        assert!(w.events.iter().any(|e| matches!(e, Event::MatchOver(0))) || w.round.match_over);
+    }
+
+    #[test]
+    fn time_over_decides_by_life() {
+        let Some(mut w) = world() else { return };
+        w.round = RoundState::new(RoundConfig {
+            round_time: 1,
+            ..Default::default()
+        });
+        w.start_round();
+        let mut waited = 0;
+        while w.round.round_state() != 2 && waited < 1200 {
+            run(&mut w, 1, Buttons::default());
+            waited += 1;
+        }
+        w.players[1].life = 500;
+        run(&mut w, 70, Buttons::default());
+        assert_eq!(w.round.finish, Finish::TimeOver);
+        assert_eq!(w.round.win_team, 0);
+        assert_eq!(w.round.clock(), 0);
     }
 
     #[test]

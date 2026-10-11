@@ -7,6 +7,7 @@ use rugen_cns::{Context, Redirect, Value, VarKind};
 
 use crate::hit::{HitType, attr};
 use crate::projectile::ProjContact;
+use crate::round::Finish;
 use crate::world::World;
 
 pub struct Ctx<'a> {
@@ -129,7 +130,6 @@ impl Context for Ctx<'_> {
                 p.ghv.fallflag && p.ghv.fall_recover && p.ghv.fall_time >= p.ghv.fall_recovertime,
             ),
             T::Ctrl => Self::b(p.ctrl),
-            T::DrawGame => Self::b(false),
             T::Facing => Self::i(if p.facing < 0.0 { -1 } else { 1 }),
             T::GameHeight => Self::f(self.w.stage.height),
             T::GameWidth => Self::f(self.w.stage.width),
@@ -147,15 +147,41 @@ impl Context for Ctx<'_> {
             T::IsHomeTeam => Self::b(p.team == 0),
             T::Life => Self::i(p.life),
             T::LifeMax => Self::i(p.life_max),
-            T::Lose
-            | T::Win
-            | T::MatchOver
+            T::Win
             | T::WinKO
             | T::WinTime
             | T::WinPerfect
+            | T::Lose
             | T::LoseKO
-            | T::LoseTime => Self::b(false),
-            T::MatchNo | T::RoundNo => Self::i(1),
+            | T::LoseTime
+            | T::MatchOver
+            | T::DrawGame => {
+                let r = &self.w.round;
+                let decided = r.finish != Finish::NotYet;
+                let team = p.team as i32;
+                let won = decided && r.win_team == team;
+                let lost = decided && r.win_team >= 0 && r.win_team != team;
+                Self::b(match t {
+                    T::Win => won,
+                    T::WinKO => won && r.finish == Finish::KO,
+                    T::WinTime => won && r.finish == Finish::TimeOver,
+                    T::WinPerfect => {
+                        won && self
+                            .w
+                            .players
+                            .iter()
+                            .filter(|o| o.helper_index == 0 && o.team == p.team)
+                            .all(|o| o.life >= o.life_max)
+                    }
+                    T::Lose => lost,
+                    T::LoseKO => lost && r.finish == Finish::KO,
+                    T::LoseTime => lost && r.finish == Finish::TimeOver,
+                    T::MatchOver => r.match_over,
+                    _ => decided && r.win_team < 0,
+                })
+            }
+            T::MatchNo => Self::i(1),
+            T::RoundNo => Self::i(self.w.round.round_no),
             T::MoveContact => Self::i(p.move_contact()),
             T::MoveGuarded => Self::i(p.move_guarded()),
             T::MoveHit => Self::i(p.move_hit()),
@@ -252,8 +278,8 @@ impl Context for Ctx<'_> {
                 let r = self.w.rng.random();
                 Self::i(r)
             }
-            T::RoundsExisted => Self::i(0),
-            T::RoundState => Self::i(2),
+            T::RoundsExisted => Self::i(self.w.round.round_no - 1),
+            T::RoundState => Self::i(self.w.round.round_state()),
             T::ScreenPos(Axis::X) => Self::f(p.pos[0] - self.w.screen_left()),
             T::ScreenPos(Axis::Y) => Self::f(p.pos[1] + self.w.stage.zoffset),
             T::ScreenHeight => Self::f(self.w.stage.height),

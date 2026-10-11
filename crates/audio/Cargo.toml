@@ -1,6 +1,6 @@
 [package]
 name = "rugen-audio"
-description = "Audio playback via kira"
+description = "Audio playback via kira: character/common sounds with MUGEN channel semantics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rugen-sim.workspace = true
 kira.workspace = true
 log.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
