@@ -339,3 +339,73 @@ mod tests {
         assert_eq!(ib.state(Key::D, false, true), 1, "$D ignores the conflict");
     }
 }
+
+/// MUGEN-style AI "button jamming" (ported from Ikemen `AiInput`): directions
+/// and buttons are held for random spans, more often at higher levels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiInput {
+    /// 0 = U, 1 = UR, 2 = R, 3 = DR, 4 = D, 5 = DL, 6 = L, 7 = UL
+    dir: i32,
+    dirt: i32,
+    at: i32,
+    bt: i32,
+    ct: i32,
+    xt: i32,
+    yt: i32,
+    zt: i32,
+    st: i32,
+}
+
+impl AiInput {
+    /// Advance one tick. `active` is false during intros and win poses.
+    pub fn update(&mut self, level: i32, active: bool, rng: &mut crate::Rng) -> Buttons {
+        if !active {
+            *self = Self {
+                dir: self.dir,
+                ..Default::default()
+            };
+            return Buttons::default();
+        }
+        // Rand(1, chance) == 1 → hold for Rand(1, time)
+        let jam = |t: &mut i32, chance: i32, time: i32, rng: &mut crate::Rng| -> bool {
+            *t -= 1;
+            if *t <= 0 {
+                if rng.below(chance.max(1) as u32) == 0 {
+                    *t = 1 + rng.below(time.max(1) as u32) as i32;
+                    return true;
+                }
+                *t = 0;
+            }
+            false
+        };
+        if jam(&mut self.dirt, 15, 60, rng) {
+            self.dir = rng.below(8) as i32;
+        }
+        let chance = ((-11.25 * level as f32 + 165.0) * 7.0) as i32;
+        for t in [
+            &mut self.at,
+            &mut self.bt,
+            &mut self.ct,
+            &mut self.xt,
+            &mut self.yt,
+            &mut self.zt,
+        ] {
+            jam(t, chance, 30, rng);
+        }
+        jam(&mut self.st, 3600, 30, rng);
+        let d = self.dirt != 0;
+        Buttons {
+            u: d && matches!(self.dir, 7 | 0 | 1),
+            d: d && matches!(self.dir, 3..=5),
+            l: d && matches!(self.dir, 5..=7),
+            r: d && matches!(self.dir, 1..=3),
+            a: self.at != 0,
+            b: self.bt != 0,
+            c: self.ct != 0,
+            x: self.xt != 0,
+            y: self.yt != 0,
+            z: self.zt != 0,
+            s: self.st != 0,
+        }
+    }
+}

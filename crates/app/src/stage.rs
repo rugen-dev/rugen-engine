@@ -56,9 +56,6 @@ pub struct StageVisual {
     air: Air,
     elems: Vec<Elem>,
     pub localcoord: [f32; 2],
-    pub bound_high: f32,
-    pub vertical_follow: f32,
-    pub floor_tension: f32,
     textures: HashMap<(u16, u16), Option<Tex>>,
     palettes: Vec<PaletteId>,
     tick: i32,
@@ -80,10 +77,6 @@ impl StageVisual {
             .and_then(|s| s.f32s("localcoord"))
             .filter(|v| v.len() >= 2 && v[0] > 0.0)
             .map_or([320.0, 240.0], |v| [v[0], v[1]]);
-        let cam = def.section("camera");
-        let bound_high = cam.and_then(|c| c.f32("boundhigh")).unwrap_or(-25.0);
-        let vertical_follow = cam.and_then(|c| c.f32("verticalfollow")).unwrap_or(0.2);
-        let floor_tension = cam.and_then(|c| c.f32("floortension")).unwrap_or(0.0);
         let mut elems = Vec::new();
         for s in def.sections_named("bg") {
             let ty = s
@@ -179,9 +172,6 @@ impl StageVisual {
             air,
             elems,
             localcoord,
-            bound_high,
-            vertical_follow,
-            floor_tension,
             textures: HashMap::new(),
             palettes: Vec::new(),
             tick: 0,

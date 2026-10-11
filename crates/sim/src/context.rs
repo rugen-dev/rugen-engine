@@ -73,7 +73,7 @@ impl Context for Ctx<'_> {
         let data = &self.w.data[p.data];
         let arg = |n: usize| args.get(n).copied().unwrap_or(Value::Bottom);
         match t {
-            T::AILevel => Self::i(0),
+            T::AILevel => Self::i(p.ai_level),
             T::Alive => Self::b(p.life > 0),
             T::Anim => Self::i(p.anim.action),
             T::AnimTime => match data.air.get(p.anim.action) {

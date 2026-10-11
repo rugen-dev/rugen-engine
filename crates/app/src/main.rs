@@ -5,6 +5,7 @@
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
 //!   --synctest                                                  local match that verifies determinism
+//!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //!
@@ -61,6 +62,7 @@ fn main() -> anyhow::Result<()> {
             let net = opt("--net");
             let port = opt("--port");
             let frames = opt("--frames");
+            let ai = opt("--ai");
             let taken = [
                 stage.clone(),
                 shot.clone(),
@@ -69,6 +71,7 @@ fn main() -> anyhow::Result<()> {
                 net.clone(),
                 port.clone(),
                 frames.clone(),
+                ai.clone(),
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let synctest = args.iter().any(|a| a == "--synctest");
@@ -79,7 +82,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys]"
                 )
             })?;
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
@@ -144,6 +147,10 @@ fn main() -> anyhow::Result<()> {
                     net: net_mode,
                     shot: shot.map(std::path::PathBuf::from),
                     script,
+                    ai: ai
+                        .map(|a| a.parse::<i32>().context("--ai expects 0..8"))
+                        .transpose()?
+                        .unwrap_or(if synctest { 0 } else { 4 }),
                     frames: frames
                         .map(|f| f.parse::<u32>().context("--frames expects a number"))
                         .transpose()?,

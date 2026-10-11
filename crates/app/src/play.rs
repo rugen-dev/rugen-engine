@@ -50,6 +50,8 @@ pub struct PlayOpts {
     pub net: Option<NetMode>,
     pub shot: Option<PathBuf>,
     pub script: Option<String>,
+    /// Computer control for P2 (0 = human).
+    pub ai: i32,
     /// Run this many ticks through the normal loop (local or net), then shoot/quit.
     pub frames: Option<u32>,
 }
@@ -97,6 +99,9 @@ pub fn run(
     }
     world.add_player(d1, 0, 1);
     world.add_player(d2, 1, 2);
+    if opts.net.is_none() {
+        world.players[1].ai_level = opts.ai.clamp(0, 8);
+    }
     world.start_round();
     log::info!("{} vs {}", world.data[0].name, world.data[1].name);
 
@@ -226,7 +231,6 @@ struct App {
     /// Announcement text and ticks left to show it.
     banner: Option<(String, i32)>,
     stage_visual: Option<crate::stage::StageVisual>,
-    cam_y: f32,
 }
 
 impl App {
@@ -260,7 +264,6 @@ impl App {
             },
             banner: None,
             stage_visual: None,
-            cam_y: 0.0,
         }
     }
 
@@ -620,7 +623,8 @@ impl App {
 
         let shake = self.world.envshake.offset;
         let cam_x = cam_x + shake[0];
-        let cam_y = self.cam_y + shake[1];
+        let cam_y = self.world.cam_y + shake[1];
+        let zoom = self.world.cam_zoom * self.zoom;
         let bg_tint = tint(self.world.bgpalfx.sample());
         let mut stage_visual = self.stage_visual.take();
         let Some(gpu) = self.gpu.as_mut() else { return };
@@ -629,13 +633,21 @@ impl App {
         let (w, h) = r.size();
         let aspect = w as f32 / h as f32;
         let screen_w = stage.height * aspect;
+        // zoom is anchored on the ground line; HUD coordinates are "screen" units
+        // mapped back into the zoomed world so bars never scale with the camera
+        let center_y = ground - (ground - stage.height / 2.0) / zoom;
+        let u = 1.0 / zoom;
+        let hud_left = cam_x - screen_w * u / 2.0;
+        let hud_w = screen_w * u;
+        let hud_top = center_y - stage.height * u / 2.0;
+        let hud = |sx: f32, sy: f32| [hud_left + sx * u, hud_top + sy * u];
         match stage_visual.as_mut() {
             Some(sv) => sv.draw(
                 r,
                 0,
                 [cam_x, cam_y],
                 stage.width / sv.localcoord[0],
-                screen_w,
+                screen_w * u,
                 bg_tint,
             ),
             None => r.rect(
@@ -702,7 +714,7 @@ impl App {
                 1,
                 [cam_x, cam_y],
                 stage.width / sv.localcoord[0],
-                screen_w,
+                screen_w * u,
                 bg_tint,
             );
         }
@@ -713,8 +725,7 @@ impl App {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        // life bars
-        let left = cam_x - screen_w / 2.0;
+        // life bars (screen units via `hud`)
         for (i, p) in self
             .world
             .players
@@ -725,17 +736,17 @@ impl App {
             let frac = (p.life.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
             let bar_w = screen_w * 0.4;
             let (x0, x1) = if i == 0 {
-                (left + 10.0, left + 10.0 + bar_w)
+                (10.0, 10.0 + bar_w)
             } else {
-                (left + screen_w - 10.0 - bar_w, left + screen_w - 10.0)
+                (screen_w - 10.0 - bar_w, screen_w - 10.0)
             };
-            r.rect([x0, 8.0], [x1, 16.0], [0.1, 0.1, 0.1, 0.9]);
+            r.rect(hud(x0, 8.0), hud(x1, 16.0), [0.1, 0.1, 0.1, 0.9]);
             let (fx0, fx1) = if i == 0 {
                 (x1 - bar_w * frac, x1)
             } else {
                 (x0, x0 + bar_w * frac)
             };
-            r.rect([fx0, 8.0], [fx1, 16.0], [0.9, 0.8, 0.2, 1.0]);
+            r.rect(hud(fx0, 8.0), hud(fx1, 16.0), [0.9, 0.8, 0.2, 1.0]);
             let pf = (p.power as f32 / p.power_max.max(1) as f32).clamp(0.0, 1.0);
             let (px0, px1) = if i == 0 {
                 (x0, x0 + bar_w * pf)
@@ -743,37 +754,43 @@ impl App {
                 (x1 - bar_w * pf, x1)
             };
             r.rect(
-                [x0, stage.height - 14.0],
-                [x1, stage.height - 10.0],
+                hud(x0, stage.height - 14.0),
+                hud(x1, stage.height - 10.0),
                 [0.1, 0.1, 0.1, 0.9],
             );
             r.rect(
-                [px0, stage.height - 14.0],
-                [px1, stage.height - 10.0],
+                hud(px0, stage.height - 14.0),
+                hud(px1, stage.height - 10.0),
                 [0.3, 0.6, 1.0, 1.0],
             );
         }
         // round clock, win marks, announcements
         let clock = self.world.round.clock();
         if clock >= 0 {
-            draw_number(r, clock, [cam_x, 8.0], 2.0, [1.0, 1.0, 1.0, 1.0]);
+            draw_number(
+                r,
+                clock,
+                hud(screen_w / 2.0, 8.0),
+                2.0 * u,
+                [1.0, 1.0, 1.0, 1.0],
+            );
         }
         for (i, wins) in self.world.round.wins.iter().enumerate() {
             for k in 0..*wins {
                 let x = if i == 0 {
-                    left + 10.0 + k as f32 * 8.0
+                    10.0 + k as f32 * 8.0
                 } else {
-                    left + screen_w - 15.0 - k as f32 * 8.0
+                    screen_w - 15.0 - k as f32 * 8.0
                 };
-                r.rect([x, 20.0], [x + 5.0, 25.0], [1.0, 0.9, 0.3, 1.0]);
+                r.rect(hud(x, 20.0), hud(x + 5.0, 25.0), [1.0, 0.9, 0.3, 1.0]);
             }
         }
         if !self.net_status.is_empty() {
             draw_text(
                 r,
                 &self.net_status,
-                [cam_x, stage.height - 4.0],
-                1.0,
+                hud(screen_w / 2.0, stage.height - 4.0),
+                u,
                 [0.8, 0.9, 1.0, 0.9],
             );
         }
@@ -781,15 +798,16 @@ impl App {
             draw_text(
                 r,
                 text,
-                [cam_x, stage.height * 0.35],
-                3.0,
+                hud(screen_w / 2.0, stage.height * 0.35),
+                3.0 * u,
                 [1.0, 1.0, 1.0, 1.0],
             );
         }
+        let _ = hud_w;
         let cam = Camera {
             screen: [screen_w, stage.height],
-            center: [cam_x, stage.height / 2.0],
-            zoom: self.zoom,
+            center: [cam_x, center_y],
+            zoom,
         };
         self.stage_visual = stage_visual;
         let Some(gpu) = self.gpu.as_mut() else { return };
@@ -993,17 +1011,6 @@ impl ApplicationHandler for App {
                 }
                 if let Some(sv) = self.stage_visual.as_mut() {
                     sv.step();
-                    // vertical follow: track the highest root player
-                    let highest = self
-                        .world
-                        .players
-                        .iter()
-                        .filter(|p| !p.removed && p.helper_index == 0)
-                        .map(|p| p.pos[1])
-                        .fold(0.0f32, f32::min);
-                    let target = ((highest + sv.floor_tension).min(0.0) * sv.vertical_follow)
-                        .max(sv.bound_high);
-                    self.cam_y += (target - self.cam_y) * 0.2;
                 }
                 if let Some((_, t)) = self.banner.as_mut() {
                     *t -= 1;

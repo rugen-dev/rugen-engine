@@ -43,6 +43,14 @@ pub struct Stage {
     pub p1_start_x: f32,
     pub p2_start_x: f32,
     pub tension: f32,
+    pub start_x: f32,
+    pub bound_high: f32,
+    pub bound_low: f32,
+    pub vertical_follow: f32,
+    pub floor_tension: f32,
+    /// Zoom limits: `zoom_out` ≤ 1 lets the camera pull back, `zoom_in` ≥ 1 lets it close in.
+    pub zoom_out: f32,
+    pub zoom_in: f32,
 }
 
 impl Default for Stage {
@@ -63,6 +71,13 @@ impl Default for Stage {
             p1_start_x: -70.0,
             p2_start_x: 70.0,
             tension: 50.0,
+            start_x: 0.0,
+            bound_high: -25.0,
+            bound_low: 0.0,
+            vertical_follow: 0.2,
+            floor_tension: 0.0,
+            zoom_out: 1.0,
+            zoom_in: 1.0,
         }
     }
 }
@@ -95,6 +110,27 @@ impl Stage {
         }
         if let Some(v) = g("camera", "tension") {
             s.tension = v;
+        }
+        if let Some(v) = g("camera", "startx") {
+            s.start_x = v;
+        }
+        if let Some(v) = g("camera", "boundhigh") {
+            s.bound_high = v;
+        }
+        if let Some(v) = g("camera", "boundlow") {
+            s.bound_low = v;
+        }
+        if let Some(v) = g("camera", "verticalfollow") {
+            s.vertical_follow = v.clamp(0.0, 1.0);
+        }
+        if let Some(v) = g("camera", "floortension") {
+            s.floor_tension = v;
+        }
+        if let Some(v) = g("camera", "zoomout") {
+            s.zoom_out = v.clamp(0.1, 1.0);
+        }
+        if let Some(v) = g("camera", "zoomin") {
+            s.zoom_in = v.max(s.zoom_out);
         }
         if let Some(v) = g("playerinfo", "leftbound") {
             s.left_bound = v;
@@ -162,6 +198,10 @@ pub struct World {
     pub frame: u32,
     pub rng: Rng,
     pub cam_x: f32,
+    /// Vertical camera offset (negative = up), after verticalfollow.
+    pub cam_y: f32,
+    /// Camera zoom: 1 = native, < 1 pulled back, > 1 closed in.
+    pub cam_zoom: f32,
     /// Pause / SuperPause ticks remaining (buffered: start next tick).
     pub pausetime: i32,
     pub supertime: i32,
@@ -195,6 +235,8 @@ impl World {
             frame: 0,
             rng: Rng::new(seed),
             cam_x: 0.0,
+            cam_y: 0.0,
+            cam_zoom: 1.0,
             pausetime: 0,
             supertime: 0,
             pausetime_buffer: 0,
@@ -294,13 +336,16 @@ impl World {
     }
 
     pub fn screen_left(&self) -> f32 {
-        self.cam_x - self.stage.width / 2.0
+        self.cam_x - self.stage.width / (2.0 * self.cam_zoom)
+    }
+    pub fn screen_right(&self) -> f32 {
+        self.cam_x + self.stage.width / (2.0 * self.cam_zoom)
     }
     /// Stage x range players may occupy on screen.
     pub fn screen_bounds(&self) -> (f32, f32) {
         (
             self.screen_left() + self.stage.screen_left,
-            self.cam_x + self.stage.width / 2.0 - self.stage.screen_right,
+            self.screen_right() - self.stage.screen_right,
         )
     }
 
@@ -651,8 +696,17 @@ impl World {
                 i += 1;
                 continue;
             }
+            let b = if self.players[i].ai_level > 0 {
+                let level = self.players[i].ai_level;
+                let active = self.round.round_state() == 2;
+                let mut ai = self.players[i].ai;
+                let b = ai.update(level, active, &mut self.rng);
+                self.players[i].ai = ai;
+                b
+            } else {
+                inputs.get(i).copied().unwrap_or_default()
+            };
             let p = &mut self.players[i];
-            let b = inputs.get(i).copied().unwrap_or_default();
             let (back, fwd) = if p.facing < 0.0 {
                 (b.r, b.l)
             } else {
@@ -2744,22 +2798,92 @@ impl World {
         }
     }
 
+    /// MUGEN camera: the view only moves when a player crosses the tension
+    /// zone near a screen edge; it zooms out (down to `zoomout`) when players
+    /// drift apart and back in (up to `zoomin`) when they close.
     pub(crate) fn update_camera(&mut self) {
-        if self.players.is_empty() {
-            return;
-        }
-        let (min, max) = self
+        let st = &self.stage;
+        let (mut leftest, mut rightest, mut highest) = (f32::MAX, f32::MIN, 0.0f32);
+        for p in self
             .players
             .iter()
-            .filter(|p| !p.removed && p.helper_index == 0)
-            .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
-                (lo.min(p.pos[0]), hi.max(p.pos[0]))
-            });
-        if min > max {
+            .filter(|p| !p.removed && p.helper_index == 0 && p.player_type)
+        {
+            leftest = leftest.min(p.pos[0]);
+            rightest = rightest.max(p.pos[0]);
+            highest = highest.min(p.pos[1]);
+        }
+        if leftest > rightest {
             return;
         }
-        let mid = (min + max) / 2.0;
-        self.cam_x = mid.clamp(self.stage.bound_left, self.stage.bound_right);
+        let half = st.width / 2.0;
+        let tension = st.tension.max(0.0);
+        let min_left = st.bound_left - half;
+        let max_right = st.bound_right + half;
+        let scale = self.cam_zoom;
+        let (old_left, old_right) = (self.cam_x - half / scale, self.cam_x + half / scale);
+        let (mut tl, mut tr) = (old_left, old_right);
+        if leftest < tl + tension {
+            let nl = (leftest - tension).max(min_left);
+            let diff = tl - nl;
+            tl = nl;
+            tr = (old_right - diff).max((rightest + tension).min(max_right));
+        } else if rightest > tr - tension {
+            let nr = (rightest + tension).min(max_right);
+            let diff = tr - nr;
+            tr = nr;
+            tl = (old_left - diff).min((leftest - tension).max(min_left));
+        }
+        // too wide for the zoom-out limit: pull the edges back in
+        if half * 2.0 / (tr - tl) < st.zoom_out {
+            let r_left = (tl + tension - leftest).max(0.0);
+            let r_right = (rightest - (tr - tension)).max(0.0);
+            let mut diff = 2.0 * ((tr - tl) / 2.0 - half / st.zoom_out);
+            if r_left > r_right {
+                let d2 = (r_left - r_right).min(diff);
+                tr -= d2;
+                diff -= d2;
+            } else if r_right > r_left {
+                let d2 = (r_right - r_left).min(diff);
+                tl += d2;
+                diff -= d2;
+            }
+            tl += diff / 2.0;
+            tr -= diff / 2.0;
+        }
+        // room to zoom in: tighten the edges toward the players
+        let max_scale = st.zoom_in;
+        if half * 2.0 / (tr - tl) < max_scale {
+            let mut dl = (leftest - tension - tl).max(0.0);
+            let mut dr = (rightest + tension - tr).min(0.0);
+            if dl - dr > 0.0 && half * 2.0 / ((tr + dr) - (tl + dl)) > max_scale {
+                let span = (tr + dr) - (tl + dl) - half * 2.0 / max_scale;
+                let t1 = dl / (dl - dr) * span;
+                let t2 = dr / (dl - dr) * span;
+                dl += t1;
+                dr += t2;
+            }
+            tl += dl;
+            tr += dr;
+        }
+        let target_x = (tl + tr) / 2.0;
+        let target_scale = (half * 2.0 / (tr - tl)).clamp(st.zoom_out, max_scale);
+        // smooth zoom, immediate pan
+        let new_scale = if (target_scale - scale).abs() < 0.0005 {
+            target_scale
+        } else {
+            scale + (target_scale - scale) * 0.1
+        };
+        let hw = half / new_scale;
+        self.cam_zoom = new_scale;
+        self.cam_x = target_x.clamp(min_left + hw, (max_right - hw).max(min_left + hw));
+        // vertical follow toward the highest player
+        let target_y = ((highest + st.floor_tension).min(0.0) * st.vertical_follow)
+            .clamp(st.bound_high.min(st.bound_low), st.bound_low);
+        self.cam_y += (target_y - self.cam_y) * 0.2;
+        if (target_y - self.cam_y).abs() < 0.01 {
+            self.cam_y = target_y;
+        }
     }
 
     pub(crate) fn screen_bound(&mut self, i: usize) {
@@ -2808,6 +2932,8 @@ impl World {
         };
         mix(self.frame as u64);
         mix(self.rng.state());
+        mix(self.cam_x.to_bits() as u64);
+        mix(self.cam_zoom.to_bits() as u64);
         for p in &self.players {
             mix(p.pos[0].to_bits() as u64);
             mix(p.pos[1].to_bits() as u64);

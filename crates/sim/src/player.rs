@@ -7,7 +7,7 @@ use crate::command::CommandList;
 use crate::explod::Trans;
 use crate::fx::{AfterImage, PalFx};
 use crate::hit::{GetHitVar, HitDef, MoveContact, MoveHitVar};
-use crate::input::InputBuffer;
+use crate::input::{AiInput, InputBuffer};
 use crate::projectile::ProjContact;
 
 /// `HitBy` / `NotHitBy` slot.
@@ -202,6 +202,10 @@ pub struct Player {
     pub pctype: ProjContact,
     pub pctime: i32,
     pub pcid: i32,
+    // ---- AI
+    /// 0 = human, 1..=8 = computer controlled (`AILevel`).
+    pub ai_level: i32,
+    pub ai: AiInput,
     // ---- drawing
     /// `Trans` controller for this tick (reset every tick).
     pub trans: Trans,
@@ -315,6 +319,8 @@ impl Player {
             pctype: ProjContact::None,
             pctime: -1,
             pcid: 0,
+            ai_level: 0,
+            ai: AiInput::default(),
             trans: Trans::Default,
             alpha: [255, 0],
             angle: 0.0,
