@@ -60,6 +60,11 @@ pub struct CharData {
 
 impl CharData {
     pub fn load(def_path: &Path) -> Result<Arc<Self>> {
+        Self::load_with_data(def_path, Path::new(""))
+    }
+
+    /// `data_dir` holds the engine's `common1.cns`; the char's own directory is searched first.
+    pub fn load_with_data(def_path: &Path, data_dir: &Path) -> Result<Arc<Self>> {
         let def = Def::open(def_path)?;
         let dir = def_path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let info = def
@@ -175,7 +180,9 @@ impl CharData {
             .raw("stcommon")
             .filter(|s| !s.is_empty())
             .unwrap_or("common1.cns");
-        let common_path = find(common).or_else(|_| find_common(&dir, common))?;
+        let common_path = find(common)
+            .or_else(|_| resolve(data_dir, common))
+            .or_else(|_| find_common(&dir, common))?;
         let common_text = decode(&std::fs::read(&common_path)?);
         add(
             common,

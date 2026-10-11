@@ -26,6 +26,7 @@ pub fn run(
     p2: Option<&Path>,
     stage: Option<&Path>,
     shot: Option<PathBuf>,
+    data_dir: &Path,
 ) -> anyhow::Result<()> {
     let stage = match stage {
         Some(p) => Stage::from_def(
@@ -33,9 +34,11 @@ pub fn run(
         ),
         None => Stage::default(),
     };
-    let d1 = CharData::load(p1).with_context(|| p1.display().to_string())?;
+    let d1 = CharData::load_with_data(p1, data_dir).with_context(|| p1.display().to_string())?;
     let d2 = match p2 {
-        Some(p) => CharData::load(p).with_context(|| p.display().to_string())?,
+        Some(p) => {
+            CharData::load_with_data(p, data_dir).with_context(|| p.display().to_string())?
+        }
         None => d1.clone(),
     };
     for d in [&d1, &d2] {

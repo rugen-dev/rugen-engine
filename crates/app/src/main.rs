@@ -2,7 +2,10 @@
 //!
 //! ```text
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
-//! rugen play <p1.def> [p2.def] [--stage stage.def]              local match, keyboard P1
+//! rugen play <char> [char2] [--stage s] [--root dir]           local match, keyboard P1
+//! rugen list [--root dir]                                       list chars/ and stages/
+//!
+//! `<char>` is an id from chars/ (file stem of a .zip/.rar/folder) or a path.
 //! ```
 
 #![forbid(unsafe_code)]
@@ -45,26 +48,74 @@ fn main() -> anyhow::Result<()> {
             };
             let stage = opt("--stage");
             let shot = opt("--shot");
+            let root = opt("--root");
+            let taken = [stage.clone(), shot.clone(), root.clone()];
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .filter(|a| !a.starts_with("--"))
-                .filter(|a| Some(*a) != stage.as_ref() && Some(*a) != shot.as_ref())
+                .filter(|a| !taken.iter().any(|t| t.as_ref() == Some(*a)))
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <p1.def> [p2.def] [--stage stage.def] [--shot out.png]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]"
                 )
             })?;
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let resolve = |name: &str| -> anyhow::Result<std::path::PathBuf> {
+                let entry = lib.find_char(name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "character {name:?} not found in {}",
+                        lib.chars_dir().display()
+                    )
+                })?;
+                let (dir, m) = lib.prepare_char(&entry)?;
+                Ok(dir.join(m.def))
+            };
+            let p1 = resolve(p1)?;
+            let p2 = rest.get(1).map(|s| resolve(s)).transpose()?;
+            let stage = stage
+                .map(|s| -> anyhow::Result<std::path::PathBuf> {
+                    let p = std::path::Path::new(&s);
+                    if p.exists() && p.extension().is_some_and(|e| e == "def") {
+                        return Ok(p.to_path_buf());
+                    }
+                    let entry = lib
+                        .stages()
+                        .into_iter()
+                        .find(|e| e.id.eq_ignore_ascii_case(&s))
+                        .ok_or_else(|| anyhow::anyhow!("stage {s:?} not found"))?;
+                    let (dir, m) = lib.prepare_stage(&entry)?;
+                    Ok(dir.join(m.def))
+                })
+                .transpose()?;
             play::run(
-                std::path::Path::new(p1),
-                rest.get(1).map(|s| std::path::Path::new(s.as_str())),
-                stage.as_deref().map(std::path::Path::new),
+                &p1,
+                p2.as_deref(),
+                stage.as_deref(),
                 shot.map(std::path::PathBuf::from),
+                &lib.data_dir(),
             )
+        }
+        Some("list") => {
+            let root = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1).cloned());
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            println!("root: {}", lib.root.display());
+            println!("chars:");
+            for c in lib.chars() {
+                println!("  {:<24} {:?}  {}", c.id, c.kind, c.source.display());
+            }
+            println!("stages:");
+            for s in lib.stages() {
+                println!("  {:<24} {:?}  {}", s.id, s.kind, s.source.display());
+            }
+            Ok(())
         }
         _ => {
             eprintln!(
-                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <p1.def> [p2.def] [--stage stage.def] [--shot out.png]",
+                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]\n  rugen list [--root dir]",
                 env!("CARGO_PKG_VERSION")
             );
             Ok(())

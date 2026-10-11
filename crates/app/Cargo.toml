@@ -14,6 +14,7 @@ rugen-sim.workspace = true
 rugen-net.workspace = true
 rugen-render.workspace = true
 rugen-audio.workspace = true
+rugen-content.workspace = true
 winit.workspace = true
 gilrs.workspace = true
 pollster.workspace = true

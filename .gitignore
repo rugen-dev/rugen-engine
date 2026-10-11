@@ -9,3 +9,9 @@ Cargo.lock.orig
 
 .DS_Store
 *.swp
+/chars/*
+!/chars/README.md
+/stages/*
+!/stages/README.md
+/data/
+/cache/
