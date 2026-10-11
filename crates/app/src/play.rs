@@ -31,11 +31,19 @@ pub fn run(
     shot: Option<PathBuf>,
     data_dir: &Path,
 ) -> anyhow::Result<()> {
-    let stage = match stage {
-        Some(p) => Stage::from_def(
-            &rugen_formats::def::Def::open(p).with_context(|| p.display().to_string())?,
-        ),
-        None => Stage::default(),
+    let (stage, visual) = match stage {
+        Some(p) => {
+            let def = rugen_formats::def::Def::open(p).with_context(|| p.display().to_string())?;
+            let visual = match crate::stage::StageVisual::load(p) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("stage background not loaded: {e:#}");
+                    None
+                }
+            };
+            (Stage::from_def(&def), visual)
+        }
+        None => (Stage::default(), None),
     };
     let d1 = CharData::load_with_data(p1, data_dir).with_context(|| p1.display().to_string())?;
     let d2 = match p2 {
@@ -65,6 +73,7 @@ pub fn run(
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(world);
+    app.stage_visual = visual;
     app.shot = shot;
     event_loop.run_app(&mut app)?;
     Ok(())
@@ -117,6 +126,8 @@ struct App {
     audio: Option<Audio>,
     /// Announcement text and ticks left to show it.
     banner: Option<(String, i32)>,
+    stage_visual: Option<crate::stage::StageVisual>,
+    cam_y: f32,
 }
 
 impl App {
@@ -142,6 +153,8 @@ impl App {
                 }
             },
             banner: None,
+            stage_visual: None,
+            cam_y: 0.0,
         }
     }
 
@@ -434,17 +447,31 @@ impl App {
         let brightness = self.world.superbrightness;
         let cam_x = self.world.cam_x;
 
+        let cam_y = self.cam_y;
+        let mut stage_visual = self.stage_visual.take();
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
         r.begin();
-        r.rect(
-            [-4000.0, ground],
-            [4000.0, ground + 1.0],
-            [0.35, 0.35, 0.35, 1.0],
-        );
+        let (w, h) = r.size();
+        let aspect = w as f32 / h as f32;
+        let screen_w = stage.height * aspect;
+        match stage_visual.as_mut() {
+            Some(sv) => sv.draw(
+                r,
+                0,
+                [cam_x, cam_y],
+                stage.width / sv.localcoord[0],
+                screen_w,
+            ),
+            None => r.rect(
+                [-4000.0, ground],
+                [4000.0, ground + 1.0],
+                [0.35, 0.35, 0.35, 1.0],
+            ),
+        }
         for it in &items {
             let frame = &it.frame;
-            let origin = [it.pos[0], ground + it.pos[1]];
+            let origin = [it.pos[0], ground + it.pos[1] - cam_y];
             if let Some((tex, pal, axis)) = it.spr {
                 let mut d = Draw::new(
                     tex,
@@ -484,6 +511,15 @@ impl App {
                 }
             }
         }
+        if let Some(sv) = stage_visual.as_mut() {
+            sv.draw(
+                r,
+                1,
+                [cam_x, cam_y],
+                stage.width / sv.localcoord[0],
+                screen_w,
+            );
+        }
         if brightness < 1.0 {
             r.rect(
                 [-4000.0, -4000.0],
@@ -492,9 +528,6 @@ impl App {
             );
         }
         // life bars
-        let (w, h) = r.size();
-        let aspect = w as f32 / h as f32;
-        let screen_w = stage.height * aspect;
         let left = cam_x - screen_w / 2.0;
         for (i, p) in self
             .world
@@ -563,6 +596,9 @@ impl App {
             center: [cam_x, stage.height / 2.0],
             zoom: self.zoom,
         };
+        self.stage_visual = stage_visual;
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        let r = &mut gpu.renderer;
         if let Some(path) = self.shot.take() {
             let rgba = r.end_to_image(&cam, [0.08, 0.08, 0.1, 1.0], w, h);
             match write_png(&path, w, h, &rgba) {
@@ -644,6 +680,9 @@ impl ApplicationHandler for App {
                 }
             })
             .collect();
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.init_gpu(&mut renderer);
+        }
         self.gpu = Some(Gpu {
             renderer,
             window,
@@ -711,6 +750,20 @@ impl ApplicationHandler for App {
                 let inputs = [self.held, Buttons::default()];
                 self.world.step(&inputs);
                 self.handle_events();
+                if let Some(sv) = self.stage_visual.as_mut() {
+                    sv.step();
+                    // vertical follow: track the highest root player
+                    let highest = self
+                        .world
+                        .players
+                        .iter()
+                        .filter(|p| !p.removed && p.helper_index == 0)
+                        .map(|p| p.pos[1])
+                        .fold(0.0f32, f32::min);
+                    let target = ((highest + sv.floor_tension).min(0.0) * sv.vertical_follow)
+                        .max(sv.bound_high);
+                    self.cam_y += (target - self.cam_y) * 0.2;
+                }
                 if let Some((_, t)) = self.banner.as_mut() {
                     *t -= 1;
                 }

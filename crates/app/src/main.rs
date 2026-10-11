@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 mod play;
+mod stage;
 mod viewer;
 
 fn main() -> anyhow::Result<()> {
@@ -73,6 +74,12 @@ fn main() -> anyhow::Result<()> {
             };
             let p1 = resolve(p1)?;
             let p2 = rest.get(1).map(|s| resolve(s)).transpose()?;
+            let stage = stage.or_else(|| {
+                lib.stages().first().map(|e| e.id.clone()).or_else(|| {
+                    let p = lib.root.join("reference/mugen-1.1b1/stages/stage0.def");
+                    p.exists().then(|| p.display().to_string())
+                })
+            });
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);

@@ -2244,6 +2244,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "gilrs",
+ "libm",
  "log",
  "png",
  "pollster",
