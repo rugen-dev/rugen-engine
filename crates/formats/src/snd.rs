@@ -118,6 +118,10 @@ mod tests {
                 }
             }
         }
+        if n == 0 {
+            eprintln!("reference tree missing; skipping");
+            return;
+        }
         assert!(n >= 5, "found only {n} snd files");
     }
 
