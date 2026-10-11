@@ -1,9 +1,11 @@
-//! `rugen play <char> [char2] [--stage s]`: local match, keyboard P1.
+//! `rugen play <char> [char2] [--stage s]`: local or online match.
 //!
-//! Keys: arrows move, Z X C = a b c, A S D = x y z, Enter = start,
-//! Space pause, `.` step, B boxes, F1 debug, +/- zoom, Esc quit.
+//! Player keys come from `rugen.toml` (see [`crate::config`]); gamepads work
+//! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug,
+//! +/- zoom, Esc quit.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,6 +14,7 @@ use anyhow::Context;
 use rugen_audio::{Audio, SoundKey};
 use rugen_formats::air::Blend as AirBlend;
 use rugen_formats::sff::Pixels;
+use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::explod::{AnimSrc, Trans};
 use rugen_sim::fx::PalFxOut;
@@ -24,14 +27,38 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::config::Config;
+use crate::input::InputState;
+
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
+
+/// How the match is driven.
+#[derive(Clone, Debug)]
+pub enum NetMode {
+    /// Online: our UDP port, the peer, and which side we play (0 = P1, 1 = P2).
+    P2P {
+        port: u16,
+        remote: SocketAddr,
+        side: usize,
+    },
+    /// Local two-player game that rolls back every frame to prove determinism.
+    SyncTest,
+}
+
+pub struct PlayOpts {
+    pub config: Config,
+    pub net: Option<NetMode>,
+    pub shot: Option<PathBuf>,
+    pub script: Option<String>,
+    /// Run this many ticks through the normal loop (local or net), then shoot/quit.
+    pub frames: Option<u32>,
+}
 
 pub fn run(
     p1: &Path,
     p2: Option<&Path>,
     stage: Option<&Path>,
-    shot: Option<PathBuf>,
-    script: Option<&str>,
+    opts: PlayOpts,
     data_dir: &Path,
 ) -> anyhow::Result<()> {
     let (stage, visual) = match stage {
@@ -73,12 +100,33 @@ pub fn run(
     world.start_round();
     log::info!("{} vs {}", world.data[0].name, world.data[1].name);
 
+    let net = match &opts.net {
+        Some(NetMode::P2P { port, remote, side }) => {
+            let o = NetOptions {
+                input_delay: opts.config.net.input_delay,
+                max_prediction: opts.config.net.max_prediction,
+                ..Default::default()
+            };
+            let n = Netplay::p2p(*port, *remote, *side, &o)
+                .with_context(|| format!("netplay on port {port} to {remote}"))?;
+            log::info!(
+                "netplay: listening on {port}, peer {remote}, playing P{}",
+                side + 1
+            );
+            Some(n)
+        }
+        Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
+        None => None,
+    };
+
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::new(world);
+    let mut app = App::new(world, &opts.config);
     app.stage_visual = visual;
-    app.shot = shot;
-    app.script = script.map(parse_script);
+    app.shot = opts.shot;
+    app.frames = opts.frames;
+    app.script = opts.script.as_deref().map(parse_script);
+    app.net = net;
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -154,7 +202,10 @@ fn tint(p: PalFxOut) -> Tint {
 struct App {
     world: World,
     gpu: Option<Gpu>,
-    held: Buttons,
+    input: InputState,
+    net: Option<Netplay>,
+    net_status: String,
+    window_size: (u32, u32),
     tick_acc: Duration,
     last: Instant,
     paused: bool,
@@ -164,6 +215,10 @@ struct App {
     debug: bool,
     /// Screenshot after a scripted sequence, then quit.
     shot: Option<PathBuf>,
+    /// `--shot` fires on the next render once armed.
+    shot_armed: bool,
+    frames: Option<u32>,
+    ticks: u32,
     /// P1 inputs per tick for `--shot` (see [`parse_script`]).
     script: Option<Vec<Buttons>>,
     quit: bool,
@@ -175,11 +230,14 @@ struct App {
 }
 
 impl App {
-    fn new(world: World) -> Self {
+    fn new(world: World, cfg: &Config) -> Self {
         Self {
             world,
             gpu: None,
-            held: Buttons::default(),
+            input: InputState::new(&cfg.input),
+            net: None,
+            net_status: String::new(),
+            window_size: (cfg.video.width.max(320), cfg.video.height.max(240)),
             tick_acc: Duration::ZERO,
             last: Instant::now(),
             paused: false,
@@ -188,6 +246,9 @@ impl App {
             show_boxes: false,
             debug: true,
             shot: None,
+            shot_armed: false,
+            frames: None,
+            ticks: 0,
             script: None,
             quit: false,
             audio: match Audio::new() {
@@ -267,8 +328,7 @@ impl App {
         audio.play(key, root, channel, volume, pan, false);
     }
 
-    fn handle_events(&mut self) {
-        let events: Vec<Event> = self.world.events.clone();
+    fn handle_events(&mut self, events: Vec<Event>) {
         for e in events {
             match e {
                 Event::Sound {
@@ -708,6 +768,15 @@ impl App {
                 r.rect([x, 20.0], [x + 5.0, 25.0], [1.0, 0.9, 0.3, 1.0]);
             }
         }
+        if !self.net_status.is_empty() {
+            draw_text(
+                r,
+                &self.net_status,
+                [cam_x, stage.height - 4.0],
+                1.0,
+                [0.8, 0.9, 1.0, 0.9],
+            );
+        }
         if let Some((text, _)) = &self.banner {
             draw_text(
                 r,
@@ -725,7 +794,9 @@ impl App {
         self.stage_visual = stage_visual;
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
-        if let Some(path) = self.shot.take() {
+        if self.shot_armed
+            && let Some(path) = self.shot.take()
+        {
             let rgba = r.end_to_image(&cam, [0.08, 0.08, 0.1, 1.0], w, h);
             match write_png(&path, w, h, &rgba) {
                 Ok(()) => log::info!("wrote {}", path.display()),
@@ -745,24 +816,20 @@ impl App {
     }
 
     fn key(&mut self, key: &Key, pressed: bool, event_loop: &ActiveEventLoop) {
-        let h = &mut self.held;
+        // player mappings are case-insensitive single characters or named keys
+        let lower = match key {
+            Key::Character(c) => Key::Character(c.to_lowercase().into()),
+            k => k.clone(),
+        };
+        if self.input.key(&lower, pressed) {
+            return;
+        }
         match key.as_ref() {
-            Key::Named(NamedKey::ArrowUp) => h.u = pressed,
-            Key::Named(NamedKey::ArrowDown) => h.d = pressed,
-            Key::Named(NamedKey::ArrowLeft) => h.l = pressed,
-            Key::Named(NamedKey::ArrowRight) => h.r = pressed,
-            Key::Character("z") | Key::Character("Z") => h.a = pressed,
-            Key::Character("x") | Key::Character("X") => h.b = pressed,
-            Key::Character("c") | Key::Character("C") => h.c = pressed,
-            Key::Character("a") | Key::Character("A") => h.x = pressed,
-            Key::Character("s") | Key::Character("S") => h.y = pressed,
-            Key::Character("d") | Key::Character("D") => h.z = pressed,
-            Key::Named(NamedKey::Enter) => h.s = pressed,
             _ if !pressed => {}
             Key::Named(NamedKey::Escape) => event_loop.exit(),
             Key::Named(NamedKey::Space) => self.paused = !self.paused,
             Key::Character(".") => self.step = true,
-            Key::Character("b") | Key::Character("B") => self.show_boxes = !self.show_boxes,
+            Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
             Key::Named(NamedKey::F1) => self.debug = !self.debug,
             Key::Character("+") | Key::Character("=") => self.zoom = (self.zoom * 1.25).min(8.0),
             Key::Character("-") => self.zoom = (self.zoom / 1.25).max(0.25),
@@ -778,7 +845,10 @@ impl ApplicationHandler for App {
         }
         let attrs = Window::default_attributes()
             .with_title("rugen")
-            .with_inner_size(winit::dpi::LogicalSize::new(960.0, 720.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.window_size.0 as f64,
+                self.window_size.1 as f64,
+            ));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let size = window.inner_size();
         let mut renderer =
@@ -828,7 +898,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 // scripted input for screenshots: walk forward, then punch, capture during the spark
-                if self.shot.is_some() {
+                if self.shot.is_some() && self.frames.is_none() && !self.shot_armed {
+                    self.shot_armed = true;
                     let mut guard = 0;
                     while self.world.round.round_state() != 2 && guard < 2000 {
                         self.world.step(&[Buttons::default(), Buttons::default()]);
@@ -870,9 +941,56 @@ impl ApplicationHandler for App {
         while self.tick_acc >= TICK {
             self.tick_acc -= TICK;
             if !self.paused || self.step {
-                let inputs = [self.held, Buttons::default()];
-                self.world.step(&inputs);
-                self.handle_events();
+                self.input.poll();
+                let inputs = self.input.buttons();
+                let advanced = match self.net.as_mut() {
+                    Some(net) => {
+                        net.poll();
+                        match net.advance(&mut self.world, inputs) {
+                            Ok(adv) => {
+                                for n in &adv.notices {
+                                    log::info!("netplay: {n}");
+                                    self.net_status = n.clone();
+                                }
+                                let st = net.stats();
+                                if st.synchronized && adv.notices.is_empty() {
+                                    self.net_status = format!(
+                                        "ping {} ms  rollbacks {}  ahead {}",
+                                        st.ping_ms, st.rollbacks, st.frames_ahead
+                                    );
+                                }
+                                let moved = adv.new_frames > 0;
+                                self.handle_events(adv.events);
+                                moved
+                            }
+                            Err(e) => {
+                                log::error!("netplay: {e}");
+                                self.net_status = format!("netplay error: {e}");
+                                self.net = None;
+                                false
+                            }
+                        }
+                    }
+                    None => {
+                        self.world.step(&inputs);
+                        let ev = self.world.events.clone();
+                        self.handle_events(ev);
+                        true
+                    }
+                };
+                if !advanced {
+                    self.step = false;
+                    continue;
+                }
+                self.ticks += 1;
+                if let Some(n) = self.frames
+                    && self.ticks >= n
+                {
+                    self.shot_armed = true;
+                    if self.shot.is_none() {
+                        self.quit = true;
+                    }
+                }
                 if let Some(sv) = self.stage_visual.as_mut() {
                     sv.step();
                     // vertical follow: track the highest root player

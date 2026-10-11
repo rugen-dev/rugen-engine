@@ -2,7 +2,9 @@
 //!
 //! ```text
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
-//! rugen play <char> [char2] [--stage s] [--root dir]           local match, keyboard P1
+//! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
+//!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
+//!   --synctest                                                  local match that verifies determinism
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //!
@@ -11,6 +13,10 @@
 
 #![forbid(unsafe_code)]
 
+use anyhow::Context;
+
+mod config;
+mod input;
 mod play;
 mod stage;
 mod viewer;
@@ -52,7 +58,20 @@ fn main() -> anyhow::Result<()> {
             let shot = opt("--shot");
             let root = opt("--root");
             let script = opt("--script");
-            let taken = [stage.clone(), shot.clone(), root.clone(), script.clone()];
+            let net = opt("--net");
+            let port = opt("--port");
+            let frames = opt("--frames");
+            let taken = [
+                stage.clone(),
+                shot.clone(),
+                root.clone(),
+                script.clone(),
+                net.clone(),
+                port.clone(),
+                frames.clone(),
+            ];
+            let p2_side = args.iter().any(|a| a == "--p2");
+            let synctest = args.iter().any(|a| a == "--synctest");
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .filter(|a| !a.starts_with("--"))
@@ -60,7 +79,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png] [--script keys]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys]"
                 )
             })?;
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
@@ -97,12 +116,38 @@ fn main() -> anyhow::Result<()> {
                     Ok(dir.join(m.def))
                 })
                 .transpose()?;
+            let config = config::Config::load(&lib.root);
+            let net_mode = if let Some(remote) = net {
+                let remote: std::net::SocketAddr = remote
+                    .parse()
+                    .with_context(|| format!("--net expects ip:port, got {remote:?}"))?;
+                let port = match port {
+                    Some(p) => p.parse().context("--port expects a number")?,
+                    None => config.net.port,
+                };
+                Some(play::NetMode::P2P {
+                    port,
+                    remote,
+                    side: usize::from(p2_side),
+                })
+            } else if synctest {
+                Some(play::NetMode::SyncTest)
+            } else {
+                None
+            };
             play::run(
                 &p1,
                 p2.as_deref(),
                 stage.as_deref(),
-                shot.map(std::path::PathBuf::from),
-                script.as_deref(),
+                play::PlayOpts {
+                    config,
+                    net: net_mode,
+                    shot: shot.map(std::path::PathBuf::from),
+                    script,
+                    frames: frames
+                        .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                        .transpose()?,
+                },
                 &lib.data_dir(),
             )
         }

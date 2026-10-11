@@ -12,6 +12,7 @@ rugen-sim.workspace = true
 ggrs.workspace = true
 log.workspace = true
 thiserror.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

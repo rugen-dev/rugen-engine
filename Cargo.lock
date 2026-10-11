@@ -2311,6 +2311,7 @@ dependencies = [
  "ggrs",
  "log",
  "rugen-sim",
+ "serde",
  "thiserror 2.0.21",
 ]
 
