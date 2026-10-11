@@ -8,9 +8,30 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Config {
     pub video: Video,
+    pub camera: CameraCfg,
     pub audio: AudioCfg,
     pub input: Input,
     pub net: Net,
+}
+
+/// Camera limits applied on top of every stage: players can separate until the
+/// view has pulled back to `zoom_out`, and the view closes in up to `zoom_in`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraCfg {
+    /// Smallest scale (1 = never pull back, 0.5 = twice the width visible).
+    pub zoom_out: f32,
+    /// Largest scale when players are close (1 = never close in).
+    pub zoom_in: f32,
+}
+
+impl Default for CameraCfg {
+    fn default() -> Self {
+        Self {
+            zoom_out: 0.6,
+            zoom_in: 1.25,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

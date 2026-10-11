@@ -169,6 +169,9 @@ impl Match {
             }
             None => (Stage::default(), None),
         };
+        let mut stage = stage;
+        stage.zoom_out = stage.zoom_out.min(cfg.camera.zoom_out.clamp(0.2, 1.0));
+        stage.zoom_in = stage.zoom_in.max(cfg.camera.zoom_in.clamp(1.0, 3.0));
         let d1 = CharData::load_with_data(&setup.p1, data_dir)
             .with_context(|| setup.p1.display().to_string())?;
         let d2 = if setup.p2 == setup.p1 {
