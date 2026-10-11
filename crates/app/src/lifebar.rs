@@ -508,6 +508,17 @@ impl Lifebar {
                 let base = hud(pos[0], pos[1]);
                 self.draw_elem(r, &e, base, u, None);
             }
+            // arena stocks: one mark per life left, a row under the win icons
+            let stocks = p.stocks.max(0) as usize;
+            for k in 0..stocks {
+                let pos = [
+                    self.winicon_pos[side][0] + self.winicon_offset[side][0] * k as f32,
+                    self.winicon_pos[side][1] + 14.0,
+                ];
+                let a = hud(pos[0] - 3.0, pos[1] - 3.0);
+                let b = hud(pos[0] + 3.0, pos[1] + 3.0);
+                r.rect(a, b, [1.0, 0.85, 0.2, 0.95]);
+            }
         }
         // clock
         let clock = w.round.clock();

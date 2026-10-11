@@ -199,6 +199,16 @@ impl Match {
         }
         world.add_player(d1, 0, 1);
         world.add_player(d2, 1, 2);
+        world.movement = rugen_sim::world::Movement {
+            air_jumps: world
+                .stage
+                .arena
+                .air_jumps
+                .unwrap_or(cfg.game.air_jumps)
+                .clamp(0, 8),
+            air_dash: world.stage.arena.air_dash.unwrap_or(cfg.game.air_dash),
+            fast_fall: world.stage.arena.fast_fall.unwrap_or(cfg.game.fast_fall),
+        };
         if setup.net.is_none() {
             world.players[0].ai_level = setup.ai[0].clamp(0, 8);
             world.players[1].ai_level = setup.ai[1].clamp(0, 8);
