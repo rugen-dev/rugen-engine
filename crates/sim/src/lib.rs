@@ -1,16 +1,14 @@
 //! Deterministic fighting game simulation.
 //!
 //! Rules (see DESIGN.md "Determinism"):
-//! - no `f32`/`f64` in simulation state; use [`Fix`]
+//! - `i32` / `f32` only; transcendentals via `libm`, never `std` (`f32::sin` etc.)
+//! - no `mul_add`
 //! - no `HashMap` iteration; use `Vec`, `BTreeMap`, `IndexMap`
 //! - no I/O, no time, no randomness outside [`Rng`]
 //! - state must be plain data: `Clone`, no `Rc`, no `Box<dyn>`
 
 #![forbid(unsafe_code)]
-#![deny(clippy::float_arithmetic, clippy::float_cmp)]
-
-/// Fixed-point number used for every simulation value.
-pub type Fix = fixed::types::I32F32;
+#![deny(clippy::suboptimal_flops, clippy::imprecise_flops)]
 
 /// Deterministic PRNG living inside simulation state (xorshift64*).
 #[derive(Clone, Debug, PartialEq, Eq)]

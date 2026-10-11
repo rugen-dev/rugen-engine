@@ -24,10 +24,10 @@ env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
-fixed = "1"
 indexmap = "2"
 logos = "0.15"
 png = "0.18"
+libm = "0.2"
 ggrs = "0.11"
 wgpu = "26"
 winit = "0.30"

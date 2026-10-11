@@ -65,8 +65,9 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
 
 ### Determinism (netplay foundation)
 
-- Fixed-point math (`fixed` crate, e.g. `I32F32`) for all sim values. No `f32` in sim state.
-- No libm calls in sim. Own trig/sqrt tables.
+- Numbers are `i32` and `f32`, because CNS semantics (int/float promotion, `7/2 = 3`, `7.0/2 = 3.5`, truncating casts) are defined on them and content depends on it. Fixed-point would break compatibility.
+- `f32` add/sub/mul/div/sqrt are bit-exact across x86_64 and aarch64 under IEEE 754 as long as nothing fuses or extends precision. Rust never emits FMA without `mul_add`, and never uses x87 on x86_64. Rule: no `mul_add`, no `-ffast-math`-style flags.
+- Transcendentals (`sin`, `pow`, `exp`, …) come from the `libm` crate (pure Rust, same bits everywhere), never from `std` (platform libm).
 - Sim state = plain data, arena + indices. No `Rc`, no `Box<dyn>`, no pointers. Must be `Clone` and cheap.
 - PRNG seeded per match, lives inside state. CNS `Random` reads from it.
 - Ordered containers only (`Vec`, `BTreeMap`, `IndexMap`). Never `HashMap` iteration in sim.
@@ -90,7 +91,7 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
 | Window | `winit` | |
 | Gamepads | `gilrs` | XInput / evdev / IOKit |
 | Audio | `kira` (cpal) | |
-| Math | `fixed` | determinism |
+| Math | `libm` | deterministic transcendentals |
 | Rollback | `ggrs` | |
 | Lexing | `logos` | |
 | Config | `serde` + `toml` | |
@@ -138,7 +139,6 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 
 ## Open questions
 
-- Fixed-point vs emulating MUGEN f32 exactly: fixed wins for netplay; measure drift vs Ikemen on real chars.
 - Lua vs Rhai for screenpack/mode scripting. Ikemen uses Lua; Lua keeps its content portable.
 - Matchmaking server: who hosts? Keep it tiny (one binary, SQLite) so anyone can.
 

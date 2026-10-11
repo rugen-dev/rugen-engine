@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 rugen-formats.workspace = true
 rugen-cns.workspace = true
-fixed.workspace = true
+libm.workspace = true
 indexmap.workspace = true
 log.workspace = true
 

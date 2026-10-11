@@ -1,6 +1,6 @@
 [package]
 name = "rugen-cns"
-description = "CNS/CMD lexer, parser, bytecode compiler and VM"
+description = "CNS/CMD lexer, compiler to stack bytecode, and VM"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,11 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rugen-formats.workspace = true
 thiserror.workspace = true
 log.workspace = true
-logos.workspace = true
 indexmap.workspace = true
-fixed.workspace = true
+libm.workspace = true
 
 [lints]
 workspace = true
