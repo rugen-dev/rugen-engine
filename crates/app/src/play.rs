@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use rugen_audio::{Audio, SoundKey};
+use rugen_formats::air::Blend as AirBlend;
 use rugen_formats::sff::Pixels;
-use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
-use rugen_sim::explod::AnimSrc;
+use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
+use rugen_sim::explod::{AnimSrc, Trans};
+use rugen_sim::fx::PalFxOut;
 use rugen_sim::world::Event;
 use rugen_sim::world::Stage;
 use rugen_sim::{Buttons, CharData, FxData, World};
@@ -29,6 +31,7 @@ pub fn run(
     p2: Option<&Path>,
     stage: Option<&Path>,
     shot: Option<PathBuf>,
+    script: Option<&str>,
     data_dir: &Path,
 ) -> anyhow::Result<()> {
     let (stage, visual) = match stage {
@@ -75,6 +78,7 @@ pub fn run(
     let mut app = App::new(world);
     app.stage_visual = visual;
     app.shot = shot;
+    app.script = script.map(parse_script);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -107,6 +111,44 @@ struct Item {
     layer: i32,
     prio: i32,
     seq: usize,
+    blend: Blend,
+    angle: f32,
+    tint: Tint,
+}
+
+/// Final blend for a sprite: the `Trans` controller wins over the AIR frame.
+fn resolve_blend(frame: &rugen_formats::air::Frame, trans: Trans, alpha: [i32; 2]) -> Blend {
+    let a = |v: i32, def: u8| if v < 0 { def } else { v.min(255) as u8 };
+    match trans {
+        Trans::Default => match frame.blend {
+            AirBlend::None => Blend::Alpha,
+            AirBlend::Add => Blend::Add {
+                src: frame.src_alpha,
+                dst: frame.dst_alpha,
+            },
+            AirBlend::Sub | AirBlend::SubAdd => Blend::Sub {
+                src: frame.src_alpha,
+                dst: frame.dst_alpha,
+            },
+        },
+        Trans::None => Blend::Alpha,
+        Trans::Add => Blend::Add { src: 255, dst: 255 },
+        Trans::Add1 => Blend::Add { src: 255, dst: 128 },
+        Trans::AddAlpha => Blend::Add {
+            src: a(alpha[0], 255),
+            dst: a(alpha[1], 0),
+        },
+        Trans::Sub => Blend::Sub { src: 255, dst: 255 },
+    }
+}
+
+fn tint(p: PalFxOut) -> Tint {
+    Tint {
+        mul: p.mul,
+        add: p.add,
+        color: p.color,
+        invert: p.invert,
+    }
 }
 
 struct App {
@@ -122,6 +164,8 @@ struct App {
     debug: bool,
     /// Screenshot after a scripted sequence, then quit.
     shot: Option<PathBuf>,
+    /// P1 inputs per tick for `--shot` (see [`parse_script`]).
+    script: Option<Vec<Buttons>>,
     quit: bool,
     audio: Option<Audio>,
     /// Announcement text and ticks left to show it.
@@ -144,6 +188,7 @@ impl App {
             show_boxes: false,
             debug: true,
             shot: None,
+            script: None,
             quit: false,
             audio: match Audio::new() {
                 Ok(a) => Some(a),
@@ -322,6 +367,7 @@ impl App {
 
     fn collect_items(&mut self) -> Vec<Item> {
         let stage = self.world.stage.clone();
+        let all_pfx = self.world.allpalfx.sample();
         let mut items: Vec<Item> = Vec::new();
         for i in 0..self.world.players.len() {
             let p = &self.world.players[i];
@@ -344,18 +390,64 @@ impl App {
                 p.facing,
                 p.spr_priority,
             );
+            let blend = resolve_blend(&frame, p.trans, p.alpha);
+            let angle = if p.angle_drawn {
+                p.angle * p.facing
+            } else {
+                0.0
+            };
+            let ascale = p.angle_scale;
+            let pfx = tint(p.palfx.sample().stacked(all_pfx));
+            // afterimages first so they sit behind the player
+            let aimg = p
+                .afterimage
+                .as_ref()
+                .map(|ai| (ai.visible(p.spr_priority), ai.trans, ai.alpha));
+            if let Some((visible, ai_trans, ai_alpha)) = aimg {
+                for (img, img_pfx, img_prio) in visible {
+                    let d = &self.world.data[img.anim_owner];
+                    let Some(f) = d
+                        .air
+                        .get(img.action)
+                        .and_then(|a| a.frames.get(img.elem))
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    let spr = self.sprite_from(Some(img.sprite_data), f.group, f.number);
+                    let blend = resolve_blend(&f, ai_trans, ai_alpha);
+                    items.push(Item {
+                        spr,
+                        pos: [img.pos[0] * scale, img.pos[1] * scale],
+                        facing: img.facing,
+                        vfacing: 1.0,
+                        scale: [scale * img.scale[0], scale * img.scale[1]],
+                        frame: f,
+                        boxes: false,
+                        layer: 0,
+                        prio: img_prio,
+                        seq: items.len(),
+                        blend,
+                        angle: img.angle * img.facing,
+                        tint: tint(img_pfx.stacked(all_pfx)),
+                    });
+                }
+            }
             let spr = self.sprite_from(Some(sprite_data), frame.group, frame.number);
             items.push(Item {
                 spr,
                 pos,
                 facing,
                 vfacing: 1.0,
-                scale: [scale, scale],
+                scale: [scale * ascale[0], scale * ascale[1]],
                 frame,
                 boxes: true,
                 layer: 0,
                 prio,
                 seq: items.len(),
+                blend,
+                angle,
+                tint: pfx,
             });
         }
         let explods: Vec<rugen_sim::explod::Explod> = self
@@ -383,6 +475,12 @@ impl App {
             };
             let spr = self.sprite_from(src, frame.group, frame.number);
             let scale = stage.width / lc;
+            let blend = resolve_blend(&frame, e.trans, e.alpha);
+            let owner_pfx = self
+                .world
+                .players
+                .get(e.owner)
+                .map_or(PalFxOut::default(), |p| p.palfx.sample());
             items.push(Item {
                 spr,
                 pos: e.draw_pos(),
@@ -400,6 +498,9 @@ impl App {
                 },
                 prio: e.sprpriority,
                 seq: items.len(),
+                blend,
+                angle: e.angle * e.facing,
+                tint: tint(owner_pfx.stacked(all_pfx)),
             });
         }
         let projs: Vec<rugen_sim::projectile::Projectile> = self
@@ -422,6 +523,8 @@ impl App {
             };
             let spr = self.sprite_from(Some(d), frame.group, frame.number);
             let scale = stage.width / lc;
+            let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
+            let owner_pfx = self.world.players[pr.owner].palfx.sample();
             items.push(Item {
                 spr,
                 pos: pr.pos,
@@ -433,6 +536,9 @@ impl App {
                 layer: 0,
                 prio: pr.sprpriority,
                 seq: items.len(),
+                blend,
+                angle: 0.0,
+                tint: tint(owner_pfx.stacked(all_pfx)),
             });
         }
         items.sort_by_key(|it| (it.layer, it.prio, it.seq));
@@ -447,7 +553,10 @@ impl App {
         let brightness = self.world.superbrightness;
         let cam_x = self.world.cam_x;
 
-        let cam_y = self.cam_y;
+        let shake = self.world.envshake.offset;
+        let cam_x = cam_x + shake[0];
+        let cam_y = self.cam_y + shake[1];
+        let bg_tint = tint(self.world.bgpalfx.sample());
         let mut stage_visual = self.stage_visual.take();
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
@@ -462,6 +571,7 @@ impl App {
                 [cam_x, cam_y],
                 stage.width / sv.localcoord[0],
                 screen_w,
+                bg_tint,
             ),
             None => r.rect(
                 [-4000.0, ground],
@@ -485,6 +595,16 @@ impl App {
                 d.hflip = (it.facing < 0.0) != frame.hflip;
                 d.vflip = (it.vfacing < 0.0) != frame.vflip;
                 d.scale = [frame.xscale * it.scale[0], frame.yscale * it.scale[1]];
+                d.blend = it.blend;
+                d.angle = it.angle;
+                d.tint = it.tint;
+                if it.angle != 0.0 {
+                    // rotate about the player's axis, not the sprite's
+                    let (dx, dy) = (d.pos[0] - origin[0], d.pos[1] - origin[1]);
+                    let rad = it.angle * (std::f32::consts::PI / 180.0);
+                    let (sn, cs) = (libm::sinf(rad), libm::cosf(rad));
+                    d.pos = [origin[0] + dx * cs + dy * sn, origin[1] - dx * sn + dy * cs];
+                }
                 r.draw(d);
             }
             if show_boxes && it.boxes {
@@ -518,6 +638,7 @@ impl App {
                 [cam_x, cam_y],
                 stage.width / sv.localcoord[0],
                 screen_w,
+                bg_tint,
             );
         }
         if brightness < 1.0 {
@@ -708,23 +829,20 @@ impl ApplicationHandler for App {
                         self.world.step(&[Buttons::default(), Buttons::default()]);
                         guard += 1;
                     }
-                    for t in 0..66 {
-                        let b = if t < 40 {
-                            Buttons {
-                                r: true,
-                                ..Default::default()
-                            }
-                        } else if t == 60 {
-                            Buttons {
-                                x: true,
-                                ..Default::default()
-                            }
-                        } else {
-                            Buttons::default()
-                        };
+                    let custom = self.script.is_some();
+                    let script = self
+                        .script
+                        .take()
+                        .unwrap_or_else(|| parse_script("R*40,.*20,x,.*5"));
+                    if custom {
+                        // scripted shots are for checking visuals: give P1 full power
+                        let p = &mut self.world.players[0];
+                        p.power = p.power_max;
+                    }
+                    for b in script {
                         self.world.step(&[b, Buttons::default()]);
                     }
-                    self.show_boxes = true;
+                    self.show_boxes = !custom;
                 }
                 self.render();
                 if self.quit {
@@ -843,6 +961,44 @@ fn glyph(c: char) -> [u8; 5] {
 }
 
 /// Draw centered text with the pixel font; `px` = pixel size in logical units.
+/// `--script`: comma-separated tokens of key letters held for one tick
+/// (`U D L R a b c x y z s`, `.` = nothing) with an optional `*n` repeat,
+/// e.g. `R*40,.*20,D,DR,R,xy,.*10`.
+fn parse_script(s: &str) -> Vec<Buttons> {
+    let mut out = Vec::new();
+    for tok in s.split(',') {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            continue;
+        }
+        let (keys, n) = match tok.split_once('*') {
+            Some((k, n)) => (k, n.trim().parse().unwrap_or(1)),
+            None => (tok, 1),
+        };
+        let mut b = Buttons::default();
+        for ch in keys.chars() {
+            match ch {
+                'U' => b.u = true,
+                'D' => b.d = true,
+                'L' => b.l = true,
+                'R' => b.r = true,
+                'a' => b.a = true,
+                'b' => b.b = true,
+                'c' => b.c = true,
+                'x' => b.x = true,
+                'y' => b.y = true,
+                'z' => b.z = true,
+                's' => b.s = true,
+                _ => {}
+            }
+        }
+        for _ in 0..n {
+            out.push(b);
+        }
+    }
+    out
+}
+
 fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f32; 4]) {
     let w = text.chars().count() as f32 * 4.0 * px;
     let mut x = center[0] - w / 2.0;

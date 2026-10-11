@@ -35,6 +35,82 @@ struct Vertex {
     pos: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
+    fx_mul: [f32; 4],
+    fx_add: [f32; 4],
+}
+
+/// How a draw combines with what is already on screen. Alphas are MUGEN
+/// style 0..=255: `Add { src, dst }` gives `dst*dst/255 + src*src/255`,
+/// `Sub` gives `dst*dst/255 - src*src/255`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Blend {
+    #[default]
+    Alpha,
+    Add {
+        src: u8,
+        dst: u8,
+    },
+    Sub {
+        src: u8,
+        dst: u8,
+    },
+}
+
+impl Blend {
+    fn pipe_index(self) -> usize {
+        match self {
+            Blend::Alpha => 0,
+            Blend::Add { .. } => 1,
+            Blend::Sub { .. } => 2,
+        }
+    }
+    fn src_scale(self) -> f32 {
+        match self {
+            Blend::Alpha => 1.0,
+            Blend::Add { src, .. } | Blend::Sub { src, .. } => src as f32 / 255.0,
+        }
+    }
+    /// Destination scale for the shader: -1 means ordinary alpha blending.
+    fn dst_scale(self) -> f32 {
+        match self {
+            Blend::Alpha => -1.0,
+            Blend::Add { dst, .. } | Blend::Sub { dst, .. } => dst as f32 / 255.0,
+        }
+    }
+}
+
+/// Palette effect (MUGEN PalFX) applied per draw, in 0..=1 units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tint {
+    pub mul: [f32; 3],
+    pub add: [f32; 3],
+    /// 1 = full colour, 0 = greyscale.
+    pub color: f32,
+    pub invert: bool,
+}
+
+impl Default for Tint {
+    fn default() -> Self {
+        Self {
+            mul: [1.0; 3],
+            add: [0.0; 3],
+            color: 1.0,
+            invert: false,
+        }
+    }
+}
+
+impl Tint {
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+struct Run {
+    tex: usize,
+    pal: Option<usize>,
+    blend: Blend,
+    start: u32,
 }
 
 /// Camera over the logical space. `screen` is the logical viewport
@@ -75,6 +151,10 @@ pub struct Draw {
     pub hflip: bool,
     pub vflip: bool,
     pub color: [f32; 4],
+    pub blend: Blend,
+    /// Rotation in degrees around `pos`, counter-clockwise on screen (MUGEN AngleDraw).
+    pub angle: f32,
+    pub tint: Tint,
 }
 
 impl Draw {
@@ -88,6 +168,9 @@ impl Draw {
             hflip: false,
             vflip: false,
             color: [1.0; 4],
+            blend: Blend::Alpha,
+            angle: 0.0,
+            tint: Tint::default(),
         }
     }
 }
@@ -101,8 +184,9 @@ pub struct Renderer {
     cam_bind: wgpu::BindGroup,
     indexed_layout: wgpu::BindGroupLayout,
     rgba_layout: wgpu::BindGroupLayout,
-    indexed_pipe: wgpu::RenderPipeline,
-    rgba_pipe: wgpu::RenderPipeline,
+    /// Per blend mode (see [`Blend::pipe_index`]).
+    indexed_pipes: [wgpu::RenderPipeline; 3],
+    rgba_pipes: [wgpu::RenderPipeline; 3],
     sampler: wgpu::Sampler,
     textures: Vec<Tex>,
     palettes: Vec<wgpu::TextureView>,
@@ -110,7 +194,7 @@ pub struct Renderer {
     indexed_binds: std::collections::HashMap<(usize, usize), wgpu::BindGroup>,
     white: TextureId,
     verts: Vec<Vertex>,
-    runs: Vec<(usize, usize, Option<usize>, u32)>, // (tex, pal or usize::MAX, vertex start)
+    runs: Vec<Run>,
 }
 
 impl Renderer {
@@ -135,6 +219,8 @@ impl Renderer {
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or(Error::SurfaceConfig)?;
         config.present_mode = wgpu::PresentMode::AutoVsync;
+        // MUGEN blends in raw 8-bit space; keep the whole pipeline linear-in-bytes.
+        config.format = config.format.remove_srgb_suffix();
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -208,9 +294,27 @@ impl Renderer {
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4],
         };
-        let make_pipe = |label, bgl: &wgpu::BindGroupLayout, fs| {
+        // The shader emits premultiplied colour and an alpha that already
+        // encodes the destination scale, so Alpha and Add share one state.
+        let blends = [
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::ReverseSubtract,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+        ];
+        let make_pipe = |label, bgl: &wgpu::BindGroupLayout, fs, blend| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
                 bind_group_layouts: &[&cam_layout, bgl],
@@ -233,7 +337,7 @@ impl Renderer {
                     entry_point: Some(fs),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: config.format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: Some(blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -242,8 +346,8 @@ impl Renderer {
                 cache: None,
             })
         };
-        let indexed_pipe = make_pipe("indexed", &indexed_layout, "fs_indexed");
-        let rgba_pipe = make_pipe("rgba", &rgba_layout, "fs_rgba");
+        let indexed_pipes = blends.map(|b| make_pipe("indexed", &indexed_layout, "fs_indexed", b));
+        let rgba_pipes = blends.map(|b| make_pipe("rgba", &rgba_layout, "fs_rgba", b));
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
@@ -260,8 +364,8 @@ impl Renderer {
             cam_bind,
             indexed_layout,
             rgba_layout,
-            indexed_pipe,
-            rgba_pipe,
+            indexed_pipes,
+            rgba_pipes,
             sampler,
             textures: Vec::new(),
             palettes: Vec::new(),
@@ -344,7 +448,7 @@ impl Renderer {
 
     /// Upload straight RGBA8 (`w*h*4` bytes).
     pub fn add_rgba(&mut self, w: u32, h: u32, rgba: &[u8]) -> TextureId {
-        let tex = self.make_texture(w, h, wgpu::TextureFormat::Rgba8UnormSrgb, 4, rgba);
+        let tex = self.make_texture(w, h, wgpu::TextureFormat::Rgba8Unorm, 4, rgba);
         let view = tex.create_view(&Default::default());
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -374,7 +478,7 @@ impl Renderer {
         for (i, c) in colors.iter().take(256).enumerate() {
             data[i * 4..i * 4 + 4].copy_from_slice(c);
         }
-        let tex = self.make_texture(256, 1, wgpu::TextureFormat::Rgba8UnormSrgb, 4, &data);
+        let tex = self.make_texture(256, 1, wgpu::TextureFormat::Rgba8Unorm, 4, &data);
         self.palettes.push(tex.create_view(&Default::default()));
         PaletteId(self.palettes.len() - 1)
     }
@@ -410,14 +514,25 @@ impl Renderer {
         };
         let (u0, u1) = if d.hflip { (1.0, 0.0) } else { (0.0, 1.0) };
         let (v0, v1) = if d.vflip { (1.0, 0.0) } else { (0.0, 1.0) };
-        self.quad(
-            [x0, y0],
-            [x1, y1],
-            [u0, v0],
-            [u1, v1],
-            d.color,
+        let mut corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        if d.angle != 0.0 {
+            let rad = d.angle * (std::f32::consts::PI / 180.0);
+            let (sn, cs) = (libm::sinf(rad), libm::cosf(rad));
+            for c in &mut corners {
+                let (dx, dy) = (c[0] - d.pos[0], c[1] - d.pos[1]);
+                *c = [d.pos[0] + dx * cs + dy * sn, d.pos[1] - dx * sn + dy * cs];
+            }
+        }
+        let mut color = d.color;
+        color[3] *= d.blend.src_scale();
+        self.push_quad(
+            corners,
+            [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
+            color,
+            d.tint,
             d.tex,
             d.pal,
+            d.blend,
         );
     }
 
@@ -446,26 +561,67 @@ impl Renderer {
         tex: TextureId,
         pal: Option<PaletteId>,
     ) {
+        self.push_quad(
+            [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]],
+            [
+                [uv0[0], uv0[1]],
+                [uv1[0], uv0[1]],
+                [uv1[0], uv1[1]],
+                [uv0[0], uv1[1]],
+            ],
+            color,
+            Tint::default(),
+            tex,
+            pal,
+            Blend::Alpha,
+        );
+    }
+
+    /// Push a quad with corners in order top-left, top-right, bottom-right, bottom-left.
+    #[allow(clippy::too_many_arguments)]
+    fn push_quad(
+        &mut self,
+        c: [[f32; 2]; 4],
+        uv: [[f32; 2]; 4],
+        color: [f32; 4],
+        tint: Tint,
+        tex: TextureId,
+        pal: Option<PaletteId>,
+        blend: Blend,
+    ) {
         let pal = pal.map(|p| p.0);
         let start = self.verts.len() as u32;
         match self.runs.last_mut() {
-            Some(r) if r.0 == tex.0 && r.2 == pal => {}
-            _ => self.runs.push((tex.0, 0, pal, start)),
+            Some(r) if r.tex == tex.0 && r.pal == pal && r.blend == blend => {}
+            _ => self.runs.push(Run {
+                tex: tex.0,
+                pal,
+                blend,
+                start,
+            }),
         }
-        let v = |pos, uv| Vertex { pos, uv, color };
-        self.verts.extend_from_slice(&[
-            v(a, uv0),
-            v([b[0], a[1]], [uv1[0], uv0[1]]),
-            v(b, uv1),
-            v(a, uv0),
-            v(b, uv1),
-            v([a[0], b[1]], [uv0[0], uv1[1]]),
-        ]);
+        let fx_mul = [
+            tint.mul[0],
+            tint.mul[1],
+            tint.mul[2],
+            tint.color.clamp(0.0, 1.0) + if tint.invert { 2.0 } else { 0.0 },
+        ];
+        let fx_add = [tint.add[0], tint.add[1], tint.add[2], blend.dst_scale()];
+        let v = |i: usize| Vertex {
+            pos: c[i],
+            uv: uv[i],
+            color,
+            fx_mul,
+            fx_add,
+        };
+        self.verts
+            .extend_from_slice(&[v(0), v(1), v(2), v(0), v(2), v(3)]);
     }
 
     /// Build bind groups for this frame's runs, upload camera, build vertex buffer.
     fn prepare(&mut self, cam: &Camera) -> wgpu::Buffer {
-        for &(t, _, p, _) in &self.runs {
+        for r in &self.runs {
+            let (t, p) = (r.tex, r.pal);
             if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p) {
                 let key = (t, p);
                 if !self.indexed_binds.contains_key(&key) {
@@ -540,15 +696,17 @@ impl Renderer {
         pass.set_bind_group(0, &self.cam_bind, &[]);
         pass.set_vertex_buffer(0, vbuf.slice(..));
         let total = self.verts.len() as u32;
-        for (i, &(t, _, p, start)) in self.runs.iter().enumerate() {
-            let end = self.runs.get(i + 1).map_or(total, |r| r.3);
+        for (i, r) in self.runs.iter().enumerate() {
+            let (t, p, start) = (r.tex, r.pal, r.start);
+            let end = self.runs.get(i + 1).map_or(total, |r| r.start);
+            let bi = r.blend.pipe_index();
             match (&self.textures[t].kind, p) {
                 (Kind::Indexed { .. }, Some(p)) => {
-                    pass.set_pipeline(&self.indexed_pipe);
+                    pass.set_pipeline(&self.indexed_pipes[bi]);
                     pass.set_bind_group(1, &self.indexed_binds[&(t, p)], &[]);
                 }
                 (Kind::Rgba { bind }, _) => {
-                    pass.set_pipeline(&self.rgba_pipe);
+                    pass.set_pipeline(&self.rgba_pipes[bi]);
                     pass.set_bind_group(1, bind, &[]);
                 }
                 (Kind::Indexed { .. }, None) => continue,
@@ -570,7 +728,7 @@ impl Renderer {
     }
 
     /// Render the queued frame into an offscreen `w x h` image and read it
-    /// back as straight RGBA8 (sRGB-encoded). For screenshots and tests.
+    /// back as straight RGBA8. For screenshots and tests.
     pub fn end_to_image(&mut self, cam: &Camera, clear: [f64; 4], w: u32, h: u32) -> Vec<u8> {
         let vbuf = self.prepare(cam);
         let size = wgpu::Extent3d {

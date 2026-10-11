@@ -8,7 +8,7 @@ use anyhow::Context;
 use rugen_formats::air::Air;
 use rugen_formats::def::Def;
 use rugen_formats::sff::{Pixels, Sff};
-use rugen_render::{Draw, PaletteId, Renderer, TextureId};
+use rugen_render::{Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::anim::AnimState;
 
 /// Uploaded stage texture plus optional palette slot index.
@@ -237,7 +237,15 @@ impl StageVisual {
 
     /// Draw elements on `layer` (0 = behind players, 1 = in front).
     /// `cam` is the camera position in stage units; `scale` = stage units per element unit.
-    pub fn draw(&mut self, r: &mut Renderer, layer: i32, cam: [f32; 2], scale: f32, screen_w: f32) {
+    pub fn draw(
+        &mut self,
+        r: &mut Renderer,
+        layer: i32,
+        cam: [f32; 2],
+        scale: f32,
+        screen_w: f32,
+        tint: Tint,
+    ) {
         let elems = self.elems.clone();
         for (idx, e) in elems.iter().enumerate() {
             if e.layer != layer {
@@ -314,6 +322,7 @@ impl StageVisual {
                     ];
                     d.hflip = hflip;
                     d.color = color;
+                    d.tint = tint;
                     r.draw(d);
                 }
             }

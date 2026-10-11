@@ -139,7 +139,13 @@ pub fn eval_hitdef(w: &mut World, i: usize, spec: &HitDefSpec) -> HitDef {
         hit_givepower: i32::MIN,
         guard_givepower: i32::MIN,
         envshake_time: f("envshake.time", 0).map_or(0, |v| v as i32),
+        envshake_freq: f("envshake.freq", 0).unwrap_or(60.0),
+        envshake_ampl: f("envshake.ampl", 0).map_or(-4, |v| v as i32),
+        envshake_phase: f("envshake.phase", 0),
         fall_envshake_time: f("fall.envshake.time", 0).map_or(0, |v| v as i32),
+        fall_envshake_freq: f("fall.envshake.freq", 0).unwrap_or(60.0),
+        fall_envshake_ampl: f("fall.envshake.ampl", 0).map_or(-4, |v| v as i32),
+        fall_envshake_phase: f("fall.envshake.phase", 0),
         active: true,
         owner_id: w.players[i].id,
     };
@@ -737,6 +743,19 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
                 ghv.fall_damage = hd.fall_damage;
                 ghv.fall_kill = hd.fall_kill;
                 ghv.fall_envshake_time = hd.fall_envshake_time;
+                ghv.fall_envshake_freq = hd.fall_envshake_freq;
+                ghv.fall_envshake_ampl = (hd.fall_envshake_ampl as f32 * scale) as i32;
+                ghv.fall_envshake_phase = hd.fall_envshake_phase;
+                if hd.envshake_time > 0 {
+                    w.envshake = crate::fx::EnvShake {
+                        time: hd.envshake_time,
+                        freq: hd.envshake_freq,
+                        ampl: (hd.envshake_ampl as f32 * scale) as i32 as f32,
+                        phase: hd.envshake_phase,
+                        ..Default::default()
+                    };
+                    w.envshake.start();
+                }
                 match gst {
                     StateType::A => {
                         ghv.hittime = hd.air_hittime;

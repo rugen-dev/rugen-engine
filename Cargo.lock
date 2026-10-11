@@ -2319,6 +2319,7 @@ name = "rugen-render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "libm",
  "log",
  "rugen-sim",
  "thiserror 2.0.21",

@@ -41,6 +41,88 @@ pub struct ExplodSpec {
     pub animfreeze: Option<Code>,
 }
 
+/// `trans = none/add/add1/addalpha/sub` (case-insensitive).
+pub fn parse_trans(c: &Controller) -> Option<Trans> {
+    c.param("trans")
+        .map(|t| match t.trim().to_ascii_lowercase().as_str() {
+            "none" => Trans::None,
+            "add" => Trans::Add,
+            "add1" => Trans::Add1,
+            "addalpha" => Trans::AddAlpha,
+            "sub" => Trans::Sub,
+            _ => Trans::Default,
+        })
+}
+
+/// PalFX / AllPalFX / BGPalFX parameters.
+#[derive(Clone, Debug)]
+pub struct PalFxSpec {
+    pub time: Option<Code>,
+    pub add: Option<Vec<Code>>,
+    pub mul: Option<Vec<Code>>,
+    pub sinadd: Option<Vec<Code>>,
+    pub sinmul: Option<Vec<Code>>,
+    pub sincolor: Option<Vec<Code>>,
+    pub invertall: Option<Code>,
+    pub color: Option<Code>,
+}
+
+impl PalFxSpec {
+    pub fn compile(c: &Controller, prefix: &str) -> Result<Self> {
+        let k = |n: &str| format!("{prefix}{n}");
+        Ok(Self {
+            time: one(c, &k("time"))?,
+            add: c.exprs(&k("add"))?,
+            mul: c.exprs(&k("mul"))?,
+            sinadd: c.exprs(&k("sinadd"))?,
+            sinmul: c.exprs(&k("sinmul"))?,
+            sincolor: c.exprs(&k("sincolor"))?,
+            invertall: one(c, &k("invertall"))?,
+            color: one(c, &k("color"))?,
+        })
+    }
+}
+
+/// AfterImage parameters.
+#[derive(Clone, Debug)]
+pub struct AfterImageSpec {
+    pub time: Option<Code>,
+    pub length: Option<Code>,
+    pub palcolor: Option<Code>,
+    pub palinvertall: Option<Code>,
+    pub palbright: Option<Vec<Code>>,
+    pub palcontrast: Option<Vec<Code>>,
+    pub palpostbright: Option<Vec<Code>>,
+    pub paladd: Option<Vec<Code>>,
+    pub palmul: Option<Vec<Code>>,
+    pub timegap: Option<Code>,
+    pub framegap: Option<Code>,
+    pub trans: Option<Trans>,
+    pub alpha: Option<Vec<Code>>,
+    pub ignorehitpause: Option<Code>,
+}
+
+impl AfterImageSpec {
+    pub fn compile(c: &Controller) -> Result<Self> {
+        Ok(Self {
+            time: one(c, "time")?,
+            length: one(c, "length")?,
+            palcolor: one(c, "palcolor")?,
+            palinvertall: one(c, "palinvertall")?,
+            palbright: c.exprs("palbright")?,
+            palcontrast: c.exprs("palcontrast")?,
+            palpostbright: c.exprs("palpostbright")?,
+            paladd: c.exprs("paladd")?,
+            palmul: c.exprs("palmul")?,
+            timegap: one(c, "timegap")?,
+            framegap: one(c, "framegap")?,
+            trans: parse_trans(c),
+            alpha: c.exprs("alpha")?,
+            ignorehitpause: one(c, "ignorehitpause")?,
+        })
+    }
+}
+
 impl ExplodSpec {
     pub fn compile(c: &Controller, need_anim: bool) -> Result<Self> {
         let anim = match c.exprs_fx("anim")? {
@@ -50,16 +132,7 @@ impl ExplodSpec {
             _ if need_anim => return Err(Error::new("missing anim")),
             _ => None,
         };
-        let trans = c
-            .param("trans")
-            .map(|t| match t.trim().to_ascii_lowercase().as_str() {
-                "none" => Trans::None,
-                "add" => Trans::Add,
-                "add1" => Trans::Add1,
-                "addalpha" => Trans::AddAlpha,
-                "sub" => Trans::Sub,
-                _ => Trans::Default,
-            });
+        let trans = parse_trans(c);
         Ok(Self {
             anim,
             id: one(c, "id")?,
@@ -276,6 +349,36 @@ pub enum Sctrl {
         value: Code,
     },
     FallEnvShake,
+    EnvShake {
+        time: Code,
+        freq: Option<Code>,
+        ampl: Option<Code>,
+        phase: Option<Code>,
+    },
+    Trans {
+        trans: Trans,
+        alpha: Option<Vec<Code>>,
+    },
+    AngleDraw {
+        value: Option<Code>,
+        scale: Option<Vec<Code>>,
+    },
+    AngleSet {
+        value: Option<Code>,
+    },
+    AngleAdd {
+        value: Option<Code>,
+    },
+    AngleMul {
+        value: Option<Code>,
+    },
+    PalFx(Box<PalFxSpec>),
+    AllPalFx(Box<PalFxSpec>),
+    BgPalFx(Box<PalFxSpec>),
+    AfterImage(Box<AfterImageSpec>),
+    AfterImageTime {
+        time: Option<Code>,
+    },
     Explod(Box<ExplodSpec>),
     ModifyExplod {
         id: Option<Code>,
@@ -584,6 +687,36 @@ impl Sctrl {
                 value: req(c, "value")?,
             },
             "fallenvshake" => Sctrl::FallEnvShake,
+            "envshake" => Sctrl::EnvShake {
+                time: req(c, "time")?,
+                freq: one(c, "freq")?,
+                ampl: one(c, "ampl")?,
+                phase: one(c, "phase")?,
+            },
+            "trans" => Sctrl::Trans {
+                trans: parse_trans(c).unwrap_or(Trans::Default),
+                alpha: c.exprs("alpha")?,
+            },
+            "angledraw" => Sctrl::AngleDraw {
+                value: one(c, "value")?,
+                scale: c.exprs("scale")?,
+            },
+            "angleset" => Sctrl::AngleSet {
+                value: one(c, "value")?,
+            },
+            "angleadd" => Sctrl::AngleAdd {
+                value: one(c, "value")?,
+            },
+            "anglemul" => Sctrl::AngleMul {
+                value: one(c, "value")?,
+            },
+            "palfx" => Sctrl::PalFx(Box::new(PalFxSpec::compile(c, "")?)),
+            "allpalfx" => Sctrl::AllPalFx(Box::new(PalFxSpec::compile(c, "")?)),
+            "bgpalfx" => Sctrl::BgPalFx(Box::new(PalFxSpec::compile(c, "")?)),
+            "afterimage" => Sctrl::AfterImage(Box::new(AfterImageSpec::compile(c)?)),
+            "afterimagetime" => Sctrl::AfterImageTime {
+                time: one(c, "time")?.or(one(c, "value")?),
+            },
             "explod" => Sctrl::Explod(Box::new(ExplodSpec::compile(c, true)?)),
             "modifyexplod" => Sctrl::ModifyExplod {
                 id: one(c, "id")?,

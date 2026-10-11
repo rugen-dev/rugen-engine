@@ -4,6 +4,8 @@ use rugen_cns::state::{MoveType, Physics, StateType};
 
 use crate::anim::AnimState;
 use crate::command::CommandList;
+use crate::explod::Trans;
+use crate::fx::{AfterImage, PalFx};
 use crate::hit::{GetHitVar, HitDef, MoveContact, MoveHitVar};
 use crate::input::InputBuffer;
 use crate::projectile::ProjContact;
@@ -184,6 +186,16 @@ pub struct Player {
     pub pctype: ProjContact,
     pub pctime: i32,
     pub pcid: i32,
+    // ---- drawing
+    /// `Trans` controller for this tick (reset every tick).
+    pub trans: Trans,
+    pub alpha: [i32; 2],
+    /// Rotation set by AngleSet/Add/Mul; only drawn while `angle_drawn`.
+    pub angle: f32,
+    pub angle_drawn: bool,
+    pub angle_scale: [f32; 2],
+    pub palfx: PalFx,
+    pub afterimage: Option<Box<AfterImage>>,
 }
 
 impl Player {
@@ -285,6 +297,13 @@ impl Player {
             pctype: ProjContact::None,
             pctime: -1,
             pcid: 0,
+            trans: Trans::Default,
+            alpha: [255, 0],
+            angle: 0.0,
+            angle_drawn: false,
+            angle_scale: [1.0, 1.0],
+            palfx: PalFx::default(),
+            afterimage: None,
         }
     }
 

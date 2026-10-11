@@ -13,13 +13,13 @@ use crate::collision;
 use crate::command::CommandList;
 use crate::context::Ctx;
 use crate::explod::{AnimSrc, Explod, PosType, Space};
+use crate::fx::{AfterImage, AfterImg, EnvShake, PalFx};
 use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
 use crate::player::{Bind, HitBySlot, Player, assert};
 use crate::projectile::{ProjStatus, Projectile, ProjectileSpec};
 use crate::round::{RoundConfig, RoundState};
-use crate::sctrl::ExplodSpec;
-use crate::sctrl::Sctrl;
+use crate::sctrl::{ExplodSpec, PalFxSpec, Sctrl};
 
 /// Stage geometry in the stage's own coordinate space (320 wide by default).
 #[derive(Clone, Debug, PartialEq)]
@@ -166,6 +166,11 @@ pub struct World {
     pub super_player: i32,
     /// 0..1 screen brightness during super pause.
     pub superbrightness: f32,
+    pub envshake: EnvShake,
+    /// AllPalFX: applied on top of every player's own PalFX.
+    pub allpalfx: PalFx,
+    /// BGPalFX: applied to the stage.
+    pub bgpalfx: PalFx,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -192,6 +197,9 @@ impl World {
             pause_player: -1,
             super_player: -1,
             superbrightness: 1.0,
+            envshake: EnvShake::default(),
+            allpalfx: PalFx::default(),
+            bgpalfx: PalFx::default(),
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -648,8 +656,104 @@ impl World {
         }
         self.tick_projectiles();
         self.update_explods();
+        self.envshake.update();
+        if self.pausetime <= 0 && self.supertime <= 0 {
+            self.allpalfx.step();
+            self.bgpalfx.step();
+        }
         let _ = n;
         self.frame += 1;
+    }
+
+    /// Fill a PalFX from controller parameters (Ikemen `palFX.runSub`).
+    fn eval_palfx(&mut self, i: usize, spec: &PalFxSpec) -> PalFx {
+        let mut pf = PalFx::default();
+        if let Some(t) = &spec.time {
+            pf.time = self.eval(i, t).to_i();
+        }
+        if let Some(c) = &spec.color {
+            pf.color = self.eval(i, c).to_f() / 256.0;
+        }
+        if let Some(v) = &spec.invertall {
+            pf.invertall = self.eval(i, v).to_b();
+        }
+        let rgb = |w: &mut Self, codes: &Option<Vec<Code>>| -> Option<([i32; 3], Option<i32>)> {
+            let codes = codes.as_ref()?;
+            let mut out = [0; 3];
+            for (k, c) in codes.iter().take(3).enumerate() {
+                out[k] = w.eval(i, c).to_i();
+            }
+            let period = codes.get(3).map(|c| w.eval(i, c).to_i());
+            Some((out, period))
+        };
+        if let Some((v, _)) = rgb(self, &spec.add) {
+            pf.add = v;
+        }
+        if let Some((v, _)) = rgb(self, &spec.mul) {
+            pf.mul = v;
+        }
+        for (slot, codes, dst) in [(0usize, &spec.sinadd, 0usize), (1, &spec.sinmul, 1)] {
+            if let Some((mut v, period)) = rgb(self, codes) {
+                let mut side = 1;
+                if let Some(p) = period {
+                    pf.cycletime[slot] = p.abs();
+                    if p < 0 {
+                        side = -1;
+                    }
+                }
+                for x in &mut v {
+                    *x *= side;
+                }
+                if dst == 0 {
+                    pf.sinadd = v;
+                } else {
+                    pf.sinmul = v;
+                }
+            }
+        }
+        if let Some(codes) = &spec.sincolor {
+            let mut side = 1;
+            if let Some(p) = codes.get(1) {
+                let p = self.eval(i, p).to_i();
+                pf.cycletime[2] = p.abs();
+                if p < 0 {
+                    side = -1;
+                }
+            }
+            if let Some(c) = codes.first() {
+                pf.sincolor = self.eval(i, c).to_i() * side;
+            }
+        }
+        pf
+    }
+
+    /// Snapshot the player's sprite for its AfterImage (runs after animation stepped).
+    fn record_afterimage(&mut self, i: usize) {
+        let p = &self.players[i];
+        let Some(ai) = p.afterimage.as_ref() else {
+            return;
+        };
+        if !ai.is_active() {
+            return;
+        }
+        if p.hit_pause_time > 0 && !ai.ignorehitpause {
+            return;
+        }
+        let img = AfterImg {
+            pos: p.pos,
+            facing: p.facing,
+            scale: p.angle_scale,
+            angle: if p.angle_drawn { p.angle } else { 0.0 },
+            anim_owner: p.anim_owner,
+            sprite_data: p.data,
+            action: p.anim.action,
+            elem: p.anim.elem,
+            priority: p.spr_priority,
+        };
+        let p = &mut self.players[i];
+        if let Some(ai) = p.afterimage.as_mut() {
+            ai.record(img);
+        }
     }
 
     /// Position for a helper / projectile relative to player `i` (Ikemen `helperPos`).
@@ -1169,7 +1273,11 @@ impl World {
             }
             p.old_pos = p.pos;
             p.pushed = false;
+            if p.hit_pause_time == 0 {
+                p.palfx.step();
+            }
         }
+        self.record_afterimage(i);
         // contact bookkeeping
         {
             let p = &mut self.players[i];
@@ -1338,6 +1446,10 @@ impl World {
         }
         p.assert_flags = 0;
         p.pos_freeze = false;
+        p.angle_drawn = false;
+        p.angle_scale = [1.0, 1.0];
+        p.trans = crate::explod::Trans::Default;
+        p.alpha = [255, 0];
         // step binds
         if let Some(b) = p.bind {
             if b.time > 0 {
@@ -1785,7 +1897,171 @@ impl World {
                 self.players[i].defence_mul = v;
             }
             Sctrl::FallEnvShake => {
+                let g = &self.players[i].ghv;
+                if g.fall_envshake_time > 0 {
+                    self.envshake = EnvShake {
+                        time: g.fall_envshake_time,
+                        freq: g.fall_envshake_freq,
+                        ampl: g.fall_envshake_ampl as f32,
+                        phase: g.fall_envshake_phase,
+                        ..Default::default()
+                    };
+                    self.envshake.start();
+                }
                 self.players[i].ghv.fall_envshake_time = 0;
+            }
+            Sctrl::EnvShake {
+                time,
+                freq,
+                ampl,
+                phase,
+            } => {
+                let scale = self.local_scale(i);
+                let mut e = EnvShake {
+                    time: self.eval(i, time).to_i(),
+                    ..Default::default()
+                };
+                if let Some(c) = freq {
+                    e.freq = self.eval(i, c).to_f().max(0.0);
+                }
+                if let Some(c) = ampl {
+                    e.ampl = (self.eval(i, c).to_f() * scale) as i32 as f32;
+                }
+                if let Some(c) = phase {
+                    e.phase = Some(self.eval(i, c).to_f().clamp(-180.0, 180.0));
+                }
+                e.start();
+                self.envshake = e;
+            }
+            Sctrl::Trans { trans, alpha } => {
+                let mut a = [255, 0];
+                if let Some(codes) = alpha {
+                    for (k, c) in codes.iter().take(2).enumerate() {
+                        a[k] = self.eval(i, c).to_i().clamp(0, 255);
+                    }
+                }
+                let p = &mut self.players[i];
+                p.trans = *trans;
+                p.alpha = a;
+            }
+            Sctrl::AngleDraw { value, scale } => {
+                if let Some(c) = value {
+                    let v = self.eval(i, c).to_f();
+                    self.players[i].angle = v;
+                }
+                if let Some(codes) = scale {
+                    for (k, c) in codes.iter().take(2).enumerate() {
+                        let v = self.eval(i, c).to_f();
+                        self.players[i].angle_scale[k] *= v;
+                    }
+                }
+                self.players[i].angle_drawn = true;
+            }
+            Sctrl::AngleSet { value } => {
+                let v = value.as_ref().map_or(0.0, |c| self.eval(i, c).to_f());
+                self.players[i].angle = v;
+            }
+            Sctrl::AngleAdd { value } => {
+                let v = value.as_ref().map_or(0.0, |c| self.eval(i, c).to_f());
+                self.players[i].angle += v;
+            }
+            Sctrl::AngleMul { value } => {
+                let v = value.as_ref().map_or(0.0, |c| self.eval(i, c).to_f());
+                self.players[i].angle *= v;
+            }
+            Sctrl::PalFx(spec) => {
+                let pf = self.eval_palfx(i, spec);
+                self.players[i].palfx = pf;
+            }
+            Sctrl::AllPalFx(spec) => {
+                self.allpalfx = self.eval_palfx(i, spec);
+            }
+            Sctrl::BgPalFx(spec) => {
+                self.bgpalfx = self.eval_palfx(i, spec);
+            }
+            Sctrl::AfterImage(spec) => {
+                let mut ai = AfterImage {
+                    time: 1,
+                    ..Default::default()
+                };
+                if let Some(c) = &spec.time {
+                    ai.time = self.eval(i, c).to_i();
+                }
+                if let Some(c) = &spec.length {
+                    ai.length = self.eval(i, c).to_i().clamp(0, crate::fx::MAX_AIMG_LENGTH);
+                }
+                if let Some(c) = &spec.timegap {
+                    let v = self.eval(i, c).to_i();
+                    if v >= 1 {
+                        ai.timegap = v;
+                    }
+                }
+                if let Some(c) = &spec.framegap {
+                    let v = self.eval(i, c).to_i();
+                    if v >= 1 {
+                        ai.framegap = v;
+                    }
+                }
+                if let Some(c) = &spec.palcolor {
+                    let v = self.eval(i, c).to_i();
+                    ai.set_pal_color(v);
+                }
+                if let Some(c) = &spec.palinvertall {
+                    let v = self.eval(i, c).to_b();
+                    ai.set_pal_invertall(v);
+                }
+                if let Some(codes) = &spec.palbright {
+                    for (k, c) in codes.iter().take(3).enumerate() {
+                        let v = self.eval(i, c).to_i();
+                        ai.set_pal_bright(k, v);
+                    }
+                }
+                if let Some(codes) = &spec.palcontrast {
+                    for (k, c) in codes.iter().take(3).enumerate() {
+                        let v = self.eval(i, c).to_i();
+                        ai.set_pal_contrast(k, v);
+                    }
+                }
+                if let Some(codes) = &spec.palpostbright {
+                    for (k, c) in codes.iter().take(3).enumerate() {
+                        ai.postbright[k] = self.eval(i, c).to_i();
+                    }
+                }
+                if let Some(codes) = &spec.paladd {
+                    for (k, c) in codes.iter().take(3).enumerate() {
+                        ai.add[k] = self.eval(i, c).to_i();
+                    }
+                }
+                if let Some(codes) = &spec.palmul {
+                    for (k, c) in codes.iter().take(3).enumerate() {
+                        ai.mul[k] = self.eval(i, c).to_f();
+                    }
+                }
+                if let Some(t) = spec.trans {
+                    ai.trans = t;
+                }
+                if let Some(codes) = &spec.alpha {
+                    for (k, c) in codes.iter().take(2).enumerate() {
+                        ai.alpha[k] = self.eval(i, c).to_i().clamp(0, 255);
+                    }
+                }
+                if let Some(c) = &spec.ignorehitpause {
+                    ai.ignorehitpause = self.eval(i, c).to_b();
+                }
+                ai.setup();
+                self.players[i].afterimage = Some(Box::new(ai));
+            }
+            Sctrl::AfterImageTime { time } => {
+                let mut t = time.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                if t == 1 {
+                    t = 0;
+                }
+                if let Some(ai) = self.players[i].afterimage.as_mut()
+                    && ai.timegap > 0
+                {
+                    ai.time = t;
+                    ai.timecount = 0;
+                }
             }
             Sctrl::Explod(spec) => {
                 self.spawn_explod(i, spec);

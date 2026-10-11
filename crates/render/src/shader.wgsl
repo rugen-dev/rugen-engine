@@ -12,11 +12,17 @@ struct VsIn {
     @location(0) pos: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
+    // PalFX multiply rgb + colour saturation (1 = untouched, 0 = greyscale)
+    @location(3) fx_mul: vec4<f32>,
+    // PalFX add rgb + invert flag
+    @location(4) fx_add: vec4<f32>,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) fx_mul: vec4<f32>,
+    @location(3) fx_add: vec4<f32>,
 };
 
 @vertex
@@ -26,7 +32,28 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = vec4<f32>(p.x, -p.y, 0.0, 1.0);
     out.uv = in.uv;
     out.color = in.color;
+    out.fx_mul = in.fx_mul;
+    out.fx_add = in.fx_add;
     return out;
+}
+
+// Apply PalFX-style tint, modulate, premultiply alpha.
+// color.a scales the source; fx_mul.a is colour saturation (+2 when inverting);
+// fx_add.a is the destination scale for Add/Sub blends, or -1 for normal alpha.
+fn finish(c_in: vec4<f32>, in: VsOut) -> vec4<f32> {
+    var rgb = c_in.rgb;
+    let invert = in.fx_mul.a >= 2.0;
+    let sat = select(in.fx_mul.a, in.fx_mul.a - 2.0, invert);
+    let grey = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
+    rgb = mix(vec3<f32>(grey), rgb, sat);
+    rgb = rgb * in.fx_mul.rgb + in.fx_add.rgb;
+    if (invert) {
+        rgb = vec3<f32>(1.0) - rgb;
+    }
+    rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * in.color.rgb;
+    let a = c_in.a * in.color.a;
+    let out_a = select(c_in.a * (1.0 - in.fx_add.a), a, in.fx_add.a < 0.0);
+    return vec4<f32>(rgb * a, out_a);
 }
 
 // indexed sprite: R8Uint texture + 256x1 palette
@@ -39,7 +66,7 @@ fn fs_indexed(in: VsOut) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(clamp(in.uv * dim, vec2<f32>(0.0), dim - vec2<f32>(1.0)));
     let i = textureLoad(idx_tex, texel, 0).r;
     let c = textureLoad(pal_tex, vec2<i32>(i32(i), 0), 0);
-    return c * in.color;
+    return finish(c, in);
 }
 
 // rgba sprite, or solid color via 1x1 white
@@ -48,5 +75,5 @@ fn fs_indexed(in: VsOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_rgba(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(rgba_tex, rgba_samp, in.uv) * in.color;
+    return finish(textureSample(rgba_tex, rgba_samp, in.uv), in);
 }

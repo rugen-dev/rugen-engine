@@ -407,9 +407,9 @@ impl Context for Ctx<'_> {
                     "fall.recovertime" => Self::i(g.fall_recovertime),
                     "fall.kill" => Self::b(g.fall_kill),
                     "fall.envshake.time" => Self::i(g.fall_envshake_time),
-                    "fall.envshake.freq" => Self::f(60.0),
-                    "fall.envshake.ampl" => Self::i(-4),
-                    "fall.envshake.phase" => Self::f(0.0),
+                    "fall.envshake.freq" => Self::f(g.fall_envshake_freq),
+                    "fall.envshake.ampl" => Self::i(g.fall_envshake_ampl),
+                    "fall.envshake.phase" => Self::f(g.fall_envshake_phase.unwrap_or(0.0)),
                     "playerno" => Self::i(
                         self.w
                             .players

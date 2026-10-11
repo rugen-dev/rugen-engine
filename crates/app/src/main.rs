@@ -50,7 +50,8 @@ fn main() -> anyhow::Result<()> {
             let stage = opt("--stage");
             let shot = opt("--shot");
             let root = opt("--root");
-            let taken = [stage.clone(), shot.clone(), root.clone()];
+            let script = opt("--script");
+            let taken = [stage.clone(), shot.clone(), root.clone(), script.clone()];
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .filter(|a| !a.starts_with("--"))
@@ -58,7 +59,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png] [--script keys]"
                 )
             })?;
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
@@ -100,6 +101,7 @@ fn main() -> anyhow::Result<()> {
                 p2.as_deref(),
                 stage.as_deref(),
                 shot.map(std::path::PathBuf::from),
+                script.as_deref(),
                 &lib.data_dir(),
             )
         }
