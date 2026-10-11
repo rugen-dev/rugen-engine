@@ -11,6 +11,8 @@ rust-version.workspace = true
 thiserror.workspace = true
 log.workspace = true
 bytemuck.workspace = true
+indexmap.workspace = true
+png.workspace = true
 
 [lints]
 workspace = true
