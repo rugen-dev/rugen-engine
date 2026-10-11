@@ -138,6 +138,14 @@ pub struct Player {
     pub move_camera: [bool; 2],
     pub juggle: i32,
     pub air_jump_count: i32,
+    /// Engine air dash (see `World::movement`): used this airtime, ticks left.
+    pub air_dash_used: bool,
+    pub air_dash_time: i32,
+    /// Frame (+1) of the last forward / back press, and whether it completed a double tap.
+    pub tap_tick: [u32; 2],
+    pub tap_pending: [bool; 2],
+    /// Lives left this round (`[Arena] stocks`); 0 = stocks disabled.
+    pub stocks: i32,
     pub pal_no: i32,
     /// Set while a negative-state block or current state is being run; -1,-2,-3 or 0.
     pub minus: i8,
@@ -271,6 +279,11 @@ impl Player {
             move_camera: [true, true],
             juggle: 0,
             air_jump_count: 0,
+            air_dash_used: false,
+            air_dash_time: 0,
+            tap_tick: [0, 0],
+            tap_pending: [false, false],
+            stocks: 0,
             pal_no,
             minus: 0,
             state_owner: data,

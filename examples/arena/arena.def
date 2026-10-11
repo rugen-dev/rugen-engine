@@ -1,0 +1,123 @@
+; rugen sample arena: three platforms, a pit on both sides of the floor,
+; blast zones, 3 stocks, engine air moves. Uses the bundled training-room art.
+;
+;   rugen play kfm --stage examples/arena/arena.def --ai 8 --watch --frames 1500 --shot target/shots/arena.png
+
+[Info]
+name = "Arena"
+displayname = "Arena"
+author = "rugen"
+mugenversion = 1.1
+
+[Camera]
+startx = 0
+starty = 0
+boundleft = -320
+boundright = 320
+boundhigh = -260
+boundlow = 0
+verticalfollow = 0.6
+floortension = 20
+tension = 70
+zoomout = 0.5
+zoomin = 1.2
+
+[PlayerInfo]
+p1startx = -90
+p1starty = 0
+p1startz = 0
+p1facing = 1
+p2startx = 90
+p2starty = 0
+p2startz = 0
+p2facing = -1
+leftbound = -1000
+rightbound = 1000
+
+[Bound]
+screenleft = 15
+screenright = 15
+
+[StageInfo]
+zoffset = 190
+autoturn = 1
+resetBG = 1
+localcoord = 320, 240
+xscale = 1
+yscale = 1
+
+[Shadow]
+intensity = 96
+color = 0,0,0
+yscale = 0.4
+
+[Arena]
+; players crossing this box are KO'd (left, top, right, bottom)
+blastzone = -520, -420, 520, 160
+; no screen-edge walls: knockback can carry players off the platforms
+walls = 0
+; lives per round
+stocks = 3
+; the floor only exists here; beyond it is a pit down to the bottom blast line
+floor = -240, 240
+spawn_y = -140
+air_jumps = 1
+air_dash = 1
+fast_fall = 1
+
+[Platform]
+x = -220, -80
+y = -80
+
+[Platform]
+x = 80, 220
+y = -80
+
+[Platform]
+x = -70, 70
+y = -160
+
+[Music]
+bgmusic =
+
+[BGdef]
+spr = ../../reference/mugen-1.1b1/stages/stage0.sff
+debugbg = 0
+
+[BG grid]
+type = normal
+spriteno = 0, 0
+start = 0, 0
+delta = 1, 1
+tile = 1, 1
+tilespacing = 0, 0
+
+; the floor: 14 tiles of 35 px from x = -245 (the [Arena] floor span)
+[BG floor]
+type = normal
+spriteno = 0, 1
+start = -245, 185
+delta = 1, 1
+tile = 14, 0
+
+; platform art: 4 tiles each, top at ground - height
+[BG platform left]
+type = normal
+spriteno = 0, 1
+start = -220, 110
+delta = 1, 1
+tile = 4, 0
+
+[BG platform right]
+type = normal
+spriteno = 0, 1
+start = 80, 110
+delta = 1, 1
+tile = 4, 0
+
+[BG platform top]
+type = normal
+spriteno = 0, 1
+start = -70, 30
+delta = 1, 1
+tile = 4, 0

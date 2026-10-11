@@ -20,11 +20,22 @@ pub struct Config {
 pub struct GameCfg {
     /// Computer opponent level 1..=8.
     pub ai_level: i32,
+    /// Extra air jumps for every character (stages may override in `[Arena]`).
+    pub air_jumps: i32,
+    /// Double-tap forward/back in the air to dash.
+    pub air_dash: bool,
+    /// Hold down while falling to drop faster.
+    pub fast_fall: bool,
 }
 
 impl Default for GameCfg {
     fn default() -> Self {
-        Self { ai_level: 4 }
+        Self {
+            ai_level: 4,
+            air_jumps: 0,
+            air_dash: false,
+            fast_fall: false,
+        }
     }
 }
 

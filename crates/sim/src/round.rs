@@ -260,6 +260,12 @@ impl World {
             p.bind = None;
             p.pause_move_time = 0;
             p.super_move_time = 0;
+            p.ground = 0.0;
+            p.stocks = self.stage.arena.stocks;
+            p.air_dash_used = false;
+            p.air_dash_time = 0;
+            p.tap_tick = [0, 0];
+            p.tap_pending = [false, false];
             p.children.clear();
             p.pctime = -1;
             p.state_owner = p.data;
