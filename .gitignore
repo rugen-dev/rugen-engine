@@ -1,0 +1,11 @@
+/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# reference material: large binaries / third-party clones. See reference/README.md + reference/fetch.sh
+/reference/*
+!/reference/README.md
+!/reference/fetch.sh
+
+.DS_Store
+*.swp
