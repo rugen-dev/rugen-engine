@@ -7,6 +7,7 @@
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
+//!   --watch                                                     both sides computer controlled
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //!
@@ -85,6 +86,7 @@ fn main() -> anyhow::Result<()> {
                 ai.clone(),
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
+            let watch = args.iter().any(|a| a == "--watch");
             let synctest = args.iter().any(|a| a == "--synctest");
             let rest: Vec<&String> = args[1..]
                 .iter()
@@ -157,7 +159,7 @@ fn main() -> anyhow::Result<()> {
                 p1: p1.clone(),
                 p2: p2.unwrap_or(p1),
                 stage,
-                ai: [0, ai],
+                ai: [if watch { ai } else { 0 }, ai],
                 net: net_mode,
             };
             let harness = game::Harness {

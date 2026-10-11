@@ -113,32 +113,27 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - Headless tests cover all of the above and confirm clone-determinism.
 - Still open from this phase: `ggrs` sync-test in debug builds (Phase 3 prerequisite).
 
-### Phase 2 — a real match (in progress)
-- ✅ Player push, Clsn1/Clsn2 hit detection, HitDef with MUGEN defaults, hit pause, guard, get-hit variables and states, damage/KO, targets (TargetState/LifeAdd/Vel/Facing/Bind/Drop), HitBy/NotHitBy, corner push, custom states (p2stateno).
-- Verified against community characters (`reference/testchars`, gitignored): load with zero errors and survive random input.
-- Next: hit sparks + fightfx, sounds, projectiles, helpers, explods, Pause/SuperPause.
-- Stage loader with camera bounds, parallax, native smooth zoom.
-- Rounds, timer, win/lose. Local versus.
-- Frame-by-frame diff harness against Ikemen GO recordings.
+### Phase 2 — a real match ✅ (2026-10-11)
+- Player push, Clsn1/Clsn2 hit detection, HitDef with MUGEN defaults, hit pause, guard, get-hit variables and states, damage/KO, targets, HitBy/NotHitBy, HitOverride, ReversalDef, corner push, custom states.
+- Sparks + fightfx, sounds (kira), projectiles, helpers, explods, Pause/SuperPause, PalFX/AfterImage/EnvShake, Trans/AngleDraw, binds, parent vars.
+- Stage backgrounds (tiling, parallax, anims, sin, blends, windows), MUGEN camera with tension and zoomin/zoomout, vertical follow.
+- Rounds, clock, win/lose, match flow; `fight.def` lifebars with MUGEN fonts; AI button jamming (`AILevel`).
+- Screenpack: `system.def` title menu, select grid with cached PNG portraits, VS screen.
+- Verified against community characters: `rugen check` reports zero unsupported controllers for the test set; 4000-frame AI soak clean.
+- Content library: `chars/` and `stages/` hold archives, `cache/` holds extracted + converted content keyed by hash (manifest v3).
 
-### Phase 3 — online
-- Real UDP sessions, matchmaking server, relay fallback.
-- Content hash check, desync detection, replays, spectator.
-- Input delay/rollback window tuning UI.
+### Phase 3 — online (core ✅)
+- ✅ ggrs P2P over UDP (`--net ip:port [--port n] [--p2]`), input delay / prediction window from `rugen.toml`, desync detection, rollback-muted sound events, connection status HUD.
+- ✅ Sync-test session (`--synctest`, and a 600-frame automated test) proves the sim is deterministic under rollback.
+- Open: matchmaking / relay, content hash handshake, replays, spectator, in-game netplay menu.
 
-### Phase 4 — creator tools
-- Hitbox/hurtbox overlay, frame data overlay, input display.
-- Hot reload of `.cns` / `.air` / `.cmd` on file change.
-- Real error messages with file:line.
-- CNS debugger: break on state, watch triggers, step frames.
+### Phase 4 — creator tools (started)
+- ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title (state, anim, pos, vel).
+- Open: frame data overlay, input display, hot reload, CNS debugger.
 
-### Phase 5 — new engine features (`engineversion = 2`)
-- Interactive stages: `[Platform]`, `[Zone]`, `[Interact]` sections. Legacy stages = one implicit floor.
-- New triggers (`GroundY`, `OnPlatform`, `StageZone`) that return flat values for legacy chars.
-- Ground query replaces `y = 0` assumption in landing / fall logic.
-- Stage transitions, tag/assist, scriptable round rules (Lua or Rhai).
-- Mod packs: single archive + manifest + hashes.
-- wasm target.
+### Phase 5 — new engine features (started)
+- ✅ `[Platform]` stage sections: per-player ground level, landing on surfaces, walking off edges; `Pos Y`/`PosSet` stay ground-relative so legacy characters work unchanged (`stages/README.md`).
+- Open: `[Zone]` / `[Interact]`, new triggers (`GroundY`, `OnPlatform`), stage transitions, tag/assist, scripting, mod packs, wasm.
 
 ## Open questions
 

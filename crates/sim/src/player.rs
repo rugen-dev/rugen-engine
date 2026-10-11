@@ -202,6 +202,8 @@ pub struct Player {
     pub pctype: ProjContact,
     pub pctime: i32,
     pub pcid: i32,
+    /// Height of the surface under the player (0 = floor, negative = platform).
+    pub ground: f32,
     // ---- AI
     /// 0 = human, 1..=8 = computer controlled (`AILevel`).
     pub ai_level: i32,
@@ -319,6 +321,7 @@ impl Player {
             pctype: ProjContact::None,
             pctime: -1,
             pcid: 0,
+            ground: 0.0,
             ai_level: 0,
             ai: AiInput::default(),
             trans: Trans::Default,

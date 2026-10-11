@@ -270,7 +270,7 @@ impl Context for Ctx<'_> {
                 }
             }
             T::Pos(Axis::X) => Self::f(p.pos[0] - self.w.cam_x),
-            T::Pos(Axis::Y) => Self::f(p.pos[1]),
+            T::Pos(Axis::Y) => Self::f(p.pos[1] - p.ground),
             T::Power => Self::i(p.power),
             T::PowerMax => Self::i(p.power_max),
             T::PrevStateNo => Self::i(p.prev_state_no),

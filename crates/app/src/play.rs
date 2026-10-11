@@ -765,6 +765,13 @@ impl Match {
                 r.draw(d);
             }
             if show_boxes && it.boxes {
+                for pl in &stage.platforms {
+                    r.rect(
+                        [pl.x1, ground + pl.y - cam_y - 1.0],
+                        [pl.x2, ground + pl.y - cam_y + 1.0],
+                        [0.2, 1.0, 0.4, 0.9],
+                    );
+                }
                 for (boxes, color) in [
                     (&frame.clsn2, [0.2, 0.4, 1.0, 0.9]),
                     (&frame.clsn1, [1.0, 0.2, 0.2, 0.9]),

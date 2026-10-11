@@ -51,6 +51,18 @@ pub struct Stage {
     /// Zoom limits: `zoom_out` ≤ 1 lets the camera pull back, `zoom_in` ≥ 1 lets it close in.
     pub zoom_out: f32,
     pub zoom_in: f32,
+    /// rugen extension: raised ground segments players can stand on.
+    pub platforms: Vec<Platform>,
+}
+
+/// A horizontal surface at height `y` (negative = above the floor) spanning `x1..=x2`
+/// in stage coordinates. Declared in a stage .def as
+/// `[Platform]` sections with `x = x1, x2` and `y = height`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Platform {
+    pub x1: f32,
+    pub x2: f32,
+    pub y: f32,
 }
 
 impl Default for Stage {
@@ -78,6 +90,7 @@ impl Default for Stage {
             floor_tension: 0.0,
             zoom_out: 1.0,
             zoom_in: 1.0,
+            platforms: Vec::new(),
         }
     }
 }
@@ -131,6 +144,17 @@ impl Stage {
         }
         if let Some(v) = g("camera", "zoomin") {
             s.zoom_in = v.max(s.zoom_out);
+        }
+        for sec in def.sections_named("platform") {
+            let x = sec.f32s("x").unwrap_or_default();
+            let (Some(&x1), Some(&x2), Some(y)) = (x.first(), x.get(1), sec.f32("y")) else {
+                continue;
+            };
+            s.platforms.push(Platform {
+                x1: x1.min(x2),
+                x2: x1.max(x2),
+                y: y.min(0.0),
+            });
         }
         if let Some(v) = g("playerinfo", "leftbound") {
             s.left_bound = v;
@@ -1418,7 +1442,7 @@ impl World {
             p.hit_pause_time = 0;
             let custom = p.pending_state.is_some();
             let st = p.state_type;
-            let on_ground_down = st == StateType::L && p.pos[1] == 0.0;
+            let on_ground_down = st == StateType::L && p.pos[1] == p.ground;
             let trip = p.ghv.hit_type == HitType::Trip;
             if custom {
                 p.prev_state_no = if on_ground_down {
@@ -1461,7 +1485,7 @@ impl World {
                 self.change_state(i, no, None, Some(false));
             }
             let p = &mut self.players[i];
-            if p.state_type == StateType::L && p.pos[1] == 0.0 && p.ghv.yvel != 0.0 {
+            if p.state_type == StateType::L && p.pos[1] == p.ground && p.ghv.yvel != 0.0 {
                 p.down_hit_offset = true;
             }
         }
@@ -1624,9 +1648,16 @@ impl World {
                 self.change_state(i, 5120, None, None);
                 self.run_current(i);
             }
-            self.pos_update(i);
+            if self.pos_update(i) {
+                self.change_state(i, 50, None, None);
+                self.run_current(i);
+            }
             let p = &self.players[i];
-            if p.physics == Physics::A && p.vel[1] > 0.0 && p.pos[1] >= 0.0 && p.state_no != 105 {
+            if p.physics == Physics::A
+                && p.vel[1] > 0.0
+                && p.pos[1] >= p.ground
+                && p.state_no != 105
+            {
                 // engine-side ChangeState outside a state body: the new state runs right away
                 self.change_state(i, 52, None, None);
                 self.run_current(i);
@@ -2532,8 +2563,8 @@ impl World {
                 }
                 if let Some(v) = self.evf(i, y) {
                     let p = &mut self.players[i];
-                    p.pos[1] = v;
-                    p.old_pos[1] = v;
+                    p.pos[1] = p.ground + v;
+                    p.old_pos[1] = p.pos[1];
                 }
             }
             Sctrl::PosFreeze { value } => {
@@ -2740,7 +2771,8 @@ impl World {
         0.0
     }
 
-    fn pos_update(&mut self, i: usize) {
+    /// Returns true when the player just walked off a platform edge.
+    fn pos_update(&mut self, i: usize) -> bool {
         let data = self.data[self.players[i].data].clone();
         let push = self.corner_push(i);
         let bound = self.players[i].bind.is_some();
@@ -2770,6 +2802,8 @@ impl World {
             p.pos[0] += p.vel[0] * p.facing + push;
             p.pos[1] += p.vel[1];
         }
+        let fell_off = self.update_ground(i);
+        let p = &mut self.players[i];
         match p.physics {
             Physics::S => {
                 p.vel[0] *= data.konst("movement.stand.friction").unwrap_or(0.85);
@@ -2796,6 +2830,55 @@ impl World {
                 p.mhv.cornerpush_veloff = 0.0;
             }
         }
+        fell_off
+    }
+
+    /// Platforms: land on a surface crossed from above this tick, keep the
+    /// surface while standing within its span, fall off when leaving it.
+    fn update_ground(&mut self, i: usize) -> bool {
+        if self.stage.platforms.is_empty() {
+            return false;
+        }
+        let (x, old_y, new_y, vy, ground) = {
+            let p = &self.players[i];
+            (p.pos[0], p.old_pos[1], p.pos[1], p.vel[1], p.ground)
+        };
+        let scale = self.local_scale(i);
+        let mut landed: Option<f32> = None;
+        let mut below: f32 = 0.0;
+        for pl in &self.stage.platforms {
+            let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
+            if x < x1 || x > x2 {
+                continue;
+            }
+            // crossed the surface from above while falling
+            if vy >= 0.0 && old_y <= y + 0.01 && new_y >= y && landed.is_none_or(|l| y < l) {
+                landed = Some(y);
+            }
+            // highest surface at or below the feet (for walk-offs)
+            if y >= new_y - 0.01 && y < below {
+                below = y;
+            }
+        }
+        if let Some(y) = landed {
+            let p = &mut self.players[i];
+            p.pos[1] = y;
+            p.ground = y;
+            return false;
+        }
+        let p = &mut self.players[i];
+        p.ground = below;
+        let _ = ground;
+        // standing on nothing: the caller drops the player into the air-fall state
+        if p.physics != Physics::A
+            && p.state_type != StateType::A
+            && p.pos[1] < p.ground - 0.5
+            && p.move_type != MoveType::H
+        {
+            p.vel[1] = 0.0;
+            return true;
+        }
+        false
     }
 
     /// MUGEN camera: the view only moves when a player crosses the tension
@@ -3072,6 +3155,69 @@ mod tests {
         run(&mut w, 60, Buttons::default());
         assert_eq!(w.players[0].state_no, 0, "attack finished");
         assert!(w.players[0].ctrl);
+    }
+
+    /// A platform above the floor: jump onto it, stand on it, walk off and fall.
+    #[test]
+    fn platform_landing_and_walk_off() {
+        let Some(mut w) = world() else { return };
+        w.stage.platforms.push(Platform {
+            x1: -120.0,
+            x2: -20.0,
+            y: -40.0,
+        });
+        run(&mut w, 5, Buttons::default());
+        assert_eq!(w.players[0].pos[0], -70.0);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                u: true,
+                ..Default::default()
+            },
+        );
+        let mut landed = false;
+        for _ in 0..120 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+            if w.players[0].state_no == 0 && w.players[0].ground < 0.0 {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "should land on the platform");
+        let p = &w.players[0];
+        assert_eq!(p.pos[1], -40.0);
+        assert_eq!(p.ground, -40.0);
+        // Pos Y reads relative to the surface
+        let mut ctx = Ctx::new(&mut w, 0);
+        assert_eq!(
+            ctx.trigger(&rugen_cns::Trigger::Pos(rugen_cns::trigger::Axis::Y), &[]),
+            Value::Float(0.0)
+        );
+        // walk right past the platform's edge and fall to the floor
+        let fwd = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        let mut fell = false;
+        for t in 0..200 {
+            w.step(&[fwd, Buttons::default()]);
+            if std::env::var_os("RUGEN_TEST_TRACE").is_some() {
+                let p = &w.players[0];
+                eprintln!(
+                    "t={t} state {} type {:?} phys {:?} pos {:?} vel {:?} ground {} ctrl {}",
+                    p.state_no, p.state_type, p.physics, p.pos, p.vel, p.ground, p.ctrl
+                );
+            }
+            if w.players[0].ground == 0.0
+                && w.players[0].pos[1] == 0.0
+                && w.players[0].pos[0] > -20.0
+            {
+                fell = true;
+                break;
+            }
+        }
+        assert!(fell, "should fall off the edge, pos {:?}", w.players[0].pos);
     }
 
     #[test]
