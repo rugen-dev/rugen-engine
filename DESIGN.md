@@ -139,6 +139,7 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - ✅ `[Platform]` stage sections: per-player ground level, landing on surfaces, walking off edges; `Pos Y`/`PosSet` stay ground-relative so legacy characters work unchanged (`stages/README.md`).
 - ✅ Triggers `GroundY` and `OnPlatform` for new characters (legacy characters never use them).
 - ✅ Arcade ladder (six random opponents), stage / screen music, fullscreen toggle.
+- ✅ `[Arena]` stages: blast zones (ring-outs), stocks with respawn, floor spans (pits), no-wall mode; camera zooms out for height; engine air jumps / air dash / fast fall for legacy characters (`[game]` config, per-stage override). Sample: `examples/arena/arena.def`.
 - Open: `[Zone]` / `[Interact]`, stage transitions, tag/assist, scripting, mod packs, wasm.
 
 ## Open questions
