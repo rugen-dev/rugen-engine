@@ -17,6 +17,7 @@ use winit::window::WindowId;
 use crate::config::Config;
 use crate::gpu::Gpu;
 use crate::input::InputState;
+use crate::options::OptionsScreen;
 use crate::play::{FightSetup, Match};
 use crate::select::SelectScreen;
 use crate::system::SystemData;
@@ -31,8 +32,10 @@ pub enum Mode {
     Arcade,
     Versus,
     Training,
+    Tutorial,
     Watch,
     Netplay,
+    Options,
     Exit,
 }
 
@@ -42,6 +45,7 @@ pub enum Transition {
     Select(Mode),
     /// Online match from the `[net]` section of rugen.toml.
     Netplay,
+    Options,
     /// Show the VS screen, then fight.
     Versus(FightSetup, [Portrait; 2]),
     Fight(FightSetup),
@@ -51,6 +55,7 @@ pub enum Transition {
 enum Screen {
     Blank,
     Title(TitleScreen),
+    Options(Box<OptionsScreen>),
     Select(SelectScreen),
     Versus(VersusScreen),
     Match(Box<Match>),
@@ -152,6 +157,35 @@ impl Shell {
         Ok(())
     }
 
+    /// Take the edited config out of the options screen, apply and save it.
+    fn apply_options(&mut self) {
+        let Screen::Options(o) = &self.screen else {
+            return;
+        };
+        if !o.dirty {
+            return;
+        }
+        self.config = o.config.clone();
+        self.input.rebind(&self.config.input);
+        if let Some(a) = self.audio.as_mut() {
+            a.set_master_volume(self.config.audio.master);
+            a.set_music_volume(self.config.audio.music);
+        }
+        if self.fullscreen != self.config.video.fullscreen {
+            self.fullscreen = self.config.video.fullscreen;
+            if let Some(g) = &self.gpu {
+                g.window.set_fullscreen(
+                    self.fullscreen
+                        .then_some(winit::window::Fullscreen::Borderless(None)),
+                );
+            }
+        }
+        match self.config.save(&self.lib.root) {
+            Ok(()) => log::info!("settings saved to rugen.toml"),
+            Err(e) => log::warn!("settings not saved: {e}"),
+        }
+    }
+
     /// system.def `[Music]`: `<screen>.bgm`, `<screen>.bgm.volume`, `<screen>.bgm.loop`.
     fn play_system_music(&mut self, screen: &str) {
         let Some(sys) = self.system.as_ref() else {
@@ -231,8 +265,9 @@ impl Shell {
                 p1: p1.clone(),
                 p2: p2.clone(),
                 stage,
-                ai: [0, 4],
+                ai: [0, self.config.game.ai_level],
                 net: None,
+                tutorial: false,
             },
             [side(&p1), side(&p2)],
         ))
@@ -352,6 +387,7 @@ impl Shell {
                     stage,
                     ai: [0, 0],
                     net: Some(net),
+                    tutorial: false,
                 }));
             }
             Transition::Title => {
@@ -369,10 +405,23 @@ impl Shell {
                     }
                 };
             }
+            Transition::Options => {
+                self.screen = match self.system.as_ref() {
+                    Some(sys) => {
+                        Screen::Options(Box::new(OptionsScreen::new(self.config.clone(), sys)))
+                    }
+                    None => Screen::Blank,
+                };
+            }
             Transition::Select(mode) => {
                 self.play_system_music("select");
                 self.screen = match self.system.as_ref() {
-                    Some(sys) => Screen::Select(SelectScreen::new(mode, sys, &self.lib)),
+                    Some(sys) => Screen::Select(SelectScreen::new(
+                        mode,
+                        sys,
+                        &self.lib,
+                        self.config.game.ai_level,
+                    )),
                     None => Screen::Blank,
                 };
             }
@@ -388,6 +437,12 @@ impl Shell {
             }
             Transition::Fight(setup) => match Match::load(&setup, &self.data_dir, &self.config) {
                 Ok(mut m) => {
+                    if setup.tutorial {
+                        m.tutorial = Some(crate::tutorial::Tutorial::new(
+                            &m.world.data[0],
+                            &self.config.input.p1,
+                        ));
+                    }
                     if let Some(a) = self.audio.as_mut() {
                         a.play_music(m.bgm.as_deref(), 1.0, true);
                     }
@@ -457,6 +512,14 @@ impl Shell {
                     next = t.tick(pressed, sys, &mut |s| sfx_queue.push(s));
                 }
             }
+            Screen::Options(o) => {
+                if let Some(sys) = self.system.as_ref() {
+                    next = o.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
+                }
+                if next.is_some() {
+                    self.apply_options();
+                }
+            }
             Screen::Select(s) => {
                 if let Some(sys) = self.system.as_ref() {
                     next = s.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
@@ -519,6 +582,7 @@ impl Shell {
         let (cam, clear) = match (&mut self.screen, self.system.as_mut()) {
             (Screen::Title(t), Some(sys)) => t.render(r, sys),
             (Screen::Select(s), Some(sys)) => s.render(r, sys),
+            (Screen::Options(o), Some(sys)) => o.render(r, sys),
             (Screen::Versus(v), Some(sys)) => v.render(r, sys),
             (Screen::Match(m), _) => m.render(r),
             _ => (
@@ -558,6 +622,14 @@ impl Shell {
     }
 
     fn key(&mut self, key: &Key, pressed: bool, event_loop: &ActiveEventLoop) {
+        if let Screen::Options(o) = &mut self.screen
+            && o.capturing()
+        {
+            if pressed {
+                o.raw_key(key);
+            }
+            return;
+        }
         let lower = match key {
             Key::Character(c) => Key::Character(c.to_lowercase().into()),
             k => k.clone(),
@@ -586,6 +658,10 @@ impl Shell {
                 Screen::Select(_) => {
                     let snd = self.system.as_ref().and_then(|s| s.select.cancel_snd);
                     self.system_sfx(snd);
+                    self.transition(Transition::Title);
+                }
+                Screen::Options(_) => {
+                    self.apply_options();
                     self.transition(Transition::Title);
                 }
                 Screen::Versus(_) | Screen::Match(_) => {

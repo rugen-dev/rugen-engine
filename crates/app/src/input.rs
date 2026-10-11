@@ -28,6 +28,36 @@ fn parse_key(name: &str) -> Key {
     }
 }
 
+/// Config name for a logical key (inverse of `parse_key`), None if not bindable.
+pub fn key_name(key: &Key) -> Option<String> {
+    Some(match key {
+        Key::Named(n) => match n {
+            NamedKey::ArrowUp => "ArrowUp",
+            NamedKey::ArrowDown => "ArrowDown",
+            NamedKey::ArrowLeft => "ArrowLeft",
+            NamedKey::ArrowRight => "ArrowRight",
+            NamedKey::Enter => "Enter",
+            NamedKey::Space => "Space",
+            NamedKey::Shift => "Shift",
+            NamedKey::Control => "Control",
+            NamedKey::Alt => "Alt",
+            NamedKey::Tab => "Tab",
+            NamedKey::Backspace => "Backspace",
+            _ => return None,
+        }
+        .to_string(),
+        Key::Character(c) => {
+            let c = c.to_lowercase();
+            if c.chars().count() == 1 {
+                c
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    })
+}
+
 struct Pad {
     id: gilrs::GamepadId,
     held: Buttons,
@@ -77,6 +107,17 @@ impl InputState {
             log::info!("{} gamepad(s) connected", s.pads.len());
         }
         s
+    }
+
+    /// Replace the keyboard mapping (after rebinding in the options screen).
+    pub fn rebind(&mut self, cfg: &config::Input) {
+        let map = |k: &config::PlayerKeys| -> [Key; 11] {
+            let n = k.names();
+            std::array::from_fn(|i| parse_key(n[i]))
+        };
+        self.keys = [map(&cfg.p1), map(&cfg.p2)];
+        self.keyboard = [Buttons::default(); 2];
+        self.pad_slot = [cfg.gamepad_p1, cfg.gamepad_p2];
     }
 
     /// Keyboard event. Returns true if the key belonged to a player mapping.

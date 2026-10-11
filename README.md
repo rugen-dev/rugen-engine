@@ -44,6 +44,13 @@ skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick
 play and `rugen replay file.json` plays a recording back.
 
+Title menu: ARCADE, VS MODE, TRAINING, TUTORIAL (guided basics then every
+special move of the chosen character, detected as you perform it), WATCH,
+OPTIONS (volumes, camera zoom limits, fullscreen, computer level, net delay,
+key rebinding; saves `rugen.toml`), NETPLAY, EXIT. `[camera] zoom_out` /
+`zoom_in` in `rugen.toml` decide how far players can separate before the
+screen edge stops them, on any stage.
+
 For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
 match runs reloads it in place (checked once a second), and `rugen check`
 lists what the engine cannot run yet.

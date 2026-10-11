@@ -45,10 +45,11 @@ pub struct SelectScreen {
     human: [bool; 2],
     random_pick: [Option<usize>; 2],
     seed: u32,
+    ai_level: i32,
 }
 
 impl SelectScreen {
-    pub fn new(mode: Mode, sys: &SystemData, lib: &Library) -> Self {
+    pub fn new(mode: Mode, sys: &SystemData, lib: &Library, ai_level: i32) -> Self {
         let bg = match StageVisual::load_prefixed(&sys.def_path, "selectbg", Some(&sys.sff_path)) {
             Ok(b) => Some(b),
             Err(e) => {
@@ -81,8 +82,8 @@ impl SelectScreen {
         }
         let human = match mode {
             Mode::Versus => [true, true],
-            Mode::Arcade | Mode::Training => [true, false],
-            Mode::Watch | Mode::Netplay | Mode::Exit => [false, false],
+            Mode::Arcade | Mode::Training | Mode::Tutorial => [true, false],
+            Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let s = &sys.select;
         let n = cells.len() as i32;
@@ -105,6 +106,7 @@ impl SelectScreen {
             human,
             random_pick: [None, None],
             seed: 0x2545_f491,
+            ai_level,
         }
     }
 
@@ -176,17 +178,22 @@ impl SelectScreen {
                 .join("reference/mugen-1.1b1/stages/stage0.def");
             p.exists().then_some(p)
         });
-        let ai = |human: bool| if human { 0 } else { 4 };
+        let ai = |human: bool| if human { 0 } else { self.ai_level };
+        let tutorial = self.mode == Mode::Tutorial;
         let setup = FightSetup {
-            p1,
-            p2,
+            p1: p1.clone(),
+            p2: if tutorial { p1 } else { p2 },
             stage,
             ai: match self.mode {
-                Mode::Training => [0, 0],
+                Mode::Training | Mode::Tutorial => [0, 0],
                 _ => [ai(self.human[0]), ai(self.human[1])],
             },
             net: None,
+            tutorial,
         };
+        if tutorial {
+            return Some(Transition::Fight(setup));
+        }
         let portrait = |me: &Self, side: usize| {
             let c = me.random_pick[side].and_then(|i| me.cells.get(i));
             Portrait::new(
@@ -260,7 +267,7 @@ impl SelectScreen {
                 }
                 if self.done[0] && self.done[1] {
                     self.phase = Phase::Stage;
-                    if !self.human[0] && !self.human[1] {
+                    if (!self.human[0] && !self.human[1]) || self.mode == Mode::Tutorial {
                         self.phase = Phase::Done;
                     }
                 }
@@ -318,7 +325,8 @@ impl SelectScreen {
             Mode::Versus => "VS Mode",
             Mode::Training => "Training",
             Mode::Watch => "Watch",
-            Mode::Netplay | Mode::Exit => "",
+            Mode::Tutorial => "Tutorial",
+            Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
         sys.text(r, s.title_font, title, s.title_offset);
         // grid

@@ -53,6 +53,8 @@ pub struct FightSetup {
     /// Computer level per side (0 = human).
     pub ai: [i32; 2],
     pub net: Option<NetMode>,
+    /// Guided tutorial for P1 (P2 stands still, no clock).
+    pub tutorial: bool,
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -150,6 +152,8 @@ pub struct Match {
     gpu_dirty: Vec<usize>,
     /// Stage music file, if any.
     pub bgm: Option<PathBuf>,
+    pub tutorial: Option<crate::tutorial::Tutorial>,
+    prev_start: bool,
 }
 
 impl Match {
@@ -200,6 +204,9 @@ impl Match {
             world.players[1].ai_level = setup.ai[1].clamp(0, 8);
         }
         world.start_round();
+        if setup.tutorial {
+            world.round.time_left = -1;
+        }
         log::info!("{} vs {}", world.data[0].name, world.data[1].name);
 
         let net = match &setup.net {
@@ -296,6 +303,8 @@ impl Match {
             reload_tick: 0,
             gpu_dirty: Vec::new(),
             bgm,
+            tutorial: None,
+            prev_start: false,
         })
     }
 
@@ -471,6 +480,20 @@ impl Match {
                 self.leave = true;
             }
         }
+        if let Some(t) = self.tutorial.as_mut() {
+            if self.world.round.time_left >= 0 {
+                self.world.round.time_left = -1;
+            }
+            t.tick(&self.world);
+            if inputs[0].s && !self.prev_start {
+                if t.finished {
+                    self.leave = true;
+                } else {
+                    t.skip();
+                }
+            }
+        }
+        self.prev_start = inputs[0].s;
         if self.debug {
             for w in self.world.warnings.drain(..) {
                 log::warn!("{w}");
@@ -1058,6 +1081,35 @@ impl Match {
         }
         if self.overlay {
             self.draw_overlay(r, &hud, u, screen_w);
+        }
+        if let Some(t) = self.tutorial.as_ref() {
+            let lines = t.text();
+            r.rect(
+                hud(screen_w / 2.0 - 150.0, 42.0),
+                hud(screen_w / 2.0 + 150.0, 78.0),
+                [0.0, 0.0, 0.0, 0.55],
+            );
+            draw_text(
+                r,
+                &lines[0],
+                hud(screen_w / 2.0, 46.0),
+                2.0 * u,
+                [1.0, 0.9, 0.3, 1.0],
+            );
+            draw_text(
+                r,
+                &lines[1],
+                hud(screen_w / 2.0, 60.0),
+                1.2 * u,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+            draw_text(
+                r,
+                &lines[2],
+                hud(screen_w / 2.0, 70.0),
+                u,
+                [0.7, 0.8, 1.0, 1.0],
+            );
         }
         if brightness < 1.0 {
             r.rect(

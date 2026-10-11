@@ -39,6 +39,7 @@ impl Replay {
             stage: self.stage.clone(),
             ai: self.ai,
             net: None,
+            tutorial: false,
         }
     }
 

@@ -26,6 +26,7 @@ mod game;
 mod gpu;
 mod input;
 mod lifebar;
+mod options;
 mod play;
 mod replay;
 mod select;
@@ -33,6 +34,7 @@ mod sprites;
 mod stage;
 mod system;
 mod title;
+mod tutorial;
 mod versus;
 mod viewer;
 
@@ -187,6 +189,7 @@ fn main() -> anyhow::Result<()> {
                 stage,
                 ai: [if watch { ai } else { 0 }, ai],
                 net: net_mode,
+                tutorial: false,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

@@ -44,12 +44,25 @@ impl TitleScreen {
                     "versus" => Mode::Versus,
                     "training" => Mode::Training,
                     "watch" => Mode::Watch,
+                    "options" => Mode::Options,
                     "exit" => Mode::Exit,
                     _ => return None,
                 };
                 Some((mode, label.clone()))
             })
             .collect();
+        let after_training = out
+            .iter()
+            .position(|(m, _)| *m == Mode::Training)
+            .map_or(out.len(), |i| i + 1);
+        out.insert(after_training, (Mode::Tutorial, "TUTORIAL".into()));
+        if !out.iter().any(|(m, _)| *m == Mode::Options) {
+            let at = out
+                .iter()
+                .position(|(m, _)| *m == Mode::Exit)
+                .unwrap_or(out.len());
+            out.insert(at, (Mode::Options, "OPTIONS".into()));
+        }
         if netplay {
             let at = out
                 .iter()
@@ -94,6 +107,7 @@ impl TitleScreen {
             return Some(match items[self.cursor].0 {
                 Mode::Exit => Transition::Quit,
                 Mode::Netplay => Transition::Netplay,
+                Mode::Options => Transition::Options,
                 m => Transition::Select(m),
             });
         }

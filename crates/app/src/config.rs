@@ -12,6 +12,20 @@ pub struct Config {
     pub audio: AudioCfg,
     pub input: Input,
     pub net: Net,
+    pub game: GameCfg,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameCfg {
+    /// Computer opponent level 1..=8.
+    pub ai_level: i32,
+}
+
+impl Default for GameCfg {
+    fn default() -> Self {
+        Self { ai_level: 4 }
+    }
 }
 
 /// Camera limits applied on top of every stage: players can separate until the
@@ -170,6 +184,24 @@ impl PlayerKeys {
             start: "Enter".into(),
         }
     }
+    /// Set the key for the button at `i` (Buttons order: u d l r a b c x y z s).
+    pub fn set(&mut self, i: usize, name: &str) {
+        let slot = match i {
+            0 => &mut self.up,
+            1 => &mut self.down,
+            2 => &mut self.left,
+            3 => &mut self.right,
+            4 => &mut self.a,
+            5 => &mut self.b,
+            6 => &mut self.c,
+            7 => &mut self.x,
+            8 => &mut self.y,
+            9 => &mut self.z,
+            _ => &mut self.start,
+        };
+        *slot = name.to_string();
+    }
+
     /// Mapping in Buttons order: u d l r a b c x y z s.
     pub fn names(&self) -> [&str; 11] {
         [
@@ -206,6 +238,12 @@ impl Default for Net {
 }
 
 impl Config {
+    pub fn save(&self, root: &Path) -> anyhow::Result<()> {
+        let text = toml::to_string_pretty(self)?;
+        std::fs::write(root.join("rugen.toml"), text)?;
+        Ok(())
+    }
+
     /// Load `<root>/rugen.toml`, creating it with defaults when missing.
     pub fn load(root: &Path) -> Self {
         let path = root.join("rugen.toml");
