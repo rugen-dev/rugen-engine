@@ -1,4 +1,5 @@
-//! Stage backgrounds: `[BGdef]` + `[BG ...]` elements from a stage .def.
+//! MUGEN background definitions: `[BGdef]` + `[BG ...]` from a stage .def,
+//! or `[TitleBGdef]` / `[SelectBGdef]` / `[VersusBGdef]` from system.def.
 //! Visual only; the simulation keeps just the bounds in `rugen_sim::Stage`.
 
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ use anyhow::Context;
 use rugen_formats::air::Air;
 use rugen_formats::def::Def;
 use rugen_formats::sff::{Pixels, Sff};
-use rugen_render::{Draw, PaletteId, Renderer, TextureId, Tint};
+use rugen_render::{Blend, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::anim::AnimState;
 
 /// Uploaded stage texture plus optional palette slot index.
@@ -48,7 +49,9 @@ struct Elem {
     /// sin.x / sin.y: amplitude, period, phase.
     sin_x: Option<[f32; 3]>,
     sin_y: Option<[f32; 3]>,
-    alpha: f32,
+    blend: Blend,
+    /// `window = x1,y1, x2,y2` in screen coordinates (top-left origin).
+    window: Option<[f32; 4]>,
 }
 
 pub struct StageVisual {
@@ -56,6 +59,7 @@ pub struct StageVisual {
     air: Air,
     elems: Vec<Elem>,
     pub localcoord: [f32; 2],
+    pub clear_color: [f64; 4],
     textures: HashMap<(u16, u16), Option<Tex>>,
     palettes: Vec<PaletteId>,
     tick: i32,
@@ -63,22 +67,52 @@ pub struct StageVisual {
 
 impl StageVisual {
     pub fn load(def_path: &Path) -> anyhow::Result<Self> {
+        Self::load_prefixed(def_path, "bg", None)
+    }
+
+    /// Load `[<prefix>def]` + `[<prefix> ...]` sections. `default_sff` is used
+    /// when the def section has no `spr=` (system.def backgrounds share system.sff).
+    pub fn load_prefixed(
+        def_path: &Path,
+        prefix: &str,
+        default_sff: Option<&Path>,
+    ) -> anyhow::Result<Self> {
         let def = Def::open(def_path).with_context(|| def_path.display().to_string())?;
         let dir = def_path.parent().unwrap_or(Path::new("."));
-        let bgdef = def.section("bgdef").context("stage has no [BGdef]")?;
-        let spr = bgdef.raw("spr").context("[BGdef] needs spr=")?;
-        let sff = Sff::open(rugen_sim::chardata::resolve(dir, spr)?, false)
-            .with_context(|| spr.to_string())?;
+        let def_name = format!("{prefix}def");
+        let bgdef = def
+            .section(&def_name)
+            .with_context(|| format!("no [{def_name}] in {}", def_path.display()))?;
+        let sff_path = match bgdef.raw("spr").filter(|s| !s.trim().is_empty()) {
+            Some(spr) => rugen_sim::chardata::resolve(dir, spr.trim())?,
+            None => default_sff
+                .map(Path::to_path_buf)
+                .with_context(|| format!("[{def_name}] needs spr="))?,
+        };
+        let sff = Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?;
+        let clear_color =
+            bgdef
+                .f32s("bgclearcolor")
+                .filter(|v| v.len() >= 3)
+                .map_or([0.0, 0.0, 0.0, 1.0], |v| {
+                    [
+                        (v[0] / 255.0) as f64,
+                        (v[1] / 255.0) as f64,
+                        (v[2] / 255.0) as f64,
+                        1.0,
+                    ]
+                });
         // animations live inside the def file itself
         let text = rugen_formats::text::decode(&std::fs::read(def_path)?);
         let air = Air::parse(&text);
         let localcoord = def
             .section("stageinfo")
+            .or_else(|| def.section("info"))
             .and_then(|s| s.f32s("localcoord"))
             .filter(|v| v.len() >= 2 && v[0] > 0.0)
             .map_or([320.0, 240.0], |v| [v[0], v[1]]);
         let mut elems = Vec::new();
-        for s in def.sections_named("bg") {
+        for s in def.sections_named(prefix) {
             let ty = s
                 .raw("type")
                 .map(|t| t.trim().to_ascii_lowercase())
@@ -140,12 +174,17 @@ impl StageVisual {
                 .raw("trans")
                 .map(|t| t.trim().to_ascii_lowercase())
                 .unwrap_or_default();
-            let alpha = if trans == "add" || trans == "addalpha" {
-                s.f32s("alpha")
-                    .and_then(|v| v.first().copied())
-                    .map_or(1.0, |a| a / 256.0)
-            } else {
-                1.0
+            let alpha = s.i32s("alpha").unwrap_or_default();
+            let a = |i: usize, d: i32| alpha.get(i).copied().unwrap_or(d).clamp(0, 255) as u8;
+            let blend = match trans.as_str() {
+                "add" => Blend::Add { src: 255, dst: 255 },
+                "add1" => Blend::Add { src: 255, dst: 128 },
+                "addalpha" => Blend::Add {
+                    src: a(0, 255),
+                    dst: a(1, 0),
+                },
+                "sub" => Blend::Sub { src: 255, dst: 255 },
+                _ => Blend::Alpha,
             };
             let sin = |k: &str| {
                 s.f32s(k)
@@ -164,7 +203,11 @@ impl StageVisual {
                 scale: pair("scalestart", [1.0, 1.0]),
                 sin_x: sin("sin.x"),
                 sin_y: sin("sin.y"),
-                alpha,
+                blend,
+                window: s
+                    .f32s("window")
+                    .filter(|v| v.len() >= 4)
+                    .map(|v| [v[0], v[1], v[2], v[3]]),
             });
         }
         Ok(Self {
@@ -172,6 +215,7 @@ impl StageVisual {
             air,
             elems,
             localcoord,
+            clear_color,
             textures: HashMap::new(),
             palettes: Vec::new(),
             tick: 0,
@@ -200,6 +244,9 @@ impl StageVisual {
     }
 
     fn sprite(&mut self, r: &mut Renderer, group: i32, number: i32) -> Option<Placed> {
+        if self.palettes.is_empty() {
+            self.init_gpu(r);
+        }
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
         let spr = self.sff.get(key.0, key.1)?;
         let (w, h) = (spr.width as f32, spr.height as f32);
@@ -282,7 +329,17 @@ impl StageVisual {
             );
             let step_x = w + e.tilespacing[0] as f32 * scale;
             let step_y = h + e.tilespacing[1] as f32 * scale;
-            let color = [1.0, 1.0, 1.0, e.alpha];
+            let color = [1.0, 1.0, 1.0, 1.0];
+            // windows are relative to the screen, which is centred on the camera
+            let clip = e.window.map(|w| {
+                let left = cam[0] - self.localcoord[0] * scale / 2.0;
+                [
+                    left + w[0] * scale,
+                    w[1] * scale,
+                    left + (w[2] + 1.0) * scale,
+                    (w[3] + 1.0) * scale,
+                ]
+            });
             // tiling: 1 = infinite, n = n copies
             let xs: Vec<f32> = if e.tile[0] == 1 && step_x > 0.0 {
                 let left = cam[0] - screen_w / 2.0 - w;
@@ -313,6 +370,8 @@ impl StageVisual {
                     d.hflip = hflip;
                     d.color = color;
                     d.tint = tint;
+                    d.blend = e.blend;
+                    d.clip = clip;
                     r.draw(d);
                 }
             }

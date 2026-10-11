@@ -17,7 +17,7 @@ use rugen_sim::World;
 use rugen_sim::round::Finish;
 use rugen_sim::world::Event;
 
-use crate::sprites::{Anim, FontGpu, SpriteSheet};
+use crate::sprites::{Anim, FontGpu, FontRef, SpriteSheet};
 
 /// Uploaded player portrait: texture, palette, axis.
 pub type Portrait = (TextureId, Option<PaletteId>, [f32; 2]);
@@ -59,29 +59,6 @@ impl Elem {
     }
     fn present(&self) -> bool {
         self.spr.is_some() || self.anim.is_some()
-    }
-}
-
-/// `font = index, bank, align`
-#[derive(Clone, Copy, Debug)]
-struct FontRef {
-    index: i32,
-    bank: i32,
-    align: i32,
-}
-
-impl FontRef {
-    fn parse(s: &Section, key: &str) -> Option<Self> {
-        let v = s.i32s(key)?;
-        let index = *v.first()?;
-        if index < 0 {
-            return None;
-        }
-        Some(Self {
-            index,
-            bank: v.get(1).copied().unwrap_or(0),
-            align: v.get(2).copied().unwrap_or(0),
-        })
     }
 }
 

@@ -11,7 +11,8 @@
 //!
 //! Archives are never read directly by the engine. [`Library::prepare_char`]
 //! extracts them once into `cache/chars/<hash>/`, writes a `rugen.json`
-//! manifest (main .def, display name) and returns the prepared directory.
+//! manifest (main .def, display name, author, portraits converted to PNG so
+//! menus never open the full SFF) and returns the prepared directory.
 //! A `cache/VERSION` file invalidates every entry when the cache format changes.
 
 #![forbid(unsafe_code)]
@@ -24,7 +25,7 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 /// Bump when the cache layout or conversion output changes.
-pub const CACHE_VERSION: u32 = 1;
+pub const CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -64,7 +65,23 @@ pub struct Manifest {
     /// Main .def relative to the cache dir.
     pub def: String,
     pub display_name: String,
+    #[serde(default)]
+    pub author: String,
+    /// Select-screen portraits (`9000,0` small, `9000,1` big) as RGBA PNGs in the cache dir.
+    #[serde(default)]
+    pub portrait_small: Option<PortraitInfo>,
+    #[serde(default)]
+    pub portrait_big: Option<PortraitInfo>,
     pub source_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PortraitInfo {
+    pub file: String,
+    pub width: u32,
+    pub height: u32,
+    /// Sprite axis (origin) relative to the top-left corner.
+    pub axis: [i32; 2],
 }
 
 #[derive(Clone, Debug)]
@@ -269,18 +286,33 @@ impl Library {
         remove_junk(&dir);
         let def = find_main_def(&dir, &entry.id, kind_dir == "stages")
             .ok_or_else(|| Error::Other(format!("{}: no usable .def found", entry.id)))?;
-        let display_name = rugen_formats::def::Def::open(dir.join(&def))
-            .ok()
-            .and_then(|d| {
-                d.section("info")
-                    .and_then(|i| i.str("displayname").or(i.str("name")).map(str::to_string))
-            })
+        let parsed = rugen_formats::def::Def::open(dir.join(&def)).ok();
+        let info = |key: &str| {
+            parsed
+                .as_ref()
+                .and_then(|d| d.section("info"))
+                .and_then(|i| i.str(key).map(str::to_string))
+        };
+        let display_name = info("displayname")
+            .or_else(|| info("name"))
             .unwrap_or_else(|| entry.id.clone());
+        let author = info("author").unwrap_or_default();
+        let (portrait_small, portrait_big) = if kind_dir == "chars" {
+            match parsed.as_ref() {
+                Some(d) => extract_portraits(&dir, &def, d),
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
         let m = Manifest {
             cache_version: CACHE_VERSION,
             id: entry.id.clone(),
             def,
             display_name,
+            author,
+            portrait_small,
+            portrait_big,
             source_hash: hash,
         };
         fs::write(
@@ -289,6 +321,123 @@ impl Library {
         )?;
         Ok((dir, m))
     }
+}
+
+/// Convert the select-screen portraits to PNG next to the manifest.
+fn extract_portraits(
+    dir: &Path,
+    def: &str,
+    parsed: &rugen_formats::def::Def,
+) -> (Option<PortraitInfo>, Option<PortraitInfo>) {
+    let def_dir = dir.join(def);
+    let def_dir = def_dir.parent().unwrap_or(dir);
+    let Some(files) = parsed.section("files") else {
+        return (None, None);
+    };
+    let Some(spr) = files.raw("sprite") else {
+        return (None, None);
+    };
+    let Some(sff_path) = find_ci(def_dir, spr.trim()) else {
+        return (None, None);
+    };
+    let sff = match rugen_formats::sff::Sff::open(&sff_path, true) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("{}: {e}", sff_path.display());
+            return (None, None);
+        }
+    };
+    // SFF v1 chars take their colours from pal1 (.act)
+    let act = files
+        .raw("pal1")
+        .and_then(|p| find_ci(def_dir, p.trim()))
+        .and_then(|p| rugen_formats::act::open(p).ok());
+    let v1 = matches!(sff.version, Some(rugen_formats::sff::Version::V1));
+    let mut out = [None, None];
+    for (k, number) in [0u16, 1].into_iter().enumerate() {
+        let Some(s) = sff.get(9000, number) else {
+            continue;
+        };
+        let rgba: Vec<u8> = match &s.pixels {
+            rugen_formats::sff::Pixels::Rgba(px) => px.clone(),
+            rugen_formats::sff::Pixels::Indexed(px) => {
+                // pal1 replaces the shared (first) palette; sprites with their own palette keep it
+                let pal = match (&act, v1, s.palette) {
+                    (Some(a), true, Some(0)) => a.clone(),
+                    (_, _, Some(i)) => sff.palettes.get(i).cloned().unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                px.iter()
+                    .flat_map(|&i| {
+                        let c = pal.get(i as usize).copied().unwrap_or([0, 0, 0, 0]);
+                        if i == 0 { [0, 0, 0, 0] } else { c }
+                    })
+                    .collect()
+            }
+        };
+        let file = format!("portrait_{}.png", if number == 0 { "small" } else { "big" });
+        let path = dir.join(&file);
+        if let Err(e) = write_png(&path, s.width as u32, s.height as u32, &rgba) {
+            log::warn!("{}: {e}", path.display());
+            continue;
+        }
+        out[k] = Some(PortraitInfo {
+            file,
+            width: s.width as u32,
+            height: s.height as u32,
+            axis: [s.offset[0] as i32, s.offset[1] as i32],
+        });
+    }
+    let [a, b] = out;
+    (a, b)
+}
+
+fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
+    let mut enc = png::Encoder::new(fs::File::create(path)?, w.max(1), h.max(1));
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut wr = enc
+        .write_header()
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let mut data = rgba.to_vec();
+    data.resize((w.max(1) * h.max(1) * 4) as usize, 0);
+    wr.write_image_data(&data)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    Ok(())
+}
+
+/// Read a cached portrait back as straight RGBA.
+pub fn read_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+    let dec = png::Decoder::new(std::io::BufReader::new(fs::File::open(path)?));
+    let mut reader = dec.read_info().map_err(|e| Error::Other(e.to_string()))?;
+    let mut buf = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    buf.truncate(info.buffer_size());
+    Ok((info.width, info.height, buf))
+}
+
+/// Case-insensitive lookup of `name` (which may contain subdirectories) under `dir`.
+fn find_ci(dir: &Path, name: &str) -> Option<PathBuf> {
+    let direct = dir.join(name);
+    if direct.exists() {
+        return Some(direct);
+    }
+    let mut cur = dir.to_path_buf();
+    for part in Path::new(name).components() {
+        let want = part.as_os_str().to_string_lossy().to_ascii_lowercase();
+        let next = fs::read_dir(&cur)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .is_some_and(|f| f.to_string_lossy().to_ascii_lowercase() == want)
+            })?;
+        cur = next;
+    }
+    Some(cur)
 }
 
 fn sanitize(s: &str) -> String {

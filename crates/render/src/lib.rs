@@ -157,6 +157,8 @@ pub struct Draw {
     pub tint: Tint,
     /// Texel sub-rectangle `[x, y, w, h]` to draw instead of the whole texture.
     pub src: Option<[u32; 4]>,
+    /// Logical-space clip rectangle `[min x, min y, max x, max y]` (unrotated draws only).
+    pub clip: Option<[f32; 4]>,
 }
 
 impl Draw {
@@ -174,6 +176,7 @@ impl Draw {
             angle: 0.0,
             tint: Tint::default(),
             src: None,
+            clip: None,
         }
     }
 }
@@ -527,8 +530,27 @@ impl Renderer {
         } else {
             (d.pos[1] - ay, d.pos[1] - ay + h)
         };
-        let (u0, u1) = if d.hflip { (su1, su0) } else { (su0, su1) };
-        let (v0, v1) = if d.vflip { (sv1, sv0) } else { (sv0, sv1) };
+        let (mut u0, mut u1) = if d.hflip { (su1, su0) } else { (su0, su1) };
+        let (mut v0, mut v1) = if d.vflip { (sv1, sv0) } else { (sv0, sv1) };
+        let (mut x0, mut x1, mut y0, mut y1) = (x0, x1, y0, y1);
+        if let Some(c) = d.clip
+            && d.angle == 0.0
+        {
+            // shrink the quad to the window and trim the UVs by the same fractions
+            let (cx0, cx1) = (x0.max(c[0]), x1.min(c[2]));
+            let (cy0, cy1) = (y0.max(c[1]), y1.min(c[3]));
+            if cx0 >= cx1 || cy0 >= cy1 {
+                return;
+            }
+            let fx0 = (cx0 - x0) / (x1 - x0);
+            let fx1 = (cx1 - x0) / (x1 - x0);
+            let fy0 = (cy0 - y0) / (y1 - y0);
+            let fy1 = (cy1 - y0) / (y1 - y0);
+            let (nu0, nu1) = (u0 + (u1 - u0) * fx0, u0 + (u1 - u0) * fx1);
+            let (nv0, nv1) = (v0 + (v1 - v0) * fy0, v0 + (v1 - v0) * fy1);
+            (u0, u1, v0, v1) = (nu0, nu1, nv0, nv1);
+            (x0, x1, y0, y1) = (cx0, cx1, cy0, cy1);
+        }
         let mut corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
         if d.angle != 0.0 {
             let rad = d.angle * (std::f32::consts::PI / 180.0);

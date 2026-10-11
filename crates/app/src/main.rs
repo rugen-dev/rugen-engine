@@ -1,6 +1,7 @@
 //! rugen binary.
 //!
 //! ```text
+//! rugen [--root dir]                                            full game: title, select, fight
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
@@ -17,11 +18,17 @@
 use anyhow::Context;
 
 mod config;
+mod game;
+mod gpu;
 mod input;
 mod lifebar;
 mod play;
+mod select;
 mod sprites;
 mod stage;
+mod system;
+mod title;
+mod versus;
 mod viewer;
 
 fn main() -> anyhow::Result<()> {
@@ -30,7 +37,9 @@ fn main() -> anyhow::Result<()> {
     )
     .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
+    // a leading option (`rugen --frames 30`) means the full game
+    let first = args.first().map(String::as_str);
+    match first.filter(|a| !a.starts_with("--")) {
         Some("view") => {
             let shot = args
                 .iter()
@@ -140,25 +149,25 @@ fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            play::run(
-                &p1,
-                p2.as_deref(),
-                stage.as_deref(),
-                play::PlayOpts {
-                    config,
-                    net: net_mode,
-                    shot: shot.map(std::path::PathBuf::from),
-                    script,
-                    ai: ai
-                        .map(|a| a.parse::<i32>().context("--ai expects 0..8"))
-                        .transpose()?
-                        .unwrap_or(if synctest { 0 } else { 4 }),
-                    frames: frames
-                        .map(|f| f.parse::<u32>().context("--frames expects a number"))
-                        .transpose()?,
-                },
-                &lib.data_dir(),
-            )
+            let ai = ai
+                .map(|a| a.parse::<i32>().context("--ai expects 0..8"))
+                .transpose()?
+                .unwrap_or(if synctest || net_mode.is_some() { 0 } else { 4 });
+            let setup = play::FightSetup {
+                p1: p1.clone(),
+                p2: p2.unwrap_or(p1),
+                stage,
+                ai: [0, ai],
+                net: net_mode,
+            };
+            let harness = game::Harness {
+                shot: shot.map(std::path::PathBuf::from),
+                frames: frames
+                    .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                    .transpose()?,
+                script: script.as_deref().map(play::parse_script),
+            };
+            game::Shell::new(config, lib, game::Transition::Fight(setup), true, harness).run()
         }
         Some("check") => {
             let opt = |name: &str| {
@@ -226,6 +235,24 @@ fn main() -> anyhow::Result<()> {
                 println!("  {:<24} {:?}  {}", s.id, s.kind, s.source.display());
             }
             Ok(())
+        }
+        None | Some("game") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let root = opt("--root");
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let config = config::Config::load(&lib.root);
+            let harness = game::Harness {
+                shot: opt("--shot").map(std::path::PathBuf::from),
+                frames: opt("--frames")
+                    .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                    .transpose()?,
+                script: opt("--script").as_deref().map(play::parse_script),
+            };
+            game::Shell::new(config, lib, game::Transition::Title, false, harness).run()
         }
         _ => {
             eprintln!(

@@ -135,6 +135,30 @@ impl Anim {
     }
 }
 
+/// `font = index, bank, align` as written in fight.def / system.def.
+#[derive(Clone, Copy, Debug)]
+pub struct FontRef {
+    pub index: i32,
+    pub bank: i32,
+    /// 1 left, 0 centred, -1 right.
+    pub align: i32,
+}
+
+impl FontRef {
+    pub fn parse(s: &rugen_formats::def::Section, key: &str) -> Option<Self> {
+        let v = s.i32s(key)?;
+        let index = *v.first()?;
+        if index < 0 {
+            return None;
+        }
+        Some(Self {
+            index,
+            bank: v.get(1).copied().unwrap_or(0),
+            align: v.get(2).copied().unwrap_or(0),
+        })
+    }
+}
+
 /// A bitmap font uploaded to the GPU.
 pub struct FontGpu {
     pub font: Font,
@@ -165,7 +189,7 @@ impl FontGpu {
         self.font.text_width(text) as f32 * scale
     }
 
-    /// Draw `text` with its baseline-top at `pos`. `align`: 1 left, 0 centred, -1 right.
+    /// Draw `text` with its bottom line at `pos.y` (MUGEN convention). `align`: 1 left, 0 centred, -1 right.
     pub fn draw(
         &mut self,
         r: &mut Renderer,
@@ -183,7 +207,7 @@ impl FontGpu {
             0 => pos[0] - total / 2.0,
             _ => pos[0] - total,
         } + self.font.offset[0] as f32 * scale;
-        let y = pos[1] + self.font.offset[1] as f32 * scale;
+        let y = pos[1] + (self.font.offset[1] - self.font.size[1] as i32 + 1) as f32 * scale;
         for c in text.chars() {
             let w = self.font.char_width(c) as f32;
             if let Some(g) = self.font.glyphs.get(&c)

@@ -1,14 +1,13 @@
-//! `rugen play <char> [char2] [--stage s]`: local or online match.
+//! The match screen: runs a [`World`] (locally or through rollback netplay),
+//! draws players, explods, projectiles, the stage and the fight.def HUD.
 //!
 //! Player keys come from `rugen.toml` (see [`crate::config`]); gamepads work
 //! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug,
-//! +/- zoom, Esc quit.
+//! +/- zoom.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use rugen_audio::{Audio, SoundKey};
@@ -21,16 +20,9 @@ use rugen_sim::fx::PalFxOut;
 use rugen_sim::world::Event;
 use rugen_sim::world::Stage;
 use rugen_sim::{Buttons, CharData, FxData, World};
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId};
 
 use crate::config::Config;
-use crate::input::InputState;
-
-const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// How the match is driven.
 #[derive(Clone, Debug)]
@@ -45,105 +37,15 @@ pub enum NetMode {
     SyncTest,
 }
 
-pub struct PlayOpts {
-    pub config: Config,
+/// Everything needed to start a match.
+#[derive(Clone, Debug)]
+pub struct FightSetup {
+    pub p1: PathBuf,
+    pub p2: PathBuf,
+    pub stage: Option<PathBuf>,
+    /// Computer level per side (0 = human).
+    pub ai: [i32; 2],
     pub net: Option<NetMode>,
-    pub shot: Option<PathBuf>,
-    pub script: Option<String>,
-    /// Computer control for P2 (0 = human).
-    pub ai: i32,
-    /// Run this many ticks through the normal loop (local or net), then shoot/quit.
-    pub frames: Option<u32>,
-}
-
-pub fn run(
-    p1: &Path,
-    p2: Option<&Path>,
-    stage: Option<&Path>,
-    opts: PlayOpts,
-    data_dir: &Path,
-) -> anyhow::Result<()> {
-    let (stage, visual) = match stage {
-        Some(p) => {
-            let def = rugen_formats::def::Def::open(p).with_context(|| p.display().to_string())?;
-            let visual = match crate::stage::StageVisual::load(p) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    log::warn!("stage background not loaded: {e:#}");
-                    None
-                }
-            };
-            (Stage::from_def(&def), visual)
-        }
-        None => (Stage::default(), None),
-    };
-    let d1 = CharData::load_with_data(p1, data_dir).with_context(|| p1.display().to_string())?;
-    let d2 = match p2 {
-        Some(p) => {
-            CharData::load_with_data(p, data_dir).with_context(|| p.display().to_string())?
-        }
-        None => d1.clone(),
-    };
-    for d in [&d1, &d2] {
-        for w in &d.warnings {
-            log::warn!("{}: {w}", d.name);
-        }
-    }
-    let mut world = World::new(stage, 1);
-    match FxData::load(data_dir) {
-        Ok(fx) => {
-            world.round = rugen_sim::RoundState::new(fx.round.clone());
-            world.fx = Some(fx);
-        }
-        Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
-    }
-    world.add_player(d1, 0, 1);
-    world.add_player(d2, 1, 2);
-    if opts.net.is_none() {
-        world.players[1].ai_level = opts.ai.clamp(0, 8);
-    }
-    world.start_round();
-    log::info!("{} vs {}", world.data[0].name, world.data[1].name);
-
-    let net = match &opts.net {
-        Some(NetMode::P2P { port, remote, side }) => {
-            let o = NetOptions {
-                input_delay: opts.config.net.input_delay,
-                max_prediction: opts.config.net.max_prediction,
-                ..Default::default()
-            };
-            let n = Netplay::p2p(*port, *remote, *side, &o)
-                .with_context(|| format!("netplay on port {port} to {remote}"))?;
-            log::info!(
-                "netplay: listening on {port}, peer {remote}, playing P{}",
-                side + 1
-            );
-            Some(n)
-        }
-        Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
-        None => None,
-    };
-
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::new(world, &opts.config);
-    app.stage_visual = visual;
-    app.lifebar = match crate::lifebar::Lifebar::load(data_dir) {
-        Ok(lb) => Some(lb),
-        Err(e) => {
-            log::warn!("fight.def HUD not loaded: {e:#}");
-            None
-        }
-    };
-    app.shot = opts.shot;
-    app.frames = opts.frames;
-    app.script = opts.script.as_deref().map(parse_script);
-    app.net = net;
-    // the round-start announcement was queued by start_round() above
-    let initial = app.world.events.clone();
-    app.handle_events(initial);
-    event_loop.run_app(&mut app)?;
-    Ok(())
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -152,14 +54,6 @@ type Loaded = (TextureId, Option<usize>);
 struct CharGpu {
     textures: HashMap<(u16, u16), Option<Loaded>>,
     palettes: Vec<PaletteId>,
-}
-
-struct Gpu {
-    // declared before `window` so the surface is dropped first
-    renderer: Renderer,
-    window: Arc<Window>,
-    /// One per `world.data`, plus one for fightfx at the end.
-    chars: Vec<CharGpu>,
 }
 
 /// One sprite to draw this frame, in stage coordinates.
@@ -214,75 +108,265 @@ fn tint(p: PalFxOut) -> Tint {
     }
 }
 
-struct App {
-    world: World,
-    gpu: Option<Gpu>,
-    input: InputState,
+pub struct Match {
+    pub world: World,
+    /// One per `world.data`, plus one for fightfx at the end (filled by `init_gpu`).
+    chars: Vec<CharGpu>,
     net: Option<Netplay>,
     net_status: String,
-    window_size: (u32, u32),
-    tick_acc: Duration,
-    last: Instant,
     paused: bool,
     step: bool,
     zoom: f32,
-    show_boxes: bool,
+    pub show_boxes: bool,
     debug: bool,
-    /// Screenshot after a scripted sequence, then quit.
-    shot: Option<PathBuf>,
-    /// `--shot` fires on the next render once armed.
-    shot_armed: bool,
-    frames: Option<u32>,
-    ticks: u32,
-    /// P1 inputs per tick for `--shot` (see [`parse_script`]).
-    script: Option<Vec<Buttons>>,
-    quit: bool,
-    audio: Option<Audio>,
-    /// Announcement text and ticks left to show it.
+    /// Announcement text and ticks left to show it (fallback when fight.def is missing).
     banner: Option<(String, i32)>,
     stage_visual: Option<crate::stage::StageVisual>,
     lifebar: Option<crate::lifebar::Lifebar>,
+    /// Ticks since the match ended.
+    over_ticks: i32,
+    /// Start pressed after the match ended.
+    pub leave: bool,
 }
 
-impl App {
-    fn new(world: World, cfg: &Config) -> Self {
-        Self {
+impl Match {
+    pub fn load(setup: &FightSetup, data_dir: &Path, cfg: &Config) -> anyhow::Result<Self> {
+        let (stage, visual) = match &setup.stage {
+            Some(p) => {
+                let def =
+                    rugen_formats::def::Def::open(p).with_context(|| p.display().to_string())?;
+                let visual = match crate::stage::StageVisual::load(p) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        log::warn!("stage background not loaded: {e:#}");
+                        None
+                    }
+                };
+                (Stage::from_def(&def), visual)
+            }
+            None => (Stage::default(), None),
+        };
+        let d1 = CharData::load_with_data(&setup.p1, data_dir)
+            .with_context(|| setup.p1.display().to_string())?;
+        let d2 = if setup.p2 == setup.p1 {
+            d1.clone()
+        } else {
+            CharData::load_with_data(&setup.p2, data_dir)
+                .with_context(|| setup.p2.display().to_string())?
+        };
+        for d in [&d1, &d2] {
+            for w in &d.warnings {
+                log::warn!("{}: {w}", d.name);
+            }
+        }
+        let mut world = World::new(stage, 1);
+        match FxData::load(data_dir) {
+            Ok(fx) => {
+                world.round = rugen_sim::RoundState::new(fx.round.clone());
+                world.fx = Some(fx);
+            }
+            Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
+        }
+        world.add_player(d1, 0, 1);
+        world.add_player(d2, 1, 2);
+        if setup.net.is_none() {
+            world.players[0].ai_level = setup.ai[0].clamp(0, 8);
+            world.players[1].ai_level = setup.ai[1].clamp(0, 8);
+        }
+        world.start_round();
+        log::info!("{} vs {}", world.data[0].name, world.data[1].name);
+
+        let net = match &setup.net {
+            Some(NetMode::P2P { port, remote, side }) => {
+                let o = NetOptions {
+                    input_delay: cfg.net.input_delay,
+                    max_prediction: cfg.net.max_prediction,
+                    ..Default::default()
+                };
+                let n = Netplay::p2p(*port, *remote, *side, &o)
+                    .with_context(|| format!("netplay on port {port} to {remote}"))?;
+                log::info!(
+                    "netplay: listening on {port}, peer {remote}, playing P{}",
+                    side + 1
+                );
+                Some(n)
+            }
+            Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
+            None => None,
+        };
+        let lifebar = match crate::lifebar::Lifebar::load(data_dir) {
+            Ok(lb) => Some(lb),
+            Err(e) => {
+                log::warn!("fight.def HUD not loaded: {e:#}");
+                None
+            }
+        };
+        Ok(Self {
             world,
-            gpu: None,
-            input: InputState::new(&cfg.input),
-            net: None,
+            chars: Vec::new(),
+            net,
             net_status: String::new(),
-            window_size: (cfg.video.width.max(320), cfg.video.height.max(240)),
-            tick_acc: Duration::ZERO,
-            last: Instant::now(),
             paused: false,
             step: false,
             zoom: 1.0,
             show_boxes: false,
             debug: true,
-            shot: None,
-            shot_armed: false,
-            frames: None,
-            ticks: 0,
-            script: None,
-            quit: false,
-            audio: match Audio::new() {
-                Ok(a) => Some(a),
-                Err(e) => {
-                    log::warn!("audio disabled: {e}");
-                    None
-                }
-            },
             banner: None,
-            stage_visual: None,
-            lifebar: None,
+            stage_visual: visual,
+            lifebar,
+            over_ticks: 0,
+            leave: false,
+        })
+    }
+
+    /// Upload palettes once the renderer exists.
+    pub fn init_gpu(&mut self, r: &mut Renderer) {
+        if !self.chars.is_empty() {
+            return;
         }
+        let mut sffs: Vec<&rugen_formats::sff::Sff> =
+            self.world.data.iter().map(|d| &d.sff).collect();
+        if let Some(fx) = &self.world.fx {
+            sffs.push(&fx.sff);
+        }
+        self.chars = sffs
+            .iter()
+            .map(|sff| {
+                let mut palettes: Vec<PaletteId> =
+                    sff.palettes.iter().map(|p| r.add_palette(p)).collect();
+                if palettes.is_empty() {
+                    palettes.push(r.add_palette(&[[0; 4]; 256]));
+                }
+                CharGpu {
+                    textures: HashMap::new(),
+                    palettes,
+                }
+            })
+            .collect();
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.init_gpu(r);
+        }
+    }
+
+    /// Advance one tick with both players' inputs. Returns false when the
+    /// frame did not advance (paused, or netplay waiting on the peer).
+    pub fn tick(&mut self, inputs: [Buttons; 2], audio: &mut Option<Audio>) -> bool {
+        if self.paused && !self.step {
+            return false;
+        }
+        self.step = false;
+        let advanced = match self.net.as_mut() {
+            Some(net) => {
+                net.poll();
+                match net.advance(&mut self.world, inputs) {
+                    Ok(adv) => {
+                        for n in &adv.notices {
+                            log::info!("netplay: {n}");
+                            self.net_status = n.clone();
+                        }
+                        let st = net.stats();
+                        if st.synchronized && adv.notices.is_empty() {
+                            self.net_status = format!(
+                                "ping {} ms  rollbacks {}  ahead {}",
+                                st.ping_ms, st.rollbacks, st.frames_ahead
+                            );
+                        }
+                        let moved = adv.new_frames > 0;
+                        self.handle_events(adv.events, audio);
+                        moved
+                    }
+                    Err(e) => {
+                        log::error!("netplay: {e}");
+                        self.net_status = format!("netplay error: {e}");
+                        self.net = None;
+                        false
+                    }
+                }
+            }
+            None => {
+                self.world.step(&inputs);
+                let ev = self.world.events.clone();
+                self.handle_events(ev, audio);
+                true
+            }
+        };
+        if !advanced {
+            return false;
+        }
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.step();
+        }
+        if let Some(lb) = self.lifebar.as_mut() {
+            lb.step();
+        }
+        if let Some((_, t)) = self.banner.as_mut() {
+            *t -= 1;
+        }
+        if self.banner.as_ref().is_some_and(|(_, t)| *t <= 0) {
+            self.banner = None;
+        }
+        if self.world.round.match_over {
+            self.over_ticks += 1;
+            if self.over_ticks > 30 && (inputs[0].s || inputs[1].s) {
+                self.leave = true;
+            }
+        }
+        if self.debug {
+            for w in self.world.warnings.drain(..) {
+                log::warn!("{w}");
+            }
+        }
+        true
+    }
+
+    /// Debug keys. Returns true when consumed.
+    pub fn key(&mut self, key: &Key, pressed: bool) -> bool {
+        if !pressed {
+            return false;
+        }
+        match key.as_ref() {
+            Key::Named(NamedKey::Space) => self.paused = !self.paused,
+            Key::Character(".") => self.step = true,
+            Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
+            Key::Named(NamedKey::F1) => self.debug = !self.debug,
+            Key::Character("+") | Key::Character("=") => self.zoom = (self.zoom * 1.25).min(8.0),
+            Key::Character("-") => self.zoom = (self.zoom / 1.25).max(0.25),
+            _ => return false,
+        }
+        true
+    }
+
+    pub fn debug_title(&self) -> Option<String> {
+        if !self.debug {
+            return None;
+        }
+        let p = &self.world.players[0];
+        let d = &self.world.data[p.data];
+        let anim = self.world.data[p.anim_owner].air.get(p.anim.action);
+        Some(format!(
+            "rugen — {} — state {} t={} anim {} elem {} animtime {} pos ({:.1},{:.1}) vel ({:.2},{:.2}) ctrl {} life {}/{}{}",
+            d.name,
+            p.state_no,
+            p.state_time,
+            p.anim.action,
+            p.anim.elem + 1,
+            anim.map_or(0, |a| p.anim.anim_time(a)),
+            p.pos[0],
+            p.pos[1],
+            p.vel[0],
+            p.vel[1],
+            p.ctrl as u8,
+            p.life,
+            self.world.players[1].life,
+            if self.paused { " [paused]" } else { "" }
+        ))
     }
 
     /// Play one sound event through the audio crate.
     #[allow(clippy::too_many_arguments)]
     fn play_sound(
         &mut self,
+        audio: &mut Option<Audio>,
         player: usize,
         own: bool,
         group: i32,
@@ -291,7 +375,7 @@ impl App {
         volume: i32,
         announcer: bool,
     ) {
-        let Some(audio) = self.audio.as_mut() else {
+        let Some(audio) = audio.as_mut() else {
             return;
         };
         let (source, bytes) = if announcer {
@@ -343,7 +427,7 @@ impl App {
         audio.play(key, root, channel, volume, pan, false);
     }
 
-    fn handle_events(&mut self, events: Vec<Event>) {
+    pub fn handle_events(&mut self, events: Vec<Event>, audio: &mut Option<Audio>) {
         if let Some(lb) = self.lifebar.as_mut() {
             for e in &events {
                 lb.event(&self.world, e);
@@ -358,27 +442,27 @@ impl App {
                     number,
                     channel,
                     volume,
-                } => self.play_sound(player, own, group, number, channel, volume, false),
+                } => self.play_sound(audio, player, own, group, number, channel, volume, false),
                 Event::StopSound { player, channel } => {
-                    if let Some(a) = self.audio.as_mut() {
+                    if let Some(a) = audio.as_mut() {
                         a.stop_channel(player, channel);
                     }
                 }
                 Event::RoundStart(n) => {
                     self.banner = Some((format!("ROUND {n}"), 90));
-                    self.play_sound(0, false, 0, n, -1, 100, true);
+                    self.play_sound(audio, 0, false, 0, n, -1, 100, true);
                 }
                 Event::Fight => {
                     self.banner = Some(("FIGHT".into(), 45));
-                    self.play_sound(0, false, 1, 0, -1, 100, true);
+                    self.play_sound(audio, 0, false, 1, 0, -1, 100, true);
                 }
                 Event::KO => {
                     self.banner = Some(("K.O.".into(), 90));
-                    self.play_sound(0, false, 2, 0, -1, 100, true);
+                    self.play_sound(audio, 0, false, 2, 0, -1, 100, true);
                 }
                 Event::TimeOver => {
                     self.banner = Some(("TIME OVER".into(), 90));
-                    self.play_sound(0, false, 2, 2, -1, 100, true);
+                    self.play_sound(audio, 0, false, 2, 2, -1, 100, true);
                 }
                 Event::RoundWon(_) => {}
                 Event::MatchOver(t) => {
@@ -394,55 +478,31 @@ impl App {
                 Event::Spark { .. } => {}
             }
         }
-        if let Some(a) = self.audio.as_mut() {
+        if let Some(a) = audio.as_mut() {
             a.gc();
         }
-    }
-
-    fn set_title(&self) {
-        let Some(g) = &self.gpu else { return };
-        let p = &self.world.players[0];
-        let d = &self.world.data[p.data];
-        let anim = self.world.data[p.anim_owner].air.get(p.anim.action);
-        g.window.set_title(&format!(
-            "rugen — {} — state {} t={} anim {} elem {} animtime {} pos ({:.1},{:.1}) vel ({:.2},{:.2}) ctrl {} life {}/{}{}",
-            d.name,
-            p.state_no,
-            p.state_time,
-            p.anim.action,
-            p.anim.elem + 1,
-            anim.map_or(0, |a| p.anim.anim_time(a)),
-            p.pos[0],
-            p.pos[1],
-            p.vel[0],
-            p.vel[1],
-            p.ctrl as u8,
-            p.life,
-            self.world.players[1].life,
-            if self.paused { " [paused]" } else { "" }
-        ));
     }
 
     /// GPU sprite from a data slot (`None` = fightfx).
     fn sprite_from(
         &mut self,
+        r: &mut Renderer,
         src: Option<usize>,
         group: i32,
         number: i32,
     ) -> Option<(TextureId, Option<PaletteId>, [f32; 2])> {
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
-        let gpu = self.gpu.as_mut()?;
         let (sff, slot) = match src {
             Some(d) => (&self.world.data[d].sff, d),
             None => (&self.world.fx.as_ref()?.sff, self.world.data.len()),
         };
-        let cg = gpu.chars.get_mut(slot)?;
+        let cg = self.chars.get_mut(slot)?;
         let spr = sff.get(key.0, key.1)?;
         let entry = cg.textures.entry(key).or_insert_with(|| {
             let (w, h) = (spr.width as u32, spr.height as u32);
             match &spr.pixels {
-                Pixels::Indexed(px) => Some((gpu.renderer.add_indexed(w, h, px), spr.palette)),
-                Pixels::Rgba(px) => Some((gpu.renderer.add_rgba(w, h, px), None)),
+                Pixels::Indexed(px) => Some((r.add_indexed(w, h, px), spr.palette)),
+                Pixels::Rgba(px) => Some((r.add_rgba(w, h, px), None)),
             }
         });
         let (tex, pal) = (*entry)?;
@@ -450,7 +510,7 @@ impl App {
         Some((tex, pal, [spr.offset[0] as f32, spr.offset[1] as f32]))
     }
 
-    fn collect_items(&mut self) -> Vec<Item> {
+    fn collect_items(&mut self, r: &mut Renderer) -> Vec<Item> {
         let stage = self.world.stage.clone();
         let all_pfx = self.world.allpalfx.sample();
         let mut items: Vec<Item> = Vec::new();
@@ -499,7 +559,7 @@ impl App {
                     else {
                         continue;
                     };
-                    let spr = self.sprite_from(Some(img.sprite_data), f.group, f.number);
+                    let spr = self.sprite_from(r, Some(img.sprite_data), f.group, f.number);
                     let blend = resolve_blend(&f, ai_trans, ai_alpha);
                     items.push(Item {
                         spr,
@@ -518,7 +578,7 @@ impl App {
                     });
                 }
             }
-            let spr = self.sprite_from(Some(sprite_data), frame.group, frame.number);
+            let spr = self.sprite_from(r, Some(sprite_data), frame.group, frame.number);
             items.push(Item {
                 spr,
                 pos,
@@ -558,7 +618,7 @@ impl App {
             else {
                 continue;
             };
-            let spr = self.sprite_from(src, frame.group, frame.number);
+            let spr = self.sprite_from(r, src, frame.group, frame.number);
             let scale = stage.width / lc;
             let blend = resolve_blend(&frame, e.trans, e.alpha);
             let owner_pfx = self
@@ -606,7 +666,7 @@ impl App {
             else {
                 continue;
             };
-            let spr = self.sprite_from(Some(d), frame.group, frame.number);
+            let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
             let scale = stage.width / lc;
             let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
             let owner_pfx = self.world.players[pr.owner].palfx.sample();
@@ -630,10 +690,11 @@ impl App {
         items
     }
 
-    fn render(&mut self) {
+    /// Queue this frame's draws; the shell calls `begin` before and `end` after.
+    pub fn render(&mut self, r: &mut Renderer) -> (Camera, [f64; 4]) {
         let stage = self.world.stage.clone();
         let ground = stage.zoffset;
-        let items = self.collect_items();
+        let items = self.collect_items(r);
         let show_boxes = self.show_boxes;
         let brightness = self.world.superbrightness;
         let cam_x = self.world.cam_x;
@@ -644,14 +705,11 @@ impl App {
         let zoom = self.world.cam_zoom * self.zoom;
         let bg_tint = tint(self.world.bgpalfx.sample());
         let portraits = [
-            self.sprite_from(Some(self.world.players[0].data), 9000, 0),
-            self.sprite_from(Some(self.world.players[1].data), 9000, 0),
+            self.sprite_from(r, Some(self.world.players[0].data), 9000, 0),
+            self.sprite_from(r, Some(self.world.players[1].data), 9000, 0),
         ];
         let mut stage_visual = self.stage_visual.take();
         let mut lifebar = self.lifebar.take();
-        let Some(gpu) = self.gpu.as_mut() else { return };
-        let r = &mut gpu.renderer;
-        r.begin();
         let (w, h) = r.size();
         let aspect = w as f32 / h as f32;
         let screen_w = stage.height * aspect;
@@ -840,244 +898,13 @@ impl App {
             center: [cam_x, center_y],
             zoom,
         };
+        let clear = stage_visual
+            .as_ref()
+            .map_or([0.08, 0.08, 0.1, 1.0], |sv| sv.clear_color);
         self.stage_visual = stage_visual;
         self.lifebar = lifebar;
-        let Some(gpu) = self.gpu.as_mut() else { return };
-        let r = &mut gpu.renderer;
-        if self.shot_armed
-            && let Some(path) = self.shot.take()
-        {
-            let rgba = r.end_to_image(&cam, [0.08, 0.08, 0.1, 1.0], w, h);
-            match write_png(&path, w, h, &rgba) {
-                Ok(()) => log::info!("wrote {}", path.display()),
-                Err(e) => log::error!("--shot {}: {e}", path.display()),
-            }
-            self.quit = true;
-            return;
-        }
-        match r.end(&cam, [0.08, 0.08, 0.1, 1.0]) {
-            Ok(()) => {}
-            Err(rugen_render::SurfaceError::Lost | rugen_render::SurfaceError::Outdated) => {
-                let s = gpu.window.inner_size();
-                gpu.renderer.resize(s.width, s.height);
-            }
-            Err(e) => log::warn!("render: {e}"),
-        }
+        (cam, clear)
     }
-
-    fn key(&mut self, key: &Key, pressed: bool, event_loop: &ActiveEventLoop) {
-        // player mappings are case-insensitive single characters or named keys
-        let lower = match key {
-            Key::Character(c) => Key::Character(c.to_lowercase().into()),
-            k => k.clone(),
-        };
-        if self.input.key(&lower, pressed) {
-            return;
-        }
-        match key.as_ref() {
-            _ if !pressed => {}
-            Key::Named(NamedKey::Escape) => event_loop.exit(),
-            Key::Named(NamedKey::Space) => self.paused = !self.paused,
-            Key::Character(".") => self.step = true,
-            Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
-            Key::Named(NamedKey::F1) => self.debug = !self.debug,
-            Key::Character("+") | Key::Character("=") => self.zoom = (self.zoom * 1.25).min(8.0),
-            Key::Character("-") => self.zoom = (self.zoom / 1.25).max(0.25),
-            _ => {}
-        }
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.gpu.is_some() {
-            return;
-        }
-        let attrs = Window::default_attributes()
-            .with_title("rugen")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                self.window_size.0 as f64,
-                self.window_size.1 as f64,
-            ));
-        let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-        let size = window.inner_size();
-        let mut renderer =
-            pollster::block_on(Renderer::new(window.clone(), size.width, size.height))
-                .expect("renderer");
-        let mut sffs: Vec<&rugen_formats::sff::Sff> =
-            self.world.data.iter().map(|d| &d.sff).collect();
-        if let Some(fx) = &self.world.fx {
-            sffs.push(&fx.sff);
-        }
-        let chars = sffs
-            .iter()
-            .map(|sff| {
-                let mut palettes: Vec<PaletteId> = sff
-                    .palettes
-                    .iter()
-                    .map(|p| renderer.add_palette(p))
-                    .collect();
-                if palettes.is_empty() {
-                    palettes.push(renderer.add_palette(&[[0; 4]; 256]));
-                }
-                CharGpu {
-                    textures: HashMap::new(),
-                    palettes,
-                }
-            })
-            .collect();
-        if let Some(sv) = self.stage_visual.as_mut() {
-            sv.init_gpu(&mut renderer);
-        }
-        self.gpu = Some(Gpu {
-            renderer,
-            window,
-            chars,
-        });
-        self.last = Instant::now();
-        self.set_title();
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(s) => {
-                if let Some(g) = &mut self.gpu {
-                    g.renderer.resize(s.width, s.height);
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                // scripted input for screenshots: walk forward, then punch, capture during the spark
-                if self.shot.is_some() && self.frames.is_none() && !self.shot_armed {
-                    self.shot_armed = true;
-                    let mut guard = 0;
-                    while self.world.round.round_state() != 2 && guard < 2000 {
-                        self.world.step(&[Buttons::default(), Buttons::default()]);
-                        guard += 1;
-                    }
-                    let custom = self.script.is_some();
-                    let script = self
-                        .script
-                        .take()
-                        .unwrap_or_else(|| parse_script("R*40,.*20,x,.*5"));
-                    if custom {
-                        // scripted shots are for checking visuals: give P1 full power
-                        let p = &mut self.world.players[0];
-                        p.power = p.power_max;
-                    }
-                    for b in script {
-                        self.world.step(&[b, Buttons::default()]);
-                    }
-                    self.show_boxes = !custom;
-                }
-                self.render();
-                if self.quit {
-                    event_loop.exit();
-                }
-            }
-            WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
-                let key = event.logical_key.clone();
-                self.key(&key, event.state == ElementState::Pressed, event_loop);
-            }
-            _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
-        self.tick_acc += now - self.last;
-        self.last = now;
-        let mut ticked = false;
-        while self.tick_acc >= TICK {
-            self.tick_acc -= TICK;
-            if !self.paused || self.step {
-                self.input.poll();
-                let inputs = self.input.buttons();
-                let advanced = match self.net.as_mut() {
-                    Some(net) => {
-                        net.poll();
-                        match net.advance(&mut self.world, inputs) {
-                            Ok(adv) => {
-                                for n in &adv.notices {
-                                    log::info!("netplay: {n}");
-                                    self.net_status = n.clone();
-                                }
-                                let st = net.stats();
-                                if st.synchronized && adv.notices.is_empty() {
-                                    self.net_status = format!(
-                                        "ping {} ms  rollbacks {}  ahead {}",
-                                        st.ping_ms, st.rollbacks, st.frames_ahead
-                                    );
-                                }
-                                let moved = adv.new_frames > 0;
-                                self.handle_events(adv.events);
-                                moved
-                            }
-                            Err(e) => {
-                                log::error!("netplay: {e}");
-                                self.net_status = format!("netplay error: {e}");
-                                self.net = None;
-                                false
-                            }
-                        }
-                    }
-                    None => {
-                        self.world.step(&inputs);
-                        let ev = self.world.events.clone();
-                        self.handle_events(ev);
-                        true
-                    }
-                };
-                if !advanced {
-                    self.step = false;
-                    continue;
-                }
-                self.ticks += 1;
-                if let Some(n) = self.frames
-                    && self.ticks >= n
-                {
-                    self.shot_armed = true;
-                    if self.shot.is_none() {
-                        self.quit = true;
-                    }
-                }
-                if let Some(sv) = self.stage_visual.as_mut() {
-                    sv.step();
-                }
-                if let Some(lb) = self.lifebar.as_mut() {
-                    lb.step();
-                }
-                if let Some((_, t)) = self.banner.as_mut() {
-                    *t -= 1;
-                }
-                if self.banner.as_ref().is_some_and(|(_, t)| *t <= 0) {
-                    self.banner = None;
-                }
-                self.step = false;
-                ticked = true;
-            }
-        }
-        if self.tick_acc > TICK * 4 {
-            self.tick_acc = Duration::ZERO;
-        }
-        if ticked && self.debug {
-            self.set_title();
-            for w in self.world.warnings.drain(..) {
-                log::warn!("{w}");
-            }
-        }
-        if let Some(g) = &self.gpu {
-            g.window.request_redraw();
-        }
-    }
-}
-
-fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()> {
-    let mut enc = png::Encoder::new(std::fs::File::create(path)?, w, h);
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header()?.write_image_data(rgba)?;
-    Ok(())
 }
 
 /// 3x5 pixel font, enough for the HUD.
@@ -1129,7 +956,7 @@ fn glyph(c: char) -> [u8; 5] {
 /// `--script`: comma-separated tokens of key letters held for one tick
 /// (`U D L R a b c x y z s`, `.` = nothing) with an optional `*n` repeat,
 /// e.g. `R*40,.*20,D,DR,R,xy,.*10`.
-fn parse_script(s: &str) -> Vec<Buttons> {
+pub fn parse_script(s: &str) -> Vec<Buttons> {
     let mut out = Vec::new();
     for tok in s.split(',') {
         let tok = tok.trim();
@@ -1184,4 +1011,12 @@ fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f3
 
 fn draw_number(r: &mut Renderer, n: i32, center: [f32; 2], px: f32, color: [f32; 4]) {
     draw_text(r, &format!("{n:02}"), center, px, color);
+}
+
+pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()> {
+    let mut enc = png::Encoder::new(std::fs::File::create(path)?, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()?.write_image_data(rgba)?;
+    Ok(())
 }
