@@ -160,6 +160,11 @@ pub struct Player {
     pub ko: bool,
     pub bind: Option<Bind>,
     pub pause_move_time: i32,
+    pub super_move_time: i32,
+    /// True while a Pause/SuperPause freezes this player this tick.
+    pub pause_bool: bool,
+    pub super_defence_mul: f32,
+    pub super_defence_mul_buffer: f32,
 }
 
 impl Player {
@@ -246,6 +251,10 @@ impl Player {
             ko: false,
             bind: None,
             pause_move_time: 0,
+            super_move_time: 0,
+            pause_bool: false,
+            super_defence_mul: 1.0,
+            super_defence_mul_buffer: 1.0,
         }
     }
 

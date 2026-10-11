@@ -894,13 +894,8 @@ fn hit_result(w: &mut World, c: usize, g: usize) -> i32 {
             - hd.sparkxy[0] * w.players[c].facing * cs;
         let y = (w.players[c].pos[1] + hd.sparkxy[1]) * cs;
         if spark >= 0 {
-            w.events.push(Event::Spark {
-                player: c,
-                own: own_spark,
-                anim: spark,
-                pos: [x, y],
-                facing: w.players[c].facing,
-            });
+            let f = w.players[c].facing;
+            w.spawn_spark(c, own_spark, spark, [x, y], f);
         }
         if snd[0] >= 0 && snd[1] >= 0 {
             w.events.push(Event::Sound {

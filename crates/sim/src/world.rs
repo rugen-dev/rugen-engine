@@ -8,13 +8,15 @@ use rugen_cns::{Code, Context, Value};
 
 use crate::Rng;
 use crate::anim::AnimState;
-use crate::chardata::{CharData, Ctrl};
+use crate::chardata::{CharData, Ctrl, FxData};
 use crate::collision;
 use crate::command::CommandList;
 use crate::context::Ctx;
+use crate::explod::{AnimSrc, Explod, PosType, Space};
 use crate::hit::{HitType, MoveContact};
 use crate::input::Buttons;
 use crate::player::{Bind, HitBySlot, Player, assert};
+use crate::sctrl::ExplodSpec;
 use crate::sctrl::Sctrl;
 
 /// Stage geometry in the stage's own coordinate space (320 wide by default).
@@ -138,11 +140,22 @@ pub enum Event {
 #[derive(Clone)]
 pub struct World {
     pub data: Vec<Arc<CharData>>,
+    pub fx: Option<Arc<FxData>>,
     pub players: Vec<Player>,
+    pub explods: Vec<Explod>,
     pub stage: Stage,
     pub frame: u32,
     pub rng: Rng,
     pub cam_x: f32,
+    /// Pause / SuperPause ticks remaining (buffered: start next tick).
+    pub pausetime: i32,
+    pub supertime: i32,
+    pub pausetime_buffer: i32,
+    pub supertime_buffer: i32,
+    pub pause_player: i32,
+    pub super_player: i32,
+    /// 0..1 screen brightness during super pause.
+    pub superbrightness: f32,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
 }
@@ -153,13 +166,39 @@ impl World {
     pub fn new(stage: Stage, seed: u64) -> Self {
         Self {
             data: Vec::new(),
+            fx: None,
             players: Vec::new(),
+            explods: Vec::new(),
             stage,
             frame: 0,
             rng: Rng::new(seed),
             cam_x: 0.0,
+            pausetime: 0,
+            supertime: 0,
+            pausetime_buffer: 0,
+            supertime_buffer: 0,
+            pause_player: -1,
+            super_player: -1,
+            superbrightness: 1.0,
             events: Vec::new(),
             warnings: Vec::new(),
+        }
+    }
+
+    /// Stage units per player-local unit.
+    pub fn local_scale(&self, i: usize) -> f32 {
+        self.stage.width / self.data[self.players[i].data].localcoord[0]
+    }
+
+    /// Does `i` act this tick, given a running Pause / SuperPause?
+    fn compute_pause_bool(&self, i: usize) -> bool {
+        let p = &self.players[i];
+        if self.supertime > 0 {
+            p.super_move_time == 0
+        } else if self.pausetime > 0 {
+            p.pause_move_time == 0
+        } else {
+            false
         }
     }
 
@@ -280,6 +319,12 @@ impl World {
         let Some(no) = self.players[i].pending_state.take() else {
             return false;
         };
+        let owner_id = self.players[i].id;
+        for e in &mut self.explods {
+            if e.owner_id == owner_id && e.removeonchangestate {
+                e.removed = true;
+            }
+        }
         let data = self.data[self.players[i].state_owner].clone();
         let Some(state) = data.states.get(&no) else {
             self.warn(format!("P{} changed to invalid state {no}", i + 1));
@@ -475,10 +520,32 @@ impl World {
         self.events.clear();
         let n = self.players.len();
 
+        // 0. pause timers (a pause requested last tick starts now)
+        if self.supertime > 0 {
+            self.supertime -= 1;
+        } else if self.pausetime > 0 {
+            self.pausetime -= 1;
+        }
+        if self.supertime_buffer < 0 {
+            self.supertime = !self.supertime_buffer;
+            self.supertime_buffer = 0;
+        }
+        if self.pausetime_buffer < 0 {
+            self.pausetime = !self.pausetime_buffer;
+            self.pausetime_buffer = 0;
+        }
+        if self.supertime <= 0 && self.pausetime <= 0 {
+            self.superbrightness = 1.0;
+        }
+        for i in 0..n {
+            let pb = self.compute_pause_bool(i);
+            self.players[i].pause_bool = pb;
+        }
+
         // 1. commands
         for i in 0..n {
             let p = &self.players[i];
-            if p.ctrl && matches!(p.state_no, 0 | 11 | 20) {
+            if p.ctrl && !p.pause_bool && matches!(p.state_no, 0 | 11 | 20) {
                 self.auto_turn(i);
             }
             let p = &mut self.players[i];
@@ -523,7 +590,225 @@ impl World {
         for i in 0..n {
             self.tick(i);
         }
+        self.update_explods();
         self.frame += 1;
+    }
+
+    pub fn set_pause_time(&mut self, i: usize, pausetime: i32, movetime: i32) {
+        if !pausetime < self.pausetime_buffer || self.pause_player == i as i32 {
+            self.pausetime_buffer = !pausetime;
+            self.pause_player = i as i32;
+        }
+        let p = &mut self.players[i];
+        p.pause_move_time = movetime.max(0);
+        if p.pause_move_time > pausetime {
+            p.pause_move_time = 0;
+        } else if self.pausetime > 0 && p.pause_move_time > 0 {
+            p.pause_move_time -= 1;
+        }
+    }
+
+    pub fn set_super_pause_time(
+        &mut self,
+        i: usize,
+        pausetime: i32,
+        movetime: i32,
+        unhittable: bool,
+        p2defmul: f32,
+    ) {
+        if !pausetime < self.supertime_buffer || self.super_player == i as i32 {
+            self.supertime_buffer = !pausetime;
+            self.super_player = i as i32;
+        }
+        let p = &mut self.players[i];
+        p.super_move_time = movetime.max(0);
+        if p.super_move_time > pausetime {
+            p.super_move_time = 0;
+        } else if self.supertime > 0 && p.super_move_time > 0 {
+            p.super_move_time -= 1;
+        }
+        if unhittable {
+            p.unhittable_time = pausetime + (pausetime > 0) as i32;
+        }
+        if p2defmul != 1.0 {
+            let team = p.team;
+            for o in &mut self.players {
+                if o.team != team {
+                    o.super_defence_mul_buffer *= p2defmul;
+                }
+            }
+        }
+    }
+
+    /// Spawn an explod for player `i` from a compiled spec. Returns its index.
+    pub fn spawn_explod(&mut self, i: usize, spec: &ExplodSpec) -> Option<usize> {
+        let (fx, anim_code) = spec.anim.as_ref()?;
+        let anim_no = self.eval(i, anim_code).to_i();
+        let src = if *fx {
+            AnimSrc::Fx
+        } else {
+            AnimSrc::Player(self.players[i].data)
+        };
+        let owner_id = self.players[i].id;
+        let mut e = Explod::new(i, owner_id, src, anim_no);
+        if e.air(self).and_then(|a| a.get(anim_no)).is_none() {
+            self.warn(format!(
+                "P{} attempted to create explod with invalid action {}{anim_no}",
+                i + 1,
+                if *fx { "F" } else { "" }
+            ));
+            return None;
+        }
+        e.id = spec
+            .id
+            .as_ref()
+            .map_or(0, |c| self.eval(i, c).to_i().max(0));
+        self.apply_explod_spec(i, &mut e, spec, true);
+        self.explod_set_pos(&mut e, i);
+        self.explods.push(e);
+        Some(self.explods.len() - 1)
+    }
+
+    fn apply_explod_spec(&mut self, i: usize, e: &mut Explod, spec: &ExplodSpec, fresh: bool) {
+        let ls = self.local_scale(i);
+        let two = |w: &mut World, v: &Option<Vec<Code>>| -> Option<[f32; 2]> {
+            let v = v.as_ref()?;
+            let a = v.first().map_or(0.0, |c| w.eval(i, c).to_f());
+            let b = v.get(1).map_or(0.0, |c| w.eval(i, c).to_f());
+            Some([a, b])
+        };
+        if let Some(pt) = spec.postype {
+            e.postype = pt;
+        }
+        if let Some(sp) = spec.space {
+            e.space = sp;
+        }
+        if let Some(v) = two(self, &spec.pos) {
+            e.rel = [v[0] * ls, v[1] * ls];
+        }
+        if let Some(v) = two(self, &spec.random) {
+            let rx = self.rng.below(1000) as f32 / 1000.0 - 0.5;
+            let ry = self.rng.below(1000) as f32 / 1000.0 - 0.5;
+            e.rel[0] += v[0] * rx * ls;
+            e.rel[1] += v[1] * ry * ls;
+        }
+        if let Some(c) = &spec.facing {
+            e.facing = if self.eval(i, c).to_i() < 0 {
+                -1.0
+            } else {
+                1.0
+            };
+        }
+        if let Some(c) = &spec.vfacing {
+            e.vfacing = if self.eval(i, c).to_i() < 0 {
+                -1.0
+            } else {
+                1.0
+            };
+        }
+        if let Some(c) = &spec.bindtime {
+            e.bindtime = self.eval(i, c).to_i();
+        }
+        if let Some(c) = &spec.bindid {
+            let id = self.eval(i, c).to_i();
+            e.bind_id = if id == -1 { self.players[i].id } else { id };
+        }
+        if let Some(v) = two(self, &spec.vel) {
+            e.velocity = [v[0] * ls, v[1] * ls];
+        }
+        if let Some(v) = two(self, &spec.accel) {
+            e.accel = [v[0] * ls, v[1] * ls];
+        }
+        if let Some(v) = two(self, &spec.friction) {
+            e.friction = v;
+        }
+        if let Some(c) = &spec.removetime {
+            e.removetime = self.eval(i, c).to_i();
+        }
+        if let Some(c) = &spec.supermove {
+            e.supermovetime = if self.eval(i, c).to_b() { -1 } else { 0 };
+        }
+        if let Some(c) = &spec.supermovetime {
+            e.supermovetime = self.eval(i, c).to_i();
+        }
+        if let Some(c) = &spec.pausemovetime {
+            e.pausemovetime = self.eval(i, c).to_i();
+        }
+        if let Some(v) = two(self, &spec.scale) {
+            e.scale = v;
+        }
+        if let Some(c) = &spec.sprpriority {
+            e.sprpriority = self.eval(i, c).to_i();
+        }
+        if let Some(c) = &spec.ontop {
+            e.ontop = self.eval(i, c).to_b();
+            if e.ontop {
+                e.sprpriority = 0;
+            }
+        }
+        if let Some(c) = &spec.under {
+            e.under = self.eval(i, c).to_b();
+        }
+        if let Some(c) = &spec.removeongethit {
+            e.removeongethit = self.eval(i, c).to_b();
+        }
+        if let Some(c) = &spec.removeonchangestate {
+            e.removeonchangestate = self.eval(i, c).to_b();
+        }
+        if let Some(c) = &spec.ignorehitpause {
+            e.ignorehitpause = self.eval(i, c).to_b();
+        }
+        if let Some(t) = spec.trans {
+            e.trans = t;
+        }
+        if let Some(v) = two(self, &spec.alpha) {
+            e.alpha = [v[0] as i32, v[1] as i32];
+        }
+        if let Some(c) = &spec.angle {
+            e.angle = self.eval(i, c).to_f();
+        }
+        if let Some(c) = &spec.animfreeze {
+            e.animfreeze = self.eval(i, c).to_b();
+        }
+        if fresh && let Some(c) = &spec.animelem {
+            let el = self.eval(i, c).to_i();
+            if let Some(a) = e.air(self).and_then(|a| a.get(e.anim.action)).cloned() {
+                e.anim.set_elem(&a, el, 0);
+            }
+        }
+    }
+
+    /// Spawn a hit/guard spark (`F` fightfx or the player's own AIR) at a stage position.
+    pub(crate) fn spawn_spark(
+        &mut self,
+        i: usize,
+        own: bool,
+        anim_no: i32,
+        stage_pos: [f32; 2],
+        facing: f32,
+    ) {
+        let src = if own {
+            AnimSrc::Player(self.players[i].data)
+        } else {
+            AnimSrc::Fx
+        };
+        let owner_id = self.players[i].id;
+        let mut e = Explod::new(i, owner_id, src, anim_no);
+        if e.air(self).and_then(|a| a.get(anim_no)).is_none() {
+            return;
+        }
+        e.id = -1; // sparks are anonymous: not found by NumExplod / RemoveExplod
+        e.postype = PosType::None;
+        e.space = Space::Stage;
+        e.bindtime = 0;
+        e.pos = stage_pos;
+        e.facing = facing;
+        e.ontop = true;
+        e.sprpriority = i32::MAX;
+        e.supermovetime = -1;
+        e.pausemovetime = -1;
+        e.removetime = -2;
+        self.explods.push(e);
     }
 
     fn finish(&mut self, i: usize) {
@@ -557,6 +842,9 @@ impl World {
     }
 
     fn tick(&mut self, i: usize) {
+        if self.players[i].pause_bool {
+            return;
+        }
         // animate (not during hit pause)
         let data = self.data[self.players[i].anim_owner].clone();
         {
@@ -653,6 +941,9 @@ impl World {
     }
 
     fn prepare(&mut self, i: usize) {
+        if self.players[i].pause_bool {
+            return;
+        }
         let p = &self.players[i];
         let data = self.data[p.data].clone();
         let (ub, db, fb, bb) = (p.input.ub, p.input.db, p.input.fb, p.input.bb);
@@ -719,6 +1010,19 @@ impl World {
         if p.unhittable_time > 0 {
             p.unhittable_time -= 1;
         }
+        if self.supertime > 0 {
+            if p.super_move_time > 0 {
+                p.super_move_time -= 1;
+            }
+        } else if self.pausetime > 0 && p.pause_move_time > 0 {
+            p.pause_move_time -= 1;
+        }
+        if p.super_defence_mul_buffer != 1.0 {
+            if p.move_type == MoveType::H {
+                p.super_defence_mul *= p.super_defence_mul_buffer;
+            }
+            p.super_defence_mul_buffer = 1.0;
+        }
         p.assert_flags = 0;
         p.pos_freeze = false;
         // step binds
@@ -736,6 +1040,9 @@ impl World {
     }
 
     fn run(&mut self, i: usize) {
+        if self.players[i].pause_bool {
+            return;
+        }
         let data = self.data[self.players[i].state_owner].clone();
         let own = self.data[self.players[i].data].clone();
         for neg in [-3, -2, -1] {
@@ -805,6 +1112,7 @@ impl World {
                 }
                 p.ghv.hitshaketime = 0;
                 p.fall_defence_mul = 1.0;
+                p.super_defence_mul = 1.0;
                 p.ghv.fallflag = false;
                 p.ghv.fallcount = 0;
                 p.ghv.hitid >>= 31;
@@ -1158,6 +1466,114 @@ impl World {
             }
             Sctrl::FallEnvShake => {
                 self.players[i].ghv.fall_envshake_time = 0;
+            }
+            Sctrl::Explod(spec) => {
+                self.spawn_explod(i, spec);
+            }
+            Sctrl::ModifyExplod { id, spec } => {
+                let eid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let owner_id = self.players[i].id;
+                let idxs: Vec<usize> = self
+                    .explods
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| {
+                        !e.removed
+                            && e.owner_id == owner_id
+                            && e.id >= 0
+                            && (eid < 0 || e.id == eid)
+                    })
+                    .map(|(k, _)| k)
+                    .collect();
+                for k in idxs {
+                    let mut e = self.explods[k].clone();
+                    self.apply_explod_spec(i, &mut e, spec, false);
+                    if spec.postype.is_some() || spec.pos.is_some() {
+                        self.explod_set_pos(&mut e, i);
+                    }
+                    self.explods[k] = e;
+                }
+            }
+            Sctrl::RemoveExplod { id } => {
+                let eid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let owner_id = self.players[i].id;
+                self.remove_explods(owner_id, eid);
+            }
+            Sctrl::ExplodBindTime { id, time } => {
+                let eid = id.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
+                let t = time.as_ref().map_or(1, |c| self.eval(i, c).to_i());
+                let owner_id = self.players[i].id;
+                for e in &mut self.explods {
+                    if e.owner_id == owner_id && e.id >= 0 && (eid < 0 || e.id == eid) {
+                        e.bindtime = t;
+                    }
+                }
+            }
+            Sctrl::Pause { time, movetime } => {
+                let t = self.eval(i, time).to_i();
+                let mt = movetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                self.set_pause_time(i, t, mt);
+            }
+            Sctrl::SuperPause {
+                time,
+                movetime,
+                anim,
+                pos,
+                sound,
+                darken,
+                p2defmul,
+                poweradd,
+                unhittable,
+            } => {
+                let t = time.as_ref().map_or(30, |c| self.eval(i, c).to_i());
+                let mt = movetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                self.superbrightness = if darken.as_ref().is_none_or(|c| self.eval(i, c).to_b()) {
+                    0.5
+                } else {
+                    1.0
+                };
+                let p2d = p2defmul.as_ref().map_or(1.5, |c| self.eval(i, c).to_f());
+                let p2d = if p2d > 0.0 { p2d } else { 1.5 };
+                if let Some(c) = poweradd {
+                    let v = self.eval(i, c).to_i();
+                    self.power_add(i, v);
+                }
+                let uh = unhittable.as_ref().is_none_or(|c| self.eval(i, c).to_b());
+                if let Some((fx, codes)) = sound
+                    && codes.len() >= 2
+                {
+                    let g = self.eval(i, &codes[0]).to_i();
+                    let n = self.eval(i, &codes[1]).to_i();
+                    self.events.push(Event::Sound {
+                        player: i,
+                        own: !fx,
+                        group: g,
+                        number: n,
+                        channel: -1,
+                        volume: 100,
+                    });
+                }
+                // the flash: fightfx 100 by default
+                let (fx, anim_no) = match anim {
+                    Some((fx, c)) => (*fx, self.eval(i, c).to_i()),
+                    None => (true, 100),
+                };
+                if anim_no >= 0 {
+                    let px = pos
+                        .as_ref()
+                        .and_then(|p| p.first())
+                        .map_or(0.0, |c| self.eval(i, c).to_f());
+                    let py = pos
+                        .as_ref()
+                        .and_then(|p| p.get(1))
+                        .map_or(0.0, |c| self.eval(i, c).to_f());
+                    let ls = self.local_scale(i);
+                    let p = &self.players[i];
+                    let stage_pos = [p.pos[0] * ls + px * ls * p.facing, p.pos[1] * ls + py * ls];
+                    let f = p.facing;
+                    self.spawn_spark(i, !fx, anim_no, stage_pos, f);
+                }
+                self.set_super_pause_time(i, t, mt, uh, p2d);
             }
             Sctrl::VelSet { x, y } => {
                 if let Some(v) = self.evf(i, x) {
@@ -1885,6 +2301,56 @@ mod tests {
             .filter(|m| m.contains("invalid") || m.contains("stuck"))
             .collect();
         assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    #[test]
+    fn hit_spawns_spark_explod() {
+        let Some(mut w) = world() else { return };
+        let data_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1/data");
+        w.fx = FxData::load(&data_dir).ok();
+        assert!(w.fx.is_some(), "fightfx loads");
+        walk_until_close(&mut w);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        let mut seen = false;
+        for _ in 0..20 {
+            run(&mut w, 1, Buttons::default());
+            if w.explods.iter().any(|e| matches!(e.src, AnimSrc::Fx)) {
+                seen = true;
+            }
+        }
+        assert!(seen, "a fightfx spark explod existed after the hit");
+        run(&mut w, 120, Buttons::default());
+        assert!(
+            w.explods.is_empty(),
+            "sparks remove themselves when their animation ends"
+        );
+    }
+
+    #[test]
+    fn pause_freezes_opponent() {
+        let Some(mut w) = world() else { return };
+        run(&mut w, 5, Buttons::default());
+        // P1 pauses for 20 ticks with 20 move ticks for itself
+        w.set_pause_time(0, 20, 20);
+        let t2 = w.players[1].state_time;
+        run(&mut w, 10, Buttons::default());
+        assert!(w.pausetime > 0, "pause running");
+        assert_eq!(w.players[1].state_time, t2, "P2 frozen");
+        assert!(
+            w.players[0].state_time > 0,
+            "P1 keeps moving during its own pause"
+        );
+        run(&mut w, 30, Buttons::default());
+        assert_eq!(w.pausetime, 0);
+        assert!(w.players[1].state_time > t2, "P2 resumes");
     }
 
     #[test]

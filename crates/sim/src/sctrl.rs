@@ -3,7 +3,101 @@
 use rugen_cns::state::Controller;
 use rugen_cns::{Code, Error, Result, VarKind, compile, compile_list};
 
+use crate::explod::{PosType, Space, Trans};
 use crate::hit::{HitDefSpec, attr};
+
+/// Compiled Explod / ModifyExplod parameters.
+#[derive(Clone, Debug)]
+pub struct ExplodSpec {
+    pub anim: Option<(bool, Code)>,
+    pub id: Option<Code>,
+    pub pos: Option<Vec<Code>>,
+    pub postype: Option<PosType>,
+    pub space: Option<Space>,
+    pub facing: Option<Code>,
+    pub vfacing: Option<Code>,
+    pub bindtime: Option<Code>,
+    pub bindid: Option<Code>,
+    pub vel: Option<Vec<Code>>,
+    pub accel: Option<Vec<Code>>,
+    pub friction: Option<Vec<Code>>,
+    pub random: Option<Vec<Code>>,
+    pub removetime: Option<Code>,
+    pub supermovetime: Option<Code>,
+    pub pausemovetime: Option<Code>,
+    pub supermove: Option<Code>,
+    pub scale: Option<Vec<Code>>,
+    pub sprpriority: Option<Code>,
+    pub ontop: Option<Code>,
+    pub under: Option<Code>,
+    pub removeongethit: Option<Code>,
+    pub removeonchangestate: Option<Code>,
+    pub ignorehitpause: Option<Code>,
+    pub trans: Option<Trans>,
+    pub alpha: Option<Vec<Code>>,
+    pub angle: Option<Code>,
+    pub animelem: Option<Code>,
+    pub animfreeze: Option<Code>,
+}
+
+impl ExplodSpec {
+    pub fn compile(c: &Controller, need_anim: bool) -> Result<Self> {
+        let anim = match c.exprs_fx("anim")? {
+            Some((prefix, mut codes)) if !codes.is_empty() => {
+                Some((prefix == Some('f'), codes.remove(0)))
+            }
+            _ if need_anim => return Err(Error::new("missing anim")),
+            _ => None,
+        };
+        let trans = c
+            .param("trans")
+            .map(|t| match t.trim().to_ascii_lowercase().as_str() {
+                "none" => Trans::None,
+                "add" => Trans::Add,
+                "add1" => Trans::Add1,
+                "addalpha" => Trans::AddAlpha,
+                "sub" => Trans::Sub,
+                _ => Trans::Default,
+            });
+        Ok(Self {
+            anim,
+            id: one(c, "id")?,
+            pos: c.exprs("pos")?,
+            postype: c.param("postype").and_then(PosType::parse),
+            space: c.param("space").map(|s| {
+                if s.trim().eq_ignore_ascii_case("screen") {
+                    Space::Screen
+                } else {
+                    Space::Stage
+                }
+            }),
+            facing: one(c, "facing")?,
+            vfacing: one(c, "vfacing")?,
+            bindtime: one(c, "bindtime")?,
+            bindid: one(c, "bindid")?,
+            vel: c.exprs("vel")?,
+            accel: c.exprs("accel")?,
+            friction: c.exprs("friction")?,
+            random: c.exprs("random")?,
+            removetime: one(c, "removetime")?,
+            supermovetime: one(c, "supermovetime")?,
+            pausemovetime: one(c, "pausemovetime")?,
+            supermove: one(c, "supermove")?,
+            scale: c.exprs("scale")?,
+            sprpriority: one(c, "sprpriority")?,
+            ontop: one(c, "ontop")?,
+            under: one(c, "under")?,
+            removeongethit: one(c, "removeongethit")?,
+            removeonchangestate: one(c, "removeonchangestate")?,
+            ignorehitpause: one(c, "ignorehitpause")?,
+            trans,
+            alpha: c.exprs("alpha")?,
+            angle: one(c, "angle")?,
+            animelem: one(c, "animelem")?,
+            animfreeze: one(c, "animfreeze")?,
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Sctrl {
@@ -181,6 +275,33 @@ pub enum Sctrl {
         value: Code,
     },
     FallEnvShake,
+    Explod(Box<ExplodSpec>),
+    ModifyExplod {
+        id: Option<Code>,
+        spec: Box<ExplodSpec>,
+    },
+    RemoveExplod {
+        id: Option<Code>,
+    },
+    ExplodBindTime {
+        id: Option<Code>,
+        time: Option<Code>,
+    },
+    Pause {
+        time: Code,
+        movetime: Option<Code>,
+    },
+    SuperPause {
+        time: Option<Code>,
+        movetime: Option<Code>,
+        anim: Option<(bool, Code)>,
+        pos: Option<Vec<Code>>,
+        sound: Option<(bool, Vec<Code>)>,
+        darken: Option<Code>,
+        p2defmul: Option<Code>,
+        poweradd: Option<Code>,
+        unhittable: Option<Code>,
+    },
     /// Recognised but not implemented yet; runs as a no-op.
     Unsupported(String),
 }
@@ -446,6 +567,42 @@ impl Sctrl {
                 value: req(c, "value")?,
             },
             "fallenvshake" => Sctrl::FallEnvShake,
+            "explod" => Sctrl::Explod(Box::new(ExplodSpec::compile(c, true)?)),
+            "modifyexplod" => Sctrl::ModifyExplod {
+                id: one(c, "id")?,
+                spec: Box::new(ExplodSpec::compile(c, false)?),
+            },
+            "removeexplod" => Sctrl::RemoveExplod { id: one(c, "id")? },
+            "explodbindtime" => Sctrl::ExplodBindTime {
+                id: one(c, "id")?,
+                time: one(c, "time")?.or(one(c, "value")?),
+            },
+            "pause" => Sctrl::Pause {
+                time: req(c, "time")?,
+                movetime: one(c, "movetime")?,
+            },
+            "superpause" => {
+                let anim = match c.exprs_fx("anim")? {
+                    Some((prefix, mut codes)) if !codes.is_empty() => {
+                        Some((prefix != Some('s'), codes.remove(0)))
+                    }
+                    _ => None,
+                };
+                let sound = c
+                    .exprs_fx("sound")?
+                    .map(|(prefix, codes)| (prefix != Some('s'), codes));
+                Sctrl::SuperPause {
+                    time: one(c, "time")?,
+                    movetime: one(c, "movetime")?,
+                    anim,
+                    pos: c.exprs("pos")?,
+                    sound,
+                    darken: one(c, "darken")?,
+                    p2defmul: one(c, "p2defmul")?,
+                    poweradd: one(c, "poweradd")?,
+                    unhittable: one(c, "unhittable")?,
+                }
+            }
             other => {
                 // make sure the parameters at least compile where they are expressions
                 let _ = compile_list;

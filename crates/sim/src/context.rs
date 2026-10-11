@@ -162,7 +162,8 @@ impl Context for Ctx<'_> {
             T::NumEnemy => {
                 Self::i(self.w.players.iter().filter(|o| o.team != p.team).count() as i32)
             }
-            T::NumPartner | T::NumProj | T::NumHelper | T::NumExplod | T::NumProjId => Self::i(0),
+            T::NumPartner | T::NumProj | T::NumHelper | T::NumProjId => Self::i(0),
+            T::NumExplod => Self::i(self.w.num_explod(p.id, arg(0).to_i())),
             T::NumTarget => {
                 let id = arg(0).to_i();
                 let n = p

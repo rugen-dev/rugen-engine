@@ -16,13 +16,14 @@ pub mod chardata;
 pub mod collision;
 pub mod command;
 pub mod context;
+pub mod explod;
 pub mod hit;
 pub mod input;
 pub mod player;
 pub mod sctrl;
 pub mod world;
 
-pub use chardata::CharData;
+pub use chardata::{CharData, FxData};
 pub use input::Buttons;
 pub use player::Player;
 pub use world::{Stage, World};

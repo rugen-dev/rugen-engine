@@ -1,4 +1,4 @@
-//! `rugen play <p1.def> [p2.def] [--stage stage.def]`: local match, keyboard P1.
+//! `rugen play <char> [char2] [--stage s]`: local match, keyboard P1.
 //!
 //! Keys: arrows move, Z X C = a b c, A S D = x y z, Enter = start,
 //! Space pause, `.` step, B boxes, F1 debug, +/- zoom, Esc quit.
@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use rugen_formats::sff::Pixels;
 use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
+use rugen_sim::explod::AnimSrc;
 use rugen_sim::world::Stage;
-use rugen_sim::{Buttons, CharData, World};
+use rugen_sim::{Buttons, CharData, FxData, World};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -47,6 +48,10 @@ pub fn run(
         }
     }
     let mut world = World::new(stage, 1);
+    match FxData::load(data_dir) {
+        Ok(fx) => world.fx = Some(fx),
+        Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
+    }
     world.add_player(d1, 0, 1);
     world.add_player(d2, 1, 2);
     log::info!("{} vs {}", world.data[0].name, world.data[1].name);
@@ -59,6 +64,7 @@ pub fn run(
     Ok(())
 }
 
+/// GPU texture for a sprite plus the SFF palette index it was authored with.
 type Loaded = (TextureId, Option<usize>);
 
 struct CharGpu {
@@ -70,7 +76,22 @@ struct Gpu {
     // declared before `window` so the surface is dropped first
     renderer: Renderer,
     window: Arc<Window>,
+    /// One per `world.data`, plus one for fightfx at the end.
     chars: Vec<CharGpu>,
+}
+
+/// One sprite to draw this frame, in stage coordinates.
+struct Item {
+    spr: Option<(TextureId, Option<PaletteId>, [f32; 2])>,
+    pos: [f32; 2],
+    facing: f32,
+    vfacing: f32,
+    scale: [f32; 2],
+    frame: rugen_formats::air::Frame,
+    boxes: bool,
+    layer: i32,
+    prio: i32,
+    seq: usize,
 }
 
 struct App {
@@ -84,7 +105,7 @@ struct App {
     zoom: f32,
     show_boxes: bool,
     debug: bool,
-    /// Screenshot after a scripted 90 ticks, then quit.
+    /// Screenshot after a scripted sequence, then quit.
     shot: Option<PathBuf>,
     quit: bool,
 }
@@ -111,9 +132,9 @@ impl App {
         let Some(g) = &self.gpu else { return };
         let p = &self.world.players[0];
         let d = &self.world.data[p.data];
-        let anim = d.air.get(p.anim.action);
+        let anim = self.world.data[p.anim_owner].air.get(p.anim.action);
         g.window.set_title(&format!(
-            "rugen — {} — state {} t={} anim {} elem {} animtime {} pos ({:.1},{:.1}) vel ({:.2},{:.2}) ctrl {}{}",
+            "rugen — {} — state {} t={} anim {} elem {} animtime {} pos ({:.1},{:.1}) vel ({:.2},{:.2}) ctrl {} life {}/{}{}",
             d.name,
             p.state_no,
             p.state_time,
@@ -125,21 +146,27 @@ impl App {
             p.vel[0],
             p.vel[1],
             p.ctrl as u8,
+            p.life,
+            self.world.players[1].life,
             if self.paused { " [paused]" } else { "" }
         ));
     }
 
-    fn sprite(
+    /// GPU sprite from a data slot (`None` = fightfx).
+    fn sprite_from(
         &mut self,
-        pi: usize,
+        src: Option<usize>,
         group: i32,
         number: i32,
     ) -> Option<(TextureId, Option<PaletteId>, [f32; 2])> {
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
         let gpu = self.gpu.as_mut()?;
-        let data = &self.world.data[self.world.players[pi].data];
-        let cg = &mut gpu.chars[self.world.players[pi].data];
-        let spr = data.sff.get(key.0, key.1)?;
+        let (sff, slot) = match src {
+            Some(d) => (&self.world.data[d].sff, d),
+            None => (&self.world.fx.as_ref()?.sff, self.world.data.len()),
+        };
+        let cg = gpu.chars.get_mut(slot)?;
+        let spr = sff.get(key.0, key.1)?;
         let entry = cg.textures.entry(key).or_insert_with(|| {
             let (w, h) = (spr.width as u32, spr.height as u32);
             match &spr.pixels {
@@ -152,95 +179,194 @@ impl App {
         Some((tex, pal, [spr.offset[0] as f32, spr.offset[1] as f32]))
     }
 
-    fn render(&mut self) {
+    fn collect_items(&mut self) -> Vec<Item> {
         let stage = self.world.stage.clone();
-        let ground = stage.zoffset;
-        let mut order: Vec<usize> = (0..self.world.players.len()).collect();
-        order.sort_by_key(|&i| self.world.players[i].spr_priority);
-
-        struct Item {
-            spr: Option<(TextureId, Option<PaletteId>, [f32; 2])>,
-            pos: [f32; 2],
-            facing: f32,
-            scale: f32,
-            frame: Option<rugen_formats::air::Frame>,
-        }
-        let mut items = Vec::new();
-        for &i in &order {
+        let mut items: Vec<Item> = Vec::new();
+        for i in 0..self.world.players.len() {
             let p = &self.world.players[i];
-            let d = &self.world.data[p.data];
+            let d = &self.world.data[p.anim_owner];
             let scale = stage.width / d.localcoord[0];
-            let frame = d
+            let Some(frame) = d
                 .air
                 .get(p.anim.action)
                 .and_then(|a| p.anim.frame(a))
-                .cloned();
-            let (fg, fn_) = frame.as_ref().map_or((-1, 0), |f| (f.group, f.number));
-            let spr = if fg >= 0 {
-                self.sprite(i, fg, fn_)
-            } else {
-                None
+                .cloned()
+            else {
+                continue;
             };
-            let p = &self.world.players[i];
+            let sprite_data = p.data;
+            let (pos, facing, prio) = (
+                [p.pos[0] * scale, p.pos[1] * scale],
+                p.facing,
+                p.spr_priority,
+            );
+            let spr = self.sprite_from(Some(sprite_data), frame.group, frame.number);
             items.push(Item {
                 spr,
-                pos: [p.pos[0] * scale, p.pos[1] * scale],
-                facing: p.facing,
-                scale,
+                pos,
+                facing,
+                vfacing: 1.0,
+                scale: [scale, scale],
                 frame,
+                boxes: true,
+                layer: 0,
+                prio,
+                seq: items.len(),
             });
         }
+        let explods: Vec<rugen_sim::explod::Explod> = self
+            .world
+            .explods
+            .iter()
+            .filter(|e| !e.removed)
+            .cloned()
+            .collect();
+        for e in explods {
+            let (src, lc) = match e.src {
+                AnimSrc::Player(d) => (Some(d), self.world.data[d].localcoord[0]),
+                AnimSrc::Fx => (
+                    None,
+                    self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
+                ),
+            };
+            let Some(frame) = e
+                .air(&self.world)
+                .and_then(|a| a.get(e.anim.action))
+                .and_then(|a| e.anim.frame(a))
+                .cloned()
+            else {
+                continue;
+            };
+            let spr = self.sprite_from(src, frame.group, frame.number);
+            let scale = stage.width / lc;
+            items.push(Item {
+                spr,
+                pos: e.draw_pos(),
+                facing: e.facing,
+                vfacing: e.vfacing,
+                scale: [scale * e.scale[0], scale * e.scale[1]],
+                frame,
+                boxes: false,
+                layer: if e.ontop {
+                    1
+                } else if e.under {
+                    -1
+                } else {
+                    0
+                },
+                prio: e.sprpriority,
+                seq: items.len(),
+            });
+        }
+        items.sort_by_key(|it| (it.layer, it.prio, it.seq));
+        items
+    }
+
+    fn render(&mut self) {
+        let stage = self.world.stage.clone();
+        let ground = stage.zoffset;
+        let items = self.collect_items();
+        let show_boxes = self.show_boxes;
+        let brightness = self.world.superbrightness;
+        let cam_x = self.world.cam_x;
 
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
         r.begin();
-        // floor
         r.rect(
-            [-2000.0, ground],
-            [2000.0, ground + 1.0],
+            [-4000.0, ground],
+            [4000.0, ground + 1.0],
             [0.35, 0.35, 0.35, 1.0],
         );
         for it in &items {
-            let Some(frame) = &it.frame else { continue };
+            let frame = &it.frame;
             let origin = [it.pos[0], ground + it.pos[1]];
             if let Some((tex, pal, axis)) = it.spr {
                 let mut d = Draw::new(
                     tex,
                     pal,
                     [
-                        origin[0] + frame.x as f32 * it.scale * it.facing,
-                        origin[1] + frame.y as f32 * it.scale,
+                        origin[0] + frame.x as f32 * it.scale[0] * it.facing,
+                        origin[1] + frame.y as f32 * it.scale[1] * it.vfacing,
                     ],
                     axis,
                 );
                 d.hflip = (it.facing < 0.0) != frame.hflip;
-                d.vflip = frame.vflip;
-                d.scale = [frame.xscale * it.scale, frame.yscale * it.scale];
+                d.vflip = (it.vfacing < 0.0) != frame.vflip;
+                d.scale = [frame.xscale * it.scale[0], frame.yscale * it.scale[1]];
                 r.draw(d);
             }
-            if self.show_boxes {
+            if show_boxes && it.boxes {
                 for (boxes, color) in [
                     (&frame.clsn2, [0.2, 0.4, 1.0, 0.9]),
                     (&frame.clsn1, [1.0, 0.2, 0.2, 0.9]),
                 ] {
                     for b in boxes {
                         let (x1, x2) = (
-                            b[0] as f32 * it.scale * it.facing,
-                            b[2] as f32 * it.scale * it.facing,
+                            b[0] as f32 * it.scale[0] * it.facing,
+                            b[2] as f32 * it.scale[0] * it.facing,
                         );
-                        let min = [origin[0] + x1.min(x2), origin[1] + b[1] as f32 * it.scale];
-                        let max = [origin[0] + x1.max(x2), origin[1] + b[3] as f32 * it.scale];
+                        let min = [
+                            origin[0] + x1.min(x2),
+                            origin[1] + b[1] as f32 * it.scale[1],
+                        ];
+                        let max = [
+                            origin[0] + x1.max(x2),
+                            origin[1] + b[3] as f32 * it.scale[1],
+                        ];
                         r.rect_outline(min, max, 1.0, color);
                         r.rect(min, max, [color[0], color[1], color[2], 0.15]);
                     }
                 }
             }
         }
+        if brightness < 1.0 {
+            r.rect(
+                [-4000.0, -4000.0],
+                [4000.0, 4000.0],
+                [0.0, 0.0, 0.0, 1.0 - brightness],
+            );
+        }
+        // life bars
         let (w, h) = r.size();
         let aspect = w as f32 / h as f32;
+        let screen_w = stage.height * aspect;
+        let left = cam_x - screen_w / 2.0;
+        for (i, p) in self.world.players.iter().enumerate() {
+            let frac = (p.life.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
+            let bar_w = screen_w * 0.4;
+            let (x0, x1) = if i == 0 {
+                (left + 10.0, left + 10.0 + bar_w)
+            } else {
+                (left + screen_w - 10.0 - bar_w, left + screen_w - 10.0)
+            };
+            r.rect([x0, 8.0], [x1, 16.0], [0.1, 0.1, 0.1, 0.9]);
+            let (fx0, fx1) = if i == 0 {
+                (x1 - bar_w * frac, x1)
+            } else {
+                (x0, x0 + bar_w * frac)
+            };
+            r.rect([fx0, 8.0], [fx1, 16.0], [0.9, 0.8, 0.2, 1.0]);
+            let pf = (p.power as f32 / p.power_max.max(1) as f32).clamp(0.0, 1.0);
+            let (px0, px1) = if i == 0 {
+                (x0, x0 + bar_w * pf)
+            } else {
+                (x1 - bar_w * pf, x1)
+            };
+            r.rect(
+                [x0, stage.height - 14.0],
+                [x1, stage.height - 10.0],
+                [0.1, 0.1, 0.1, 0.9],
+            );
+            r.rect(
+                [px0, stage.height - 14.0],
+                [px1, stage.height - 10.0],
+                [0.3, 0.6, 1.0, 1.0],
+            );
+        }
         let cam = Camera {
-            screen: [stage.height * aspect, stage.height],
-            center: [self.world.cam_x, stage.height / 2.0],
+            screen: [screen_w, stage.height],
+            center: [cam_x, stage.height / 2.0],
             zoom: self.zoom,
         };
         if let Some(path) = self.shot.take() {
@@ -302,13 +428,15 @@ impl ApplicationHandler for App {
         let mut renderer =
             pollster::block_on(Renderer::new(window.clone(), size.width, size.height))
                 .expect("renderer");
-        let chars = self
-            .world
-            .data
+        let mut sffs: Vec<&rugen_formats::sff::Sff> =
+            self.world.data.iter().map(|d| &d.sff).collect();
+        if let Some(fx) = &self.world.fx {
+            sffs.push(&fx.sff);
+        }
+        let chars = sffs
             .iter()
-            .map(|d| {
-                let mut palettes: Vec<PaletteId> = d
-                    .sff
+            .map(|sff| {
+                let mut palettes: Vec<PaletteId> = sff
                     .palettes
                     .iter()
                     .map(|p| renderer.add_palette(p))
@@ -323,8 +451,8 @@ impl ApplicationHandler for App {
             })
             .collect();
         self.gpu = Some(Gpu {
-            window,
             renderer,
+            window,
             chars,
         });
         self.last = Instant::now();
@@ -340,9 +468,9 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // scripted input for screenshots: walk forward, then punch
+                // scripted input for screenshots: walk forward, then punch, capture during the spark
                 if self.shot.is_some() {
-                    for t in 0..90 {
+                    for t in 0..66 {
                         let b = if t < 40 {
                             Buttons {
                                 r: true,

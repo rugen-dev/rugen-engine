@@ -150,7 +150,7 @@ impl Library {
                 kind,
             });
         }
-        out.sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
+        out.sort_by_key(|a| a.id.to_ascii_lowercase());
         out
     }
 

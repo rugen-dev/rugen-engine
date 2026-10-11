@@ -243,6 +243,32 @@ fn compile_ctrl(c: &Controller, warnings: &mut Vec<String>, file: &str) -> Ctrl 
     }
 }
 
+/// Shared fight effects: `data/fightfx.sff` + `.air` and `data/common.snd`.
+#[derive(Debug)]
+pub struct FxData {
+    pub sff: Sff,
+    pub air: Air,
+    pub snd: Option<rugen_formats::snd::Snd>,
+    pub localcoord: [f32; 2],
+}
+
+impl FxData {
+    pub fn load(data_dir: &Path) -> Result<Arc<Self>> {
+        let sff = Sff::open(resolve(data_dir, "fightfx.sff")?, false)?;
+        let air = Air::open(resolve(data_dir, "fightfx.air")?)?;
+        let snd = resolve(data_dir, "common.snd")
+            .ok()
+            .and_then(|p| rugen_formats::snd::Snd::open(p).ok());
+        // fightfx.air carries no localcoord; MUGEN 1.1's fight.def is 320x240
+        Ok(Arc::new(Self {
+            sff,
+            air,
+            snd,
+            localcoord: [320.0, 240.0],
+        }))
+    }
+}
+
 /// Case-insensitive path resolution with backslash normalisation.
 pub fn resolve(dir: &Path, name: &str) -> Result<PathBuf> {
     let name = name.replace('\\', "/");
