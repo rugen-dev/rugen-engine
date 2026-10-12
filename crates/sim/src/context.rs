@@ -366,7 +366,8 @@ impl Context for Ctx<'_> {
                 "info.author" => self.w.stage.author.eq_ignore_ascii_case(text),
                 _ => false,
             }),
-            T::Command(name) => Self::b(p.cmds.active(name)),
+            // helpers without keyctrl read no command input (MUGEN Helper doc, Ikemen `command`)
+            T::Command(name) => Self::b((p.helper_index == 0 || p.keyctrl) && p.cmds.active(name)),
             T::Const(name) => match data.konst(name) {
                 Some(v) => {
                     // ints stay ints so `const(data.life)` compares like MUGEN

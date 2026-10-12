@@ -1665,7 +1665,10 @@ impl World {
         let p = &self.players[i];
         let data = self.data[p.data].clone();
         let (ub, db, fb, bb) = (p.input.ub, p.input.db, p.input.fb, p.input.bb);
-        if p.ctrl {
+        // Ikemen `actionPrepare`: the hardcoded basic actions read command input,
+        // so helpers only take them with keyctrl
+        let keys = p.helper_index == 0 || p.keyctrl;
+        if keys && p.ctrl {
             let st = p.state_type;
             let no = p.state_no;
             if p.guarding && p.inguarddist && !p.in_guard_state() && st != StateType::L && bb > 0 {
@@ -1705,10 +1708,12 @@ impl World {
             }
         }
         let p = &self.players[i];
-        if p.state_no == 20 && (bb > 0) == (fb > 0) {
+        if keys && p.state_no == 20 && (bb > 0) == (fb > 0) {
             self.change_state(i, 0, None, None);
         }
-        self.engine_air_moves(i, &data, fb, bb, db);
+        if keys {
+            self.engine_air_moves(i, &data, fb, bb, db);
+        }
         let p = &mut self.players[i];
         if p.state_type != StateType::A {
             p.air_jump_count = 0;
@@ -1783,15 +1788,24 @@ impl World {
         if self.players[i].pause_bool {
             return;
         }
-        let data = self.data[self.players[i].state_owner].clone();
         let own = self.data[self.players[i].data].clone();
-        for neg in [-3, -2, -1] {
-            // -1 and -3 come from the player's own files even in a custom state; -2 always runs
-            let src = if neg == -2 { &data } else { &own };
-            if let Some(state) = src.states.get(&neg) {
-                if neg == -1 && self.players[i].state_owner != self.players[i].data {
-                    continue;
-                }
+        let p = &self.players[i];
+        // Ikemen `actionRun`: the special states always come from the player's own
+        // files. -3 is skipped in a custom state (MUGEN cns docs), -2 always runs,
+        // -1 only in its own states. Helpers run -3 and -2 only as player-type
+        // helpers and -1 only with keyctrl (MUGEN Helper doc).
+        let in_own = p.state_owner == p.data;
+        let root = p.helper_index == 0;
+        let runs = [
+            in_own && (root || p.player_type),
+            root || p.player_type,
+            in_own && (root || p.keyctrl),
+        ];
+        for (neg, run) in [-3, -2, -1].into_iter().zip(runs) {
+            if !run {
+                continue;
+            }
+            if let Some(state) = own.states.get(&neg) {
                 self.players[i].minus = neg as i8;
                 let mut persist = vec![0; state.ctrls.len()];
                 self.run_ctrls(i, &state.ctrls, &mut persist);
@@ -4271,6 +4285,98 @@ mod tests {
             w.players[h].facing, -w.players[0].facing,
             "a single Turn on the first tick"
         );
+    }
+
+    /// Helpers run no special states, hardcoded actions or commands unless keyctrl = 1
+    /// (-1 only) or helpertype = player (-3 / -2). G6 Sasuke's Amaterasu FX
+    /// helper (keyctrl = 0, missing statedef) kept the spawn tick's buffered
+    /// "holddown" + "b" forever and looped his state -1 combo moves.
+    #[test]
+    fn helpers_run_special_states_only_with_keyctrl() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef -3]\n[State -3, v]\ntype = VarAdd\ntrigger1 = IsHelper\nvar(2) = 1\n\
+                 [Statedef -2]\n[State -2, v]\ntype = VarAdd\ntrigger1 = IsHelper\nvar(3) = 1\n\
+                 [Statedef -1]\n[State -1, c]\ntype = ChangeState\ntrigger1 = IsHelper && command = \"x\"\nvalue = 1003\n\
+                 [Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n\
+                 [State 1001, a]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 77\n\
+                 [State 1001, b]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 79\nkeyctrl = 1\n\
+                 [Statedef 1002]\ntype = S\nphysics = N\nanim = 0\nctrl = 1\n\
+                 [State 1002, c]\ntype = VarSet\ntrigger1 = command = \"x\"\nvar(4) = 1\n\
+                 [Statedef 1003]\ntype = S\nphysics = N\nanim = 0\nctrl = 0\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        let x = Buttons {
+            x: true,
+            d: true,
+            ..Default::default()
+        };
+        w.change_state(0, 1001, None, Some(false));
+        run(&mut w, 1, x);
+        run(&mut w, 10, Buttons::default());
+        run(&mut w, 1, x);
+        run(&mut w, 2, Buttons::default());
+        let find = |w: &World, id| {
+            w.players
+                .iter()
+                .position(|p| !p.removed && p.helper_id == id)
+                .expect("helper exists")
+        };
+        let plain = &w.players[find(&w, 77)];
+        assert_eq!(
+            plain.state_no, 1002,
+            "no state -1 or hardcoded crouch without keyctrl"
+        );
+        assert_eq!(plain.vars[4], 0, "no command input without keyctrl");
+        assert_eq!(
+            (plain.vars[2], plain.vars[3]),
+            (0, 0),
+            "no -3 / -2 for a normal helper"
+        );
+        let keyed = &w.players[find(&w, 79)];
+        assert_eq!(keyed.state_no, 1003, "keyctrl helpers run state -1");
+    }
+
+    /// In another character's states (thrown via p2stateno) a player skips its
+    /// state -3 and still runs its own -2, never the state owner's.
+    #[test]
+    fn custom_state_runs_own_minus_two_and_skips_minus_three() {
+        let Some(d) = kfm() else { return };
+        let mine = d
+            .with_states(
+                "a.cns",
+                "[Statedef -3]\n[State -3, v]\ntype = VarAdd\ntrigger1 = 1\nvar(5) = 1\n\
+                 [Statedef -2]\n[State -2, v]\ntype = VarAdd\ntrigger1 = 1\nvar(6) = 1\n",
+            )
+            .unwrap();
+        let theirs = d
+            .with_states(
+                "b.cns",
+                "[Statedef -2]\n[State -2, v]\ntype = VarAdd\ntrigger1 = 1\nvar(7) = 1\n\
+                 [Statedef 888]\ntype = S\nmovetype = H\nphysics = N\nanim = 0\nctrl = 0\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(mine, 0, 1);
+        w.add_player(theirs, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.players[0].vars[5] = 0;
+        w.players[0].vars[6] = 0;
+        w.players[0].vars[7] = 0;
+        w.players[0].state_owner = w.players[1].data;
+        w.change_state(0, 888, None, Some(false));
+        run(&mut w, 10, Buttons::default());
+        let p = &w.players[0];
+        assert_eq!(p.state_no, 888);
+        assert_eq!(p.vars[5], 0, "-3 skipped in a custom state");
+        assert_eq!(p.vars[6], 10, "own -2 runs every tick");
+        assert_eq!(p.vars[7], 0, "the state owner's -2 is not run");
     }
 
     #[test]
