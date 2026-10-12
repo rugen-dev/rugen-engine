@@ -1,8 +1,12 @@
 //! SND sound archives: `ElecbyteSnd\0`, a table of WAV subfiles keyed by
 //! `(group, number)`. Audio decoding is left to the audio crate; this
 //! returns the raw WAV bytes.
+//!
+//! Sounds are views into one shared copy of the file ([`Sound`]): loading is a
+//! single read, with no per-sound copy.
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 
@@ -10,19 +14,46 @@ use crate::{Error, Result};
 
 const F: &str = "snd";
 
+/// One sound's WAV bytes: a range of the archive's shared buffer.
+#[derive(Clone)]
+pub struct Sound {
+    buf: Arc<Vec<u8>>,
+    start: usize,
+    end: usize,
+}
+
+impl std::ops::Deref for Sound {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.buf[self.start..self.end]
+    }
+}
+
+impl std::fmt::Debug for Sound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Sound({} bytes)", self.end - self.start)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Snd {
     pub version: (u16, u16),
     /// Raw WAV file bytes per key. First duplicate wins, like MUGEN.
-    pub sounds: IndexMap<(i32, i32), Vec<u8>>,
+    pub sounds: IndexMap<(i32, i32), Sound>,
 }
 
 impl Snd {
     pub fn get(&self, group: i32, number: i32) -> Option<&[u8]> {
-        self.sounds.get(&(group, number)).map(Vec::as_slice)
+        self.sounds.get(&(group, number)).map(|s| &**s)
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self> {
+        Self::parse_shared(Arc::new(bytes.to_vec()))
+    }
+
+    /// Parse, keeping `buf` as the storage of every sound.
+    pub fn parse_shared(buf: Arc<Vec<u8>>) -> Result<Self> {
+        let bytes: &[u8] = &buf;
         let mut r = Cursor::new(bytes);
         let mut sig = [0u8; 12];
         r.read_exact(&mut sig)?;
@@ -60,7 +91,14 @@ impl Snd {
                         key.1
                     );
                 } else {
-                    snd.sounds.insert(key, bytes[start..end].to_vec());
+                    snd.sounds.insert(
+                        key,
+                        Sound {
+                            buf: buf.clone(),
+                            start,
+                            end,
+                        },
+                    );
                 }
             }
             if next == 0 || next == ofs {
@@ -72,7 +110,7 @@ impl Snd {
     }
 
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        Self::parse(&std::fs::read(path)?)
+        Self::parse_shared(Arc::new(std::fs::read(path)?))
     }
 }
 
