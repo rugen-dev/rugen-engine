@@ -53,11 +53,29 @@ can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
 ping-aware matchmaking), **Leaderboard**. Matches are **relayed by the
 server** (UDP, or a WebSocket fallback through HTTPS-only networks): players
 never learn each other's IP address. Accounts are anonymous keys per server in
-`profile.json`; the character you bring online is `profile.json` `main_char`
-(else `[net] p1`). Both sides report results with their input streams; they
-only count when they agree. Both machines need the same characters installed.
+`profile.json`. Both sides report results with their input streams; they
+only count when they agree.
+
+**Bring your own character**: the machines do not need the same characters.
+Every online match opens a **matchup**: you pick a fighter from your own
+`chars/` (the select screen in online mode, P1 also picks the stage), and the
+server judges both at once from their fingerprints and fairness profiles
+(static CNS analysis: stats, damage, supers, invulnerability, cheat flags,
+power score): **FAIR**, **UNBALANCED** (casual only, both players must accept
+it; ranked refuses it) or **BLOCKED** (cheats such as life regeneration in
+state -2, permanent invulnerability, setting the opponent's life, or a
+character that fails `rugen verify`: change fighter). The MATCHUP screen shows
+both cards (portrait, author, stats, community rating per character), the
+verdict stamp and its reasons, CONFIRM / CHANGE FIGHTER, the opponent's status
+and the transfers: from the moment you pick, your fighter's optimised package
+uploads in the background if the server does not have it yet (the server
+re-hashes and re-analyses it, so an edited character cannot pass as the
+original), and the opponent's downloads into `cache/net/` (instant when
+cached). Then VS and the fight. Packages on the server are temporary caches.
 Command line: `rugen play kfm --server https://host --room new` (prints a
-code) / `--room CODE [--spectate]`.
+code) / `rugen play G6_Naruto --server https://host --room CODE [--spectate]`;
+each side brings the character it names, confirms unless BLOCKED and quits
+after the match.
 
 Without a server, **direct matches** (LAN / explicit IP) still work: HOST
 (1P) / JOIN (2P) in ONLINE, each player types the other's address, or `[net]
@@ -141,7 +159,10 @@ WebSocket relay; fine behind a tunnel / reverse proxy) and the UDP match relay
 on 7001. Everything is rate-limited and validated; there are no account
 passwords (anonymous keys), room passwords are Argon2id hashes, and no client
 address is ever sent to another client. Seasons roll every 90 days with a
-soft rating reset. Players add `https://your-host` in ONLINE.
+soft rating reset. Players add `https://your-host` in ONLINE. The server also
+judges matchups and passes character packages between the two players of a
+match (`RUGEN_PKG_TTL`, `RUGEN_PKG_MAX_TOTAL`, `RUGEN_PKG_MAX`: see the deploy
+README, including the note on hosted content).
 
 ## Status
 
