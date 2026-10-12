@@ -215,6 +215,40 @@ impl FontGpu {
         clip: Option<[f32; 4]>,
         alpha: f32,
     ) {
+        self.draw_full(r, text, pos, bank, align, scale, clip, alpha, None);
+    }
+
+    /// [`draw`](Self::draw) rotated by `angle` degrees (counter-clockwise on
+    /// screen) around `pivot`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_rotated(
+        &mut self,
+        r: &mut Renderer,
+        text: &str,
+        pos: [f32; 2],
+        bank: i32,
+        align: i32,
+        scale: f32,
+        angle: f32,
+        pivot: [f32; 2],
+    ) {
+        let rot = (angle != 0.0).then_some((angle, pivot));
+        self.draw_full(r, text, pos, bank, align, scale, None, 1.0, rot);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_full(
+        &mut self,
+        r: &mut Renderer,
+        text: &str,
+        pos: [f32; 2],
+        bank: i32,
+        align: i32,
+        scale: f32,
+        clip: Option<[f32; 4]>,
+        alpha: f32,
+        rot: Option<(f32, [f32; 2])>,
+    ) {
         self.init(r);
         let bank = self.banks[(bank.max(0) as usize).min(self.banks.len() - 1)];
         let total = self.width(text, scale);
@@ -234,6 +268,15 @@ impl FontGpu {
                     .entry(c)
                     .or_insert_with(|| r.add_indexed(g.width as u32, g.height as u32, &g.pixels));
                 let mut d = Draw::new(tex, Some(bank), [x, y], [0.0, 0.0]);
+                if let Some((angle, pv)) = rot {
+                    // same rotation as the renderer's: each glyph's corner turns
+                    // around the pivot, then the glyph turns around its corner
+                    let rad = angle * (std::f32::consts::PI / 180.0);
+                    let (sn, cs) = (libm::sinf(rad), libm::cosf(rad));
+                    let (dx, dy) = (x - pv[0], y - pv[1]);
+                    d.pos = [pv[0] + dx * cs + dy * sn, pv[1] - dx * sn + dy * cs];
+                    d.angle = angle;
+                }
                 d.scale = [scale, scale];
                 d.clip = clip;
                 d.color = [1.0, 1.0, 1.0, alpha];
