@@ -130,10 +130,12 @@ pub struct Net {
     pub p1: String,
     pub p2: String,
     pub stage: String,
-    /// `rugen-relay` server `ip:port` and room code; when set, the peer address is
+    /// `rugen-server` `ip:port` and room code; when set, the peer address is
     /// discovered through the relay instead of `remote`.
     pub relay: String,
     pub room: String,
+    /// `rugen-server` `host:port` for the ONLINE menu (rooms, ranked, leaderboard).
+    pub server: String,
 }
 
 impl Default for Video {
@@ -244,6 +246,7 @@ impl Default for Net {
             stage: String::new(),
             relay: String::new(),
             room: String::new(),
+            server: String::new(),
         }
     }
 }

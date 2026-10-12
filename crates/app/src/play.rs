@@ -33,7 +33,7 @@ pub enum NetMode {
         remote: SocketAddr,
         side: usize,
     },
-    /// Online through a `rugen-relay` rendezvous: server, room code, side.
+    /// Online through a `rugen-server` rendezvous: server, room code, side.
     Rendezvous {
         port: u16,
         server: SocketAddr,

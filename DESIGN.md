@@ -126,8 +126,9 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - ✅ ggrs P2P over UDP (`--net ip:port [--port n] [--p2]`), input delay / prediction window from `rugen.toml`, desync detection, rollback-muted sound events, connection status HUD.
 - ✅ Sync-test session (`--synctest`, and a 600-frame automated test) proves the sim is deterministic under rollback.
 - ✅ Replays (setup + per-tick inputs, JSON) with byte-identical playback; NETPLAY title entry from `rugen.toml [net]`.
-- ✅ `rugen-relay`: UDP rendezvous by room code with NAT hole punching; the ggrs socket is reused so the learned mapping is the game's.
-- Open: traffic relay fallback, content hash handshake (desync detection catches mismatches today), spectator, synced online character select.
+- ✅ `rugen-server` (ex `rugen-relay`): UDP rendezvous by room code with NAT hole punching (the ggrs socket is reused so the learned mapping is the game's) + JSON API: anonymous accounts, profiles, custom rooms with codes, ranked queue (rating window widening with wait time), Elo K=32 with both-sides-agree results, 90-day seasons, leaderboard. `rugen-proto` holds the wire types; client in `rugen_net::online` (blocking calls on worker threads).
+- ✅ ONLINE screens on the UI engine (`motif/ui/online.toml`): room create/join (typed code), ranked queue with opponent card, leaderboard; results reported after the match.
+- Open: traffic relay fallback, content hash handshake (desync detection catches mismatches today), spectator, synced online character select, server-side anti-cheat beyond agreement.
 
 ### Phase 4 — creator tools (started)
 - ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title.

@@ -32,13 +32,20 @@ work out of the box. In a match: Space pause, `.` step, F2 hitboxes and
 platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
 Esc back.
 
-Online from the menu: set `[net] remote = "ip:port"`, `side = 1` or `2`, and
-the `p1` / `p2` / `stage` ids in `rugen.toml`; a NETPLAY entry then appears on
-the title screen (both machines need the same content). Behind NAT, run the
-tiny `rugen-relay` binary on any reachable host and set `[net] relay =
-"host:7777"` and `room = "some-code"` on both sides instead of `remote` (or
-`rugen play kfm --room code --relay host:7777 [--p2]`); the relay only swaps
-addresses, the match itself stays peer to peer. Music: stage `bgmusic` and
+Online: set `[net] server = "host:7777"` in `rugen.toml` (a `rugen-server`,
+see below) and an ONLINE entry appears on the title screen: **Custom Room**
+(create a 5-letter code, the other player types it under **Join a Room**),
+**Ranked** (queue, Elo matchmaking with a widening rating window, seasons),
+**Leaderboard**. Accounts are anonymous keys stored in `profile.json`; the
+character you bring online is `profile.json` `main_char` (else `[net] p1`).
+Results are reported by both sides and only count when they agree. Both
+machines need the same characters installed (a match is declined otherwise).
+
+Without a server you can still connect directly: `[net] remote = "ip:port"`,
+`side = 1` or `2`, `p1` / `p2` / `stage` ids → NETPLAY entry; or by room code
+through the server's rendezvous only: `[net] relay = "host:7777"`, `room =
+"code"` (or `rugen play kfm --room code --relay host:7777 [--p2]`). The
+server only swaps addresses; every match stays peer to peer. Music: stage `bgmusic` and
 system.def `[Music]` entries play when they are mp3/ogg/flac/wav (MIDI is
 skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick
@@ -86,6 +93,20 @@ rugen fontgen bold.ttf --size 13 --italic 3 --rim --out motif/font/my.def --prev
 Edit the `.def` files to re-layout, swap sprites in the SFFs to retheme, or
 drop a classic MUGEN screenpack into `data/`; anything missing in `motif/`
 falls back to `data/`.
+
+## Hosting a server
+
+```
+cargo build --release -p rugen-relay --bin rugen-server
+./target/release/rugen-server --port 7777 --data /var/lib/rugen --name "my server"
+```
+
+One binary, one data directory (`state.json`, written atomically), one port
+number open for **both UDP and TCP**. UDP is the rendezvous (NAT hole
+punching), TCP is the JSON API (`GET /` shows it is up). Everything is
+rate-limited per IP and validated; there are no passwords, accounts are random
+keys the clients keep. Seasons roll every 90 days with a soft rating reset.
+Players point `[net] server` at `host:7777`.
 
 ## Status
 

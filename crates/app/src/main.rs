@@ -5,7 +5,7 @@
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
-//!   --room code --relay ip:port [--p2]                          same, peer found through rugen-relay
+//!   --room code --relay ip:port [--p2]                          same, peer found through rugen-server
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
@@ -29,6 +29,7 @@ mod game;
 mod gpu;
 mod input;
 mod lifebar;
+mod online;
 mod options;
 mod play;
 mod replay;

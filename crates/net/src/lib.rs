@@ -6,6 +6,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod online;
+
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -84,7 +86,7 @@ impl Socket {
         })
     }
 
-    /// Ask a `rugen-relay` server for the peer in `room`. Blocks up to `timeout`,
+    /// Ask a `rugen-server` for the peer in `room`. Blocks up to `timeout`,
     /// calling `progress` with status lines. Returns the peer's public address.
     pub fn rendezvous(
         &mut self,

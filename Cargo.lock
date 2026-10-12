@@ -2339,9 +2339,18 @@ dependencies = [
  "bincode",
  "ggrs",
  "log",
+ "rugen-proto",
  "rugen-sim",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rugen-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2349,7 +2358,11 @@ name = "rugen-relay"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "getrandom 0.2.17",
  "log",
+ "rugen-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
