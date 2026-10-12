@@ -17,7 +17,7 @@ use winit::window::WindowId;
 use crate::config::Config;
 use crate::gpu::Gpu;
 use crate::input::InputState;
-use crate::online::{OnlineMatch, OnlineScreen};
+use crate::online::{OnlineAuto, OnlineMatch, OnlineScreen};
 use crate::options::OptionsScreen;
 use crate::play::{FightSetup, Match};
 use crate::select::SelectScreen;
@@ -51,6 +51,8 @@ pub enum Mode {
     Netplay,
     Options,
     Exit,
+    /// Pick the fighter you bring to an online matchup (one cursor, local roster).
+    Online,
 }
 
 #[derive(Debug)]
@@ -61,6 +63,10 @@ pub enum Transition {
     Netplay,
     /// ONLINE menu: rooms, ranked, leaderboard (needs `[net] server`).
     Online,
+    /// The online screen wants the fighter pick (select screen in online mode).
+    OnlineSelect,
+    /// Back from the online fighter pick: character id and P1's stage choice.
+    OnlinePicked(String, Option<String>),
     Options,
     /// Key bindings page for player 0 / 1 (`ui/controls.toml`).
     Controls(usize),
@@ -129,7 +135,7 @@ impl ResultSource for Match {
 }
 
 /// Display name and big art for a prepared character .def (from its cache manifest).
-fn char_card(def: &std::path::Path) -> (String, Option<crate::uiscreen::MemImage>) {
+pub(crate) fn char_card(def: &std::path::Path) -> (String, Option<crate::uiscreen::MemImage>) {
     let Some(dir) = def.parent() else {
         return (String::new(), None);
     };
@@ -194,6 +200,10 @@ pub struct Shell {
     data_dir: PathBuf,
     /// The online match the current fight belongs to.
     online_match: Option<OnlineMatch>,
+    /// ONLINE screen parked while its fighter pick (select screen) is open.
+    parked_online: Option<Box<OnlineScreen>>,
+    /// `rugen play --server`: the ONLINE screen drives itself.
+    online_auto: Option<OnlineAuto>,
     /// Result reports in flight: (request, we won).
     reports: Vec<(
         rugen_net::online::Pending<rugen_net::online::ResultAck>,
@@ -248,9 +258,9 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// Report the result of the starting fight to its server (CLI online play).
-    pub fn with_online_match(mut self, om: OnlineMatch) -> Self {
-        self.online_match = Some(om);
+    /// Start on a self-driving ONLINE screen (`rugen play --server --room`).
+    pub fn with_online_auto(mut self, auto: OnlineAuto) -> Self {
+        self.online_auto = Some(auto);
         self
     }
 
@@ -306,6 +316,8 @@ impl Shell {
             arcade: None,
             fullscreen: config_fullscreen,
             online_match: None,
+            parked_online: None,
+            online_auto: None,
             reports: Vec::new(),
             fade: 1.0,
             pause: None,
@@ -762,9 +774,66 @@ impl Shell {
                     }
                 };
             }
+            Transition::Online if self.parked_online.is_some() => {
+                // back from the fighter pick without a pick
+                if let Some(mut o) = self.parked_online.take() {
+                    o.pick_cancelled();
+                    self.screen = Screen::Online(o);
+                }
+            }
+            Transition::OnlinePicked(id, stage) => match self.parked_online.take() {
+                Some(mut o) => {
+                    o.picked(&id, stage);
+                    self.screen = Screen::Online(o);
+                }
+                None => self.transition(Transition::Online),
+            },
+            Transition::OnlineSelect => {
+                let Screen::Online(mut o) = std::mem::replace(&mut self.screen, Screen::Blank)
+                else {
+                    return;
+                };
+                let ui = self
+                    .system
+                    .as_ref()
+                    .filter(|_| UiScreen::available(&self.motif_dir, UiKind::Select(Mode::Online)))
+                    .and_then(|sys| {
+                        UiScreen::load(
+                            UiKind::Select(Mode::Online),
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            &self.lib,
+                        )
+                        .map_err(|e| log::warn!("ui/select.toml: {e:#}"))
+                        .ok()
+                    });
+                match ui {
+                    Some(u) => {
+                        self.parked_online = Some(o);
+                        self.screen = Screen::Ui(Box::new(u));
+                    }
+                    None => {
+                        // no pick screen in this theme: bring the main fighter
+                        o.pick_default();
+                        self.screen = Screen::Online(o);
+                    }
+                }
+            }
             Transition::Online => {
-                let r =
-                    OnlineScreen::load(&self.motif_dir, &self.lib.root, &self.lib, &self.config);
+                let r = match self.online_auto.take() {
+                    Some(auto) => OnlineScreen::load_auto(
+                        &self.motif_dir,
+                        &self.lib.root,
+                        &self.lib,
+                        &self.config,
+                        auto,
+                    ),
+                    None => {
+                        OnlineScreen::load(&self.motif_dir, &self.lib.root, &self.lib, &self.config)
+                    }
+                };
                 self.screen = match r {
                     Ok(o) => Screen::Online(Box::new(o)),
                     Err(e) => {
@@ -782,6 +851,9 @@ impl Shell {
                 }
             }
             Transition::Title => {
+                // leaving the online flow drops a parked matchup (the worker leaves it)
+                self.parked_online = None;
+                self.online_match = None;
                 self.save_replay();
                 self.pause = None;
                 self.arcade = None;
@@ -1123,13 +1195,20 @@ impl Shell {
                 }
             }
             Screen::Online(o) => {
+                // `rugen play --server --shot`: the matchup screen is the picture
+                let auto_shot = self.harness.shot.is_some() && o.is_auto();
+                o.hold_for_shot = auto_shot;
                 if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
                     next = o.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
                 }
-                if matches!(next, Some(Transition::Fight(_))) {
+                if matches!(next, Some(Transition::Fight(_) | Transition::Versus(..))) {
                     self.online_match = o.started.take();
+                }
+                // `--shot` of the matchup screen once its verdict settled
+                if auto_shot && o.shot_ready() {
+                    self.shot_armed = true;
                 }
             }
             Screen::Select(s) => {

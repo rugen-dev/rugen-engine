@@ -7,7 +7,10 @@
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
 //!   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (relayed,
-//!                                                               no IP is shared; `new` creates a room)
+//!                                                               no IP is shared; `new` creates a room):
+//!                                                               brings <char>, shows the matchup, confirms
+//!                                                               unless BLOCKED, syncs files, fights, quits;
+//!                                                               with --shot: picture of the matchup screen
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
@@ -36,6 +39,7 @@ mod inkscreens;
 mod input;
 mod kit;
 mod lifebar;
+mod matchup;
 mod online;
 mod options;
 mod pixelize;
@@ -156,25 +160,44 @@ fn main() -> anyhow::Result<()> {
                 }
                 Ok(dir.join(m.def))
             };
-            // online: the room decides both fighters
             let config = config::Config::load(&lib.root);
-            let mut online_match = None;
-            let mut online_mode = None;
-            let mut names: (String, Option<String>) =
-                (p1.to_string(), rest.get(1).map(|s| s.to_string()));
+            // online: the ONLINE screen drives the room and the matchup
             if let Some(room) = &room {
                 let server = server
                     .clone()
                     .or_else(|| Some(config.net.server.clone()).filter(|s| !s.trim().is_empty()))
                     .context("--room needs --server URL (or [net] server in rugen.toml)")?;
-                let my_char = rest.get(1).filter(|_| room != "new").unwrap_or(p1);
-                let (mode, c1, c2, om) = online::cli_session(
-                    &lib.root, &config, &server, room, my_char, spectate, guest,
-                )?;
-                names = (c1, Some(c2));
-                online_mode = Some(mode);
-                online_match = Some(om);
+                let entry = lib.find_char(p1).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "character {p1:?} not found in {}",
+                        lib.chars_dir().display()
+                    )
+                })?;
+                let auto = online::OnlineAuto {
+                    server,
+                    room: room.clone(),
+                    char_id: entry.id,
+                    stage: stage.clone(),
+                    spectate,
+                    guest,
+                };
+                let harness = game::Harness {
+                    shot: shot.map(std::path::PathBuf::from),
+                    ..Default::default()
+                };
+                return game::Shell::new(
+                    config,
+                    lib,
+                    game::Transition::Online,
+                    true,
+                    harness,
+                    None,
+                )
+                .with_online_auto(auto)
+                .run();
             }
+            let names: (String, Option<String>) =
+                (p1.to_string(), rest.get(1).map(|s| s.to_string()));
             let p1 = resolve(&names.0)?;
             let p2 = names.1.as_deref().map(resolve).transpose()?;
             let stage = stage.or_else(|| lib.default_stage().map(|p| p.display().to_string()));
@@ -193,9 +216,7 @@ fn main() -> anyhow::Result<()> {
                     Ok(dir.join(m.def))
                 })
                 .transpose()?;
-            let net_mode = if let Some(mode) = online_mode {
-                Some(mode)
-            } else if let Some(remote) = net {
+            let net_mode = if let Some(remote) = net {
                 let remote: std::net::SocketAddr = remote
                     .parse()
                     .with_context(|| format!("--net expects ip:port, got {remote:?}"))?;
@@ -245,10 +266,7 @@ fn main() -> anyhow::Result<()> {
                 harness,
                 None,
             );
-            match online_match {
-                Some(om) => shell.with_online_match(om).run(),
-                None => shell.run(),
-            }
+            shell.run()
         }
         Some("screenpack-gen") => {
             let opt = |name: &str| {

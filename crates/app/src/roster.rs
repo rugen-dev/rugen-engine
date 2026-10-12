@@ -133,13 +133,15 @@ impl Roster {
         };
         let human = match mode {
             Mode::Versus => [true, true],
-            Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena => [true, false],
+            Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena | Mode::Online => {
+                [true, false]
+            }
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         // training, arena and watch: the cursor also picks the other side
         let chooses = match mode {
             Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
-            Mode::Arcade | Mode::Tutorial => [true, false],
+            Mode::Arcade | Mode::Tutorial | Mode::Online => [true, false],
             Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let mut r = Self {
@@ -168,9 +170,10 @@ impl Roster {
         if mode == Mode::Arena && r.stages.len() == 1 {
             r.stage_idx = 1;
         }
-        // computer sides pick up front so the plates fill in
+        // computer sides pick up front so the plates fill in (online: the
+        // opponent brings their own, unknown until the matchup)
         for side in 0..2 {
-            if !r.chooses[side] {
+            if !r.chooses[side] && mode != Mode::Online {
                 r.picks[side] = r.random_ok();
             }
         }
@@ -257,6 +260,9 @@ impl Roster {
     }
 
     fn all_picked(&self) -> bool {
+        if self.mode == Mode::Online {
+            return self.picks[0].is_some();
+        }
         (0..2).all(|s| self.picks[s].is_some())
     }
 
@@ -331,6 +337,10 @@ impl Roster {
         if let Some(s) = target {
             self.picks[s] = Some(cell);
             self.picking = self.next_picking();
+        }
+        // online: one pick and back to the matchup
+        if self.mode == Mode::Online && self.picks[0].is_some() {
+            return self.go();
         }
         Outcome::Refresh
     }
@@ -416,6 +426,9 @@ impl Roster {
                 self.reorder();
                 Outcome::Refresh
             }
+            "back" | "title" if self.mode == Mode::Online => {
+                Outcome::Go(Box::new(Transition::Online))
+            }
             "back" | "title" => Outcome::Go(Box::new(Transition::Title)),
             _ => Outcome::None,
         }
@@ -450,6 +463,19 @@ impl Roster {
     }
 
     fn setup(&mut self) -> Option<Transition> {
+        if self.mode == Mode::Online {
+            let id = self.cells.get(self.picks[0]?)?.manifest.id.clone();
+            // RANDOM stage: settle it here so it travels as a real stage
+            let stage = if self.stage_idx == 0 {
+                let n = self.stages.len();
+                (n > 0).then(|| self.rand(n))
+            } else {
+                Some(self.stage_idx - 1)
+            }
+            .and_then(|i| self.stages.get(i))
+            .map(|s| s.entry.id.clone());
+            return Some(Transition::OnlinePicked(id, stage));
+        }
         let def = |me: &Self, side: usize| -> Option<(PathBuf, String)> {
             let c = me.cells.get(me.picks[side]?)?;
             Some((c.dir.join(&c.manifest.def), c.manifest.id.clone()))
@@ -559,9 +585,16 @@ impl Roster {
         let cell = self.picks[side].or(if cursor { hover } else { None });
         let mut v = self.char_json(cell, profile);
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
-            v["status"] = Value::from(if self.human[side] { "" } else { "CPU" });
+            let online_foe = self.mode == Mode::Online && side == 1;
+            v["status"] = Value::from(if self.human[side] {
+                ""
+            } else if online_foe {
+                "OPPONENT: AT THE MATCHUP"
+            } else {
+                "CPU"
+            });
             v["picked"] = Value::from(false);
-            v["cpu"] = Value::from(!self.human[side]);
+            v["cpu"] = Value::from(!self.human[side] && !online_foe);
             v["portrait"] = Value::from("");
             return v;
         };
@@ -668,9 +701,12 @@ impl Roster {
             Mode::Tutorial => "TUTORIAL",
             Mode::Watch => "WATCH",
             Mode::Arena => "ARENA",
+            Mode::Online => "ONLINE",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
-        let prompt = if self.all_picked() {
+        let prompt = if self.mode == Mode::Online {
+            "BRING YOUR FIGHTER".to_string()
+        } else if self.all_picked() {
             "READY  -  CONFIRM TO FIGHT".to_string()
         } else if self.dual() {
             match (self.picks[0].is_some(), self.picks[1].is_some()) {
@@ -741,5 +777,69 @@ impl Roster {
             "profile": serde_json::to_value(profile).unwrap_or(Value::Null),
             "rating": profile.rating_text(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for e in std::fs::read_dir(src).unwrap().flatten() {
+            if e.path().is_dir() {
+                copy_dir(&e.path(), &dst.join(e.file_name()));
+            } else {
+                std::fs::copy(e.path(), dst.join(e.file_name())).unwrap();
+            }
+        }
+    }
+
+    /// Online pick: one cursor, no CPU opponent, one press goes back to the matchup.
+    #[test]
+    fn online_mode_picks_one_fighter_and_a_stage() {
+        let reference =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1");
+        if !reference.join("chars/kfm/kfm.def").exists() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("rugen-roster-online-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        copy_dir(&reference.join("chars/kfm"), &root.join("chars/kfm"));
+        copy_dir(&reference.join("data"), &root.join("data"));
+        std::fs::create_dir_all(root.join("stages/stage0")).unwrap();
+        for f in ["stage0.def", "stage0.sff"] {
+            std::fs::copy(
+                reference.join("stages").join(f),
+                root.join("stages/stage0").join(f),
+            )
+            .unwrap();
+        }
+        let lib = Library::discover(Some(&root));
+        let mut r = Roster::new(Mode::Online, &lib, 4);
+        assert!(!r.dual());
+        assert!(r.picks[1].is_none(), "no CPU opponent online");
+        let d = r.data(&Profile::default(), "ONLINE");
+        assert_eq!(d["title"], "ONLINE");
+        assert_eq!(d["card2"]["cpu"], false);
+        match r.action("stage:next") {
+            Outcome::Refresh => {}
+            _ => panic!("stage strip"),
+        }
+        match r.action("pick:0") {
+            Outcome::Go(t) => match *t {
+                Transition::OnlinePicked(id, stage) => {
+                    assert_eq!(id, "kfm");
+                    assert_eq!(stage.as_deref(), Some("stage0"));
+                }
+                other => panic!("{other:?}"),
+            },
+            _ => panic!("one pick goes back to the matchup"),
+        }
+        match r.action("back") {
+            Outcome::Go(t) => assert!(matches!(*t, Transition::Online)),
+            _ => panic!("back returns to the online screen"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

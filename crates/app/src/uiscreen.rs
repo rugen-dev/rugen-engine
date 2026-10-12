@@ -520,7 +520,11 @@ impl UiScreen {
                 UiKind::Select(mode) => Some(Roster::new(mode, lib, config.game.ai_level)),
                 _ => None,
             },
-            room: "LOCAL".into(),
+            room: if kind == UiKind::Select(Mode::Online) {
+                "ONLINE".into()
+            } else {
+                "LOCAL".into()
+            },
             versus: None,
             result: None,
             mem: HashMap::new(),
@@ -851,13 +855,17 @@ impl UiScreen {
                 None
             }
             UiKind::Controls => Some(Transition::Options),
-            UiKind::Select(_) => {
+            UiKind::Select(mode) => {
                 // take back the last pick first, leave when there is none
                 if self.roster.as_mut().is_some_and(|r| r.cancel(None)) {
                     self.refresh_data(sys);
                     return None;
                 }
-                Some(Transition::Title)
+                Some(if mode == Mode::Online {
+                    Transition::Online
+                } else {
+                    Transition::Title
+                })
             }
             _ => Some(Transition::Title),
         }
@@ -891,13 +899,17 @@ impl UiScreen {
         sfx: &mut dyn FnMut(Option<(i32, i32)>),
     ) -> Option<Transition> {
         match self.kind {
-            UiKind::Select(_) => {
+            UiKind::Select(mode) => {
                 sfx(sys.select.cancel_snd);
                 if self.roster.as_mut().is_some_and(|r| r.cancel(side)) {
                     self.refresh_data(sys);
                     return None;
                 }
-                Some(Transition::Title)
+                Some(if mode == Mode::Online {
+                    Transition::Online
+                } else {
+                    Transition::Title
+                })
             }
             UiKind::Pause => Some(Transition::Resume),
             UiKind::Options => self.escape(sys),
@@ -1447,30 +1459,36 @@ pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "webp" => {
-            let file = std::io::BufReader::new(std::fs::File::open(path)?);
-            let mut dec = image_webp::WebPDecoder::new(file)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-            let (w, h) = dec.dimensions();
-            let mut buf = vec![0u8; dec.output_buffer_size().unwrap_or(0)];
-            dec.read_image(&mut buf)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-            if !dec.has_alpha() {
-                // RGB → RGBA
-                let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-                for px in buf.chunks_exact(3) {
-                    rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-                }
-                buf = rgba;
-            }
-            Ok((w, h, buf))
-        }
+        "webp" => decode_webp(&std::fs::read(path)?)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display())),
         "png" => {
             let (w, h, rgba) = rugen_content::read_png(path)?;
             Ok((w, h, rgba))
         }
         _ => anyhow::bail!("{}: unsupported image type", path.display()),
     }
+}
+
+/// Decode a WebP (file contents or a card portrait off the wire) to RGBA.
+pub fn decode_webp(bytes: &[u8]) -> anyhow::Result<MemImage> {
+    let mut dec = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|e| anyhow::anyhow!("webp: {e}"))?;
+    let (w, h) = dec.dimensions();
+    if w > 8192 || h > 8192 {
+        anyhow::bail!("webp: {w}x{h} is too large");
+    }
+    let mut buf = vec![0u8; dec.output_buffer_size().unwrap_or(0)];
+    dec.read_image(&mut buf)
+        .map_err(|e| anyhow::anyhow!("webp: {e}"))?;
+    if !dec.has_alpha() {
+        // RGB → RGBA
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for px in buf.chunks_exact(3) {
+            rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+        buf = rgba;
+    }
+    Ok((w, h, buf))
 }
 
 /// Stage display name and thumbnail path for a prepared stage .def.

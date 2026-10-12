@@ -11,7 +11,7 @@ pub use rugen_proto::{
     CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo, MatchupView,
     PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay, ResultAck, RoomInfo,
     RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, Verdict,
-    VerdictKind, ping_bars, rank_name,
+    VerdictKind, b64_decode, ping_bars, rank_name,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

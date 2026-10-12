@@ -5,7 +5,12 @@
 //! 2. **Lobby** of the chosen server: public rooms (join / watch), create a
 //!    room (name, public / private, password, rules, spectator seats), join
 //!    by code (+ password), quick match, ranked, leaderboard.
-//! 3. Matches are **relayed by the server** (UDP fast path, WebSocket
+//! 3. Every match opens a **matchup** first (bring your own character):
+//!    pick a local fighter (the select screen in online mode), see both
+//!    cards and the server's instant verdict (FAIR / UNBALANCED / BLOCKED),
+//!    confirm or change fighter while the packages sync in the background
+//!    (see [`crate::matchup`]), then VS and the fight with the synced files.
+//! 4. Matches are **relayed by the server** (UDP fast path, WebSocket
 //!    fallback): no player ever learns another's address.
 //!
 //! DIRECT MATCH (LAN / IP) stays available without any server: each player
@@ -22,7 +27,7 @@ use rugen_content::Library;
 use rugen_net::online::{
     Evidence, Leaderboard, MatchInfo, OnlineClient, OnlineResult, Pending, Presence, ProfileInfo,
     QueueStatus, Registered, ResultAck, RoomInfo, RoomOptions, RoomSummary, Rules, ServerInfo,
-    ServerMsg, SessionTicket, base_url, ping_bars, rank_name,
+    ServerMsg, base_url, ping_bars, rank_name,
 };
 use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
@@ -32,9 +37,12 @@ use winit::keyboard::Key;
 
 use crate::config::{Config, GOOD_PING_MS};
 use crate::game::Transition;
+use crate::matchup::{Driver, Shared, Xfer, XferState};
 use crate::play::{FightSetup, NetMode};
 use crate::system::SystemData;
-use crate::uiscreen::{Cached, Host, MouseEvent, Profile, viewport};
+use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, viewport};
+use crate::versus::Portrait;
+use rugen_net::online::{FighterCard, VerdictKind};
 
 /// Which online match a fight belongs to, for result reporting.
 #[derive(Clone, Debug)]
@@ -48,12 +56,55 @@ pub struct OnlineMatch {
     /// Watching only: nothing to report.
     pub spectator: bool,
     pub rules: Rules,
-    /// Room to return to (rematch), if any.
-    pub room: Option<String>,
 }
 
 /// Where the ONLINE screen resumes after a match: (server, room code).
 static RESUME: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
+
+/// Fighter brought to the last matchup (picked again for a rematch).
+static LAST_PICK: Mutex<Option<String>> = Mutex::new(None);
+
+/// Match ids already played from this machine (a stale room view never restarts one).
+static STARTED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+fn started_before(id: u64) -> bool {
+    STARTED.lock().is_ok_and(|s| s.contains(&id))
+}
+
+/// `rugen play <char> --server URL --room CODE|new`: the ONLINE screen
+/// drives itself (create / join, pick, confirm unless BLOCKED) and the game
+/// quits after the match.
+#[derive(Clone, Debug, Default)]
+pub struct OnlineAuto {
+    pub server: String,
+    /// Room code, or `new` to create one.
+    pub room: String,
+    pub char_id: String,
+    pub stage: Option<String>,
+    pub spectate: bool,
+    /// Throwaway account (not saved to the profile).
+    pub guest: bool,
+}
+
+/// A matchup on screen: the worker and what the match needs afterwards.
+struct Mx {
+    driver: Driver,
+    /// Account ids by side (index 0 = P1).
+    players: [u64; 2],
+    ranked: bool,
+    room: Option<String>,
+    snap: Shared,
+    /// We still have to pick (the select screen opens).
+    need_pick: bool,
+    /// Ticks since the verdict appeared (auto mode).
+    verdict_ticks: u32,
+    /// When the verdict appeared (screenshots).
+    verdict_at: Option<std::time::Instant>,
+    /// Ticks the screen has been settled (verdict shown, files synced or blocked).
+    settled_ticks: u32,
+    /// Auto mode: last confirm sent (tick).
+    auto_confirm_at: u32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -68,6 +119,8 @@ enum State {
     Board,
     /// Typing the peer's address for a direct (LAN / IP) match.
     Direct,
+    /// Bring-your-own-character matchup before a match.
+    Matchup,
 }
 
 enum Job {
@@ -149,6 +202,21 @@ pub struct OnlineScreen {
     /// This machine's LAN address, for the other player to type.
     local_ip: String,
     pending_fight: Option<FightSetup>,
+    /// A synced online match: VS screen, then the fight.
+    pending_versus: Option<(FightSetup, [Portrait; 2])>,
+    mx: Option<Mx>,
+    /// The fighter pick screen should open (the shell parks this screen).
+    want_select: bool,
+    /// Card portraits (`mem:card_<fingerprint>`).
+    mem: HashMap<String, MemImage>,
+    auto: Option<OnlineAuto>,
+    auto_joined: bool,
+    /// Auto mode: leave the game (error, blocked) at this tick.
+    auto_quit_at: Option<u32>,
+    /// `--shot` pending: keep the matchup screen up once synced (it is the picture).
+    pub hold_for_shot: bool,
+    /// CONFIRM was visible last refresh (focus moves onto it when it appears).
+    confirm_focused: bool,
 }
 
 /// Account (id, key) for `server`; the legacy single key belongs to `[net] server`.
@@ -240,6 +308,15 @@ impl OnlineScreen {
             tick: 0,
             started: None,
             pending_fight: None,
+            pending_versus: None,
+            mx: None,
+            want_select: false,
+            mem: HashMap::new(),
+            auto: None,
+            auto_joined: false,
+            auto_quit_at: None,
+            hold_for_shot: false,
+            confirm_focused: false,
             direct_side: 0,
             addr: String::new(),
             local_ip: rugen_net::socket::lan_ip()
@@ -265,6 +342,561 @@ impl OnlineScreen {
         }
         s.refresh();
         Ok(s)
+    }
+
+    /// `rugen play --server`: connect straight to `auto.server` and drive the flow.
+    pub fn load_auto(
+        motif: &Path,
+        root: &Path,
+        lib: &Library,
+        config: &Config,
+        auto: OnlineAuto,
+    ) -> anyhow::Result<Self> {
+        if let Ok(mut r) = RESUME.lock() {
+            *r = None;
+        }
+        let mut s = Self::load(motif, root, lib, config)?;
+        s.jobs.clear();
+        let server = auto.server.clone();
+        s.auto = Some(auto);
+        s.connect(&server);
+        s.refresh();
+        Ok(s)
+    }
+
+    /// Auto mode: once registered, create or join the room.
+    fn auto_join(&mut self) {
+        let Some(a) = self.auto.clone() else { return };
+        if self.auto_joined || self.client.key.is_none() {
+            return;
+        }
+        self.auto_joined = true;
+        if a.room.eq_ignore_ascii_case("new") {
+            let opts = RoomOptions {
+                name: format!("{} CLI", self.profile.name.to_uppercase()),
+                public: true,
+                rules: Rules {
+                    stage: a.stage.clone().unwrap_or_default(),
+                    ..Rules::default()
+                },
+                max_spectators: 2,
+                ..Default::default()
+            };
+            let (c, ch) = (self.client.clone(), a.char_id.clone());
+            self.state = State::Room;
+            self.status = "CREATING ROOM".into();
+            self.jobs
+                .push(Job::Room(Pending::spawn(move || c.create_room(&ch, &opts))));
+        } else {
+            self.password.clear();
+            self.join(a.room.to_ascii_uppercase(), a.spectate);
+        }
+    }
+
+    /// Auto mode: print, then leave the game shortly (time to read / screenshot).
+    fn auto_exit(&mut self, msg: &str) {
+        if self.auto.is_some() && self.auto_quit_at.is_none() {
+            eprintln!("{msg}");
+            self.auto_quit_at = Some(self.tick + 180);
+        }
+    }
+
+    /// The matchup screen is settled enough for a `--shot` (verdict shown,
+    /// transfers finished or a moment passed).
+    pub fn is_auto(&self) -> bool {
+        self.auto.is_some()
+    }
+
+    pub fn shot_ready(&self) -> bool {
+        // the UI draws the data of the previous tick: wait a few settled ticks
+        self.state == State::Matchup && self.mx.as_ref().is_some_and(|m| m.settled_ticks >= 20)
+    }
+
+    fn settled(mx: &Mx) -> bool {
+        let Some(at) = mx.verdict_at else {
+            return false;
+        };
+        let blocked = mx.snap.verdict() == Some(VerdictKind::Blocked);
+        let synced = mx.snap.ready.is_some()
+            || (mx.snap.uploads.iter().all(Xfer::finished)
+                && mx.snap.downloads.iter().all(Xfer::finished)
+                && !mx.snap.downloads.is_empty());
+        let t = at.elapsed().as_secs_f32();
+        t >= 1.0 && (blocked || synced || t >= 20.0)
+    }
+
+    /// Open the matchup phase of match `id`.
+    fn start_matchup(&mut self, id: u64, players: [u64; 2], ranked: bool, room: Option<String>) {
+        if let Some(old) = self.mx.take() {
+            old.driver.leave();
+        }
+        log::info!(
+            "online: matchup {id} ({})",
+            if ranked { "ranked" } else { "casual" }
+        );
+        let driver = Driver::start(
+            self.client.clone(),
+            self.lib.clone(),
+            id,
+            self.config.net.stage.clone(),
+        );
+        // auto mode and rematches pick straight away (CHANGE FIGHTER stays available)
+        let preset = self
+            .auto
+            .as_ref()
+            .map(|a| a.char_id.clone())
+            .or_else(|| LAST_PICK.lock().ok().and_then(|l| l.clone()))
+            .filter(|c| self.lib.find_char(c).is_some());
+        let stage = self.auto.as_ref().and_then(|a| a.stage.clone());
+        if let Some(c) = &preset {
+            driver.pick(c, stage);
+        }
+        self.mx = Some(Mx {
+            driver,
+            players,
+            ranked,
+            room,
+            snap: Shared::default(),
+            need_pick: preset.is_none(),
+            verdict_ticks: 0,
+            verdict_at: None,
+            settled_ticks: 0,
+            auto_confirm_at: 0,
+        });
+        self.error.clear();
+        self.state = State::Matchup;
+        self.status = match (&self.mx.as_ref().and_then(|m| m.room.clone()), ranked) {
+            (Some(code), _) => format!("ROOM {code}  -  CASUAL: UNBALANCED FIGHTS NEED BOTH OK"),
+            (None, true) => "RANKED: ONLY FAIR MATCHUPS".into(),
+            (None, false) => "QUICK MATCH: UNBALANCED FIGHTS NEED BOTH OK".into(),
+        };
+        if preset.is_none() {
+            self.want_select = true;
+        }
+    }
+
+    /// Watching a running room match: fetch its files, then the fight.
+    fn start_watching(&mut self, r: &RoomInfo) {
+        if self.mx.as_ref().is_some_and(|m| m.driver.id == r.match_id) {
+            return;
+        }
+        let host = r
+            .members
+            .iter()
+            .find(|m| m.role == 0)
+            .map_or(0, |m| m.profile.id);
+        let chal = r
+            .members
+            .iter()
+            .find(|m| m.role == 1)
+            .map_or(0, |m| m.profile.id);
+        let driver = Driver::start(
+            self.client.clone(),
+            self.lib.clone(),
+            r.match_id,
+            String::new(),
+        );
+        self.mx = Some(Mx {
+            driver,
+            players: [host, chal],
+            ranked: false,
+            room: Some(r.code.clone()),
+            snap: Shared::default(),
+            need_pick: false,
+            verdict_ticks: 0,
+            verdict_at: None,
+            settled_ticks: 0,
+            auto_confirm_at: 0,
+        });
+        self.state = State::Matchup;
+        self.status = format!("ROOM {} - FETCHING THE FIGHTERS", r.code);
+    }
+
+    /// The shell's fighter pick (select screen in online mode) came back.
+    pub fn picked(&mut self, char_id: &str, stage: Option<String>) {
+        self.want_select = false;
+        if let Some(mx) = self.mx.as_mut() {
+            mx.need_pick = false;
+            mx.driver.pick(char_id, stage);
+            if let Ok(mut l) = LAST_PICK.lock() {
+                *l = Some(char_id.to_string());
+            }
+        }
+    }
+
+    /// The pick screen was left without a pick: keep the previous fighter,
+    /// or leave the matchup when there is none.
+    pub fn pick_cancelled(&mut self) {
+        self.want_select = false;
+        if self.mx.as_ref().is_some_and(|m| m.need_pick) {
+            self.leave_matchup("YOU LEFT THE MATCHUP");
+        }
+    }
+
+    /// The pick screen could not open (theme without one): bring the main fighter.
+    pub fn pick_default(&mut self) {
+        let c = self.my_char();
+        self.picked(&c, None);
+    }
+
+    fn leave_matchup(&mut self, why: &str) {
+        if let Some(mx) = self.mx.take() {
+            mx.driver.leave();
+            self.status = why.into();
+            self.state = if mx.room.is_some() && self.room.is_some() {
+                State::Room
+            } else {
+                State::Menu
+            };
+        }
+    }
+
+    /// Follow the matchup worker: errors back to the room, VS once synced.
+    fn poll_matchup(&mut self) {
+        let Some(mx) = self.mx.as_mut() else { return };
+        mx.snap = mx.driver.snapshot();
+        if mx.snap.verdict().is_some()
+            && mx
+                .snap
+                .view
+                .as_ref()
+                .is_some_and(|v| v.fighters.iter().all(Option::is_some))
+        {
+            mx.verdict_ticks += 1;
+            mx.verdict_at.get_or_insert_with(std::time::Instant::now);
+        } else {
+            mx.verdict_ticks = 0;
+            mx.verdict_at = None;
+        }
+        mx.settled_ticks = if Self::settled(mx) {
+            mx.settled_ticks + 1
+        } else {
+            0
+        };
+        if let Some(e) = mx.snap.error.clone() {
+            let mx = self.mx.take();
+            let room = mx.as_ref().and_then(|m| m.room.clone());
+            self.error = format!("MATCHUP: {e}").to_uppercase();
+            self.status = room
+                .as_ref()
+                .map(|c| format!("ROOM {c} - ASK FOR A REMATCH TO TRY AGAIN"))
+                .unwrap_or_default();
+            self.state = if room.is_some() && self.room.is_some() {
+                State::Room
+            } else if self.client.server.is_empty() {
+                State::Servers
+            } else {
+                State::Menu
+            };
+            self.auto_exit(&format!("matchup failed: {e}"));
+            return;
+        }
+        if let Some(ready) = mx.snap.ready.clone()
+            && !self.hold_for_shot
+        {
+            let mx = self.mx.take().expect("matchup");
+            self.start_synced(ready, &mx);
+            return;
+        }
+        // auto mode: confirm unless BLOCKED; leave when our own fighter is blocked
+        if self.auto.is_some() {
+            let tick = self.tick;
+            let mut exit = None;
+            if let Some(v) = &mx.snap.view {
+                let blocked = mx.snap.verdict() == Some(VerdictKind::Blocked);
+                let mine_blocked = mx
+                    .snap
+                    .mine
+                    .as_ref()
+                    .and_then(|m| m.profile.as_ref())
+                    .is_some_and(|p| p.blocked());
+                if v.phase == "confirm"
+                    && !mx.snap.accepted
+                    && !blocked
+                    && tick >= mx.auto_confirm_at + 120
+                {
+                    mx.auto_confirm_at = tick;
+                    mx.driver.accept();
+                }
+                if blocked && mine_blocked && mx.verdict_ticks == 1 {
+                    let reasons = v
+                        .verdict
+                        .as_ref()
+                        .map(|v| v.reasons.join("; "))
+                        .unwrap_or_default();
+                    exit = Some(format!("BLOCKED: {reasons}"));
+                }
+                if mx.verdict_ticks == 1
+                    && let Some(verdict) = &v.verdict
+                {
+                    let names: Vec<String> = v
+                        .fighters
+                        .iter()
+                        .flatten()
+                        .map(|c| c.decl.name.clone())
+                        .collect();
+                    println!(
+                        "MATCHUP: {}  →  {}",
+                        names.join(" vs "),
+                        verdict.kind.label()
+                    );
+                    for r in &verdict.reasons {
+                        println!("  - {r}");
+                    }
+                }
+            }
+            if let Some(m) = exit {
+                self.auto_exit(&m);
+            }
+        }
+    }
+
+    /// Every file is here and the relay ticket arrived: VS screen, then the fight.
+    fn start_synced(&mut self, ready: crate::matchup::Ready, mx: &Mx) {
+        let v = &ready.view;
+        if let Ok(mut s) = STARTED.lock() {
+            s.push(v.id);
+        }
+        if let Ok(mut r) = RESUME.lock() {
+            *r = Some((self.client.server.clone(), mx.room.clone()));
+        }
+        let [p1, p2, stage] = ready.defs.clone();
+        let m = OnlineMatch {
+            server: self.client.server.clone(),
+            match_id: v.id,
+            players: mx.players,
+            my_side: usize::from(v.side == 2),
+            ranked: v.ranked,
+            spectator: v.side > 2,
+            rules: v.rules.clone(),
+        };
+        self.status = "MATCH STARTING".into();
+        let side = |def: &PathBuf| {
+            let (name, img) = crate::game::char_card(def);
+            Portrait::new(name, img.map(|(w, h, rgba)| (w, h, rgba, [0, 0])))
+        };
+        let portraits = [side(&p1), side(&p2)];
+        let setup = FightSetup {
+            p1,
+            p2,
+            stage: Some(stage),
+            ai: [0, 0],
+            net: Some(NetMode::Relay {
+                server: base_url(&self.client.server),
+                ticket: ready.ticket.clone(),
+                websocket_only: self.config.net.websocket_only,
+            }),
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+        };
+        self.used_ticket = Some(ready.ticket.session);
+        self.pending_versus = Some((setup, portraits));
+        self.started = Some(m);
+    }
+
+    /// A fighter card for the matchup screen.
+    fn card_json(
+        &mut self,
+        card: Option<&FighterCard>,
+        local: Option<&PathBuf>,
+        status: &str,
+    ) -> Value {
+        let Some(c) = card else {
+            return json!({ "present": false, "status": status, "has_portrait": false });
+        };
+        let d = &c.decl;
+        let key = format!("card_{}", crate::matchup::short(&d.fingerprint));
+        if !self.mem.contains_key(&key) {
+            let img = local
+                .and_then(|p| crate::uiscreen::load_image(p).ok())
+                .or_else(|| {
+                    d.portrait
+                        .as_deref()
+                        .and_then(rugen_net::online::b64_decode)
+                        .and_then(|b| crate::uiscreen::decode_webp(&b).ok())
+                });
+            self.mem
+                .insert(key.clone(), img.unwrap_or((0, 0, Vec::new())));
+        }
+        let has_portrait = self.mem.get(&key).is_some_and(|(w, _, _)| *w > 0);
+        let p = d.profile.clone().unwrap_or_default();
+        let rating = match &c.rating {
+            Some(r) if r.games > 0 => format!(
+                "COMMUNITY {}  ({} GAMES, {} WINS)",
+                r.rating, r.games, r.wins
+            ),
+            _ => "COMMUNITY: UNRATED".to_string(),
+        };
+        let name = d.name.to_uppercase();
+        json!({
+            "present": true,
+            "name": name,
+            "long": name.chars().count() > 14,
+            "author": if d.author.is_empty() { "BY UNKNOWN".to_string() } else { format!("BY {}", d.author.to_uppercase()) },
+            "portrait": format!("mem:{key}"),
+            "has_portrait": has_portrait,
+            "stats1": format!("LIFE {}   ATTACK {}   DEFENCE {}", p.life, p.attack, p.defence),
+            "stats2": format!("SUPERS {}   PROJECTILES {}   THROWS {}", p.supers, p.projectiles, p.throws),
+            "stats3": format!("BEST HIT {}   COMBO ~{}", p.max_hit_damage, p.est_combo_damage),
+            "power": format!("POWER {:.0}", p.power_score),
+            "rating": rating,
+            "verified": if p.blocked() { "BLOCKED: NEVER SHARED" } else if c.verified { "FILES CHECKED BY THE SERVER" } else { "WAITING FOR THE SERVER CHECK" },
+            "size": format!("{:.1} MB", d.size as f64 / 1048576.0),
+            "status": status,
+            "flags": p.flags.iter().map(|f| f.code.to_uppercase()).collect::<Vec<_>>().join(" "),
+        })
+    }
+
+    fn xfer_json(rows: &[Xfer], what: &str) -> Value {
+        if rows.is_empty() {
+            return json!({ "visible": false, "pct": 0, "text": "" });
+        }
+        let total: u64 = rows
+            .iter()
+            .map(|x| x.progress.total.load(std::sync::atomic::Ordering::Relaxed))
+            .sum();
+        let frac = rows.iter().map(Xfer::fraction).sum::<f32>() / rows.len() as f32;
+        let failed = rows.iter().find_map(|x| match &x.state {
+            XferState::Failed(e) => Some(e.clone()),
+            _ => None,
+        });
+        let text = if let Some(e) = failed {
+            format!("{what}: FAILED - {}", e.to_uppercase())
+        } else if rows.iter().all(|x| x.state == XferState::Cached) {
+            format!("{what}: ALREADY THERE (CACHED)")
+        } else if rows.iter().all(Xfer::finished) {
+            format!("{what}: DONE")
+        } else if rows.iter().any(|x| x.state == XferState::Checking) && frac == 0.0 {
+            format!("{what}: PREPARING")
+        } else {
+            format!(
+                "{what}: {:.0}%  OF {:.1} MB",
+                frac * 100.0,
+                total as f64 / 1048576.0
+            )
+        };
+        json!({ "visible": true, "pct": (frac * 100.0) as u32, "text": text })
+    }
+
+    /// The `mx` block of the data context (matchup screen).
+    fn matchup_json(&mut self) -> Value {
+        let Some(snap) = self.mx.as_ref().map(|m| m.snap.clone()) else {
+            return json!({});
+        };
+        let ranked = self.mx.as_ref().is_some_and(|m| m.ranked);
+        let need_pick = self.mx.as_ref().is_some_and(|m| m.need_pick);
+        let v = snap.view.clone().unwrap_or_default();
+        let spectator = v.side > 2;
+        let me = usize::from(v.side == 2);
+        let opp = 1 - me;
+        let phase = v.phase.as_str();
+        let status_of = |i: usize| -> String {
+            let Some(card) = &v.fighters[i] else {
+                return "PICKING...".into();
+            };
+            let blocked = card.decl.profile.as_ref().is_some_and(|p| p.blocked());
+            if blocked {
+                "BLOCKED".into()
+            } else if v.ready[i] {
+                "READY".into()
+            } else if v.accepted[i] {
+                "CONFIRMED".into()
+            } else if phase == "pick" {
+                "WAITING".into()
+            } else {
+                "DECIDING...".into()
+            }
+        };
+        let my_status = if snap.preparing {
+            "PREPARING YOUR FIGHTER...".to_string()
+        } else if need_pick {
+            "PICKING...".to_string()
+        } else {
+            status_of(me)
+        };
+        let local = snap.mine_card.clone();
+        let (left, right) = if spectator {
+            (
+                self.card_json(v.fighters[0].as_ref(), None, "P1"),
+                self.card_json(v.fighters[1].as_ref(), None, "P2"),
+            )
+        } else {
+            (
+                self.card_json(v.fighters[me].as_ref(), local.as_ref(), &my_status),
+                self.card_json(v.fighters[opp].as_ref(), None, &status_of(opp)),
+            )
+        };
+        let verdict = v.verdict.clone();
+        let kind = verdict.as_ref().map(|v| v.kind);
+        let both = v.fighters.iter().all(Option::is_some);
+        let reasons: Vec<Value> = verdict
+            .as_ref()
+            .map(|v| {
+                v.reasons
+                    .iter()
+                    .take(3)
+                    .map(|r| json!({ "text": r.to_uppercase() }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mine_blocked = snap
+            .mine
+            .as_ref()
+            .and_then(|m| m.profile.as_ref())
+            .is_some_and(|p| p.blocked());
+        let hint = match (kind, phase) {
+            _ if spectator => "WATCHING: THE FIGHT STARTS ONCE BOTH PLAYERS ARE READY".to_string(),
+            _ if !both => {
+                "THE SERVER JUDGES THE MATCHUP AS SOON AS BOTH FIGHTERS ARE PICKED".to_string()
+            }
+            (Some(VerdictKind::Blocked), _) if mine_blocked => {
+                "YOUR FIGHTER IS BLOCKED: CHANGE FIGHTER".to_string()
+            }
+            (Some(VerdictKind::Blocked), _) => {
+                "THEIR FIGHTER IS BLOCKED: WAITING FOR A NEW PICK".to_string()
+            }
+            (Some(VerdictKind::Unbalanced), _) if ranked => {
+                "RANKED NEEDS A FAIR FIGHT: CHANGE FIGHTER".to_string()
+            }
+            (Some(VerdictKind::Unbalanced), "confirm") if !snap.accepted => {
+                "UNBALANCED: BOTH PLAYERS MUST ACCEPT IT".to_string()
+            }
+            (_, "confirm") if snap.accepted => "WAITING FOR YOUR OPPONENT TO CONFIRM".to_string(),
+            (_, "confirm") => "CONFIRM THE MATCHUP OR CHANGE FIGHTER".to_string(),
+            (_, "sync") => "SYNCING FILES - THE FIGHT STARTS WHEN BOTH ARE READY".to_string(),
+            (_, "started") => "MATCH STARTING".to_string(),
+            _ => String::new(),
+        };
+        let can_confirm = !spectator
+            && phase == "confirm"
+            && !snap.accepted
+            && !(ranked && kind == Some(VerdictKind::Unbalanced));
+        json!({
+            "title": if spectator { "WATCHING" } else if ranked { "RANKED MATCHUP" } else { "MATCHUP" },
+            "left": left,
+            "right": right,
+            "left_tag": if spectator { "P1" } else { "YOU" },
+            "right_tag": if spectator { "P2" } else { "OPPONENT" },
+            "has_verdict": both && kind.is_some(),
+            "pending": !both || kind.is_none(),
+            "verdict": kind.map(|k| k.label()).unwrap_or(""),
+            "fair": both && kind == Some(VerdictKind::Fair),
+            "unbalanced": both && kind == Some(VerdictKind::Unbalanced),
+            "blocked": both && kind == Some(VerdictKind::Blocked),
+            "ratio": verdict.as_ref().filter(|v| v.ratio > 0.0).map(|v| format!("POWER RATIO {:.2}", v.ratio)).unwrap_or_default(),
+            "reasons": reasons,
+            "no_reasons": reasons.is_empty(),
+            "hint": hint,
+            "can_confirm": can_confirm,
+            "confirm_label": if kind == Some(VerdictKind::Unbalanced) { "ACCEPT UNBALANCED" } else { "CONFIRM" },
+            "can_change": !spectator && matches!(phase, "pick" | "confirm" | "") && !snap.preparing,
+            "changed": snap.verdict_changed,
+            "notice": if snap.verdict_changed { "THE VERDICT CHANGED: CONFIRM AGAIN".to_string() } else { snap.notice.to_uppercase() },
+            "has_notice": !snap.notice.is_empty() || snap.verdict_changed,
+            "up": Self::xfer_json(&snap.uploads, "UPLOADING YOURS"),
+            "down": Self::xfer_json(&snap.downloads, "DOWNLOADING THEIRS"),
+        })
     }
 
     /// Ask every listed server for its info and measure the round trip.
@@ -343,6 +975,11 @@ impl OnlineScreen {
     }
 
     fn refresh(&mut self) {
+        let mx = if self.state == State::Matchup {
+            self.matchup_json()
+        } else {
+            json!({})
+        };
         let me = self.me.clone().unwrap_or_else(|| ProfileInfo {
             id: self.my_id(),
             name: self.profile.name.clone(),
@@ -506,7 +1143,10 @@ impl OnlineScreen {
             "is_queue": self.state == State::Queue,
             "is_board": self.state == State::Board,
             "is_direct": self.state == State::Direct,
-            "has_server": has_server && self.state != State::Servers,
+            "is_matchup": self.state == State::Matchup,
+            "not_matchup": self.state != State::Matchup,
+            "mx": mx,
+            "has_server": has_server && self.state != State::Servers && self.state != State::Matchup,
             "no_server": self.state == State::Servers,
             "server_line": server_line,
             "motd": motd,
@@ -586,6 +1226,12 @@ impl OnlineScreen {
                 v
             }).unwrap_or(Value::Null),
         });
+        // CONFIRM appearing takes the focus (it is what the player wants next)
+        let can_confirm = data["mx"]["can_confirm"].as_bool() == Some(true);
+        if can_confirm && !self.confirm_focused {
+            self.ui.set_focus(Some("mx_confirm"));
+        }
+        self.confirm_focused = can_confirm;
         self.ui.set_data(data);
     }
 
@@ -905,6 +1551,17 @@ impl OnlineScreen {
                 self.ui.set_input("addr", &self.addr);
             }
             ("direct", "go") => self.direct_go(),
+            ("mx", "confirm") => {
+                if let Some(mx) = &self.mx {
+                    mx.driver.accept();
+                }
+            }
+            ("mx", "change") => {
+                if self.mx.is_some() {
+                    self.want_select = true;
+                }
+            }
+            ("mx", "leave") => self.leave_matchup("YOU LEFT THE MATCHUP"),
             ("netplay", _) => return Some(Transition::Netplay),
             _ => log::warn!("online: unknown action {a:?}"),
         }
@@ -970,6 +1627,10 @@ impl OnlineScreen {
     }
 
     fn cancel(&mut self) {
+        if self.state == State::Matchup {
+            self.leave_matchup("YOU LEFT THE MATCHUP");
+            return;
+        }
         match self.state {
             State::Queue => {
                 let c = self.client.clone();
@@ -1003,6 +1664,10 @@ impl OnlineScreen {
 
     fn fail(&mut self, what: &str, e: impl std::fmt::Display) {
         log::warn!("online: {what}: {e}");
+        if let Some(mx) = self.mx.take() {
+            mx.driver.leave();
+        }
+        self.auto_exit(&format!("{what}: {e}"));
         self.error = format!("{what}: {e}").to_uppercase();
         self.status.clear();
         if !matches!(self.state, State::Board | State::Servers | State::Lobby) {
@@ -1014,169 +1679,88 @@ impl OnlineScreen {
         }
     }
 
-    /// Resolve both characters and the stage, hand the shell a relayed fight.
-    fn start_fight(
-        &mut self,
-        p1_char: &str,
-        p2_char: &str,
-        stage: &str,
-        ticket: SessionTicket,
-        m: OnlineMatch,
-    ) {
-        if self.used_ticket == Some(ticket.session) {
-            return;
-        }
-        let resolve = |lib: &Library, id: &str| -> Option<PathBuf> {
-            let e = lib.find_char(id)?;
-            lib.prepare_char(&e).ok().map(|(d, man)| d.join(man.def))
-        };
-        let (Some(p1), Some(p2)) = (resolve(&self.lib, p1_char), resolve(&self.lib, p2_char))
-        else {
-            let missing = if resolve(&self.lib, p1_char).is_none() {
-                p1_char
-            } else {
-                p2_char
-            };
-            self.fail(
-                "cannot start",
-                format!("character {missing:?} is not installed here"),
-            );
-            return;
-        };
-        let want = if stage.is_empty() {
-            self.config.net.stage.clone()
-        } else {
-            stage.to_string()
-        };
-        // both sides must pick the same stage: by id, else the first one sorted
-        let stage_path = self
-            .lib
-            .stages()
-            .into_iter()
-            .find(|e| e.id.eq_ignore_ascii_case(&want))
-            .or_else(|| self.lib.stages().into_iter().next())
-            .and_then(|e| {
-                self.lib
-                    .prepare_stage(&e)
-                    .ok()
-                    .map(|(d, man)| d.join(man.def))
-            })
-            .or_else(|| self.lib.default_stage());
-        self.used_ticket = Some(ticket.session);
-        if let Ok(mut r) = RESUME.lock() {
-            *r = Some((self.client.server.clone(), m.room.clone()));
-        }
-        self.pending_fight = Some(FightSetup {
-            p1,
-            p2,
-            stage: stage_path,
-            ai: [0, 0],
-            net: Some(NetMode::Relay {
-                server: base_url(&self.client.server),
-                ticket,
-                websocket_only: self.config.net.websocket_only,
-            }),
-            tutorial: false,
-            ids: [String::new(), String::new()],
-            mode: None,
-        });
-        self.started = Some(m);
-    }
-
     fn room_update(&mut self, r: RoomInfo) {
-        if r.ready
-            && let Some(ticket) = r.ticket.clone()
-            && self.used_ticket != Some(ticket.session)
+        let host = r
+            .members
+            .iter()
+            .find(|m| m.role == 0)
+            .map_or(0, |m| m.profile.id);
+        let chal = r
+            .members
+            .iter()
+            .find(|m| m.role == 1)
+            .map_or(0, |m| m.profile.id);
+        // a new match in this room: its matchup phase (pick, verdict, sync)
+        if r.side <= 2
+            && let Some(mv) = &r.matchup
+            && mv.phase != "failed"
+            && mv.phase != "started"
+            && !started_before(mv.id)
+            && self.mx.as_ref().is_none_or(|m| m.driver.id != mv.id)
+            && !self.error.starts_with("MATCHUP")
         {
-            let my_id = self.my_id();
-            let opp = r.opponent.as_ref().map_or(0, |o| o.id);
-            let host = r
-                .members
-                .iter()
-                .find(|m| m.role == 0)
-                .map_or(0, |m| m.profile.id);
-            let chal = r
-                .members
-                .iter()
-                .find(|m| m.role == 1)
-                .map_or(0, |m| m.profile.id);
-            let players = match r.side {
-                1 => [my_id, opp],
-                2 => [opp, my_id],
-                _ => [host, chal],
-            };
-            let m = OnlineMatch {
-                server: self.client.server.clone(),
-                match_id: r.match_id,
-                players,
-                my_side: usize::from(r.side == 2),
-                ranked: false,
-                spectator: r.side > 2,
-                rules: r.rules.clone(),
-                room: Some(r.code.clone()),
-            };
-            self.status = format!("ROOM {} - MATCH STARTING", r.code);
-            let (p1, p2, stage) = (r.p1_char.clone(), r.p2_char.clone(), r.stage.clone());
+            log::info!("online: room {} match {} - matchup", r.code, mv.id);
+            let (id, code) = (mv.id, r.code.clone());
             self.room = Some(r);
-            self.start_fight(&p1, &p2, &stage, ticket, m);
+            self.start_matchup(id, [host, chal], false, Some(code));
+            return;
+        }
+        // watching: the match runs, fetch its fighters and join the relay
+        if r.side > 2 && r.ready && r.ticket.is_some() && !started_before(r.match_id) {
+            self.start_watching(&r);
+            self.room = Some(r);
+            return;
+        }
+        if self.state == State::Matchup {
+            self.room = Some(r);
             return;
         }
         if self.room.as_ref().is_none_or(|old| old.code != r.code) {
             log::info!("online: room code {}", r.code);
+            if self
+                .auto
+                .as_ref()
+                .is_some_and(|a| a.room.eq_ignore_ascii_case("new"))
+            {
+                println!("ROOM CODE: {}", r.code);
+            }
         }
-        self.status = if r.opponent.is_none() && r.side <= 2 {
-            format!("ROOM {} - WAITING FOR A CHALLENGER", r.code)
-        } else if r.side > 2 {
-            format!("ROOM {} - WATCHING, WAITING FOR THE NEXT MATCH", r.code)
-        } else {
-            format!("ROOM {} - REMATCH?", r.code)
-        };
+        if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
+            self.status = if r.opponent.is_none() && r.side <= 2 {
+                format!("ROOM {} - WAITING FOR A CHALLENGER", r.code)
+            } else if r.side > 2 {
+                format!("ROOM {} - WATCHING, WAITING FOR THE NEXT MATCH", r.code)
+            } else {
+                format!("ROOM {} - REMATCH?", r.code)
+            };
+        }
         self.room = Some(r);
     }
 
     fn match_found(&mut self, mi: MatchInfo) {
         let my_id = self.my_id();
-        let Some(ticket) = mi.ticket.clone() else {
-            self.fail("match", "the server sent no relay ticket");
-            return;
-        };
-        let (p1c, p2c, players) = if mi.side == 1 {
-            (
-                mi.my_char.clone(),
-                mi.opponent_char.clone(),
-                [my_id, mi.opponent.id],
-            )
+        let players = if mi.side == 1 {
+            [my_id, mi.opponent.id]
         } else {
-            (
-                mi.opponent_char.clone(),
-                mi.my_char.clone(),
-                [mi.opponent.id, my_id],
-            )
+            [mi.opponent.id, my_id]
         };
-        if self.lib.find_char(&mi.opponent_char).is_none() {
+        let Some(mv) = mi.matchup.clone() else {
             self.fail(
-                "match declined",
-                format!("opponent plays {:?}, not installed here", mi.opponent_char),
+                "match",
+                "this server is too old for bring-your-own-character",
             );
             return;
-        }
-        let m = OnlineMatch {
-            server: self.client.server.clone(),
-            match_id: mi.match_id,
-            players,
-            my_side: usize::from(mi.side == 2),
-            ranked: mi.ranked,
-            spectator: false,
-            rules: Rules::default(),
-            room: None,
         };
+        if self.mx.as_ref().is_some_and(|m| m.driver.id == mv.id) || started_before(mv.id) {
+            return;
+        }
+        self.start_matchup(mv.id, players, mi.ranked, None);
         self.status = format!(
             "MATCH FOUND: {} ({})  {}",
             mi.opponent.name,
             mi.opponent.rank,
             ping_text(mi.est_ping_ms)
         );
-        self.start_fight(&p1c, &p2c, &mi.stage, ticket, m);
     }
 
     fn poll_presence(&mut self) {
@@ -1187,7 +1771,7 @@ impl OnlineScreen {
             match m {
                 ServerMsg::Welcome { id, .. } => log::debug!("online: presence as {id}"),
                 ServerMsg::Room { room } => {
-                    if self.state == State::Room
+                    if matches!(self.state, State::Room | State::Matchup)
                         && self.room.as_ref().is_none_or(|r| r.code == room.code)
                     {
                         self.room_update(room);
@@ -1217,10 +1801,12 @@ impl OnlineScreen {
                 Job::Register(p) => match p.take() {
                     None => keep.push(j),
                     Some(Ok(r)) => {
-                        self.profile
-                            .online_accounts
-                            .insert(self.client.server.clone(), (r.id, r.key.clone()));
-                        self.profile.save(&self.root);
+                        if !self.auto.as_ref().is_some_and(|a| a.guest) {
+                            self.profile
+                                .online_accounts
+                                .insert(self.client.server.clone(), (r.id, r.key.clone()));
+                            self.profile.save(&self.root);
+                        }
                         self.client.key = Some(r.key);
                         self.presence = Presence::spawn(&self.client).ok();
                         let (c, name) = (self.client.clone(), self.profile.name.clone());
@@ -1284,7 +1870,7 @@ impl OnlineScreen {
                 Job::Room(p) => match p.take() {
                     None => keep.push(j),
                     Some(Ok(r)) => {
-                        if self.state == State::Room {
+                        if matches!(self.state, State::Room | State::Matchup) {
                             self.room_update(r);
                         }
                     }
@@ -1336,7 +1922,7 @@ impl OnlineScreen {
         let busy_room = self.jobs.iter().any(|j| matches!(j, Job::Room(_)));
         let busy_queue = self.jobs.iter().any(|j| matches!(j, Job::Queue(_)));
         match self.state {
-            State::Room if !busy_room => {
+            State::Room | State::Matchup if !busy_room => {
                 if let Some(code) = self.room.as_ref().map(|r| r.code.clone()) {
                     let c = self.client.clone();
                     self.jobs
@@ -1368,8 +1954,19 @@ impl OnlineScreen {
         self.poll_jobs();
         self.poll_presence();
         self.poll_server();
+        self.poll_matchup();
+        self.auto_join();
+        if self.auto_quit_at.is_some_and(|t| self.tick >= t) {
+            return Some(Transition::Quit);
+        }
         if let Some(f) = self.pending_fight.take() {
             return Some(Transition::Fight(f));
+        }
+        if let Some((setup, sides)) = self.pending_versus.take() {
+            return Some(Transition::Versus(setup, sides));
+        }
+        if self.want_select {
+            return Some(Transition::OnlineSelect);
         }
         self.window = r.size();
         let (vw, vh) = viewport(self.window);
@@ -1398,7 +1995,7 @@ impl OnlineScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
-                mem: None,
+                mem: Some(&self.mem),
                 rot: None,
             };
             self.ui.tick(nav, &mut host)
@@ -1457,7 +2054,7 @@ impl OnlineScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
-                mem: None,
+                mem: Some(&self.mem),
                 rot: None,
             };
             self.ui.draw(&mut host);
@@ -1540,93 +2137,4 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
         }
         Err(e) => log::warn!("online: result not accepted: {e}"),
     }
-}
-
-/// `rugen play` online from the command line: join (or create with
-/// `new`) a room on `server` and block until the match starts. Returns the
-/// relay fight mode, both character ids and the match bookkeeping.
-pub fn cli_session(
-    root: &Path,
-    config: &Config,
-    server: &str,
-    room: &str,
-    my_char: &str,
-    spectate: bool,
-    guest: bool,
-) -> anyhow::Result<(NetMode, String, String, OnlineMatch)> {
-    let mut profile = Profile::load(root);
-    let (_, key) = if guest {
-        (0, String::new())
-    } else {
-        account_for(&profile, config, server)
-    };
-    let mut client = OnlineClient::new(server, (!key.is_empty()).then_some(key));
-    if client.key.is_none() {
-        let r = client.register().context("registering on the server")?;
-        if !guest {
-            profile
-                .online_accounts
-                .insert(server.to_string(), (r.id, r.key));
-            profile.save(root);
-        }
-        let _ = client.set_profile(&profile.name, 0);
-    }
-    let mut info = if room.eq_ignore_ascii_case("new") {
-        let r = client.create_room(
-            my_char,
-            &RoomOptions {
-                name: format!("{} CLI", profile.name),
-                public: true,
-                rules: Rules::default(),
-                max_spectators: 2,
-                ..Default::default()
-            },
-        )?;
-        println!("ROOM CODE: {}", r.code);
-        log::info!("online: room {} created, waiting for a challenger", r.code);
-        r
-    } else {
-        client.join_room(room, my_char, "", spectate)?
-    };
-    let start = std::time::Instant::now();
-    while info.ticket.is_none() {
-        if start.elapsed() > std::time::Duration::from_secs(300) {
-            anyhow::bail!("nobody joined room {} within 5 minutes", info.code);
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        info = client.poll_room(&info.code)?;
-    }
-    let ticket = info.ticket.clone().unwrap_or_default();
-    let host = info
-        .members
-        .iter()
-        .find(|m| m.role == 0)
-        .map_or(0, |m| m.profile.id);
-    let chal = info
-        .members
-        .iter()
-        .find(|m| m.role == 1)
-        .map_or(0, |m| m.profile.id);
-    let m = OnlineMatch {
-        server: server.to_string(),
-        match_id: info.match_id,
-        players: [host, chal],
-        my_side: usize::from(info.side == 2),
-        ranked: false,
-        spectator: info.side > 2,
-        rules: info.rules.clone(),
-        room: Some(info.code.clone()),
-    };
-    log::info!(
-        "online: room {} match {} as {}",
-        info.code,
-        info.match_id,
-        role_name(info.side.saturating_sub(1))
-    );
-    let mode = NetMode::Relay {
-        server: base_url(server),
-        ticket,
-        websocket_only: config.net.websocket_only,
-    };
-    Ok((mode, info.p1_char.clone(), info.p2_char.clone(), m))
 }

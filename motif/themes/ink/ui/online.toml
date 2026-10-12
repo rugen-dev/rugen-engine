@@ -17,6 +17,7 @@ h = "100%"
 kind = "text"
 dock = "top"
 text = "ONLINE"
+visible = "not_matchup"
 x = 0
 w = "100%"
 y = 42
@@ -31,6 +32,7 @@ enter_time = 16
 kind = "text"
 dock = "top"
 text = "{server_line}"
+visible = "not_matchup"
 x = 0
 w = "100%"
 y = 112
@@ -1007,6 +1009,650 @@ enter_time = 16
   scale = 2
   pad = 26
   on_press = "form:go"
+
+# ---- MATCHUP (bring your own character): both cards, the server's verdict,
+# confirm / change fighter, transfer bars. Data: is_matchup, mx.* (title,
+# left/right {present name long author portrait has_portrait power stats1..3
+# rating verified size status}, left_tag right_tag, pending has_verdict fair
+# unbalanced blocked verdict ratio reasons[] (text) no_reasons hint notice
+# has_notice can_confirm confirm_label can_change, up/down {visible pct text}).
+[[node]]
+kind = "text"
+dock = "top"
+visible = "is_matchup"
+text = "{mx.title}"
+x = 0
+w = "100%"
+y = 22
+font = 1
+bank = 9
+scale = 3
+align = "center"
+enter = "down"
+enter_time = 12
+
+# ---- matchup: left card
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_matchup"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+anchor = "tl"
+x = 40
+y = 86
+w = 400
+h = 420
+enter = "left"
+enter_time = 16
+
+  [[node.children]]
+  kind = "button"
+  focus = false
+  image = "ui/slab_red.webp"
+  x = 14
+  y = -16
+  w = 190
+  h = 38
+  text = "{mx.left_tag}"
+  font = 1
+  bank = 11
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  x = 20
+  y = 36
+  w = 160
+  h = 160
+  color = [0.97, 0.96, 0.92, 1.0]
+  border = 3
+  border_color = [0.07, 0.07, 0.07, 1.0]
+
+    [[node.children.children]]
+    kind = "image"
+    visible = "mx.left.has_portrait"
+    image = "{mx.left.portrait}"
+    fit = "contain"
+    x = 8
+    y = 8
+    w = 144
+    h = 144
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "!mx.left.has_portrait"
+    text = "?"
+    x = 0
+    y = 44
+    w = 160
+    font = 1
+    bank = 10
+    scale = 5
+    align = "center"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!mx.left.long"
+  text = "{mx.left.name}"
+  x = 194
+  y = 40
+  w = 196
+  font = 1
+  bank = 9
+  scale = 2
+  wrap = true
+  line_gap = 6
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.long"
+  text = "{mx.left.name}"
+  x = 194
+  y = 40
+  w = 196
+  font = 2
+  bank = 9
+  scale = 2
+  wrap = true
+  line_gap = 0
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.author}"
+  x = 194
+  y = 134
+  w = 196
+  font = 2
+  bank = 9
+  scale = 1
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.power}"
+  x = 194
+  y = 164
+  font = 1
+  bank = 10
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.stats1}"
+  x = 22
+  y = 210
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.stats2}"
+  x = 22
+  y = 236
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.stats3}"
+  x = 22
+  y = 262
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.rating}"
+  x = 22
+  y = 292
+  font = 2
+  bank = 10
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.left.present"
+  text = "{mx.left.verified}  -  {mx.left.size}"
+  x = 22
+  y = 318
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "button"
+  focus = false
+  image = "ui/slab.webp"
+  x = 20
+  y = 356
+  w = 360
+  h = 44
+  text = "{mx.left.status}"
+  font = 2
+  bank = 11
+  scale = 2
+
+# left transfer bar
+[[node]]
+kind = "text"
+dock = "left"
+visible = "mx.up.visible"
+text = "{mx.up.text}"
+anchor = "tl"
+x = 40
+y = 516
+w = 400
+font = 2
+bank = 9
+scale = 1
+
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "mx.up.visible"
+anchor = "tl"
+x = 40
+y = 542
+w = 400
+h = 20
+color = [0.97, 0.96, 0.92, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 0
+  w = "{mx.up.pct}%"
+  h = 20
+  color = [0.86, 0.13, 0.13, 1.0]
+
+# ---- matchup: right card
+[[node]]
+kind = "panel"
+dock = "right"
+visible = "is_matchup"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+anchor = "tr"
+x = 40
+y = 86
+w = 400
+h = 420
+enter = "right"
+enter_time = 16
+
+  [[node.children]]
+  kind = "button"
+  focus = false
+  image = "ui/slab_red.webp"
+  x = 14
+  y = -16
+  w = 190
+  h = 38
+  text = "{mx.right_tag}"
+  font = 1
+  bank = 11
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  x = 20
+  y = 36
+  w = 160
+  h = 160
+  color = [0.97, 0.96, 0.92, 1.0]
+  border = 3
+  border_color = [0.07, 0.07, 0.07, 1.0]
+
+    [[node.children.children]]
+    kind = "image"
+    visible = "mx.right.has_portrait"
+    image = "{mx.right.portrait}"
+    fit = "contain"
+    x = 8
+    y = 8
+    w = 144
+    h = 144
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "!mx.right.has_portrait"
+    text = "?"
+    x = 0
+    y = 44
+    w = 160
+    font = 1
+    bank = 10
+    scale = 5
+    align = "center"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!mx.right.long"
+  text = "{mx.right.name}"
+  x = 194
+  y = 40
+  w = 196
+  font = 1
+  bank = 9
+  scale = 2
+  wrap = true
+  line_gap = 6
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.long"
+  text = "{mx.right.name}"
+  x = 194
+  y = 40
+  w = 196
+  font = 2
+  bank = 9
+  scale = 2
+  wrap = true
+  line_gap = 0
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.author}"
+  x = 194
+  y = 134
+  w = 196
+  font = 2
+  bank = 9
+  scale = 1
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.power}"
+  x = 194
+  y = 164
+  font = 1
+  bank = 10
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.stats1}"
+  x = 22
+  y = 210
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.stats2}"
+  x = 22
+  y = 236
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.stats3}"
+  x = 22
+  y = 262
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.rating}"
+  x = 22
+  y = 292
+  font = 2
+  bank = 10
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.right.present"
+  text = "{mx.right.verified}  -  {mx.right.size}"
+  x = 22
+  y = 318
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "button"
+  focus = false
+  image = "ui/slab.webp"
+  x = 20
+  y = 356
+  w = 360
+  h = 44
+  text = "{mx.right.status}"
+  font = 2
+  bank = 11
+  scale = 2
+
+# right transfer bar
+[[node]]
+kind = "text"
+dock = "right"
+visible = "mx.down.visible"
+text = "{mx.down.text}"
+anchor = "tr"
+x = 40
+y = 516
+w = 400
+font = 2
+bank = 9
+scale = 1
+
+[[node]]
+kind = "panel"
+dock = "right"
+visible = "mx.down.visible"
+anchor = "tr"
+x = 40
+y = 542
+w = 400
+h = 20
+color = [0.97, 0.96, 0.92, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 0
+  w = "{mx.down.pct}%"
+  h = 20
+  color = [0.86, 0.13, 0.13, 1.0]
+
+[[node]]
+kind = "image"
+visible = "is_matchup"
+image = "ui/vs.webp"
+x = 573
+y = 92
+w = 134
+h = 86
+enter = "fade"
+
+[[node]]
+kind = "text"
+visible = "mx.pending"
+text = "WAITING FOR BOTH PICKS"
+x = 470
+y = 230
+w = 340
+font = 2
+bank = 9
+scale = 2
+align = "center"
+blink = 60
+
+[[node]]
+kind = "panel"
+visible = "mx.fair"
+image = "ui/panel9_black.webp"
+nine = [12, 12, 24, 24]
+x = 476
+y = 196
+w = 328
+h = 100
+angle = -6
+enter = "fade"
+enter_time = 6
+
+  [[node.children]]
+  kind = "text"
+  text = "FAIR"
+  x = 0
+  y = 10
+  w = 328
+  font = 1
+  bank = 11
+  scale = 5
+  align = "center"
+
+[[node]]
+kind = "panel"
+visible = "mx.unbalanced"
+image = "ui/stamp9.webp"
+nine = [5, 5, 5, 5]
+x = 476
+y = 196
+w = 328
+h = 100
+angle = -6
+enter = "fade"
+enter_time = 6
+
+  [[node.children]]
+  kind = "text"
+  text = "UNBALANCED"
+  x = 0
+  y = 26
+  w = 328
+  font = 1
+  bank = 10
+  scale = 3
+  align = "center"
+
+[[node]]
+kind = "panel"
+visible = "mx.blocked"
+color = [0.86, 0.13, 0.13, 1.0]
+border = 5
+border_color = [0.07, 0.07, 0.07, 1.0]
+x = 476
+y = 196
+w = 328
+h = 100
+angle = -6
+enter = "fade"
+enter_time = 6
+
+  [[node.children]]
+  kind = "text"
+  text = "BLOCKED"
+  x = 0
+  y = 18
+  w = 328
+  font = 1
+  bank = 11
+  scale = 4
+  align = "center"
+
+[[node]]
+kind = "text"
+visible = "is_matchup"
+text = "{mx.hint}"
+x = 470
+y = 316
+w = 340
+font = 2
+bank = 9
+scale = 1
+align = "center"
+wrap = true
+line_gap = 4
+
+[[node]]
+kind = "vbox"
+visible = "mx.has_verdict"
+x = 478
+y = 412
+w = 324
+gap = 4
+items = "mx.reasons"
+
+  [[node.children]]
+  kind = "text"
+  text = "- {item.text}"
+  w = 324
+  font = 2
+  bank = 9
+  scale = 1
+  wrap = true
+  line_gap = 4
+
+[[node]]
+kind = "text"
+visible = "mx.has_verdict"
+text = "{mx.ratio}"
+x = 470
+y = 382
+w = 340
+font = 2
+bank = 10
+scale = 1
+align = "center"
+
+[[node]]
+kind = "text"
+visible = "mx.has_notice"
+text = "{mx.notice}"
+x = 470
+y = 512
+w = 340
+font = 2
+bank = 10
+scale = 1
+align = "center"
+wrap = true
+
+[[node]]
+kind = "hbox"
+visible = "is_matchup"
+x = 240
+y = 572
+w = 800
+h = 46
+gap = 18
+justify = "center"
+
+  [[node.children]]
+  kind = "button"
+  id = "mx_confirm"
+  visible = "mx.can_confirm"
+  w = 320
+  h = 46
+  image = "ui/slab_red_wide.webp"
+  image_focus = "ui/slab_red_wide.webp"
+  text = "{mx.confirm_label}"
+  font = 1
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  hover_scale = 1.05
+  on_press = "mx:confirm"
+
+  [[node.children]]
+  kind = "button"
+  id = "mx_change"
+  visible = "mx.can_change"
+  w = 260
+  h = 46
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "CHANGE FIGHTER"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  hover_scale = 1.04
+  on_press = "mx:change"
+
+  [[node.children]]
+  kind = "button"
+  id = "mx_leave"
+  w = 160
+  h = 46
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "LEAVE"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  hover_scale = 1.04
+  on_press = "mx:leave"
 
 # status / error footer
 [[node]]
