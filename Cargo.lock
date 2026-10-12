@@ -2637,9 +2637,12 @@ version = "0.3.0"
 dependencies = [
  "libm",
  "log",
+ "ring",
  "rugen-cns",
  "rugen-formats",
  "rugen-proto",
+ "serde",
+ "serde_json",
  "sha2",
  "thiserror 2.0.21",
  "zip",

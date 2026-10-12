@@ -16,6 +16,10 @@ log.workspace = true
 libm.workspace = true
 sha2 = "0.11"
 zstd = { version = "0.13", default-features = false }
+# Ed25519 (already in the game through rustls; pure verification + signing)
+ring = "0.17"
+serde.workspace = true
+serde_json = "1"
 
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate"] }

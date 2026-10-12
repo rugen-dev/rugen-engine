@@ -9,12 +9,14 @@
 
 pub mod fair;
 pub mod relay;
+pub mod trust;
 
 pub use fair::*;
+pub use trust::*;
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: u32 = 3;
+pub const API_VERSION: u32 = 4;
 
 /// Rank band name for a rating.
 pub fn rank_name(rating: i32) -> &'static str {
@@ -79,6 +81,13 @@ pub struct ServerInfo {
     /// This is the server's own address, never a player's.
     #[serde(default)]
     pub udp: Option<String>,
+    /// The server's Ed25519 public key (hex) when it signs (API 4). A claim
+    /// only: clients trust a server once it signed their identity nonce.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// The server claims to be the official one (API 4; verified by key).
+    #[serde(default)]
+    pub official: bool,
 }
 
 /// Room rules chosen by the host.
@@ -235,6 +244,9 @@ pub struct ResultAck {
     /// The two reports (winner, inputs or final checksum) disagree.
     #[serde(default)]
     pub disputed: bool,
+    /// [`ResultStatement`] signed by the server once the result is settled (API 4).
+    #[serde(default)]
+    pub signed: Option<SignedBlob>,
 }
 
 /// A stored ranked replay (`GET /replay/{match_id}`).
