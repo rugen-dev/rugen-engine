@@ -42,13 +42,22 @@ pub struct Registered {
 pub struct ServerInfo {
     pub api: u32,
     pub name: String,
-    /// UDP rendezvous port on the same host.
+    /// Legacy UDP rendezvous port on the same host (0 = disabled).
     pub udp_port: u16,
     pub online: usize,
     pub queued: usize,
+    /// Public `host:port` of the optional UDP relay (fallback when hole punching fails).
+    #[serde(default)]
+    pub udp_relay: Option<String>,
+    /// The server can mint TURN credentials (`GET /turn`).
+    #[serde(default)]
+    pub turn: bool,
+    /// Region hint the server sees for this request (Cloudflare `CF-IPCountry`).
+    #[serde(default)]
+    pub region: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct RoomInfo {
     pub code: String,
     /// 1 = creator, 2 = joiner.
@@ -60,6 +69,9 @@ pub struct RoomInfo {
     pub opponent: Option<ProfileInfo>,
     /// Unique id both sides report results under.
     pub match_id: u64,
+    /// Server estimate of the round trip to the opponent, if any.
+    #[serde(default)]
+    pub est_ping_ms: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,7 +82,7 @@ pub struct QueueStatus {
     pub found: Option<MatchInfo>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MatchInfo {
     pub match_id: u64,
     pub code: String,
@@ -79,6 +91,9 @@ pub struct MatchInfo {
     pub opponent: ProfileInfo,
     pub opponent_char: String,
     pub stage: String,
+    /// Server estimate of the round trip to the opponent (region history), if any.
+    #[serde(default)]
+    pub est_ping_ms: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -106,4 +121,115 @@ pub struct ResultAck {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApiError {
     pub error: String,
+}
+
+/// Short-lived TURN credentials minted by the server (Cloudflare Realtime TURN).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TurnCredentials {
+    /// `turn:host:port?transport=udp` style URLs.
+    pub urls: Vec<String>,
+    pub username: String,
+    pub credential: String,
+}
+
+/// Signal-strength style quality from a round trip in milliseconds: 4 bars
+/// up to 40 ms, 3 up to 80, 2 up to 150, else 1.
+pub fn ping_bars(rtt_ms: u32) -> u8 {
+    match rtt_ms {
+        0..=40 => 4,
+        41..=80 => 3,
+        81..=150 => 2,
+        _ => 1,
+    }
+}
+
+/// WebSocket (`GET /ws?key=`) messages from the game to the server.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum ClientMsg {
+    /// "I am about to play in `code`; reach me at these UDP endpoints."
+    /// `side` (1 or 2) is only used for codes the server does not know
+    /// (rooms and ranked matches assign sides themselves).
+    Signal {
+        code: String,
+        side: u8,
+        candidates: Vec<String>,
+    },
+    /// Hole punching failed: my TURN relayed address (`None` = no TURN here).
+    Relay {
+        code: String,
+        addr: Option<String>,
+    },
+    Ping,
+}
+
+/// WebSocket messages from the server to the game.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum ServerMsg {
+    Welcome {
+        id: u64,
+        name: String,
+    },
+    /// Both sides signalled: the opponent's endpoints and the fallbacks on offer.
+    Peer {
+        code: String,
+        /// Our side, 1 or 2.
+        side: u8,
+        candidates: Vec<String>,
+        turn: bool,
+        udp_relay: Option<String>,
+    },
+    /// The opponent's TURN relayed address (or `None`: try the UDP relay).
+    PeerRelay {
+        code: String,
+        addr: Option<String>,
+    },
+    /// Presence: a room we created was joined.
+    Room {
+        room: RoomInfo,
+    },
+    /// Presence: the ranked queue paired us.
+    Found {
+        found: MatchInfo,
+    },
+    Pong,
+    Error {
+        error: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_are_tagged_json() {
+        let m = ClientMsg::Signal {
+            code: "ABCDE".into(),
+            side: 1,
+            candidates: vec!["1.2.3.4:7000".into()],
+        };
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(s.starts_with(r#"{"t":"signal""#), "{s}");
+        assert_eq!(serde_json::from_str::<ClientMsg>(&s).unwrap(), m);
+        let p: ServerMsg = serde_json::from_str(r#"{"t":"pong"}"#).unwrap();
+        assert_eq!(p, ServerMsg::Pong);
+    }
+
+    #[test]
+    fn old_server_info_still_decodes() {
+        let i: ServerInfo =
+            serde_json::from_str(r#"{"api":1,"name":"x","udp_port":7777,"online":0,"queued":0}"#)
+                .unwrap();
+        assert!(!i.turn && i.udp_relay.is_none());
+    }
+
+    #[test]
+    fn bars() {
+        assert_eq!(ping_bars(10), 4);
+        assert_eq!(ping_bars(60), 3);
+        assert_eq!(ping_bars(120), 2);
+        assert_eq!(ping_bars(400), 1);
+    }
 }
