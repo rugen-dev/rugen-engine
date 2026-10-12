@@ -938,6 +938,7 @@ impl Shell {
             self.key(&key, false);
         }
         let mut now = self.input.buttons();
+        let pad_pause = self.input.take_pause();
         if let Some(script) = self.harness.script.as_mut() {
             if script.is_empty() {
                 self.harness.script = None;
@@ -1054,7 +1055,7 @@ impl Shell {
                     resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
-                    if resume.is_none() && (pressed[0].s || pressed[1].s) {
+                    if resume.is_none() && (pressed[0].s || pressed[1].s || pad_pause.is_some()) {
                         resume = Some(Transition::Resume);
                     }
                 }
@@ -1072,14 +1073,15 @@ impl Shell {
                 }
             }
             Screen::Match(m) => {
-                // Start opens the pause menu in local matches
-                if (pressed[0].s || pressed[1].s)
+                // Esc or a pad's Select/Back opens the pause menu in local
+                // matches; Start belongs to the fighters (power charge, taunts)
+                if let Some(side) = pad_pause
                     && !m.is_net()
                     && !m.is_tutorial()
                     && !m.world.round.match_over
                     && m.world.round.round_state() == 2
                 {
-                    open_pause = Some(usize::from(!pressed[0].s));
+                    open_pause = Some(side);
                 }
                 advanced = m.tick(now, &mut self.audio);
                 if advanced {

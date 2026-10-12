@@ -73,6 +73,8 @@ pub struct InputState {
     gilrs: Option<gilrs::Gilrs>,
     pads: Vec<Pad>,
     pad_slot: [i32; 2],
+    /// Player whose gamepad pressed Select/Back (the pad's pause button).
+    pad_pause: Option<usize>,
     deadzone: f32,
 }
 
@@ -95,6 +97,7 @@ impl InputState {
             gilrs,
             pads: Vec::new(),
             pad_slot: [cfg.gamepad_p1, cfg.gamepad_p2],
+            pad_pause: None,
             deadzone: cfg.deadzone.clamp(0.1, 0.95),
         };
         if let Some(g) = &s.gilrs {
@@ -173,6 +176,10 @@ impl InputState {
                     if let Some(s) = slot {
                         set(&mut pad.held, s, pressed);
                     }
+                    if pressed && matches!(b, Button::Select | Button::Mode) {
+                        let pi = idx as i32;
+                        self.pad_pause = self.pad_slot.iter().position(|&slot| slot == pi);
+                    }
                 }
                 EventType::AxisChanged(a, v, _) => match a {
                     Axis::LeftStickX => pad.stick[0] = v,
@@ -186,6 +193,11 @@ impl InputState {
                 _ => {}
             }
         }
+    }
+
+    /// Take a pending pad pause request: the player whose Select/Back was pressed.
+    pub fn take_pause(&mut self) -> Option<usize> {
+        self.pad_pause.take()
     }
 
     /// Connected gamepads in slot order: name and held buttons (stick included).
