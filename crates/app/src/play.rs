@@ -468,7 +468,13 @@ impl Match {
                 }
             }
             None => {
-                self.world.step(&inputs);
+                // a panicking character is disabled instead of taking the match down
+                if let Some(culprit) = self.world.step_checked(&inputs) {
+                    log::error!(
+                        "P{} crashed the simulation and was disabled; see `rugen verify`",
+                        culprit + 1
+                    );
+                }
                 let ev = self.world.events.clone();
                 self.handle_events(ev, audio);
                 true

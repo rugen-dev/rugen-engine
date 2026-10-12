@@ -55,6 +55,17 @@ For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
 match runs reloads it in place (checked once a second), and `rugen check`
 lists what the engine cannot run yet.
 
+Broken characters cannot ruin a match: every character is verified the first
+time it is used (`rugen verify <char>` / `--all` does it by hand): it is
+loaded, inspected (unsupported controllers, missing sprites) and run through
+two 3000-frame headless matches. The verdict is stored in its cache manifest
+and shown as a green / yellow / red mark on the select screen; `broken`
+characters (crash, do not load, get stuck) cannot be picked and `rugen play`
+refuses them unless `--force`. The engine also caps helpers, explods,
+projectiles and sounds per tick, sanitizes non-finite positions, and if a
+character still panics mid-match it is disabled and loses while the other
+player keeps playing.
+
 Linux needs `libudev` and `alsa` headers, see [BUILDING.md](BUILDING.md). The `reference/` tree comes from `reference/fetch.sh`.
 
 ## Screenpack

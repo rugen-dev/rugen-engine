@@ -73,6 +73,27 @@ pub struct Manifest {
     #[serde(default)]
     pub portrait_big: Option<PortraitInfo>,
     pub source_hash: String,
+    /// Result of `rugen verify` (headless soak); `None` until it has run.
+    #[serde(default)]
+    pub verify: Option<VerifyInfo>,
+}
+
+/// Verification verdict stored in the cache manifest.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerifyInfo {
+    /// `verified`, `warn` or `broken`.
+    pub verdict: String,
+    pub issues: Vec<String>,
+    /// Engine version that produced the verdict; a different engine re-verifies.
+    pub engine_version: String,
+    /// Unix seconds.
+    pub when: u64,
+}
+
+impl VerifyInfo {
+    pub fn is_broken(&self) -> bool {
+        self.verdict == "broken"
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -264,6 +285,15 @@ impl Library {
     pub fn prepare_char(&self, entry: &Entry) -> Result<(PathBuf, Manifest)> {
         self.prepare(entry, "chars")
     }
+
+    /// Rewrite a prepared entry's manifest (after verification).
+    pub fn save_manifest(dir: &Path, m: &Manifest) -> Result<()> {
+        fs::write(
+            dir.join("rugen.json"),
+            serde_json::to_string_pretty(m).map_err(|e| Error::Other(e.to_string()))?,
+        )?;
+        Ok(())
+    }
     pub fn prepare_stage(&self, entry: &Entry) -> Result<(PathBuf, Manifest)> {
         self.prepare(entry, "stages")
     }
@@ -325,6 +355,7 @@ impl Library {
             portrait_small,
             portrait_big,
             source_hash: hash,
+            verify: None,
         };
         fs::write(
             &manifest_path,

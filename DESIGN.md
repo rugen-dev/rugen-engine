@@ -133,6 +133,8 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title.
 - ✅ F3 overlay: state, state time, type/movetype, ctrl, anim/elem/animtime, pos/vel, life/power/hit count/juggle and the last inputs per player.
 - ✅ Hot reload: a character's source files are re-read in place when they change on disk.
+- ✅ Verification: `rugen verify` (load + inspection + two headless soaks) writes a `verified` / `warn` / `broken` verdict into the cache manifest, runs automatically on first use per engine version, select-screen badge, broken characters refused.
+- ✅ Content safety: `Limits` (helpers per root, explods, projectiles, sounds per tick), NaN/inf sanitizing, saturating life/power/counter math, `World::step_checked` crash isolation (offending player disabled, match continues), fuzz tests (random controllers, corrupted SFF/SND/AIR/DEF).
 - Open: CNS debugger (break on state, watch triggers), frame-advantage display.
 
 ### Phase 5 — new engine features (started)

@@ -217,7 +217,7 @@ fn fuzzed_controllers_never_panic() {
     ];
     for seed in 1..=4u64 {
         let mut rng = Rng::new(seed * 7919);
-        let mut num = |rng: &mut Rng| -> String {
+        let num = |rng: &mut Rng| -> String {
             match rng.below(6) {
                 0 => "0".into(),
                 1 => "-1".into(),

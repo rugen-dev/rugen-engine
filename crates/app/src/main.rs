@@ -11,6 +11,8 @@
 //!   --watch                                                     both sides computer controlled
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
+//! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
+//!   (play refuses `broken` characters unless --force)
 //! rugen replay <file.json>                                      play back a recorded match
 //!   (quick play records to --record file.json, menu matches to replays/)
 //!
@@ -37,6 +39,7 @@ mod stage;
 mod system;
 mod title;
 mod tutorial;
+mod verify;
 mod versus;
 mod viewer;
 
@@ -101,6 +104,7 @@ fn main() -> anyhow::Result<()> {
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let watch = args.iter().any(|a| a == "--watch");
+            let force = args.iter().any(|a| a == "--force");
             let synctest = args.iter().any(|a| a == "--synctest");
             let rest: Vec<&String> = args[1..]
                 .iter()
@@ -120,7 +124,16 @@ fn main() -> anyhow::Result<()> {
                         lib.chars_dir().display()
                     )
                 })?;
-                let (dir, m) = lib.prepare_char(&entry)?;
+                let (dir, m) = verify::prepare_verified(&lib, &entry)?;
+                if m.verify.as_ref().is_some_and(|v| v.is_broken()) && !force {
+                    anyhow::bail!(
+                        "{name} failed verification ({}); run `rugen verify {name}` for details or pass --force",
+                        m.verify
+                            .as_ref()
+                            .map(|v| v.issues.join("; "))
+                            .unwrap_or_default()
+                    );
+                }
                 Ok(dir.join(m.def))
             };
             let p1 = resolve(p1)?;
@@ -310,6 +323,48 @@ fn main() -> anyhow::Result<()> {
                 Some(r),
             )
             .run()
+        }
+        Some("verify") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let root = opt("--root");
+            let all = args.iter().any(|a| a == "--all");
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let targets: Vec<rugen_content::Entry> = if all {
+                lib.chars()
+            } else {
+                let name = args[1..]
+                    .iter()
+                    .filter(|a| !a.starts_with("--"))
+                    .find(|a| Some(*a) != root.as_ref())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("usage: rugen verify <char> | --all [--root dir]")
+                    })?;
+                vec![
+                    lib.find_char(name)
+                        .ok_or_else(|| anyhow::anyhow!("character {name:?} not found"))?,
+                ]
+            };
+            let sparring = verify::sparring_partner(&lib);
+            let mut broken = 0;
+            for entry in targets {
+                let (dir, mut m) = lib.prepare_char(&entry)?;
+                let report =
+                    verify::verify(&dir.join(&m.def), &lib.data_dir(), sparring.as_deref());
+                report.print();
+                if report.verdict == verify::Verdict::Broken {
+                    broken += 1;
+                }
+                m.verify = Some(report.info());
+                rugen_content::Library::save_manifest(&dir, &m)?;
+            }
+            if broken > 0 {
+                std::process::exit(2);
+            }
+            Ok(())
         }
         Some("check") => {
             let opt = |name: &str| {
