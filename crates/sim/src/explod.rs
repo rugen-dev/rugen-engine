@@ -6,7 +6,7 @@ use crate::anim::AnimState;
 use crate::world::World;
 
 /// Where an explod's animation comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnimSrc {
     /// Index into `World::data`.
     Player(usize),
@@ -14,7 +14,7 @@ pub enum AnimSrc {
     Fx,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PosType {
     #[default]
     P1,
@@ -41,14 +41,14 @@ impl PosType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Space {
     #[default]
     Stage,
     Screen,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Trans {
     #[default]
     Default,

@@ -13,7 +13,7 @@ use crate::text::{atof, atoi, section, strip_comment};
 /// Collision box `[x1, y1, x2, y2]`, normalized so `x1 <= x2`, `y1 <= y2`.
 pub type Rect = [i32; 4];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Blend {
     #[default]
     None,
@@ -22,7 +22,7 @@ pub enum Blend {
     SubAdd,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct Frame {
     pub group: i32,
     pub number: i32,
@@ -66,7 +66,7 @@ impl Default for Frame {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     pub frames: Vec<Frame>,
     /// Frame index to loop back to.
@@ -82,7 +82,7 @@ pub struct Action {
     pub pre_loop_time: i32,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 pub struct Air {
     pub actions: BTreeMap<i32, Action>,
 }

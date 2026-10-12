@@ -9,7 +9,7 @@
 use crate::state::{Parsed, StateDef, parse_states};
 use crate::{Error, Result};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
     U,
     D,
@@ -57,7 +57,7 @@ impl Key {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct Elem {
     pub keys: Vec<Key>,
     /// `~`: key must be released; `Some(n)` = held at least n ticks before release.
@@ -70,7 +70,7 @@ pub struct Elem {
     pub strict: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Command {
     pub name: String,
     pub elems: Vec<Elem>,
@@ -78,7 +78,7 @@ pub struct Command {
     pub buffer_time: i32,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 pub struct Cmd {
     pub commands: Vec<Command>,
     pub default_time: i32,

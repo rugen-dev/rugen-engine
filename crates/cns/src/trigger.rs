@@ -2,7 +2,7 @@
 //! [`crate::Context::trigger`]; arguments that are expressions arrive on the
 //! VM stack (`args`), static ones (names, flags) live in the variant.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Axis {
     X,
     Y,
@@ -31,14 +31,14 @@ pub mod flags {
     pub const AT_HP: u32 = 1 << 8;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TeamMode {
     Single,
     Simul,
     Turns,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NameWhich {
     Name,
     P1Name,
@@ -49,7 +49,7 @@ pub enum NameWhich {
 }
 
 /// Which old-style projectile clause.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProjEvent {
     Hit,
     Guarded,
@@ -57,7 +57,7 @@ pub enum ProjEvent {
 }
 
 /// `args` = number of values popped from the stack, in order.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum Trigger {
     // --- nullary, player state
     AILevel,

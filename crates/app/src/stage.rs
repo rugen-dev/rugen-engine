@@ -90,7 +90,12 @@ impl StageVisual {
                 .map(Path::to_path_buf)
                 .with_context(|| format!("[{def_name}] needs spr="))?,
         };
-        let sff = Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?;
+        // the prepared stage's sprite pack when it is fresh (see rugen-content)
+        let pack = rugen_sim::chardata::opt_dir(def_path).join(rugen_sim::chardata::SPRITES_FILE);
+        let sff = match rugen_sim::chardata::load_sprite_pack(&pack, &sff_path, false) {
+            Some(s) => s,
+            None => Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?,
+        };
         let clear_color =
             bgdef
                 .f32s("bgclearcolor")

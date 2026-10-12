@@ -4,7 +4,7 @@
 //! in arithmetic and comparisons (Ikemen GO behavior), stays bottom through
 //! `!` and interval checks, and is false as a condition.
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum Value {
     Int(i32),
     Float(f32),

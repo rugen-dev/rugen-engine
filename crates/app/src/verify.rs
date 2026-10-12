@@ -206,7 +206,8 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let t = Instant::now();
-    let loaded = catch_unwind(AssertUnwindSafe(|| CharData::load_with_data(def, data_dir)));
+    // the verdict is about the original files, never the optimised cache
+    let loaded = catch_unwind(AssertUnwindSafe(|| CharData::load_original(def, data_dir)));
     stats.load_ms = t.elapsed().as_millis();
     let data = match loaded {
         Ok(Ok(d)) => d,
@@ -301,7 +302,7 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         &mut issues,
     );
     if ran && let Some(sp) = sparring {
-        if let Ok(kfm) = CharData::load_with_data(sp, data_dir) {
+        if let Ok(kfm) = CharData::load_original(sp, data_dir) {
             ran = soak(
                 data.clone(),
                 kfm,
