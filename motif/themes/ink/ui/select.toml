@@ -357,12 +357,11 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "{card1.status}"
-  x = 196
-  y = 60
-  font = 1
-  scale = 2
-  bank = 9
+  text = "CPU"
+  x = 330
+  y = 8
+  font = 2
+  bank = 10
   visible = "card1.cpu"
 
 # 2P card (mirrored)
@@ -496,12 +495,11 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "{card2.status}"
-  x = 120
-  y = 60
-  font = 1
-  scale = 2
-  bank = 9
+  text = "CPU"
+  x = 24
+  y = 8
+  font = 2
+  bank = 10
   visible = "card2.cpu"
 
 # stage picker
