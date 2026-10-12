@@ -28,9 +28,11 @@ mod fontgen;
 mod game;
 mod gpu;
 mod input;
+mod kit;
 mod lifebar;
 mod online;
 mod options;
+mod pixelize;
 mod play;
 mod replay;
 mod roster;
@@ -257,11 +259,63 @@ fn main() -> anyhow::Result<()> {
             let out = opt("--out").unwrap_or_else(|| "motif".into());
             let ttf = opt("--font")
                 .map(std::path::PathBuf::from)
-                .or_else(fontgen::default_ttf)
-                .ok_or_else(|| anyhow::anyhow!("no TTF found; pass --font file.ttf"))?;
-            let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
-            uigen::generate(&bytes, std::path::Path::new(&out))?;
-            println!("wrote the front end to {out}/ui/ (font {})", ttf.display());
+                .or_else(fontgen::default_ttf);
+            let bytes = match &ttf {
+                Some(p) => Some(std::fs::read(p).with_context(|| p.display().to_string())?),
+                None => None,
+            };
+            uigen::generate(bytes.as_deref(), std::path::Path::new(&out))?;
+            println!("wrote the front end to {out}/ui/ (fonts from {out}/font/src)");
+            Ok(())
+        }
+        Some("kit-import") => {
+            let out = args
+                .iter()
+                .position(|a| a == "--out")
+                .and_then(|i| args.get(i + 1).cloned())
+                .unwrap_or_else(|| "motif".into());
+            let n = kit::import(std::path::Path::new(&out))?;
+            println!("wrote {n} kit pieces to {out}/ui/kit/");
+            Ok(())
+        }
+        Some("pixelize") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let values: Vec<String> = ["--width", "--palette"]
+                .iter()
+                .filter_map(|f| opt(f))
+                .collect();
+            let positional: Vec<&String> = args[1..]
+                .iter()
+                .filter(|a| !a.starts_with("--"))
+                .filter(|a| !values.contains(a))
+                .collect();
+            let (Some(input), Some(output)) = (positional.first(), positional.get(1)) else {
+                anyhow::bail!(
+                    "usage: rugen pixelize <in.png|webp> <out.webp> [--width N] [--palette p.gpl] [--dither] [--outline]"
+                );
+            };
+            let palette = match opt("--palette") {
+                Some(p) => pixelize::load_gpl(std::path::Path::new(&p))?,
+                None => pixelize::full_palette(),
+            };
+            let width = opt("--width")
+                .map(|w| w.parse::<u32>().context("--width expects a number"))
+                .transpose()?;
+            let (w, h) = pixelize::pixelize_file(
+                std::path::Path::new(input),
+                std::path::Path::new(output),
+                width,
+                &palette,
+                args.iter().any(|a| a == "--dither"),
+                args.iter()
+                    .any(|a| a == "--outline")
+                    .then_some(pixelize::BLACK),
+            )?;
+            println!("wrote {output} ({w}x{h}, {} colours)", palette.len());
             Ok(())
         }
         Some("fontgen") => {

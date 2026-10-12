@@ -474,16 +474,8 @@ pub fn generate(ttf: &[u8], out: &Path) -> anyhow::Result<()> {
         rim,
         highlight: true,
     };
-    let fonts = [
-        ("rugen-title", style(24, 3, true)),
-        ("rugen-menu", style(13, 3, false)),
-        ("rugen-small", style(9, 0, false)),
-        ("rugen-num", style(18, 0, true)),
-    ];
-    for (name, st) in fonts {
-        let g = Generator::new(ttf, st)?;
-        fontgen::write_font(&g, &out.join("font").join(format!("{name}.def")), name)?;
-    }
+    // motif fonts: OFL pixel fonts from motif/font/src (the TTF is only a fallback)
+    fontgen::generate_roles(out, Some(ttf))?;
 
     // ---- system.sff
     let mut sys = Sff {

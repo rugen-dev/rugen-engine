@@ -204,9 +204,9 @@ scale = 2
 [[node]]
 kind = "button"
 id = "search"
-x = 696
+x = 736
 y = 462
-w = 170
+w = 130
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -219,9 +219,9 @@ on_press = "search"
 [[node]]
 kind = "button"
 id = "sort"
-x = 874
+x = 876
 y = 462
-w = 190
+w = 170
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -234,9 +234,9 @@ on_press = "sort"
 [[node]]
 kind = "button"
 id = "random"
-x = 1072
+x = 1056
 y = 462
-w = 170
+w = 186
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"

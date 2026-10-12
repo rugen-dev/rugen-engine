@@ -6,7 +6,7 @@ name = "rugen-small"
 [Def]
 Type = bitmap
 BankType = palette
-Size = 6,12
+Size = 10,11
 Spacing = -2,0
 Offset = -1,2
 File = rugen-small.sff

@@ -1,0 +1,47 @@
+GIMP Palette
+Name: rugen
+Columns: 6
+#
+  4   4   8	black
+255 255 255	white
+  6   8  18	navy 0
+ 12  16  34	navy 1
+ 22  30  58	navy 2
+ 38  50  92	navy 3
+ 66  84 140	navy 4
+110 130 190	navy 5
+ 40   8  20	maroon 0
+ 78  18  36	maroon 1
+118  30  48	maroon 2
+170  46  62	maroon 3
+220  80  88	maroon 4
+250 140 130	maroon 5
+ 70  36  10	gold 0
+150  80  20	gold 1
+220 140  40	gold 2
+255 190  70	gold 3
+255 230 140	gold 4
+255 250 220	gold 5
+ 16  18  26	steel 0
+ 40  44  60	steel 1
+ 84  90 118	steel 2
+140 148 180	steel 3
+200 206 228	steel 4
+245 247 255	steel 5
+  8  30  36	teal 0
+ 16  70  80	teal 1
+ 30 120 130	teal 2
+ 70 190 190	teal 3
+160 240 230	teal 4
+ 80  10  14	red 0
+190  40  40	red 1
+240  70  60	red 2
+255 140 120	red 3
+ 10  50  30	green 0
+ 30 130  70	green 1
+ 90 220 110	green 2
+190 255 190	green 3
+ 10  30  80	blue 0
+ 40  90 200	blue 1
+ 90 160 255	blue 2
+190 220 255	blue 3

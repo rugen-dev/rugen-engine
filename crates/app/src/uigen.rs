@@ -1,239 +1,15 @@
 //! `rugen ui-gen`: writes the default front-end into `motif/ui/` — WebP
-//! assets drawn procedurally in the pixel style, the `title.toml` /
-//! `options.toml` screens, `news.json` and a README for modders.
+//! assets built from the CC0 kit and the palette (see `kit.rs`), the
+//! `title.toml` / `options.toml` / `select.toml` screens, `news.json`,
+//! `palette.gpl` and a README for modders. Hero art dropped into
+//! `motif/art/` is pixelized into `motif/ui/art/`.
 
 use std::path::Path;
 
-use crate::fontgen::{Generator, Style};
-use crate::screenpack::Canvas;
+use crate::fontgen::{self, Generator, Style};
 
-type Rgba = [u8; 4];
-
-const NAVY: Rgba = [10, 14, 30, 255];
-const NAVY_LIGHT: Rgba = [22, 34, 66, 255];
-const TEAL: Rgba = [30, 90, 110, 255];
-const MAROON: Rgba = [118, 30, 48, 255];
-const MAROON_DARK: Rgba = [70, 16, 30, 255];
-const MAROON_LIT: Rgba = [170, 46, 62, 255];
-const ORANGE: Rgba = [255, 150, 60, 255];
-const PANEL: Rgba = [20, 22, 34, 232];
-const PANEL_DARK: Rgba = [10, 11, 18, 240];
-const RIM: Rgba = [70, 80, 110, 255];
-const BLACK: Rgba = [4, 4, 8, 255];
-
-fn write_webp(path: &Path, c: &Canvas) -> anyhow::Result<()> {
-    if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
-    image_webp::WebPEncoder::new(file)
-        .encode(&c.px, c.w, c.h, image_webp::ColorType::Rgba8)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-    Ok(())
-}
-
-/// Night-sky backdrop: dithered navy gradient, teal horizon glow, diagonal
-/// light shafts and sparse stars. 640x360, drawn at 2x.
-fn backdrop() -> Canvas {
-    let (w, h) = (640u32, 360u32);
-    let mut c = Canvas::new(w, h);
-    c.vgrad(0, 0, w as i32, h as i32, NAVY, NAVY_LIGHT);
-    c.vgrad(0, 250, w as i32, 110, [22, 34, 66, 0], TEAL);
-    // light shafts
-    for (x0, width, a) in [(-80, 70, 18u8), (120, 40, 14), (330, 90, 12), (520, 50, 16)] {
-        for y in 0..h as i32 {
-            let x = x0 + y;
-            c.rect(x, y, width, 1, [120, 160, 220, a]);
-        }
-    }
-    c.noise(0.004, [220, 230, 255, 200], 7);
-    c.noise(0.002, [255, 240, 200, 255], 19);
-    // ground band
-    c.vgrad(0, 330, w as i32, 30, [12, 30, 40, 255], [6, 12, 20, 255]);
-    c
-}
-
-/// Slanted Brawlhalla-style menu button (200x27, shown at 2x).
-fn button(lit: bool) -> Canvas {
-    let (w, h, skew) = (190, 27, 7);
-    let mut c = Canvas::new((w + skew + 2) as u32, h as u32);
-    if lit {
-        c.para_grad(1, 0, w, h, skew, MAROON_LIT, MAROON);
-        c.para_edge(1, 0, w, h, skew, BLACK);
-        c.para_edge(2, 1, w - 2, h - 2, skew, [255, 190, 150, 255]);
-        // slash highlight near the right end
-        for yy in 1..h - 1 {
-            let dx = skew * (h - 1 - yy) / (h - 1);
-            c.put(w - 30 + yy / 2 + dx, yy, [255, 220, 200, 255]);
-        }
-    } else {
-        c.para_grad(1, 0, w, h, skew, MAROON, MAROON_DARK);
-        c.para_edge(1, 0, w, h, skew, BLACK);
-        c.para_edge(2, 1, w - 2, h - 2, skew, [160, 70, 90, 255]);
-    }
-    // bottom shadow line
-    c.rect(0, h - 1, w + skew + 2, 1, [0, 0, 0, 120]);
-    c
-}
-
-/// 9-slice dark glossy panel (24x24, borders 8).
-fn panel() -> Canvas {
-    let mut c = Canvas::new(24, 24);
-    c.vgrad(0, 0, 24, 24, PANEL, PANEL_DARK);
-    c.outline(RIM);
-    c.rect(1, 1, 22, 1, [120, 130, 170, 255]);
-    c
-}
-
-/// Settings row (380x20, shown at 2x).
-fn row(lit: bool) -> Canvas {
-    let (w, h, skew) = (374, 20, 5);
-    let mut c = Canvas::new((w + skew + 1) as u32, h as u32);
-    if lit {
-        c.para_grad(0, 0, w, h, skew, MAROON_LIT, MAROON_DARK);
-        c.para_edge(0, 0, w, h, skew, [255, 190, 150, 255]);
-    } else {
-        c.para_grad(0, 0, w, h, skew, [30, 32, 48, 220], [16, 16, 26, 220]);
-        c.para_edge(0, 0, w, h, skew, [60, 66, 92, 255]);
-    }
-    c
-}
-
-/// Placeholder feature art: gradient, big slash, bold caption.
-fn news_art(
-    generator: &Generator,
-    w: u32,
-    h: u32,
-    top: Rgba,
-    bottom: Rgba,
-    caption: &str,
-) -> Canvas {
-    let mut c = Canvas::new(w, h);
-    c.vgrad(0, 0, w as i32, h as i32, top, bottom);
-    c.slash(w as i32 / 3, 16, [255, 255, 255, 40]);
-    c.slash(w as i32 / 3 + 22, 6, [255, 255, 255, 70]);
-    c.noise(0.01, [255, 255, 255, 90], 3);
-    let (tw, th, px) = generator.text_rgba(caption, 1, 2);
-    let t = Canvas::from_rgba(tw, th, px);
-    c.blit(&t, (w as i32 - tw as i32) / 2, (h as i32 - th as i32) / 2);
-    c.outline(BLACK);
-    c
-}
-
-/// Logo: big italic "RUGEN" with a slashed highlight and a red under-bar.
-fn logo(generator: &Generator) -> Canvas {
-    let (w, h, px) = generator.text_rgba("RUGEN", 0, 3);
-    let mut c = Canvas::new(w + 12, h + 10);
-    let text = Canvas::from_rgba(w, h, px);
-    c.blit(&text, 6, 0);
-    for y in 0..h as i32 {
-        for x in 0..(w + 12) as i32 {
-            let p = c.get(x, y);
-            if p[3] == 0 || p[0] < 200 {
-                continue;
-            }
-            let d = x + y - (w as i32 / 2);
-            if (14..20).contains(&d) {
-                c.put(x, y, [255, 230, 120, 255]);
-            } else if y > (h as i32) * 2 / 3 {
-                c.put(x, y, [214, 218, 232, 255]);
-            }
-        }
-    }
-    // under-bar with a cut end
-    let bar_y = h as i32 + 3;
-    c.para_grad(10, bar_y, w as i32 - 20, 5, 4, ORANGE, [200, 60, 50, 255]);
-    c
-}
-
-fn avatar() -> Canvas {
-    let mut c = Canvas::new(28, 28);
-    c.vgrad(0, 0, 28, 28, [70, 90, 150, 255], [30, 40, 80, 255]);
-    // simple pixel helmet silhouette
-    c.rect(8, 6, 12, 10, [230, 210, 180, 255]);
-    c.rect(6, 4, 16, 4, [60, 40, 40, 255]);
-    c.rect(7, 16, 14, 8, [200, 60, 60, 255]);
-    c.outline([240, 240, 255, 255]);
-    c
-}
-
-/// Roster cell frame (38x38, shown at 2x): dark glossy square, optional lit rim.
-fn cell(kind: &str) -> Canvas {
-    let n = 38;
-    let mut c = Canvas::new(n as u32, n as u32);
-    match kind {
-        "lit" => {
-            c.vgrad(0, 0, n, n, [48, 52, 78, 255], [24, 26, 40, 255]);
-            c.outline([255, 200, 120, 255]);
-            c.rect(1, 1, n - 2, 1, [255, 240, 200, 255]);
-        }
-        "p1" => {
-            // overlay: transparent inside, red frame
-            c.rect(0, 0, n, 2, MAROON_LIT);
-            c.rect(0, n - 2, n, 2, MAROON_LIT);
-            c.rect(0, 0, 2, n, MAROON_LIT);
-            c.rect(n - 2, 0, 2, n, MAROON_LIT);
-            c.rect(0, 0, 9, 9, MAROON_LIT);
-        }
-        "p2" => {
-            let blue: Rgba = [60, 130, 230, 255];
-            c.rect(0, 0, n, 2, blue);
-            c.rect(0, n - 2, n, 2, blue);
-            c.rect(0, 0, 2, n, blue);
-            c.rect(n - 2, 0, 2, n, blue);
-            c.rect(n - 9, 0, 9, 9, blue);
-        }
-        _ => {
-            c.vgrad(0, 0, n, n, [30, 32, 48, 255], [14, 15, 24, 255]);
-            c.outline(RIM);
-        }
-    }
-    c
-}
-
-/// Verification badge (7x7 diamond, shown at 2x).
-fn badge(color: Rgba) -> Canvas {
-    let mut c = Canvas::new(7, 7);
-    for y in 0..7 {
-        let half = 3 - (y - 3i32).abs();
-        c.rect(3 - half, y, half * 2 + 1, 1, color);
-    }
-    c.outline(BLACK);
-    c
-}
-
-/// Big portrait plate (9-slice 32x32, borders 10): dark with a red top band.
-fn art_frame() -> Canvas {
-    let mut c = Canvas::new(32, 32);
-    c.vgrad(0, 0, 32, 32, [26, 28, 44, 240], [10, 11, 18, 240]);
-    c.outline(RIM);
-    c.rect(1, 1, 30, 3, MAROON_LIT);
-    c.rect(1, 4, 30, 1, [255, 190, 150, 255]);
-    c
-}
-
-/// Player card (9-slice 32x32, borders 10): navy with an orange bottom rule.
-fn card() -> Canvas {
-    let mut c = Canvas::new(32, 32);
-    c.vgrad(0, 0, 32, 32, [24, 36, 70, 240], [12, 16, 32, 240]);
-    c.outline([80, 110, 170, 255]);
-    c.rect(1, 29, 30, 2, ORANGE);
-    c
-}
-
-/// Slanted name plate (220x22, shown at 2x).
-fn plate(lit: bool) -> Canvas {
-    let (w, h, skew) = (214, 22, 6);
-    let mut c = Canvas::new((w + skew + 1) as u32, h as u32);
-    if lit {
-        c.para_grad(0, 0, w, h, skew, MAROON_LIT, MAROON_DARK);
-        c.para_edge(0, 0, w, h, skew, [255, 190, 150, 255]);
-    } else {
-        c.para_grad(0, 0, w, h, skew, [36, 40, 62, 235], [16, 17, 28, 235]);
-        c.para_edge(0, 0, w, h, skew, [90, 100, 140, 255]);
-    }
-    c
-}
+use crate::kit;
+use crate::pixelize;
 
 const SELECT_TOML: &str = r##"# rugen character select — Brawlhalla-style roster. Coordinates are 1280x720.
 # Data: title, prompt, room, cells[] (name thumb badge broken p1 p2 hover index),
@@ -441,9 +217,9 @@ scale = 2
 [[node]]
 kind = "button"
 id = "search"
-x = 696
+x = 736
 y = 462
-w = 170
+w = 130
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -456,9 +232,9 @@ on_press = "search"
 [[node]]
 kind = "button"
 id = "sort"
-x = 874
+x = 876
 y = 462
-w = 190
+w = 170
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -471,9 +247,9 @@ on_press = "sort"
 [[node]]
 kind = "button"
 id = "random"
-x = 1072
+x = 1056
 y = 462
-w = 170
+w = 186
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -672,13 +448,33 @@ on_press = "back"
 "##;
 
 const TITLE_TOML: &str = r##"# rugen title screen — edit freely, see README.md. Coordinates are 1280x720.
-background = [0.03, 0.04, 0.08, 1.0]
+background = [0.02, 0.03, 0.07, 1.0]
+
+# background: three pixel layers (sky, far ridges, near arena) that slide in
+# at different speeds for a parallax feel
+[[node]]
+kind = "image"
+image = "ui/bg_sky.webp"
+w = 1280
+h = 720
+enter = "fade"
+enter_time = 30
 
 [[node]]
 kind = "image"
-image = "ui/bg.webp"
+image = "ui/bg_far.webp"
 w = 1280
 h = 720
+enter = "up"
+enter_time = 36
+
+[[node]]
+kind = "image"
+image = "ui/bg_near.webp"
+w = 1280
+h = 720
+enter = "up"
+enter_time = 22
 
 [[node]]
 kind = "image"
@@ -699,7 +495,7 @@ nine = [8, 8, 8, 8]
 anchor = "tr"
 x = 24
 y = 22
-w = 440
+w = 560
 h = 76
 enter = "right"
 enter_time = 20
@@ -976,7 +772,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "LEFT / RIGHT  CHANGE      ENTER  SELECT      SAVED ON EXIT"
+  text = "< >  CHANGE     ENTER  SELECT     SAVED ON EXIT"
   anchor = "br"
   x = 8
   y = 60
@@ -1065,71 +861,63 @@ Binds use dotted paths: `{profile.name}`, `{news.0.title}`, `{item.label}`.
 `"!path"` negates.
 "#;
 
-/// Generate `motif/ui/*` (assets, screens, news, README).
-pub fn generate(ttf: &[u8], motif: &Path) -> anyhow::Result<()> {
+/// Generate `motif/ui/*` (assets, screens, news, README). `fallback_ttf` is
+/// only used when a role font is missing from `motif/font/src/`.
+pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()> {
     let ui = motif.join("ui");
     std::fs::create_dir_all(&ui)?;
-    let style = |size, italic| Style {
-        size,
-        italic,
-        condense: 0.9,
-        rim: true,
-        highlight: true,
-    };
-    let logo_gen = Generator::new(ttf, style(44, 3))?;
-    let caption_gen = Generator::new(ttf, style(20, 3))?;
-    write_webp(&ui.join("bg.webp"), &backdrop())?;
-    write_webp(&ui.join("logo.webp"), &logo(&logo_gen))?;
-    write_webp(&ui.join("button.webp"), &button(false))?;
-    write_webp(&ui.join("button_lit.webp"), &button(true))?;
-    write_webp(&ui.join("panel.webp"), &panel())?;
-    write_webp(&ui.join("row.webp"), &row(false))?;
-    write_webp(&ui.join("row_lit.webp"), &row(true))?;
-    write_webp(&ui.join("avatar.webp"), &avatar())?;
-    write_webp(&ui.join("cell.webp"), &cell("normal"))?;
-    write_webp(&ui.join("cell_lit.webp"), &cell("lit"))?;
-    write_webp(&ui.join("cell_p1.webp"), &cell("p1"))?;
-    write_webp(&ui.join("cell_p2.webp"), &cell("p2"))?;
-    write_webp(&ui.join("badge_ok.webp"), &badge([90, 220, 110, 255]))?;
-    write_webp(&ui.join("badge_warn.webp"), &badge([250, 200, 70, 255]))?;
-    write_webp(&ui.join("badge_bad.webp"), &badge([230, 60, 60, 255]))?;
-    write_webp(&ui.join("art_frame.webp"), &art_frame())?;
-    write_webp(&ui.join("card.webp"), &card())?;
-    write_webp(&ui.join("plate.webp"), &plate(false))?;
-    write_webp(&ui.join("plate_lit.webp"), &plate(true))?;
-    write_webp(
-        &ui.join("news1.webp"),
-        &news_art(
-            &caption_gen,
-            244,
-            129,
-            [40, 70, 140, 255],
-            [120, 40, 90, 255],
-            "RUGEN",
-        ),
+    std::fs::write(motif.join("palette.gpl"), pixelize::gpl())?;
+    fontgen::generate_roles(motif, fallback_ttf)?;
+    let title_role = &fontgen::roles()[0];
+    let title_ttf = fontgen::role_ttf(motif, title_role, fallback_ttf)?;
+    let logo_gen = Generator::new(
+        &title_ttf,
+        Style {
+            size: 32,
+            italic: 0,
+            condense: 1.0,
+            rim: false,
+            highlight: false,
+        },
     )?;
-    write_webp(
-        &ui.join("news2.webp"),
-        &news_art(
-            &caption_gen,
-            114,
-            60,
-            [30, 100, 90, 255],
-            [20, 40, 70, 255],
-            "ARENA",
-        ),
+    let caption_gen = Generator::new(&title_ttf, title_role.style)?;
+    kit::import(motif)?;
+    let w = |name: &str, c: &crate::screenpack::Canvas| pixelize::write_webp(&ui.join(name), c);
+    w("bg.webp", &kit::bg_composite())?;
+    w("bg_sky.webp", &kit::bg_sky())?;
+    w("bg_far.webp", &kit::bg_far())?;
+    w("bg_near.webp", &kit::bg_near())?;
+    w("logo.webp", &kit::logo(&logo_gen))?;
+    w("button.webp", &kit::button(motif, false)?)?;
+    w("button_lit.webp", &kit::button(motif, true)?)?;
+    w("panel.webp", &kit::panel(motif)?)?;
+    w("row.webp", &kit::row(motif, false)?)?;
+    w("row_lit.webp", &kit::row(motif, true)?)?;
+    w("avatar.webp", &kit::avatar(motif)?)?;
+    w("cell.webp", &kit::cell(motif, "normal")?)?;
+    w("cell_lit.webp", &kit::cell(motif, "lit")?)?;
+    w("cell_p1.webp", &kit::cell(motif, "p1")?)?;
+    w("cell_p2.webp", &kit::cell(motif, "p2")?)?;
+    w("badge_ok.webp", &kit::badge(pixelize::GREEN[2]))?;
+    w("badge_warn.webp", &kit::badge(pixelize::GOLD[3]))?;
+    w("badge_bad.webp", &kit::badge(pixelize::RED[2]))?;
+    w("art_frame.webp", &kit::art_frame(motif)?)?;
+    w("card.webp", &kit::card(motif)?)?;
+    w("plate.webp", &kit::plate(motif, false)?)?;
+    w("plate_lit.webp", &kit::plate(motif, true)?)?;
+    w(
+        "news1.webp",
+        &kit::news_arena(&caption_gen, 244, 129, "RUGEN"),
     )?;
-    write_webp(
-        &ui.join("news3.webp"),
-        &news_art(
-            &caption_gen,
-            114,
-            60,
-            [140, 60, 40, 255],
-            [60, 20, 50, 255],
-            "ONLINE",
-        ),
+    w(
+        "news2.webp",
+        &kit::news_platforms(&caption_gen, 114, 60, "ARENAS"),
     )?;
+    w(
+        "news3.webp",
+        &kit::news_online(&caption_gen, 114, 60, "ONLINE"),
+    )?;
+    pixelize_art(motif)?;
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
     std::fs::write(ui.join("options.toml"), OPTIONS_TOML)?;
     std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
@@ -1139,4 +927,39 @@ pub fn generate(ttf: &[u8], motif: &Path) -> anyhow::Result<()> {
         std::fs::write(news, NEWS_JSON)?;
     }
     Ok(())
+}
+
+/// Hero images dropped into `motif/art/` (png / webp) → `motif/ui/art/<name>.webp`,
+/// downscaled to the 640-px grid and quantised to the palette.
+pub fn pixelize_art(motif: &Path) -> anyhow::Result<usize> {
+    let src = motif.join("art");
+    let Ok(rd) = std::fs::read_dir(&src) else {
+        return Ok(0);
+    };
+    let out = motif.join("ui").join("art");
+    let pal = pixelize::full_palette();
+    let mut n = 0;
+    for e in rd.flatten() {
+        let p = e.path();
+        let ext = p
+            .extension()
+            .map(|x| x.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if ext != "png" && ext != "webp" {
+            continue;
+        }
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let dst = out.join(format!("{stem}.webp"));
+        match pixelize::pixelize_file(&p, &dst, Some(640), &pal, true, None) {
+            Ok((w, h)) => {
+                log::info!("pixelized {} -> {} ({w}x{h})", p.display(), dst.display());
+                n += 1;
+            }
+            Err(err) => log::warn!("{}: {err}", p.display()),
+        }
+    }
+    Ok(n)
 }

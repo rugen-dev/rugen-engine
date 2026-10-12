@@ -6,7 +6,7 @@ name = "rugen-title"
 [Def]
 Type = bitmap
 BankType = palette
-Size = 23,29
-Spacing = -11,0
+Size = 20,21
+Spacing = -4,0
 Offset = -2,3
 File = rugen-title.sff
