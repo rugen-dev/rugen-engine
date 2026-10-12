@@ -99,6 +99,8 @@ pub struct Input {
     pub gamepad_p2: i32,
     /// Analog stick deadzone 0..1.
     pub deadzone: f32,
+    /// Let the mouse hover and click menus (off: keyboard / pad only, cursor hidden).
+    pub mouse: bool,
 }
 
 /// Keyboard mapping. Names are winit logical keys: single characters
@@ -162,6 +164,7 @@ impl Default for Input {
             gamepad_p1: 0,
             gamepad_p2: 1,
             deadzone: 0.5,
+            mouse: false,
         }
     }
 }

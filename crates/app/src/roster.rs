@@ -26,6 +26,20 @@ struct StageItem {
     manifest: Option<Manifest>,
 }
 
+impl StageItem {
+    /// The stage def has an `[Arena]` section (blast zones, stocks, ring-out).
+    fn is_arena(&self) -> bool {
+        let (Some(dir), Some(m)) = (&self.dir, &self.manifest) else {
+            return false;
+        };
+        std::fs::read(dir.join(&m.def)).is_ok_and(|b| {
+            String::from_utf8_lossy(&b)
+                .lines()
+                .any(|l| l.trim().eq_ignore_ascii_case("[arena]"))
+        })
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sort {
     Name,
@@ -47,7 +61,11 @@ pub struct Roster {
     order: Vec<usize>,
     stages: Vec<StageItem>,
     lib: Library,
+    /// Sides a player controls in the fight (the others are the CPU).
     human: [bool; 2],
+    /// Sides whose fighter is chosen on this screen; a computer side that is
+    /// not chosen gets a random fighter up front (the arcade opponent).
+    chooses: [bool; 2],
     picks: [Option<usize>; 2],
     /// Which side the next pick goes to (2 = everyone picked).
     picking: usize,
@@ -102,11 +120,27 @@ impl Roster {
                     manifest: prepared.map(|(_, m)| m),
                 }
             })
-            .collect();
+            .collect::<Vec<StageItem>>();
+        // ARENA fights only on stages with an `[Arena]` section (stocks, ring-out)
+        let stages = if mode == Mode::Arena {
+            let arenas: Vec<StageItem> = stages.into_iter().filter(StageItem::is_arena).collect();
+            if arenas.is_empty() {
+                log::warn!("arena: no stage with an [Arena] section installed");
+            }
+            arenas
+        } else {
+            stages
+        };
         let human = match mode {
             Mode::Versus => [true, true],
-            Mode::Arcade | Mode::Training | Mode::Tutorial => [true, false],
+            Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
+        };
+        // training, arena and watch: the cursor also picks the other side
+        let chooses = match mode {
+            Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
+            Mode::Arcade | Mode::Tutorial => [true, false],
+            Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let mut r = Self {
             mode,
@@ -115,26 +149,32 @@ impl Roster {
             stages,
             lib: lib.clone(),
             human,
+            chooses,
             picks: [None, None],
-            picking: if human[0] { 0 } else { 1 },
+            picking: if chooses[0] { 0 } else { 1 },
             stage_idx: 0,
             query: String::new(),
             sort: Sort::Name,
             hover: None,
             hover2: None,
             ai_level,
-            seed: 0x2545_f491,
+            // a fresh CPU opponent / random stage every visit
+            seed: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0x2545_f491, |d| d.subsec_nanos() | 1),
         };
         r.reorder();
+        // a lone arena stage is shown by name rather than as RANDOM
+        if mode == Mode::Arena && r.stages.len() == 1 {
+            r.stage_idx = 1;
+        }
         // computer sides pick up front so the plates fill in
         for side in 0..2 {
-            if !r.human[side] {
+            if !r.chooses[side] {
                 r.picks[side] = r.random_ok();
             }
         }
-        if !human[0] && !human[1] {
-            r.picking = 2;
-        }
+        r.picking = r.next_picking();
         r.hover = r.order.first().copied();
         r
     }
@@ -222,13 +262,42 @@ impl Roster {
 
     fn next_picking(&self) -> usize {
         (0..2)
-            .find(|&s| self.human[s] && self.picks[s].is_none())
+            .find(|&s| self.chooses[s] && self.picks[s].is_none())
             .unwrap_or(2)
     }
 
     /// Both humans pick at the same time (each with their own cursor).
     pub fn dual(&self) -> bool {
         self.human[0] && self.human[1]
+    }
+
+    /// Back / Esc: take back `side`'s pick (None: the last pick made on this
+    /// screen). False when there was nothing to take back (leave the screen).
+    pub fn cancel(&mut self, side: Option<usize>) -> bool {
+        let side = match side {
+            Some(s) if self.dual() => Some(s).filter(|&s| self.picks[s].is_some()),
+            // one cursor picks everything: back always undoes the last pick
+            _ => (0..2)
+                .rev()
+                .find(|&s| self.chooses[s] && self.picks[s].is_some()),
+        };
+        match side {
+            Some(s) => {
+                self.picks[s] = None;
+                self.picking = self.next_picking();
+                true
+            }
+            // the other player still has a pick: stay
+            None => (0..2).any(|s| self.chooses[s] && self.picks[s].is_some()),
+        }
+    }
+
+    /// Everyone picked: start (VS screen or straight into the fight).
+    fn go(&mut self) -> Outcome {
+        match self.setup() {
+            Some(t) => Outcome::Go(Box::new(t)),
+            None => Outcome::Refresh,
+        }
     }
 
     /// Search text from the input widget.
@@ -238,7 +307,12 @@ impl Roster {
     }
 
     /// `side` picks the `i`th cell of the filtered list (None: whoever is next).
+    /// Once everyone has picked, a pick press from either side starts the fight;
+    /// a side that already picked keeps its fighter until it backs out.
     fn pick(&mut self, i: usize, side: Option<usize>) -> Outcome {
+        if self.all_picked() {
+            return self.go();
+        }
         let Some(&cell) = self.order.get(i) else {
             return Outcome::None;
         };
@@ -249,31 +323,16 @@ impl Roster {
             self.hover = Some(cell);
         }
         let target = match side {
-            Some(s) if self.human[s] => {
-                if self.picks[s].is_some() {
-                    // pressing again on a picked side = unpick
-                    self.picks[s] = None;
-                    self.picking = self.next_picking();
-                    return Outcome::Refresh;
-                }
-                Some(s)
-            }
+            Some(s) if self.chooses[s] && self.picks[s].is_none() => Some(s),
             Some(_) => None,
             None if self.picking < 2 => Some(self.picking),
             None => None,
         };
-        match target {
-            Some(s) => {
-                self.picks[s] = Some(cell);
-                self.picking = self.next_picking();
-                Outcome::Refresh
-            }
-            None if self.all_picked() => match self.setup() {
-                Some(t) => Outcome::Go(Box::new(t)),
-                None => Outcome::Refresh,
-            },
-            None => Outcome::Refresh,
+        if let Some(s) = target {
+            self.picks[s] = Some(cell);
+            self.picking = self.next_picking();
         }
+        Outcome::Refresh
     }
 
     pub fn action(&mut self, a: &str) -> Outcome {
@@ -284,19 +343,15 @@ impl Roster {
                 Err(_) => Outcome::None,
             },
             "pick2" => match arg.parse::<usize>() {
-                Ok(i) if self.human[1] => self.pick(i, Some(1)),
+                Ok(i) if self.dual() => self.pick(i, Some(1)),
                 _ => Outcome::None,
             },
             "unpick" => {
-                if let Some(s) = (0..2)
-                    .rev()
-                    .find(|&s| self.human[s] && self.picks[s].is_some())
-                {
-                    self.picks[s] = None;
-                    self.picking = s;
-                    return Outcome::Refresh;
+                if self.cancel(None) {
+                    Outcome::Refresh
+                } else {
+                    Outcome::None
                 }
-                Outcome::None
             }
             "query" => {
                 self.set_query(arg);
@@ -304,10 +359,7 @@ impl Roster {
             }
             "confirm" => {
                 if self.all_picked() {
-                    match self.setup() {
-                        Some(t) => Outcome::Go(Box::new(t)),
-                        None => Outcome::None,
-                    }
+                    self.go()
                 } else if let Some(h) = self.hover {
                     let i = self.order.iter().position(|&c| c == h).unwrap_or(0);
                     self.action(&format!("pick:{i}"))
@@ -315,8 +367,9 @@ impl Roster {
                     Outcome::None
                 }
             }
+            _ if head.starts_with("random") && self.all_picked() => self.go(),
             "random2" => {
-                if self.human[1] && self.picks[1].is_none() {
+                if self.dual() && self.picks[1].is_none() {
                     self.picks[1] = self.random_ok();
                     self.hover2 = self.picks[1];
                     self.picking = self.next_picking();
@@ -498,10 +551,16 @@ impl Roster {
     /// A player's card: their pick, else what their cursor is on.
     fn card_json(&self, side: usize, profile: &Profile) -> Value {
         let hover = if side == 0 { self.hover } else { self.hover2 };
-        let cell = self.picks[side].or(if self.human[side] { hover } else { None });
+        let cursor = if self.dual() {
+            true
+        } else {
+            self.picking == side
+        };
+        let cell = self.picks[side].or(if cursor { hover } else { None });
         let mut v = self.char_json(cell, profile);
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
             v["status"] = Value::from(if self.human[side] { "" } else { "CPU" });
+            v["picked"] = Value::from(false);
             v["cpu"] = Value::from(!self.human[side]);
             v["portrait"] = Value::from("");
             return v;
@@ -517,7 +576,7 @@ impl Roster {
             Some(v) if v.verdict == "verified" => ("✓ VERIFIED".to_string(), true),
             Some(v) if v.verdict == "warn" => (
                 format!(
-                    "⚠ RUNS WITH {} ISSUE{}",
+                    "⚠ {} KNOWN ISSUE{}",
                     v.issues.len(),
                     if v.issues.len() == 1 { "" } else { "S" }
                 ),
@@ -530,6 +589,10 @@ impl Roster {
         let (plays, wins) = st.map_or((0, 0), |s| (s.plays, s.wins));
         v["portrait"] = Value::from(portrait);
         v["name_up"] = Value::from(m.display_name.to_uppercase());
+        // long names drop a size so they stay on the card
+        let long = m.display_name.chars().count() > 12;
+        v["name_big"] = Value::from(!long);
+        v["name_small"] = Value::from(long);
         v["status"] = Value::from(status);
         v["ok"] = Value::from(ok);
         v["bad"] = Value::from(!ok);
@@ -604,6 +667,7 @@ impl Roster {
             Mode::Training => "TRAINING",
             Mode::Tutorial => "TUTORIAL",
             Mode::Watch => "WATCH",
+            Mode::Arena => "ARENA",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
         let prompt = if self.all_picked() {
@@ -613,6 +677,13 @@ impl Roster {
                 (false, false) => "P1 AND P2 : CHOOSE YOUR FIGHTERS".to_string(),
                 (true, false) => "P2 : CHOOSE YOUR FIGHTER".to_string(),
                 _ => "P1 : CHOOSE YOUR FIGHTER".to_string(),
+            }
+        } else if self.picking < 2 && !self.human[self.picking] {
+            match (self.mode, self.picking) {
+                (Mode::Watch, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
+                (Mode::Watch, _) => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
+                (Mode::Training, _) => "P1 : CHOOSE YOUR SPARRING PARTNER".to_string(),
+                _ => "P1 : CHOOSE YOUR OPPONENT".to_string(),
             }
         } else if self.picking < 2 {
             format!("P{} : CHOOSE YOUR FIGHTER", self.picking + 1)

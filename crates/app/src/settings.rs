@@ -153,6 +153,13 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 String::new(),
                 "Size of the game window. Menus stretch to any shape of window.",
             ),
+            row(
+                "mouse",
+                "MOUSE IN MENUS",
+                on_off(c.input.mouse),
+                String::new(),
+                "Point and click in the menus. Off hides the cursor: Esc, Enter and the arrows always work.",
+            ),
         ],
         "audio" => vec![
             row(
@@ -411,6 +418,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
         "air_dash" => c.game.air_dash = !c.game.air_dash,
         "fast_fall" => c.game.fast_fall = !c.game.fast_fall,
+        "mouse" => c.input.mouse = !c.input.mouse,
         "ai" => {
             c.game.ai_level = if wrap && c.game.ai_level + dir > 8 {
                 1

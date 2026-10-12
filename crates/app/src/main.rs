@@ -3,7 +3,7 @@
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
-//! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo)
+//! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
 //!   --room code --relay ip:port [--p2]                          same, peer found through rugen-server

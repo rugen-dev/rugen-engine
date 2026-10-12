@@ -1,5 +1,6 @@
 # rugen ONLINE screen — rooms, ranked queue, leaderboard. Coordinates are 1280x720.
-# Data: is_menu/is_room/is_join/is_queue/is_board, status, error, server.*, me.*,
+# Data: is_menu/is_room/is_join/is_queue/is_board/is_direct, has_server, no_server,
+# server_line, direct.* (title addr mine fighters), status, error, me.*,
 # room.code, typed, opponent.*, queue.*, board[] (pos/name/rating/rank/record), season, my_rank.
 background = [0.03, 0.04, 0.08, 1.0]
 
@@ -14,7 +15,8 @@ h = "100%"
 kind = "text"
 dock = "top"
 text = "ONLINE"
-x = 640
+x = 0
+w = "100%"
 y = 42
 font = 2
 bank = 7
@@ -26,18 +28,20 @@ enter_time = 16
 [[node]]
 kind = "text"
 dock = "top"
-text = "{server.name}   {server.online} ONLINE   {server.queued} IN QUEUE"
-x = 640
+text = "{server_line}"
+x = 0
+w = "100%"
 y = 112
 font = 1
 bank = 6
 scale = 2
 align = "center"
 
-# player card (always)
+# player card (with a server)
 [[node]]
 kind = "panel"
 dock = "right"
+visible = "has_server"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 anchor = "tr"
@@ -231,6 +235,178 @@ h = 300
   bank = 6
   scale = 2
 
+# ---- no server: what ONLINE needs, and the direct match that works without one
+[[node]]
+kind = "panel"
+dock = "right"
+visible = "no_server"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+anchor = "tr"
+x = 40
+y = 150
+w = 640
+h = 360
+enter = "right"
+enter_time = 18
+
+  [[node.children]]
+  kind = "text"
+  text = "NO RUGEN SERVER SET"
+  x = 24
+  y = 20
+  font = 2
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "ROOMS, RANKED AND LEADERBOARD"
+  x = 24
+  y = 64
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "NEED [NET] SERVER = HOST:PORT"
+  x = 24
+  y = 90
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "IN RUGEN.TOML (RUGEN-SERVER)."
+  x = 24
+  y = 116
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "DIRECT MATCH (LAN / IP):"
+  x = 24
+  y = 166
+  font = 1
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "HOST PLAYS 1P, JOIN PLAYS 2P;"
+  x = 24
+  y = 192
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "EACH TYPES THE OTHER'S ADDRESS."
+  x = 24
+  y = 218
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "YOUR ADDRESS: {direct.mine}"
+  x = 24
+  y = 262
+  font = 2
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{direct.fighters}"
+  x = 24
+  y = 306
+  font = 1
+  bank = 6
+  scale = 2
+
+# ---- direct match: type the peer address
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_direct"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+x = 60
+y = 190
+w = 720
+h = 330
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "{direct.title}"
+  x = 30
+  y = 24
+  font = 2
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "PEER ADDRESS (IP OR IP:PORT)"
+  x = 30
+  y = 66
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "addr"
+  x = 30
+  y = 96
+  w = 640
+  h = 60
+  font = 2
+  bank = 7
+  scale = 3
+  max_len = 40
+  placeholder = "192.168.1.20"
+  value = "direct.addr"
+  on_change = "addr:{value}"
+  on_press = "direct:go"
+
+  [[node.children]]
+  kind = "text"
+  text = "YOUR ADDRESS: {direct.mine}"
+  x = 30
+  y = 178
+  font = 2
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{direct.fighters}"
+  x = 30
+  y = 216
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "ENTER CONNECTS   ESC CANCELS"
+  anchor = "bl"
+  x = 30
+  y = 24
+  font = 1
+  bank = 6
+  scale = 2
+
 # ---- ranked queue
 [[node]]
 kind = "panel"
@@ -395,7 +571,7 @@ scale = 2
 [[node]]
 kind = "text"
 dock = "right bottom"
-text = "ENTER / CLICK  SELECT     ESC  BACK"
+text = "ENTER  SELECT     ESC  BACK"
 anchor = "br"
 x = 24
 y = 16

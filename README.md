@@ -32,8 +32,23 @@ work out of the box. In a match: Space pause, `.` step, F2 hitboxes and
 platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
 Esc back.
 
-Online: set `[net] server = "host:7777"` in `rugen.toml` (a `rugen-server`,
-see below) and an ONLINE entry appears on the title screen: **Custom Room**
+Menus answer the base keys whatever the bindings: **Esc** backs out (on the
+title it first jumps to EXIT; on the select screen it takes back the last pick
+before leaving), **Enter** confirms, the **arrows** move the focus. A key a
+player mapping already uses stays that player's: with the defaults the arrows
+and Enter are P2's, which on single-cursor screens (title, options, arcade /
+training / arena select, pause, result) drives the same focus, while in the VS
+MODE select they move P2's own cursor and P1 uses its bound keys. Unbound
+arrows / Enter, and gamepads without a player slot, act as P1. In menus A (and
+the other attack buttons, Start) confirm and **B cancels** (pad South / East).
+The mouse is off by default (cursor hidden, no hover): `[input] mouse = true`
+or OPTIONS > VIDEO > MOUSE IN MENUS turns it on.
+
+ONLINE is always on the title screen. Without a server it offers a **direct
+match** (LAN / internet): one player picks HOST (plays 1P), the other JOIN
+(2P), each types the other's address (the screen shows yours; port `[net]
+port`, fighters / stage from `[net] p1` / `p2` / `stage`). Set `[net] server =
+"host:7777"` in `rugen.toml` (a `rugen-server`, see below) for **Custom Room**
 (create a 5-letter code, the other player types it under **Join a Room**),
 **Ranked** (queue, Elo matchmaking with a widening rating window, seasons),
 **Leaderboard**. Accounts are anonymous keys stored in `profile.json`; the
@@ -42,7 +57,7 @@ Results are reported by both sides and only count when they agree. Both
 machines need the same characters installed (a match is declined otherwise).
 
 Without a server you can still connect directly: `[net] remote = "ip:port"`,
-`side = 1` or `2`, `p1` / `p2` / `stage` ids → NETPLAY entry; or by room code
+`side = 1` or `2`, `p1` / `p2` / `stage` ids → NETPLAY entry in ONLINE; or by room code
 through the server's rendezvous only: `[net] relay = "host:7777"`, `room =
 "code"` (or `rugen play kfm --room code --relay host:7777 [--p2]`). The
 server only swaps addresses; every match stays peer to peer. Music: stage `bgmusic` and
@@ -51,10 +66,14 @@ skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick
 play and `rugen replay file.json` plays a recording back.
 
-Title menu: ARCADE, VS MODE, TRAINING, TUTORIAL (guided basics then every
-special move of the chosen character, detected as you perform it), WATCH,
+Title menu: ARCADE, VS MODE, ARENA (platform-fighter rules: pick your
+fighter and the CPU's, fight on a stage with an `[Arena]` section — stocks,
+blast zones, ring-out, air jumps; the built-in `motif/stages/ink_arena`, or
+any stage you add with one), TRAINING (you also pick the sparring partner),
+TUTORIAL (guided basics then every special move of the chosen character,
+detected as you perform it), WATCH (you pick both CPU fighters), ONLINE,
 OPTIONS (volumes, camera zoom limits, fullscreen, computer level, net delay,
-key rebinding; saves `rugen.toml`), NETPLAY, EXIT. `[camera] zoom_out` /
+key rebinding; saves `rugen.toml`), EXIT. `[camera] zoom_out` /
 `zoom_in` in `rugen.toml` decide how far players can separate before the
 screen edge stops them, on any stage.
 

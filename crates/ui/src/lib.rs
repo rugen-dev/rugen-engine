@@ -704,6 +704,9 @@ pub struct Ui {
     mouse: Option<(f32, f32)>,
     mouse_down: bool,
     mouse_was_down: bool,
+    /// Mouse position the hover focus was last taken from: a still cursor
+    /// does not take the focus back from the keyboard.
+    mouse_seen: Option<(f32, f32)>,
     wheel: f32,
     pending: Vec<Event>,
     /// Slanted clip / rotation of the subtree being laid out.
@@ -916,6 +919,7 @@ impl Ui {
             mouse: None,
             mouse_down: false,
             mouse_was_down: false,
+            mouse_seen: None,
             wheel: 0.0,
             pending: Vec::new(),
             cur_quad: None,
@@ -1862,14 +1866,15 @@ impl Ui {
                         && i.clip.is_none_or(|c| c.contains(mx, my))
                 })
                 .cloned();
-            if let Some(h) = hovered {
+            let click = self.mouse_down && !self.mouse_was_down;
+            let moved = self.mouse_seen != Some((mx, my));
+            if let Some(h) = hovered.filter(|_| moved || self.mouse_down) {
                 if self.focus.as_deref() != Some(&h.key) {
                     self.focus = Some(h.key.clone());
                     self.focus_age = 0.0;
                     events.push(Event::Moved);
                 }
                 let kind = self.defs[h.def].kind;
-                let click = self.mouse_down && !self.mouse_was_down;
                 match kind {
                     Kind::Slider if self.mouse_down => {
                         let frac = ((mx - h.rect.x) / h.rect.w.max(1.0)).clamp(0.0, 1.0);
@@ -1891,6 +1896,7 @@ impl Ui {
         }
         self.wheel = 0.0;
         self.mouse_was_down = self.mouse_down;
+        self.mouse_seen = self.mouse;
 
         if self.focus.as_deref().is_none_or(|f| self.find(f).is_none()) {
             self.focus = self
@@ -2844,6 +2850,30 @@ y = 20
         ui.mouse_button(true);
         let ev = ui.tick(Nav::default(), &mut p);
         assert_eq!(ev, vec![Event::Action("quit".into())]);
+    }
+
+    #[test]
+    fn still_mouse_does_not_take_focus_back() {
+        let def = ScreenDef::parse(MENU).unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        // the cursor rests on the third button, then the keyboard moves up
+        ui.mouse_move(Some((100.0, 180.0 + 120.0 + 10.0)));
+        ui.tick(Nav::default(), &mut p);
+        let up = Nav {
+            up: true,
+            ..Default::default()
+        };
+        assert_eq!(ui.tick(up, &mut p), vec![Event::Moved]);
+        let keyboard = ui.focused().map(str::to_string);
+        for _ in 0..3 {
+            assert!(ui.tick(Nav::default(), &mut p).is_empty());
+        }
+        assert_eq!(ui.focused().map(str::to_string), keyboard);
+        // moving the mouse takes it again
+        ui.mouse_move(Some((101.0, 180.0 + 120.0 + 10.0)));
+        assert_eq!(ui.tick(Nav::default(), &mut p), vec![Event::Moved]);
     }
 
     #[test]

@@ -172,7 +172,6 @@ pub struct UiScreen {
     /// Options / controls screens: the edited config.
     pub config: Config,
     pub dirty: bool,
-    netplay: bool,
     profile: Profile,
     news: Value,
     /// Installed UI themes for the options row.
@@ -254,10 +253,11 @@ fn menu_desc(id: &str) -> &'static str {
     match id {
         "arcade" => "Climb the ladder vs the CPU",
         "versus" => "Two players, one keyboard",
+        "arena" => "Platforms and stocks: knock them off the stage",
         "training" => "Free practice, no clock",
         "tutorial" => "Learn the basics step by step",
         "watch" => "Sit back: CPU vs CPU",
-        "online" => "Rooms, ranked and rollback",
+        "online" => "Room codes, ranked and LAN play",
         "netplay" => "Direct match over the network",
         "options" => "Video, audio and controls",
         "exit" => "See you next chapter",
@@ -323,7 +323,7 @@ impl UiScreen {
         setup: FightSetup,
         sides: [Portrait; 2],
     ) -> anyhow::Result<Self> {
-        let mut s = Self::load(UiKind::Versus, motif, root, sys, config, false, lib)?;
+        let mut s = Self::load(UiKind::Versus, motif, root, sys, config, lib)?;
         let [a, b] = sides;
         for (i, p) in [a, b].into_iter().enumerate() {
             if let Some((w, h, rgba, _)) = p.image {
@@ -346,7 +346,7 @@ impl UiScreen {
         lib: &rugen_content::Library,
         info: ResultInfo,
     ) -> anyhow::Result<Self> {
-        let mut s = Self::load(UiKind::Result, motif, root, sys, config, false, lib)?;
+        let mut s = Self::load(UiKind::Result, motif, root, sys, config, lib)?;
         for (i, art) in info.arts.iter().enumerate() {
             if let Some(img) = art {
                 s.mem.insert(format!("p{}", i + 1), img.clone());
@@ -366,7 +366,7 @@ impl UiScreen {
         lib: &rugen_content::Library,
         mut info: PauseInfo,
     ) -> anyhow::Result<Self> {
-        let mut s = Self::load(UiKind::Pause, motif, root, sys, config, false, lib)?;
+        let mut s = Self::load(UiKind::Pause, motif, root, sys, config, lib)?;
         if let Some(img) = info.scene.take() {
             s.mem.insert("scene".into(), img);
         }
@@ -489,7 +489,6 @@ impl UiScreen {
         root: &Path,
         sys: &SystemData,
         config: &Config,
-        netplay: bool,
         lib: &rugen_content::Library,
     ) -> anyhow::Result<Self> {
         let path = motif_file(motif, &format!("ui/{}", Self::file(kind)))
@@ -507,7 +506,6 @@ impl UiScreen {
             textures: HashMap::new(),
             config: config.clone(),
             dirty: false,
-            netplay,
             profile: Profile::load(root),
             themes: lib.themes(),
             news,
@@ -700,6 +698,12 @@ impl UiScreen {
                     at,
                     json!({ "id": "tutorial", "label": "TUTORIAL", "action": "mode:tutorial" }),
                 );
+                // ARENA (platform fighter rules) right after the two-player mode
+                let at = pos(&menu, "versus");
+                menu.insert(
+                    at,
+                    json!({ "id": "arena", "label": "ARENA", "action": "mode:arena" }),
+                );
                 if !menu.iter().any(|m| m["id"] == "options") {
                     let at = menu
                         .iter()
@@ -710,7 +714,8 @@ impl UiScreen {
                         json!({ "id": "options", "label": "OPTIONS", "action": "mode:options" }),
                     );
                 }
-                if !self.config.net.server.trim().is_empty() {
+                // always listed: the online screen explains what it needs when no server is set
+                {
                     let at = menu
                         .iter()
                         .position(|m| m["id"] == "options")
@@ -718,16 +723,6 @@ impl UiScreen {
                     menu.insert(
                         at,
                         json!({ "id": "online", "label": "ONLINE", "action": "online" }),
-                    );
-                }
-                if self.netplay {
-                    let at = menu
-                        .iter()
-                        .position(|m| m["id"] == "exit")
-                        .unwrap_or(menu.len());
-                    menu.insert(
-                        at,
-                        json!({ "id": "netplay", "label": "NETPLAY", "action": "netplay" }),
                     );
                 }
                 let can_try = !self.featured.is_empty();
@@ -851,7 +846,58 @@ impl UiScreen {
                 None
             }
             UiKind::Controls => Some(Transition::Options),
+            UiKind::Select(_) => {
+                // take back the last pick first, leave when there is none
+                if self.roster.as_mut().is_some_and(|r| r.cancel(None)) {
+                    self.refresh_data(sys);
+                    return None;
+                }
+                Some(Transition::Title)
+            }
             _ => Some(Transition::Title),
+        }
+    }
+
+    /// Title: Esc first moves the focus onto EXIT; true when it did (stay).
+    pub fn focus_exit(&mut self) -> bool {
+        if self.kind != UiKind::Title {
+            return false;
+        }
+        let Some(i) = self.ui.data()["menu"]
+            .as_array()
+            .and_then(|m| m.iter().position(|m| m["id"] == "exit"))
+        else {
+            return false;
+        };
+        let key = format!("menu[{i}].exit");
+        if self.ui.focused() == Some(key.as_str()) {
+            return false;
+        }
+        self.ui.set_focus(Some(&key));
+        true
+    }
+
+    /// A player's B button (pad East): cancel / back, per screen. `side` is the
+    /// player on a two-cursor select screen.
+    fn back(
+        &mut self,
+        side: Option<usize>,
+        sys: &SystemData,
+        sfx: &mut dyn FnMut(Option<(i32, i32)>),
+    ) -> Option<Transition> {
+        match self.kind {
+            UiKind::Select(_) => {
+                sfx(sys.select.cancel_snd);
+                if self.roster.as_mut().is_some_and(|r| r.cancel(side)) {
+                    self.refresh_data(sys);
+                    return None;
+                }
+                Some(Transition::Title)
+            }
+            UiKind::Pause => Some(Transition::Resume),
+            UiKind::Options => self.escape(sys),
+            // B is a fight button: it must not quit the game, leave a result or the bindings page
+            UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus => None,
         }
     }
 
@@ -1023,6 +1069,7 @@ impl UiScreen {
                 "arcade" => Transition::Select(Mode::Arcade),
                 "versus" => Transition::Select(Mode::Versus),
                 "training" => Transition::Select(Mode::Training),
+                "arena" => Transition::Select(Mode::Arena),
                 "tutorial" => Transition::Select(Mode::Tutorial),
                 "watch" => Transition::Select(Mode::Watch),
                 "options" => Transition::Options,
@@ -1121,13 +1168,14 @@ impl UiScreen {
             self.ui
                 .mouse_move(Some(rugen_ui::window_to_virtual(self.window, px, py)));
         }
+        // A (and the other attack buttons, Start) accept; B backs out
         let of = |b: &Buttons| Nav {
             up: b.u,
             down: b.d,
             left: b.l,
             right: b.r,
-            accept: b.a || b.b || b.c || b.x || b.y || b.z || b.s,
-            back: false,
+            accept: b.a || b.c || b.x || b.y || b.z || b.s,
+            back: b.b,
         };
         let dual = self.roster.as_ref().is_some_and(|r| r.dual());
         let listening = self
@@ -1144,8 +1192,9 @@ impl UiScreen {
             (of(&merged), Nav::default())
         };
         if self.kind == UiKind::Controls {
-            // fight buttons only light the test pad here; Enter / clicks press
+            // fight buttons only light the test pad here; Enter / clicks press, Esc leaves
             nav.accept = false;
+            nav.back = false;
             self.settings.ticks += 1;
             if self.settings.ticks % 10 == 0 {
                 self.refresh_data(sys);
@@ -1179,7 +1228,7 @@ impl UiScreen {
         let mut vs_refresh = false;
         if let Some((setup, left)) = self.versus.as_mut() {
             *left -= 1;
-            if *left <= 0 || nav.accept || nav2.accept {
+            if *left <= 0 || nav.accept || nav2.accept || nav.back || nav2.back {
                 vs_done = Some(setup.clone());
             }
             vs_refresh = *left % 60 == 0;
@@ -1206,7 +1255,12 @@ impl UiScreen {
         for e in events {
             match e {
                 Event::Moved | Event::Moved2 => sfx(sys.title.move_snd),
-                Event::Back => out = Some(Transition::Title),
+                Event::Back => {
+                    let side = dual.then_some(0);
+                    if let Some(t) = self.back(side, sys, sfx) {
+                        out = Some(t);
+                    }
+                }
                 Event::Action(a) => {
                     if !a.starts_with("query:") {
                         sfx(sys.title.done_snd);
@@ -1227,6 +1281,12 @@ impl UiScreen {
                         if let Some(t) = self.action("random2", sys) {
                             out = Some(t);
                         }
+                    } else if a == "confirm" || a.starts_with("stage:") {
+                        // FIGHT!! and the stage picker answer either player
+                        sfx(sys.title.done_snd);
+                        if let Some(t) = self.action(&a, sys) {
+                            out = Some(t);
+                        }
                     }
                 }
                 Event::Input(id, text) => {
@@ -1235,6 +1295,13 @@ impl UiScreen {
                     }
                 }
             }
+        }
+        if dual
+            && nav2.back
+            && out.is_none()
+            && let Some(t) = self.back(Some(1), sys, sfx)
+        {
+            out = Some(t);
         }
         // options: the focused tab is the tab on display; the help line follows the focus
         if self.kind == UiKind::Options {
