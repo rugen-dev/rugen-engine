@@ -6,13 +6,15 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/home_bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # logo: ink word, red offset shadow, brush underline, katakana accent
 [[node]]
 kind = "image"
+dock = "left"
 image = "ui/logo_home.webp"
 x = 52
 y = 10
@@ -23,6 +25,7 @@ ease = "back"
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "{vol}"
 x = 64
 y = 166
@@ -39,6 +42,7 @@ enter_delay = 10
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "{arenas.counts}"
 x = 236
 y = 174
@@ -50,6 +54,7 @@ enter_delay = 14
 # menu: the focused slab grows, turns red, gets a "!!" and its description
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "menu"
 x = 48
 y = 226
@@ -133,6 +138,7 @@ enter_time = 16
 # featured fighter: big slanted manga panel
 [[node]]
 kind = "panel"
+dock = "right"
 x = 600
 y = 40
 w = 648
@@ -227,6 +233,7 @@ enter_time = 18
 # arenas
 [[node]]
 kind = "panel"
+dock = "right"
 x = 640
 y = 470
 w = 298
@@ -267,6 +274,7 @@ enter_delay = 6
 # ranked
 [[node]]
 kind = "panel"
+dock = "right"
 x = 950
 y = 470
 w = 298
@@ -309,9 +317,10 @@ enter_delay = 10
 # footer
 [[node]]
 kind = "panel"
+dock = "bottom"
 x = 0
 y = 660
-w = 1280
+w = "100%"
 h = 60
 color = [0.07, 0.07, 0.07, 1.0]
 
@@ -343,6 +352,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
   [[node.children]]
   kind = "hbox"
+  dock = "right"
   x = 560
   y = 12
   w = 696

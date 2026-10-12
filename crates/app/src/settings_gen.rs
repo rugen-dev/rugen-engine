@@ -281,19 +281,22 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/paper.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # ---------------------------------------------------------------- header
 [[node]]
 kind = "panel"
-w = 1280
+dock = "top"
+w = "100%"
 h = 84
 color = [0.067, 0.067, 0.067, 1.0]
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 44
 y = 25
@@ -303,6 +306,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 40
 y = 21
@@ -312,6 +316,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
 x = 40
@@ -322,6 +327,7 @@ bank = 6
 # ---------------------------------------------------------------- tabs
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "tabs"
 x = 30
 y = 120
@@ -389,6 +395,7 @@ stagger = 2
 # ---------------------------------------------------------------- content panel
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 360
@@ -419,6 +426,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "rows"
   x = 20
   y = 62
@@ -678,7 +686,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED WHEN YOU LEAVE THE OPTIONS"
+  text = "APPLIED AT ONCE AND SAVED"
   x = 28
   y = 400
   font = 2
@@ -689,6 +697,7 @@ enter_time = 14
 # ---------------------------------------------------------------- help bar
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9_black.webp"
 nine = [12, 12, 24, 24]
 x = 360
@@ -717,6 +726,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
+  dock = "stretch-x"
   text = "{help}"
   x = 114
   y = 4
@@ -731,6 +741,7 @@ enter_time = 18
 # ---------------------------------------------------------------- key hints
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 30
 y = 624
 w = 320
@@ -765,6 +776,7 @@ align = "center"
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 30
 y = 664
 w = 320
@@ -793,19 +805,22 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/paper.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # ---------------------------------------------------------------- header
 [[node]]
 kind = "panel"
-w = 1280
+dock = "top"
+w = "100%"
 h = 84
 color = [0.067, 0.067, 0.067, 1.0]
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 44
 y = 25
@@ -815,6 +830,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 40
 y = 21
@@ -824,6 +840,7 @@ scale = 2
 
 [[node]]
 kind = "hbox"
+dock = "top"
 x = 470
 y = 22
 w = 300
@@ -848,6 +865,7 @@ group = "header"
 
 [[node]]
 kind = "hbox"
+dock = "right top"
 anchor = "tr"
 x = 40
 y = 22
@@ -889,6 +907,7 @@ group = "header"
 # ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 40
@@ -1063,6 +1082,7 @@ enter_time = 14
 # ---------------------------------------------------------------- presets
 [[node]]
 kind = "text"
+dock = "left"
 text = "PRESETS"
 x = 40
 y = 580
@@ -1071,6 +1091,7 @@ bank = 9
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 40
 y = 604
 w = 620
@@ -1104,6 +1125,7 @@ group = "presets"
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 40
 y = 664
 w = 600
@@ -1128,6 +1150,7 @@ align = "center"
 # ---------------------------------------------------------------- bindings
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 680
@@ -1187,6 +1210,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "binds"
   x = 16
   y = 46
@@ -1358,6 +1382,7 @@ enter_time = 18
 # ---------------------------------------------------------------- footer
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 680
 y = 656
 w = 580
@@ -1426,12 +1451,14 @@ background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 60
 y = 34
@@ -1442,6 +1469,7 @@ enter = "down"
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
 x = 60
@@ -1451,6 +1479,7 @@ bank = 6
 
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "tabs"
 x = 60
 y = 120
@@ -1492,6 +1521,7 @@ enter = "left"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 350
@@ -1520,6 +1550,7 @@ enter = "up"
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "rows"
   y = 54
   w = 822
@@ -1693,6 +1724,7 @@ enter = "up"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 350
@@ -1702,6 +1734,7 @@ h = 76
 
   [[node.children]]
   kind = "text"
+  dock = "stretch-x"
   text = "{help}"
   x = 24
   w = 820
@@ -1712,6 +1745,7 @@ h = 76
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 60
 y = 640
 w = 280
@@ -1741,12 +1775,14 @@ background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 60
 y = 34
@@ -1756,6 +1792,7 @@ scale = 2
 
 [[node]]
 kind = "hbox"
+dock = "top"
 x = 470
 y = 30
 w = 200
@@ -1779,6 +1816,7 @@ group = "header"
 
 [[node]]
 kind = "keycap"
+dock = "right top"
 anchor = "tr"
 x = 60
 y = 30
@@ -1798,6 +1836,7 @@ group = "header"
 
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 60
@@ -1897,6 +1936,7 @@ pad = 24
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 60
 y = 580
 w = 600
@@ -1925,6 +1965,7 @@ group = "presets"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 660
@@ -1957,6 +1998,7 @@ pad = 20
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "binds"
   y = 30
   w = 520
@@ -2048,6 +2090,7 @@ pad = 20
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "ENTER REBIND   BACKSPACE CLEAR   F5 DEFAULTS   TAB 1P/2P   ESC BACK"
 x = 60
 y = 660

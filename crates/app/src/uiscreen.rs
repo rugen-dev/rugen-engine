@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
 use rugen_sim::Buttons;
-use rugen_ui::{Event, Nav, Painter, Rect, ScreenDef, TextKey, Ui, VIRTUAL_H, VIRTUAL_W};
+use rugen_ui::{Event, Nav, Painter, Rect, ScreenDef, TextKey, Ui};
 use serde_json::{Value, json};
 use winit::keyboard::{Key, NamedKey};
 
@@ -281,15 +281,7 @@ struct SettingsPage {
     ticks: u64,
 }
 
-/// Virtual viewport for a window: 1280 wide on 16:9, letterboxed otherwise.
-pub(crate) fn viewport(window: (u32, u32)) -> (f32, f32) {
-    let aspect = window.0.max(1) as f32 / window.1.max(1) as f32;
-    if aspect >= VIRTUAL_W / VIRTUAL_H {
-        (VIRTUAL_H * aspect, VIRTUAL_H)
-    } else {
-        (VIRTUAL_W, VIRTUAL_W / aspect)
-    }
-}
+pub(crate) use rugen_ui::viewport;
 
 impl UiScreen {
     /// True when the motif (or the flat `motif/` it falls back to) provides a TOML for this screen.
@@ -809,6 +801,21 @@ impl UiScreen {
         self.refresh_data(sys);
     }
 
+    /// Active options tab.
+    pub fn options_tab(&self) -> usize {
+        self.settings.tab
+    }
+
+    /// Key of the focused node, to restore it after a reload.
+    pub fn focus_key(&self) -> Option<String> {
+        self.ui.focused().map(str::to_string)
+    }
+
+    /// Focus `key` again (the options re-opened in another theme share keys).
+    pub fn restore_focus(&mut self, key: &str) {
+        self.ui.set_focus(Some(key));
+    }
+
     /// Show `player`'s bindings on the controls page.
     pub fn set_player(&mut self, player: usize, sys: &SystemData) {
         if let Some(c) = self.settings.controls.as_mut() {
@@ -1108,13 +1115,11 @@ impl UiScreen {
             self.refresh_data(sys);
         }
         self.window = r.size();
+        let (vw, vh) = viewport(self.window);
+        self.ui.set_size(vw, vh);
         if let Some((px, py)) = self.mouse_px {
-            let (vw, vh) = viewport(self.window);
-            let vx =
-                VIRTUAL_W / 2.0 + (px - self.window.0 as f32 / 2.0) * vw / self.window.0 as f32;
-            let vy =
-                VIRTUAL_H / 2.0 + (py - self.window.1 as f32 / 2.0) * vh / self.window.1 as f32;
-            self.ui.mouse_move(Some((vx, vy)));
+            self.ui
+                .mouse_move(Some(rugen_ui::window_to_virtual(self.window, px, py)));
         }
         let of = |b: &Buttons| Nav {
             up: b.u,
@@ -1271,6 +1276,8 @@ impl UiScreen {
 
     pub fn render(&mut self, r: &mut Renderer, sys: &mut SystemData) -> (Camera, [f64; 4]) {
         self.window = r.size();
+        let (vw, vh) = viewport(self.window);
+        self.ui.set_size(vw, vh);
         {
             let mut host = Host {
                 r,
@@ -1283,12 +1290,11 @@ impl UiScreen {
             };
             self.ui.draw(&mut host);
         }
-        let (vw, vh) = viewport(self.window);
         let bg = self.ui.background();
         (
             Camera {
                 screen: [vw, vh],
-                center: [VIRTUAL_W / 2.0, VIRTUAL_H / 2.0],
+                center: [vw / 2.0, vh / 2.0],
                 zoom: 1.0,
             },
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],

@@ -4,30 +4,35 @@ background = [0.05, 0.06, 0.1, 1.0]
 # background: base gloss, slash layer, floor — each slides in at its own pace
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg_sky.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "fade"
 enter_time = 24
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg_far.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "right"
 enter_time = 30
 
 [[node]]
 kind = "image"
+fit_y = 1.0
+fit = "cover"
 image = "ui/bg_near.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "up"
 enter_time = 22
 
 [[node]]
 kind = "image"
+dock = "left top"
 id = "logo"
 image = "ui/logo.webp"
 x = 56
@@ -39,6 +44,7 @@ enter_time = 22
 # profile strip (skewed slab, red avatar square)
 [[node]]
 kind = "image"
+dock = "right top"
 image = "ui/strip.webp"
 anchor = "tr"
 x = 24
@@ -50,6 +56,7 @@ enter_time = 20
 
 [[node]]
 kind = "image"
+dock = "right top"
 image = "{profile.avatar}"
 anchor = "tr"
 x = 514
@@ -61,6 +68,7 @@ enter_time = 20
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "{profile.name}"
 anchor = "tr"
 x = 24
@@ -76,6 +84,7 @@ enter_time = 20
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
 anchor = "tr"
 x = 24
@@ -92,6 +101,7 @@ enter_time = 20
 # main menu: one slanted button per entry of `menu`
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "menu"
 x = 60
 y = 196
@@ -180,6 +190,7 @@ enter_delay = 6
 # two smaller tiles
 [[node]]
 kind = "image"
+dock = "right"
 image = "{news.1.image}"
 x = 1024
 y = 196
@@ -191,6 +202,7 @@ enter_delay = 8
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{news.1.title}"
 x = 1024
 y = 322
@@ -203,6 +215,7 @@ enter_delay = 8
 
 [[node]]
 kind = "image"
+dock = "right"
 image = "{news.2.image}"
 x = 1024
 y = 352
@@ -214,6 +227,7 @@ enter_delay = 12
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{news.2.title}"
 x = 1024
 y = 478
@@ -227,21 +241,24 @@ enter_delay = 12
 # footer bar with a red rule
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.04, 0.05, 0.08, 1.0]
 anchor = "bl"
-w = 1280
+w = "100%"
 h = 30
 
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.63, 0.07, 0.17, 1.0]
 anchor = "bl"
 y = 30
-w = 1280
+w = "100%"
 h = 2
 
 [[node]]
 kind = "text"
+dock = "left bottom"
 text = "RUGEN {version}"
 anchor = "bl"
 x = 24
@@ -252,6 +269,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right bottom"
 text = "ENTER / CLICK  SELECT     ESC  BACK     F11  FULLSCREEN"
 anchor = "br"
 x = 24

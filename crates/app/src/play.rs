@@ -1190,7 +1190,8 @@ impl Match {
             let ratio = (stage.height / lc[1].max(1.0)).min(screen_w / lc[0].max(1.0));
             let x_off = (screen_w - lc[0] * ratio) / 2.0;
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
-            lb.draw(r, &self.world, &lb_hud, u * ratio, portraits);
+            // wider than the fight.def: each side's bars move out to its edge
+            lb.draw(r, &self.world, &lb_hud, u * ratio, portraits, x_off / ratio);
         } else {
             // life bars (screen units via `hud`)
             for (i, p) in self

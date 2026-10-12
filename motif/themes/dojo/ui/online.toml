@@ -5,12 +5,14 @@ background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "text"
+dock = "top"
 text = "ONLINE"
 x = 640
 y = 42
@@ -23,6 +25,7 @@ enter_time = 16
 
 [[node]]
 kind = "text"
+dock = "top"
 text = "{server.name}   {server.online} ONLINE   {server.queued} IN QUEUE"
 x = 640
 y = 112
@@ -34,6 +37,7 @@ align = "center"
 # player card (always)
 [[node]]
 kind = "panel"
+dock = "right"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 anchor = "tr"
@@ -83,6 +87,7 @@ enter_time = 18
 # ---- menu: one slanted button per entry of `menu`
 [[node]]
 kind = "vbox"
+dock = "left"
 visible = "is_menu"
 x = 60
 y = 190
@@ -111,6 +116,7 @@ enter_time = 18
 # ---- room
 [[node]]
 kind = "panel"
+dock = "left"
 visible = "is_room"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
@@ -181,6 +187,7 @@ enter_time = 16
 # ---- join (typing)
 [[node]]
 kind = "panel"
+dock = "left"
 visible = "is_join"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
@@ -227,6 +234,7 @@ h = 300
 # ---- ranked queue
 [[node]]
 kind = "panel"
+dock = "left"
 visible = "is_queue"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
@@ -287,6 +295,7 @@ enter_time = 16
 # ---- leaderboard
 [[node]]
 kind = "panel"
+dock = "left"
 visible = "is_board"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
@@ -362,6 +371,7 @@ enter_time = 16
 # status / error footer
 [[node]]
 kind = "text"
+dock = "left bottom"
 text = "{status}"
 anchor = "bl"
 x = 60
@@ -372,6 +382,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "left bottom"
 text = "{error}"
 visible = "has_error"
 anchor = "bl"
@@ -383,6 +394,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right bottom"
 text = "ENTER / CLICK  SELECT     ESC  BACK"
 anchor = "br"
 x = 24

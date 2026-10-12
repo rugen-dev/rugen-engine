@@ -10,16 +10,18 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/sel_bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # header band
 [[node]]
 kind = "panel"
+dock = "top"
 x = 0
 y = 0
-w = 1280
+w = "100%"
 h = 56
 color = [0.07, 0.07, 0.07, 1.0]
 enter = "down"
@@ -49,6 +51,7 @@ enter_time = 12
 
   [[node.children]]
   kind = "hbox"
+  dock = "right"
   x = 780
   y = 13
   w = 472
@@ -233,6 +236,7 @@ on_change = "query:{value}"
 # 1P card: portrait, name slab across the bottom, facts on the right
 [[node]]
 kind = "panel"
+dock = "left"
 x = 20
 y = 480
 w = 408
@@ -364,6 +368,7 @@ enter_time = 16
 # 2P card (mirrored)
 [[node]]
 kind = "panel"
+dock = "right"
 x = 852
 y = 480
 w = 408

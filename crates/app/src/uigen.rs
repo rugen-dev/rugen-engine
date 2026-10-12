@@ -20,13 +20,15 @@ background = [0.05, 0.06, 0.1, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # header
 [[node]]
 kind = "text"
+dock = "left top"
 text = "{title}"
 x = 40
 y = 16
@@ -37,6 +39,7 @@ enter = "down"
 
 [[node]]
 kind = "text"
+dock = "top"
 text = "{prompt}"
 x = 470
 y = 28
@@ -47,6 +50,7 @@ scale = 2
 # big art plate (left column)
 [[node]]
 kind = "image"
+dock = "left"
 id = "art"
 image = "ui/art_frame.webp"
 x = 40
@@ -58,6 +62,7 @@ enter_time = 20
 
 [[node]]
 kind = "image"
+dock = "left"
 image = "{shown.art}"
 x = 60
 y = 84
@@ -69,6 +74,7 @@ enter_time = 20
 # info strip under the plate
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/plate_lit.webp"
 x = 40
 y = 516
@@ -88,6 +94,7 @@ enter_time = 22
 
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 40
@@ -146,6 +153,7 @@ enter_time = 24
 # roster grid
 [[node]]
 kind = "panel"
+dock = "right"
 color = [0.05, 0.06, 0.12, 0.8]
 x = 466
 y = 62
@@ -154,6 +162,7 @@ h = 330
 
 [[node]]
 kind = "grid"
+dock = "right"
 id = "cells"
 x = 470
 y = 66
@@ -219,6 +228,7 @@ enter_time = 20
 # grid toolbar
 [[node]]
 kind = "text"
+dock = "right"
 text = "{count}"
 x = 474
 y = 406
@@ -228,6 +238,7 @@ scale = 2
 
 [[node]]
 kind = "button"
+dock = "right"
 id = "search"
 x = 748
 y = 400
@@ -243,6 +254,7 @@ on_press = "search"
 
 [[node]]
 kind = "button"
+dock = "right"
 id = "sort"
 x = 886
 y = 400
@@ -258,6 +270,7 @@ on_press = "sort"
 
 [[node]]
 kind = "button"
+dock = "right"
 id = "random"
 x = 1108
 y = 400
@@ -274,6 +287,7 @@ on_press = "random"
 # player card (skewed, big gold number)
 [[node]]
 kind = "image"
+dock = "right"
 image = "ui/card.webp"
 x = 466
 y = 448
@@ -285,6 +299,7 @@ enter_delay = 4
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{profile.name}"
 x = 492
 y = 458
@@ -294,6 +309,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{profile.wins}"
 x = 492
 y = 480
@@ -303,6 +319,7 @@ scale = 3
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "WINS"
 x = 492
 y = 538
@@ -312,6 +329,7 @@ scale = 2
 
 [[node]]
 kind = "image"
+dock = "right"
 image = "{profile.avatar}"
 x = 818
 y = 462
@@ -320,6 +338,7 @@ h = 56
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "LEVEL {profile.level}"
 x = 636
 y = 470
@@ -329,6 +348,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{profile.losses} LOSSES"
 x = 636
 y = 496
@@ -338,6 +358,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "RATING {rating}"
 x = 636
 y = 522
@@ -348,6 +369,7 @@ scale = 2
 # stage strip
 [[node]]
 kind = "panel"
+dock = "right"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 920
@@ -442,6 +464,7 @@ enter_time = 20
 # confirm / back
 [[node]]
 kind = "button"
+dock = "right"
 id = "confirm"
 x = 920
 y = 598
@@ -460,6 +483,7 @@ hover_scale = 1.03
 
 [[node]]
 kind = "button"
+dock = "right"
 id = "back"
 x = 466
 y = 598
@@ -477,21 +501,24 @@ on_press = "back"
 # footer bar
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.04, 0.05, 0.08, 1.0]
 anchor = "bl"
-w = 1280
+w = "100%"
 h = 30
 
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.63, 0.07, 0.17, 1.0]
 anchor = "bl"
 y = 30
-w = 1280
+w = "100%"
 h = 2
 
 [[node]]
 kind = "text"
+dock = "left bottom"
 text = "ROOM {room}     {count}"
 anchor = "bl"
 x = 24
@@ -502,6 +529,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right bottom"
 text = "ENTER  PICK     ESC  BACK"
 anchor = "br"
 x = 24
@@ -517,30 +545,35 @@ background = [0.05, 0.06, 0.1, 1.0]
 # background: base gloss, slash layer, floor — each slides in at its own pace
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg_sky.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "fade"
 enter_time = 24
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg_far.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "right"
 enter_time = 30
 
 [[node]]
 kind = "image"
+fit_y = 1.0
+fit = "cover"
 image = "ui/bg_near.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 enter = "up"
 enter_time = 22
 
 [[node]]
 kind = "image"
+dock = "left top"
 id = "logo"
 image = "ui/logo.webp"
 x = 56
@@ -552,6 +585,7 @@ enter_time = 22
 # profile strip (skewed slab, red avatar square)
 [[node]]
 kind = "image"
+dock = "right top"
 image = "ui/strip.webp"
 anchor = "tr"
 x = 24
@@ -563,6 +597,7 @@ enter_time = 20
 
 [[node]]
 kind = "image"
+dock = "right top"
 image = "{profile.avatar}"
 anchor = "tr"
 x = 514
@@ -574,6 +609,7 @@ enter_time = 20
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "{profile.name}"
 anchor = "tr"
 x = 24
@@ -589,6 +625,7 @@ enter_time = 20
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
 anchor = "tr"
 x = 24
@@ -605,6 +642,7 @@ enter_time = 20
 # main menu: one slanted button per entry of `menu`
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "menu"
 x = 60
 y = 196
@@ -693,6 +731,7 @@ enter_delay = 6
 # two smaller tiles
 [[node]]
 kind = "image"
+dock = "right"
 image = "{news.1.image}"
 x = 1024
 y = 196
@@ -704,6 +743,7 @@ enter_delay = 8
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{news.1.title}"
 x = 1024
 y = 322
@@ -716,6 +756,7 @@ enter_delay = 8
 
 [[node]]
 kind = "image"
+dock = "right"
 image = "{news.2.image}"
 x = 1024
 y = 352
@@ -727,6 +768,7 @@ enter_delay = 12
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{news.2.title}"
 x = 1024
 y = 478
@@ -740,21 +782,24 @@ enter_delay = 12
 # footer bar with a red rule
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.04, 0.05, 0.08, 1.0]
 anchor = "bl"
-w = 1280
+w = "100%"
 h = 30
 
 [[node]]
 kind = "panel"
+dock = "bottom"
 color = [0.63, 0.07, 0.17, 1.0]
 anchor = "bl"
 y = 30
-w = 1280
+w = "100%"
 h = 2
 
 [[node]]
 kind = "text"
+dock = "left bottom"
 text = "RUGEN {version}"
 anchor = "bl"
 x = 24
@@ -765,6 +810,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right bottom"
 text = "ENTER / CLICK  SELECT     ESC  BACK     F11  FULLSCREEN"
 anchor = "br"
 x = 24
@@ -804,9 +850,16 @@ Assets are also addressable as SFF sprites: `image = "sff:100,0"` (system.sff).
 
 ## Layout
 
-Everything is laid out in a virtual **1280x720** space, scaled to the window
-with letterboxing; pixel art is scaled nearest-neighbour, so draw assets at
-half size and show them with `scale = 2` (or `w`/`h` doubled).
+Screens are designed in a virtual **1280x720** space. The window is always
+720 units high (wider windows get more width, narrower ones keep 1280 and get
+more height), and top-level nodes sit in the 1280x720 design frame, centred,
+unless they say otherwise with `dock`: `left` / `center` / `right` and `top` /
+`middle` / `bottom` pin a node to that edge of the window, `fill` (or a
+`"100%"` size) stretches it edge to edge (backgrounds, bands: pair with
+`fit = "cover"` for art), and `stretch-x` keeps a panel's left edge and grows
+its width by the extra room. Children of a filled or stretched node can dock
+inside it the same way. Pixel art is scaled nearest-neighbour, so draw assets
+at half size and show them with `scale = 2` (or `w`/`h` doubled).
 
 A node has `kind` = `panel` | `image` | `text` | `button` | `vbox` | `hbox` |
 `list` | `grid`, a position (`x`, `y`, `w`, `h`, numbers or `"50%"`), an

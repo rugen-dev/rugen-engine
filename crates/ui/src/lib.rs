@@ -35,6 +35,16 @@
 //! react to the focus of the node's scope, `top` draws over everything, and a
 //! `paged` grid scrolls whole pages (publishing `pages.<id>`), with `bleed`
 //! letting cursor frames draw outside its clip.
+//!
+//! Responsive screens: screens are designed in 1280x720 but the layout root is
+//! the real viewport ([`viewport`]: 720 high, wider on wide windows, taller on
+//! narrow ones). Top-level nodes sit in the 1280x720 design frame, centred,
+//! unless `dock` moves them: `left` / `right` / `center` and `top` / `bottom` /
+//! `middle` pick the frame's edge on each axis, `fill-x` / `fill-y` / `fill`
+//! stretch the frame to the whole viewport (a `"100%"` size fills its axis on
+//! its own), and `stretch-x` / `stretch-y` / `stretch` keep the node at the
+//! start but grow its pixel size by the extra room. A filled or stretched
+//! node's children may dock inside it the same way.
 
 #![forbid(unsafe_code)]
 
@@ -47,6 +57,78 @@ use serde_json::Value;
 
 pub const VIRTUAL_W: f32 = 1280.0;
 pub const VIRTUAL_H: f32 = 720.0;
+
+/// Virtual viewport for a window: 720 high and wider than 1280 on wide
+/// windows; narrower windows keep 1280 columns and grow taller instead.
+pub fn viewport(window: (u32, u32)) -> (f32, f32) {
+    let aspect = window.0.max(1) as f32 / window.1.max(1) as f32;
+    if aspect >= VIRTUAL_W / VIRTUAL_H {
+        (VIRTUAL_H * aspect, VIRTUAL_H)
+    } else {
+        (VIRTUAL_W, VIRTUAL_W / aspect)
+    }
+}
+
+/// Window pixel to virtual viewport coordinates.
+pub fn window_to_virtual(window: (u32, u32), px: f32, py: f32) -> (f32, f32) {
+    let (vw, vh) = viewport(window);
+    (
+        px * vw / window.0.max(1) as f32,
+        py * vh / window.1.max(1) as f32,
+    )
+}
+
+/// Where a node sits on one axis of the responsive frame.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Edge {
+    Start,
+    Middle,
+    End,
+    Fill,
+    /// Start-aligned, and a pixel size grows by the extra room.
+    Stretch,
+}
+
+/// `dock` tokens → (horizontal, vertical); `None` when the axis is not named.
+fn dock_edges(dock: &str) -> (Option<Edge>, Option<Edge>) {
+    let (mut h, mut v) = (None, None);
+    for t in dock.split([' ', ',']).filter(|t| !t.is_empty()) {
+        match t {
+            "left" => h = Some(Edge::Start),
+            "center" => h = Some(Edge::Middle),
+            "right" => h = Some(Edge::End),
+            "fill-x" => h = Some(Edge::Fill),
+            "top" => v = Some(Edge::Start),
+            "middle" => v = Some(Edge::Middle),
+            "bottom" => v = Some(Edge::End),
+            "fill-y" => v = Some(Edge::Fill),
+            "fill" => (h, v) = (Some(Edge::Fill), Some(Edge::Fill)),
+            "stretch-x" => h = Some(Edge::Stretch),
+            "stretch-y" => v = Some(Edge::Stretch),
+            "stretch" => (h, v) = (Some(Edge::Stretch), Some(Edge::Stretch)),
+            "tl" => (h, v) = (Some(Edge::Start), Some(Edge::Start)),
+            "tr" => (h, v) = (Some(Edge::End), Some(Edge::Start)),
+            "bl" => (h, v) = (Some(Edge::Start), Some(Edge::End)),
+            "br" => (h, v) = (Some(Edge::End), Some(Edge::End)),
+            _ => {}
+        }
+    }
+    (h, v)
+}
+
+/// Offset and length of a frame along one axis: `full` available, `extra` of it beyond the design size.
+fn frame_axis(edge: Edge, full: f32, extra: f32) -> (f32, f32) {
+    match edge {
+        Edge::Start | Edge::Stretch => (0.0, full - extra),
+        Edge::Middle => (extra / 2.0, full - extra),
+        Edge::End => (extra, full - extra),
+        Edge::Fill => (0.0, full),
+    }
+}
+
+fn is_pct(d: &Option<Dim>) -> bool {
+    matches!(d, Some(Dim::Pct(s)) if s.trim_end().ends_with('%'))
+}
 
 /// A size or position: a number of virtual pixels or a `"50%"` of the parent.
 #[derive(Clone, Debug, Deserialize)]
@@ -119,6 +201,10 @@ pub struct NodeDef {
     pub h: Option<Dim>,
     /// `tl` (default), `tr`, `bl`, `br`, `center`, `top`, `bottom`, `left`, `right`.
     pub anchor: Option<String>,
+    /// Responsive placement (see the crate docs): `left`/`center`/`right`/`fill-x`,
+    /// `top`/`middle`/`bottom`/`fill-y`, `fill`, `stretch-x`/`stretch-y`/`stretch`,
+    /// `tl`/`tr`/`bl`/`br`.
+    pub dock: Option<String>,
     /// Solid fill `[r, g, b, a]` 0..1.
     pub color: Option<[f32; 4]>,
     pub color_focus: Option<[f32; 4]>,
@@ -628,6 +714,12 @@ pub struct Ui {
     pages: HashMap<String, (usize, usize)>,
     /// Scrollers follow the second player's focus (it moved last).
     follow2: bool,
+    /// Layout root size (virtual units), see [`viewport`].
+    size: (f32, f32),
+    /// Room beyond the design size the children being laid out may dock into.
+    cur_extra: (f32, f32),
+    /// Laying out the top-level nodes.
+    cur_root: bool,
 }
 
 fn truthy(v: Option<&Value>) -> bool {
@@ -831,7 +923,19 @@ impl Ui {
             cur_top: false,
             pages: HashMap::new(),
             follow2: false,
+            size: (VIRTUAL_W, VIRTUAL_H),
+            cur_extra: (0.0, 0.0),
+            cur_root: false,
         }
+    }
+
+    /// Layout root size in virtual units (default 1280x720); see [`viewport`].
+    pub fn set_size(&mut self, w: f32, h: f32) {
+        self.size = (w.max(1.0), h.max(1.0));
+    }
+
+    pub fn size(&self) -> (f32, f32) {
+        self.size
     }
 
     pub fn background(&self) -> [f32; 4] {
@@ -1014,9 +1118,14 @@ impl Ui {
         let root = Rect {
             x: 0.0,
             y: 0.0,
-            w: VIRTUAL_W,
-            h: VIRTUAL_H,
+            w: self.size.0,
+            h: self.size.1,
         };
+        self.cur_extra = (
+            (self.size.0 - VIRTUAL_W).max(0.0),
+            (self.size.1 - VIRTUAL_H).max(0.0),
+        );
+        self.cur_root = true;
         let nodes = self.def.node.clone();
         // paged grids publish their page for `{pages.<id>.page}` / `.count`
         if !self.pages.is_empty()
@@ -1098,13 +1207,61 @@ impl Ui {
                 } else {
                     n
                 };
-            let rect = Self::node_rect(n, parent, ctx, p);
+            let (frame, extra, grow) = self.dock_frame(n, parent);
+            let mut rect = Self::node_rect(n, frame, ctx, p);
+            rect.w += grow.0;
+            rect.h += grow.1;
             let before = self.instances.len();
+            let saved = (self.cur_extra, self.cur_root);
+            self.cur_extra = extra;
+            self.cur_root = false;
             self.place(n, def_idx, key, rect, ctx, clip, delay, cursor, subtree, p);
+            (self.cur_extra, self.cur_root) = saved;
             if lit && let Some(inst) = self.instances.get_mut(before) {
                 inst.scope_lit = true;
             }
         }
+    }
+
+    /// The frame a node is placed in, the room its children may dock into and
+    /// how much a `stretch` node grows. Top-level nodes default to the centred
+    /// design frame; nested nodes keep their parent unless they name a `dock`.
+    fn dock_frame(&self, n: &NodeDef, parent: Rect) -> (Rect, (f32, f32), (f32, f32)) {
+        let (dh, dv) = n.dock.as_deref().map_or((None, None), dock_edges);
+        let dh = dh.or(is_pct(&n.w).then_some(Edge::Fill));
+        let dv = dv.or(is_pct(&n.h).then_some(Edge::Fill));
+        let (dh, dv) = if self.cur_root {
+            (dh.or(Some(Edge::Middle)), dv.or(Some(Edge::Middle)))
+        } else {
+            (dh, dv)
+        };
+        let (ex, ey) = self.cur_extra;
+        let (x, w) = dh.map_or((0.0, parent.w), |e| frame_axis(e, parent.w, ex));
+        let (y, h) = dv.map_or((0.0, parent.h), |e| frame_axis(e, parent.h, ey));
+        let room = |e: Option<Edge>, r: f32| {
+            if matches!(e, Some(Edge::Fill | Edge::Stretch)) {
+                r
+            } else {
+                0.0
+            }
+        };
+        let grows = |e: Option<Edge>, d: &Option<Dim>, r: f32| {
+            if e == Some(Edge::Stretch) && !is_pct(d) {
+                r
+            } else {
+                0.0
+            }
+        };
+        (
+            Rect {
+                x: parent.x + x,
+                y: parent.y + y,
+                w,
+                h,
+            },
+            (room(dh, ex), room(dv, ey)),
+            (grows(dh, &n.w, ex), grows(dv, &n.h, ey)),
+        )
     }
 
     /// The focus is on `key`, inside it, or (within an `items` instance) on a sibling.
@@ -2044,8 +2201,8 @@ impl Ui {
             let w = p.text_width(font, &text, scale) + 16.0;
             let h = p.text_height(font, scale) + 10.0;
             let mut x = r.x + r.w / 2.0 - w / 2.0;
-            x = x.clamp(0.0, VIRTUAL_W - w);
-            let y = if r.y + r.h + h + 6.0 > VIRTUAL_H {
+            x = x.clamp(0.0, (self.size.0 - w).max(0.0));
+            let y = if r.y + r.h + h + 6.0 > self.size.1 {
                 r.y - h - 6.0
             } else {
                 r.y + r.h + 6.0
@@ -2818,6 +2975,93 @@ h = 20
         assert_eq!(l.x, 0.0);
         assert_eq!(r.x, 300.0);
         assert_eq!(l.y, 400.0 + 15.0, "centred on the cross axis");
+    }
+
+    #[test]
+    fn dock_follows_the_viewport() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "panel"
+id = "mid"
+x = 600
+y = 100
+w = 80
+h = 20
+[[node]]
+kind = "panel"
+id = "left"
+dock = "left top"
+x = 40
+y = 10
+w = 80
+h = 20
+[[node]]
+kind = "panel"
+id = "right"
+dock = "right bottom"
+x = 1160
+y = 690
+w = 80
+h = 20
+[[node]]
+kind = "panel"
+id = "band"
+dock = "bottom"
+w = "100%"
+y = 660
+h = 60
+[[node.children]]
+kind = "panel"
+id = "end"
+dock = "right"
+x = 1200
+w = 80
+h = 60
+[[node]]
+kind = "panel"
+id = "wide"
+dock = "stretch-x"
+x = 360
+y = 100
+w = 880
+h = 40
+[[node.children]]
+kind = "panel"
+id = "inner"
+dock = "stretch-x"
+x = 20
+w = 840
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.rect_of("mid").unwrap().x, 600.0, "16:9 is unchanged");
+        assert_eq!(ui.rect_of("right").unwrap().x, 1160.0);
+        let (vw, vh) = viewport((2520, 1080));
+        assert_eq!((vw, vh), (1680.0, 720.0));
+        ui.set_size(vw, vh);
+        ui.tick(Nav::default(), &mut p);
+        let r = |k: &str| ui.rect_of(k).unwrap();
+        assert_eq!((r("mid").x, r("mid").y), (800.0, 100.0), "centred frame");
+        assert_eq!(r("left").x, 40.0);
+        assert_eq!(r("right").x, 1560.0);
+        assert_eq!((r("band").x, r("band").w), (0.0, 1680.0));
+        assert_eq!(r("end").x, 1600.0, "docks inside a filled parent");
+        assert_eq!((r("wide").x, r("wide").w), (360.0, 1280.0));
+        assert_eq!((r("inner").x, r("inner").w), (380.0, 1240.0));
+        let (vw, vh) = viewport((1024, 768));
+        assert_eq!((vw, vh), (1280.0, 960.0));
+        ui.set_size(vw, vh);
+        ui.tick(Nav::default(), &mut p);
+        let r = |k: &str| ui.rect_of(k).unwrap();
+        assert_eq!(r("mid").y, 220.0, "taller windows centre vertically");
+        assert_eq!(r("left").y, 10.0);
+        assert_eq!(r("right").y, 930.0);
+        assert_eq!(r("band").y, 900.0);
+        assert_eq!(window_to_virtual((1024, 768), 512.0, 384.0), (640.0, 480.0));
     }
 
     #[test]

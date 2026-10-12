@@ -7,26 +7,29 @@ exit_time = 6
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "{scene}"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 visible = "has_scene"
 
 [[node]]
 kind = "panel"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 color = [0.07, 0.07, 0.07, 0.66]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/tone_dark.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # the tilted paper card with the menu
 [[node]]
 kind = "panel"
+dock = "left"
 x = 60
 y = 70
 w = 448
@@ -141,6 +144,7 @@ ease = "back"
 # move list of the fighter who paused
 [[node]]
 kind = "panel"
+dock = "right"
 x = 560
 y = 80
 w = 668
@@ -286,6 +290,7 @@ enter_time = 14
 # key hints
 [[node]]
 kind = "hbox"
+dock = "right bottom"
 x = 760
 y = 674
 w = 480

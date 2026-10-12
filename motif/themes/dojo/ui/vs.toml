@@ -5,18 +5,21 @@ exit_time = 10
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # red half (P1)
 [[node]]
 kind = "panel"
+anchor = "tr"
+dock = "fill"
 color = [0.55, 0.12, 0.16, 0.85]
-x = -120
+x = "50%"
 y = 0
-w = 760
-h = 720
+w = 1100
+h = "100%"
 skew = -140
 enter = "left"
 enter_time = 16
@@ -24,19 +27,20 @@ enter_time = 16
 # blue half (P2)
 [[node]]
 kind = "panel"
+dock = "fill"
 color = [0.12, 0.2, 0.55, 0.85]
-x = 640
+x = "50%"
 y = 0
-w = 760
-h = 720
+w = 1100
+h = "100%"
 skew = -140
 enter = "right"
 enter_time = 16
 
 [[node]]
 kind = "particles"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 count = 60
 speed = 0.6
 size = 3
@@ -46,6 +50,7 @@ color2 = [0.5, 0.7, 1.0, 0.5]
 # P1 art plate
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/art_frame.webp"
 nine = [10, 10, 10, 10]
 x = 70
@@ -67,6 +72,7 @@ ease = "back"
 
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/plate_lit.webp"
 x = 70
 y = 572
@@ -88,6 +94,7 @@ enter_delay = 8
 # P2 art plate
 [[node]]
 kind = "panel"
+dock = "right"
 image = "ui/art_frame.webp"
 nine = [10, 10, 10, 10]
 anchor = "tr"
@@ -110,6 +117,7 @@ ease = "back"
 
 [[node]]
 kind = "panel"
+dock = "right"
 image = "ui/plate_lit.webp"
 anchor = "tr"
 x = 70
@@ -146,6 +154,7 @@ ease = "bounce"
 # stage + countdown
 [[node]]
 kind = "panel"
+dock = "bottom"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 anchor = "bottom"
@@ -186,6 +195,7 @@ enter_delay = 10
 
 [[node]]
 kind = "button"
+dock = "right bottom"
 id = "fight"
 anchor = "br"
 x = 40

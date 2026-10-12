@@ -3,12 +3,14 @@ background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 60
 y = 34
@@ -19,6 +21,7 @@ enter = "down"
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
 x = 60
@@ -28,6 +31,7 @@ bank = 6
 
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "tabs"
 x = 60
 y = 120
@@ -69,6 +73,7 @@ enter = "left"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 350
@@ -97,6 +102,7 @@ enter = "up"
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "rows"
   y = 54
   w = 822
@@ -270,6 +276,7 @@ enter = "up"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 350
@@ -279,6 +286,7 @@ h = 76
 
   [[node.children]]
   kind = "text"
+  dock = "stretch-x"
   text = "{help}"
   x = 24
   w = 820
@@ -289,6 +297,7 @@ h = 76
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 60
 y = 640
 w = 280
