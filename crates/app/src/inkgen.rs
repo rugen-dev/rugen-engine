@@ -504,27 +504,32 @@ fn empty_star() -> Canvas {
     c
 }
 
-/// Clock speech-burst: 12 jittered spikes, white with a 6 px ink outline
-/// (the mock's SVG polygon, same seed).
-fn timer_burst() -> Canvas {
-    let (w, h, n, inner) = (136.0f32, 116.0f32, 12, 0.78f32);
-    let mut pts = Vec::new();
-    let mut s: u64 = 3;
-    for i in 0..n * 2 {
-        s = (s * 48271) % 2_147_483_647;
-        let a = i as f32 / (n * 2) as f32 * std::f32::consts::TAU;
-        let k = if i % 2 == 1 {
-            inner + (s % 100) as f32 / 1000.0
-        } else {
-            1.0 - (s % 60) as f32 / 1000.0
-        };
-        pts.push([
-            w / 2.0 + libm::cosf(a) * (w / 2.0 - 6.0) * k,
-            h / 2.0 + libm::sinf(a) * (h / 2.0 - 6.0) * k,
-        ]);
-    }
+/// Clock badge: an ink trapezoid whose sides run parallel to the life bars'
+/// slanted ends (wider at the bottom), a hard red offset shadow and a thin
+/// paper inner rule.
+fn timer_badge() -> Canvas {
+    let (w, h, slant, sh) = (196.0f32, 68.0f32, 34.0f32, 6.0f32);
+    let quad = |dx: f32, dy: f32, inset: f32| {
+        vec![
+            [slant + inset + dx, inset + dy],
+            [w - slant - inset + dx, inset + dy],
+            [w - inset * 0.5 + dx, h - inset + dy],
+            [inset * 0.5 + dx, h - inset + dy],
+        ]
+    };
+    let mut c = Canvas::new((w + sh) as u32, (h + sh) as u32);
+    poly(&mut c, &quad(sh, sh, 0.0), RED, [0; 4], 0.0, 0.0);
+    poly(&mut c, &quad(0.0, 0.0, 0.0), INK, [0; 4], 0.0, 0.0);
+    poly(&mut c, &quad(0.0, 0.0, 6.0), INK, PAPER, 2.0, 0.0);
+    c
+}
+
+/// "ROUND n" tag hanging under the clock: small red trapezoid, ink edge.
+fn round_tag() -> Canvas {
+    let (w, h, slant) = (124.0f32, 24.0f32, 12.0f32);
     let mut c = Canvas::new(w as u32, h as u32);
-    poly(&mut c, &pts, WHITE, INK, 3.0, 3.0);
+    let pts = [[0.0, 0.0], [w, 0.0], [w - slant, h], [slant, h]];
+    poly(&mut c, &pts, RED, INK, 3.0, 0.0);
     c
 }
 
@@ -919,8 +924,8 @@ fn fight_hud(fight: &mut Sff, ttf: &[u8]) -> anyhow::Result<()> {
     let pf = portrait_frame();
     to_sprite(fight, (50, 0), &pf, [(pf.w / 2) as i16, (pf.h / 2) as i16]);
     // clock burst and round tag
-    to_sprite(fight, (60, 0), &timer_burst(), [68, 58]);
-    to_sprite(fight, (61, 0), &solid(96, 20, INK), [48, 0]);
+    to_sprite(fight, (60, 0), &timer_badge(), [98, 0]);
+    to_sprite(fight, (61, 0), &round_tag(), [62, 0]);
     // round stars
     to_sprite(fight, (100, 0), &win_star(), [10, 10]);
     to_sprite(fight, (110, 0), &empty_star(), [10, 10]);
@@ -1287,15 +1292,15 @@ p2.bg.slice = 16,16
 p2.bg.pad = 11
 
 [Time]
-pos = 640,70
+pos = 640,16
 bg.spr = 60,0
-counter.offset = 2,14
-counter.font = 1,9,0
-counter.scale = 4
+counter.offset = 1,55
+counter.font = 1,11,0
+counter.scale = 5
 round.bg.spr = 61,0
-round.bg.offset = 0,56
+round.bg.offset = 0,72
 round.text = ROUND %i
-round.offset = 1,69
+round.offset = 1,89
 round.font = 1,11,0
 framespercount = 60
 

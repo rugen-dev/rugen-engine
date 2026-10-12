@@ -142,15 +142,15 @@ p2.bg.slice = 16,16
 p2.bg.pad = 11
 
 [Time]
-pos = 640,70
+pos = 640,16
 bg.spr = 60,0
-counter.offset = 2,14
-counter.font = 1,9,0
-counter.scale = 4
+counter.offset = 1,55
+counter.font = 1,11,0
+counter.scale = 5
 round.bg.spr = 61,0
-round.bg.offset = 0,56
+round.bg.offset = 0,72
 round.text = ROUND %i
-round.offset = 1,69
+round.offset = 1,89
 round.font = 1,11,0
 framespercount = 60
 
