@@ -15,6 +15,7 @@ use winit::keyboard::Key;
 
 use crate::config::Config;
 use crate::game::{Mode, Transition};
+use crate::roster::{Outcome, Roster};
 use crate::sprites::{FontGpu, SpriteSheet};
 use crate::system::SystemData;
 
@@ -23,6 +24,15 @@ use crate::system::SystemData;
 pub enum UiKind {
     Title,
     Options,
+    /// Character / stage select for a game mode.
+    Select(Mode),
+}
+
+/// Per-character record in the profile.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct CharStats {
+    pub plays: u32,
+    pub wins: u32,
 }
 
 /// Local player profile (`profile.json` in the game root).
@@ -36,6 +46,9 @@ pub struct Profile {
     pub losses: u32,
     pub shards: u32,
     pub avatar: String,
+    /// Per-character plays / wins keyed by cache manifest id.
+    #[serde(default)]
+    pub chars: std::collections::BTreeMap<String, CharStats>,
 }
 
 impl Default for Profile {
@@ -48,11 +61,48 @@ impl Default for Profile {
             losses: 0,
             shards: 0,
             avatar: "ui/avatar.webp".into(),
+            chars: Default::default(),
         }
     }
 }
 
 impl Profile {
+    pub fn save(&self, root: &Path) {
+        if let Ok(text) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(root.join("profile.json"), text);
+        }
+    }
+
+    /// Record a finished match for character `id`; levels up every 100 xp.
+    pub fn record(&mut self, id: &str, won: bool) {
+        if won {
+            self.wins += 1;
+            self.xp += 20;
+            self.shards += 5;
+        } else {
+            self.losses += 1;
+            self.xp += 8;
+            self.shards += 1;
+        }
+        self.level = 1 + self.xp / 100;
+        if !id.is_empty() {
+            let e = self.chars.entry(id.to_string()).or_default();
+            e.plays += 1;
+            if won {
+                e.wins += 1;
+            }
+        }
+    }
+
+    /// Placeholder until ranked exists: a rating derived from wins.
+    pub fn rating_text(&self) -> String {
+        if self.wins + self.losses == 0 {
+            "UNRANKED".into()
+        } else {
+            format!("{}", 1000 + self.wins as i64 * 25 - self.losses as i64 * 15)
+        }
+    }
+
     pub fn load(root: &Path) -> Self {
         let path = root.join("profile.json");
         match std::fs::read(&path) {
@@ -95,6 +145,9 @@ pub struct UiScreen {
     window: (u32, u32),
     mouse_px: Option<(f32, f32)>,
     pending: Option<Transition>,
+    /// Select screens only.
+    roster: Option<Roster>,
+    room: String,
 }
 
 const BUTTON_NAMES: [&str; 11] = [
@@ -121,6 +174,15 @@ impl UiScreen {
         match kind {
             UiKind::Title => "title.toml",
             UiKind::Options => "options.toml",
+            UiKind::Select(_) => "select.toml",
+        }
+    }
+
+    /// The game mode a select screen was opened for.
+    pub fn mode(&self) -> Option<Mode> {
+        match self.kind {
+            UiKind::Select(m) => Some(m),
+            _ => None,
         }
     }
 
@@ -131,6 +193,7 @@ impl UiScreen {
         sys: &SystemData,
         config: &Config,
         netplay: bool,
+        lib: &rugen_content::Library,
     ) -> anyhow::Result<Self> {
         let path = motif.join("ui").join(Self::file(kind));
         let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
@@ -153,7 +216,18 @@ impl UiScreen {
             window: (1280, 720),
             mouse_px: None,
             pending: None,
+            roster: match kind {
+                UiKind::Select(mode) => Some(Roster::new(mode, lib, config.game.ai_level)),
+                _ => None,
+            },
+            room: "LOCAL".into(),
         };
+        if let Some(r) = &s.roster
+            && r.is_empty()
+        {
+            log::warn!("no characters in chars/");
+            s.pending = Some(Transition::Title);
+        }
         s.refresh_data(sys);
         Ok(s)
     }
@@ -161,6 +235,10 @@ impl UiScreen {
     /// Rebuild the data context the TOML binds to.
     fn refresh_data(&mut self, sys: &SystemData) {
         let data = match self.kind {
+            UiKind::Select(_) => match &self.roster {
+                Some(r) => r.data(&self.profile, &self.room),
+                None => Value::Null,
+            },
             UiKind::Title => {
                 let mut menu: Vec<Value> = sys
                     .title
@@ -288,11 +366,17 @@ impl UiScreen {
     }
 
     pub fn capturing(&self) -> bool {
-        self.capture.is_some()
+        self.capture.is_some() || self.roster.as_ref().is_some_and(|r| r.searching)
     }
 
-    /// Raw key while rebinding. Returns true when consumed.
+    /// Raw key while rebinding or typing a search. Returns true when consumed.
     pub fn raw_key(&mut self, key: &Key, sys: &SystemData) -> bool {
+        if let Some(r) = self.roster.as_mut()
+            && r.type_key(key)
+        {
+            self.refresh_data(sys);
+            return true;
+        }
         let Some((player, idx)) = self.capture else {
             return false;
         };
@@ -345,6 +429,16 @@ impl UiScreen {
     }
 
     fn action(&mut self, a: &str, sys: &SystemData) -> Option<Transition> {
+        if let Some(r) = self.roster.as_mut() {
+            return match r.action(a) {
+                Outcome::None => None,
+                Outcome::Refresh => {
+                    self.refresh_data(sys);
+                    None
+                }
+                Outcome::Go(t) => Some(*t),
+            };
+        }
         let mut parts = a.splitn(3, ':');
         let head = parts.next().unwrap_or("");
         let arg = parts.next().unwrap_or("");
@@ -438,6 +532,16 @@ impl UiScreen {
                     }
                 }
             }
+        }
+        // roster: the focused cell is the character on display
+        if let Some(r) = self.roster.as_mut()
+            && let Some(f) = self.ui.focused()
+            && let Some(rest) = f.strip_prefix("cells[")
+            && let Some(end) = rest.find(']')
+            && let Ok(i) = rest[..end].parse::<usize>()
+            && r.hover_order(i)
+        {
+            self.refresh_data(sys);
         }
         out
     }

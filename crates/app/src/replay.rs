@@ -40,6 +40,7 @@ impl Replay {
             ai: self.ai,
             net: None,
             tutorial: false,
+            ids: [String::new(), String::new()],
         }
     }
 

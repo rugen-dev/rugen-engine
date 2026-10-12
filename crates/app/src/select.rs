@@ -190,6 +190,7 @@ impl SelectScreen {
             },
             net: None,
             tutorial,
+            ids: [String::new(), String::new()],
         };
         if tutorial {
             return Some(Transition::Fight(setup));

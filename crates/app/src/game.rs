@@ -55,12 +55,12 @@ pub enum Transition {
 
 enum Screen {
     Blank,
-    Title(TitleScreen),
+    Title(Box<TitleScreen>),
     Options(Box<OptionsScreen>),
     /// TOML-driven screen from `motif/ui/`.
     Ui(Box<UiScreen>),
-    Select(SelectScreen),
-    Versus(VersusScreen),
+    Select(Box<SelectScreen>),
+    Versus(Box<VersusScreen>),
     Match(Box<Match>),
 }
 
@@ -279,9 +279,25 @@ impl Shell {
                 ai: [0, self.config.game.ai_level],
                 net: None,
                 tutorial: false,
+                ids: [manifest_id(&p1), man.id.clone()],
             },
             [side(&p1), side(&p2)],
         ))
+    }
+
+    /// Finished match → profile stats for P1's character (local, non-tutorial matches).
+    fn record_result(&mut self) {
+        let Screen::Match(m) = &mut self.screen else {
+            return;
+        };
+        if !m.world.round.match_over || m.stats_recorded || m.is_tutorial() {
+            return;
+        }
+        m.stats_recorded = true;
+        let won = m.world.round.wins[0] > m.world.round.wins[1];
+        let mut p = crate::uiscreen::Profile::load(&self.lib.root);
+        p.record(&m.setup_ids()[0], won);
+        p.save(&self.lib.root);
     }
 
     /// Write the current match's recording (quick play: to `--record`, else `replays/`).
@@ -401,6 +417,7 @@ impl Shell {
                     ai: [0, 0],
                     net: Some(net),
                     tutorial: false,
+                    ids: [String::new(), String::new()],
                 }));
             }
             Transition::Title => {
@@ -418,15 +435,16 @@ impl Shell {
                             sys,
                             &self.config,
                             netplay,
+                            &self.lib,
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
                             Err(e) => {
                                 log::error!("ui/title.toml: {e:#}");
-                                Screen::Title(TitleScreen::new(sys, netplay))
+                                Screen::Title(Box::new(TitleScreen::new(sys, netplay)))
                             }
                         }
                     }
-                    Some(sys) => Screen::Title(TitleScreen::new(sys, netplay)),
+                    Some(sys) => Screen::Title(Box::new(TitleScreen::new(sys, netplay))),
                     None => {
                         log::error!("no system.def: cannot show the title screen");
                         self.quit = true;
@@ -444,6 +462,7 @@ impl Shell {
                             sys,
                             &self.config,
                             false,
+                            &self.lib,
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
                             Err(e) => {
@@ -464,19 +483,41 @@ impl Shell {
             Transition::Select(mode) => {
                 self.play_system_music("select");
                 self.screen = match self.system.as_ref() {
-                    Some(sys) => Screen::Select(SelectScreen::new(
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Select(mode)) => {
+                        match UiScreen::load(
+                            UiKind::Select(mode),
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            false,
+                            &self.lib,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::warn!("ui/select.toml: {e:#}; using the screenpack select");
+                                Screen::Select(Box::new(SelectScreen::new(
+                                    mode,
+                                    sys,
+                                    &self.lib,
+                                    self.config.game.ai_level,
+                                )))
+                            }
+                        }
+                    }
+                    Some(sys) => Screen::Select(Box::new(SelectScreen::new(
                         mode,
                         sys,
                         &self.lib,
                         self.config.game.ai_level,
-                    )),
+                    ))),
                     None => Screen::Blank,
                 };
             }
             Transition::Versus(setup, sides) => {
                 self.play_system_music("vs");
                 self.screen = match self.system.as_ref() {
-                    Some(sys) => Screen::Versus(VersusScreen::new(setup, sides, sys)),
+                    Some(sys) => Screen::Versus(Box::new(VersusScreen::new(setup, sides, sys))),
                     None => {
                         self.transition(Transition::Fight(setup));
                         return;
@@ -579,8 +620,18 @@ impl Shell {
                         sfx_queue.push(snd)
                     });
                 }
-                if next.is_some() && u.kind == UiKind::Options {
+                let is_options = u.kind == UiKind::Options;
+                let arcade_pick = match (&next, u.mode()) {
+                    (Some(Transition::Versus(setup, _)), Some(Mode::Arcade)) => {
+                        Some(setup.p1.clone())
+                    }
+                    _ => None,
+                };
+                if next.is_some() && is_options {
                     self.apply_options();
+                }
+                if let Some(p1) = arcade_pick {
+                    self.arcade = Some((p1, 0));
                 }
             }
             Screen::Select(s) => {
@@ -604,6 +655,9 @@ impl Shell {
                     });
                 }
             }
+        }
+        if next.is_some() {
+            self.record_result();
         }
         if matches!(next, Some(Transition::Title))
             && let Some(t) = self.arcade_next()
@@ -857,4 +911,13 @@ impl ApplicationHandler for Shell {
             g.window.request_redraw();
         }
     }
+}
+
+/// Cache manifest id for a prepared character .def (empty when unknown).
+fn manifest_id(def: &std::path::Path) -> String {
+    def.parent()
+        .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
+        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok())
+        .map(|m| m.id)
+        .unwrap_or_default()
 }
