@@ -59,7 +59,7 @@ impl SelectScreen {
         };
         let mut cells = Vec::new();
         for e in lib.chars() {
-            match lib.prepare_char(&e) {
+            match crate::verify::prepare_verified(lib, &e) {
                 Ok((dir, m)) => {
                     let load = |p: &Option<rugen_content::PortraitInfo>| {
                         let p = p.as_ref()?;
@@ -234,8 +234,22 @@ impl SelectScreen {
                     if !self.human[side] {
                         // computer side: pick once P1 is done (or immediately in watch mode)
                         if side == 0 || self.done[0] {
-                            let n = self.cells.len();
-                            let k = self.rand(n);
+                            // computer picks among characters that passed verification
+                            let ok: Vec<usize> = (0..self.cells.len())
+                                .filter(|&i| {
+                                    !self.cells[i]
+                                        .manifest
+                                        .verify
+                                        .as_ref()
+                                        .is_some_and(|v| v.is_broken())
+                                })
+                                .collect();
+                            let pool = if ok.is_empty() {
+                                (0..self.cells.len()).collect()
+                            } else {
+                                ok
+                            };
+                            let k = pool[self.rand(pool.len())];
                             self.random_pick[side] = Some(k);
                             self.done[side] = true;
                         }
@@ -260,9 +274,19 @@ impl SelectScreen {
                     if (b.a || b.b || b.c || b.x || b.y || b.z || b.s)
                         && let Some(i) = self.cell_index(sys, self.cursor[side])
                     {
-                        self.random_pick[side] = Some(i);
-                        self.done[side] = true;
-                        sfx(sys.select.done_snd[side]);
+                        let broken = self.cells[i]
+                            .manifest
+                            .verify
+                            .as_ref()
+                            .is_some_and(|v| v.is_broken());
+                        if broken {
+                            // failed verification: cannot be picked
+                            sfx(sys.select.cancel_snd);
+                        } else {
+                            self.random_pick[side] = Some(i);
+                            self.done[side] = true;
+                            sfx(sys.select.done_snd[side]);
+                        }
                     }
                 }
                 if self.done[0] && self.done[1] {
@@ -360,6 +384,31 @@ impl SelectScreen {
                     );
                     d.scale = s.portrait_scale;
                     r.draw(d);
+                }
+                // verification badge: green verified, yellow warnings, red broken
+                let badge = match cell.manifest.verify.as_ref().map(|v| v.verdict.as_str()) {
+                    Some("verified") => Some([0.2, 0.9, 0.3, 1.0]),
+                    Some("warn") => Some([1.0, 0.8, 0.1, 1.0]),
+                    Some("broken") => Some([1.0, 0.15, 0.15, 1.0]),
+                    _ => None,
+                };
+                if let Some(c) = badge {
+                    let bx = x + ox + s.cell_size[0] - 5.0;
+                    let by = y + s.cell_size[1] - 5.0;
+                    r.rect(
+                        [bx - 1.0, by - 1.0],
+                        [bx + 4.0, by + 4.0],
+                        [0.0, 0.0, 0.0, 0.8],
+                    );
+                    r.rect([bx, by], [bx + 3.0, by + 3.0], c);
+                }
+                if cell.manifest.verify.as_ref().is_some_and(|v| v.is_broken()) {
+                    // dim broken characters
+                    r.rect(
+                        [x + ox, y],
+                        [x + ox + s.cell_size[0], y + s.cell_size[1]],
+                        [0.0, 0.0, 0.0, 0.55],
+                    );
                 }
             }
         }

@@ -217,6 +217,32 @@ impl CharData {
     }
 
     /// Copy with extra states parsed from `text` (overriding existing numbers). For tests and tools.
+    /// Like [`with_states`](Self::with_states) but keeps going on compile
+    /// problems (bad controllers become `Null`), as the real loader does.
+    pub fn with_states_lenient(&self, file: &str, text: &str) -> Arc<Self> {
+        let mut d = self.clone();
+        let parsed = rugen_cns::state::parse_states(file, text);
+        d.warnings.extend(parsed.errors);
+        for st in parsed.states {
+            let mut warnings = Vec::new();
+            let ctrls = st
+                .controllers
+                .iter()
+                .map(|c| compile_ctrl(c, &mut warnings, file))
+                .collect();
+            d.warnings.extend(warnings);
+            d.states.insert(
+                st.no,
+                State {
+                    ctrls,
+                    def: st,
+                    file: file.to_string(),
+                },
+            );
+        }
+        Arc::new(d)
+    }
+
     pub fn with_states(&self, file: &str, text: &str) -> Result<Arc<Self>> {
         let mut d = self.clone();
         let parsed = rugen_cns::state::parse_states(file, text);

@@ -26,6 +26,9 @@ pub mod round;
 pub mod sctrl;
 pub mod world;
 
+#[cfg(test)]
+mod safety_tests;
+
 pub use chardata::{CharData, FxData};
 pub use input::Buttons;
 pub use player::Player;
