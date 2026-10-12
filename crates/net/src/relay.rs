@@ -863,8 +863,8 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
             d.flush_due();
         }
         self.apply_hooks();
-        // the relay's round trip, once a second (players only)
-        if self.slot < 2 && self.last_rping.elapsed() >= Duration::from_secs(1) {
+        // the relay's round trip every 3 s (players only), for comparison
+        if self.slot < 2 && self.last_rping.elapsed() >= Duration::from_secs(3) {
             let mut p = vec![T_RPING];
             p.extend(self.now_us().to_be_bytes());
             self.send_frame(wire::DATA, 1 - self.slot, &p);

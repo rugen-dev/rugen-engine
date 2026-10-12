@@ -334,9 +334,10 @@ fn rollback_match_over_turn_stays_in_sync() {
         assert_eq!(a.log[..n], b.log[..n], "{label}: input streams diverged");
         if turn {
             assert!(a.transport.starts_with("TURN"), "{}", a.transport);
-            // match traffic left the server relay (only keep-alives remain)
+            // match traffic left the server relay (only keep-alives and the
+            // relay round trip, measured every 3 s for path selection, remain)
             assert!(
-                relayed < 2000,
+                relayed < 4000,
                 "{label}: {relayed} bytes still went through the relay"
             );
             let per_s = |r: &Run| (r.rx_wire as f64) / r.secs;

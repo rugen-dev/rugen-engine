@@ -245,9 +245,19 @@ fn peer(
         .expect("handshake through the proxy");
     // DELAY-CHOICE (the baseline harness patches this line)
     let p95 = shake.rtt.map(|r| r.p95).or(shake.rtt_ms).unwrap_or(0);
-    let delay = rugen_net::DelayPolicy::default().delay(p95);
+    // RUGEN_WINDOW / RUGEN_HEADROOM: try other policies
+    let mut policy = rugen_net::DelayPolicy::default();
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok());
+    if let Some(w) = env("RUGEN_WINDOW") {
+        policy.prediction_window = w;
+    }
+    if let Some(h) = env("RUGEN_HEADROOM") {
+        policy.headroom = h;
+    }
+    let delay = policy.delay(p95);
     let opts = Options {
         input_delay: delay,
+        max_prediction: policy.prediction_window,
         ..Default::default()
     };
     let mut net = Netplay::p2p_with_socket(socket, via, handle, &opts).unwrap();

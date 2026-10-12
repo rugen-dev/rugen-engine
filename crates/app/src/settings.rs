@@ -210,7 +210,7 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         Widget::Choice(opts, Some(sel))
                     },
                     c.net.input_delay.to_string(),
-                    "AUTO adds delay only beyond what rollback hides (1 frame up to ~260 ms ping).",
+                    "AUTO adds delay only beyond what rollback hides (1 frame up to ~300 ms ping).",
                 ),
                 row(
                     "direct",

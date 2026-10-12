@@ -6,7 +6,10 @@
 //! * the direct path breaks mid-match: the match falls back to the relay
 //!   at once and stays in sync;
 //! * a direct path that comes up mid-match takes over (hysteresis);
-//! * a player with direct connections off: no candidates, relayed.
+//! * a player with direct connections off: no candidates, relayed;
+//! * with a TURN service (`RUGEN_TEST_TURN`, coturn as in `turn_relay.rs`):
+//!   a private player plays over TURN, and a direct path that breaks falls
+//!   back to TURN rather than to the relay.
 //!
 //! Skipped when the reference tree (KFM) is absent.
 
@@ -16,8 +19,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use rugen_net::{DirectConfig, Netplay, Options, PathKind, RelaySocket};
-use rugen_proto::SessionTicket;
 use rugen_proto::relay::{self as wire, Header};
+use rugen_proto::{RelayTransport, SessionTicket};
 use rugen_sim::{Buttons, CharData, Stage, World};
 
 fn reference() -> Option<PathBuf> {
@@ -91,14 +94,31 @@ fn world(root: &std::path::Path) -> World {
     w
 }
 
-fn ticket(server: SocketAddr, session: u32, slot: usize) -> SessionTicket {
+/// The coturn of `turn_relay.rs`, when `RUGEN_TEST_TURN` is set.
+fn turn_service() -> Option<RelayTransport> {
+    let host = std::env::var("RUGEN_TEST_TURN").ok()?;
+    let user = std::env::var("RUGEN_TEST_TURN_USER").unwrap_or_else(|_| "u".into());
+    let pass = std::env::var("RUGEN_TEST_TURN_PASS").unwrap_or_else(|_| "p".into());
+    Some(RelayTransport::turn(
+        vec![format!("turn:{host}?transport=udp")],
+        &user,
+        &pass,
+        0,
+    ))
+}
+
+fn ticket(server: SocketAddr, session: u32, slot: usize, turn: bool) -> SessionTicket {
     SessionTicket {
         session,
         slot: slot as u8,
         token: rugen_proto::to_hex(&token(slot)),
         spectators: 0,
         udp: Some(server.to_string()),
-        transports: Vec::new(),
+        transports: if turn {
+            turn_service().into_iter().collect()
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -121,6 +141,8 @@ struct Plan {
     sever_at: Option<u32>,
     /// Inject this many forged datagrams at frame 100.
     forge: u32,
+    /// The ticket carries the test TURN service.
+    turn: bool,
 }
 
 struct Outcome {
@@ -135,7 +157,7 @@ fn play(root: PathBuf, server: SocketAddr, session: u32, slot: usize, plan: Plan
     let target = 600u32;
     let mut w = world(&root);
     let mut sock = RelaySocket::connect_udp(
-        &ticket(server, session, slot),
+        &ticket(server, session, slot, plan.turn),
         &server.to_string(),
         Duration::from_secs(3),
     )
@@ -299,5 +321,62 @@ fn a_private_player_stays_relayed() {
             "{:?}",
             o.paths
         );
+    }
+}
+
+#[test]
+fn a_private_player_plays_over_turn() {
+    if turn_service().is_none() {
+        eprintln!("RUGEN_TEST_TURN not set; skipping");
+        return;
+    }
+    let a = Plan {
+        direct: Some(true),
+        turn: true,
+        ..Default::default()
+    };
+    let b = Plan {
+        direct: Some(false),
+        turn: true,
+        ..Default::default()
+    };
+    let Some((a, b)) = run(0xD5, a, b) else {
+        return;
+    };
+    for o in [&a, &b] {
+        assert_eq!(o.start_path, PathKind::Turn, "{:?}", o.paths);
+        assert!(
+            o.paths.iter().all(|(_, p)| *p == PathKind::Turn),
+            "{:?}",
+            o.paths
+        );
+    }
+}
+
+#[test]
+fn broken_direct_path_falls_back_to_turn() {
+    if turn_service().is_none() {
+        eprintln!("RUGEN_TEST_TURN not set; skipping");
+        return;
+    }
+    let a = Plan {
+        direct: Some(true),
+        turn: true,
+        sever_at: Some(250),
+        ..Default::default()
+    };
+    let b = Plan {
+        direct: Some(true),
+        turn: true,
+        ..Default::default()
+    };
+    let Some((a, b)) = run(0xD6, a, b) else {
+        return;
+    };
+    assert_eq!(a.start_path, PathKind::Direct);
+    for o in [&a, &b] {
+        let last = o.paths.last().unwrap();
+        assert_eq!(last.1, PathKind::Turn, "{:?}", o.paths);
+        assert!(last.0 >= 250, "{:?}", o.paths);
     }
 }

@@ -22,16 +22,20 @@ const FRAME_MS: f64 = 1000.0 / 60.0;
 /// with `one_way_ms = p95 round trip / 2 + 1 frame` (an input is sent at
 /// the end of the tick that sampled it and used at the next tick boundary).
 ///
-/// Bands with the defaults (window 10, headroom 2, min 1), by p95 round
+/// Bands with the defaults (window 12, headroom 3, min 1), by p95 round
 /// trip of the chosen path:
 ///
-/// | p95 RTT        | delay | frames rolled back at most |
-/// |----------------|-------|----------------------------|
-/// | 0 - 266 ms     | 1     | up to 8 (180 ms: 6)        |
-/// | 267 - 300 ms   | 2     | 8                          |
-/// | 301 - 333 ms   | 3     | 8                          |
-/// | 334 - 366 ms   | 4     | 8                          |
-/// | each +33 ms    | +1    | 8 (delay capped at 8)      |
+/// | p95 RTT        | delay | frames predicted (typical rollback) |
+/// |----------------|-------|-------------------------------------|
+/// | 0 - 300 ms     | 1     | up to 9 (180 ms: 6, 250 ms: 8)      |
+/// | 301 - 333 ms   | 2     | 9                                   |
+/// | 334 - 366 ms   | 3     | 9                                   |
+/// | 367 - 400 ms   | 4     | 9                                   |
+/// | each +33 ms    | +1    | 9 (delay capped at 8)               |
+///
+/// The 3 frames of headroom were measured (`examples/netsim.rs`, 350 ms,
+/// 8 ms jitter, 1% loss): with a 10-frame window and 2 of headroom ggrs
+/// still hit the window ~8 times a second; with 12 / 3 never.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DelayPolicy {
     pub min_delay: usize,
@@ -47,8 +51,8 @@ impl Default for DelayPolicy {
     fn default() -> Self {
         Self {
             min_delay: 1,
-            prediction_window: 10,
-            headroom: 2,
+            prediction_window: 12,
+            headroom: 3,
         }
     }
 }
@@ -410,15 +414,14 @@ mod tests {
     #[test]
     fn delay_policy_bands() {
         let p = DelayPolicy::default();
-        // the rollback window covers everything up to ~266 ms
-        for rtt in [0, 12, 40, 80, 120, 180, 233, 266] {
+        // the rollback window covers everything up to 300 ms
+        for rtt in [0, 12, 40, 80, 120, 180, 233, 266, 300] {
             assert_eq!(p.delay(rtt), 1, "{rtt} ms");
         }
-        assert_eq!(p.delay(267), 2);
-        assert_eq!(p.delay(300), 2);
-        assert_eq!(p.delay(301), 3);
-        assert_eq!(p.delay(333), 3);
-        assert_eq!(p.delay(350), 4);
+        assert_eq!(p.delay(301), 2);
+        assert_eq!(p.delay(333), 2);
+        assert_eq!(p.delay(350), 3);
+        assert_eq!(p.delay(370), 4);
         assert_eq!(p.delay(2000), DelayPolicy::MAX_DELAY);
         // what is left is predicted, never past window - headroom
         assert_eq!(p.lead(180, 1), 6);

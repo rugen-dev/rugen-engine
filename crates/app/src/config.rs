@@ -449,7 +449,7 @@ impl Default for Net {
             port: 7000,
             input_delay: InputDelay(None),
             min_delay: 1,
-            prediction_window: 10,
+            prediction_window: 12,
             max_prediction: None,
             direct: true,
             good_connections_only: false,
@@ -593,13 +593,13 @@ mod tests {
         let p = Net::default().delay_policy();
         assert_eq!(InputDelay(None).frames(Some(10), &p), 1);
         assert_eq!(InputDelay(None).frames(Some(180), &p), 1);
-        assert_eq!(InputDelay(None).frames(Some(300), &p), 2);
-        assert_eq!(InputDelay(None).frames(Some(350), &p), 4);
+        assert_eq!(InputDelay(None).frames(Some(300), &p), 1);
+        assert_eq!(InputDelay(None).frames(Some(350), &p), 3);
         assert_eq!(InputDelay(None).frames(None, &p), 2);
         assert_eq!(InputDelay(Some(5)).frames(Some(10), &p), 5);
         // an old rugen.toml: max_prediction is read and dropped
         let c: Config = toml::from_str("[net]\nmax_prediction = 8\n").unwrap();
-        assert_eq!(c.net.prediction_window, 10);
+        assert_eq!(c.net.prediction_window, 12);
         assert!(c.net.direct);
         assert!(!toml::to_string(&c).unwrap().contains("max_prediction"));
         let c: Config = toml::from_str("[net]\ndirect = false\nmin_delay = 0\n").unwrap();
