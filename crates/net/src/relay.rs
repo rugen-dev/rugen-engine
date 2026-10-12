@@ -20,7 +20,7 @@ use crate::socket::median;
 use crate::{Error, Result};
 
 /// Inner payload types of relayed `DATA` frames.
-const T_GGRS: u8 = 0;
+pub(crate) const T_GGRS: u8 = 0;
 const T_PING: u8 = 1;
 const T_PONG: u8 = 2;
 
@@ -56,6 +56,9 @@ pub struct RelaySocket {
     /// RTT loops), handed to ggrs first: a lost first sync request can stall
     /// a spectator for good.
     early: Vec<(SocketAddr, ggrs::Message)>,
+    /// Player ↔ player path through TURN (see [`crate::turn`]), when the
+    /// ticket carries a `turn` transport.
+    turn: Option<crate::turn::Overlay>,
 }
 
 fn rz(msg: impl Into<String>) -> Error {
@@ -111,6 +114,7 @@ impl RelaySocket {
             last_hello: Instant::now() - Duration::from_secs(10),
             buf: vec![0; 2048],
             early: Vec::new(),
+            turn: crate::turn::Overlay::from_ticket(t),
         })
     }
 
@@ -172,6 +176,9 @@ impl RelaySocket {
     }
 
     pub fn transport_name(&self) -> &'static str {
+        if let Some(n) = self.turn.as_ref().and_then(|t| t.name()) {
+            return n;
+        }
         match self.transport {
             Transport::Udp { .. } => "UDP",
             Transport::Ws(_) => "WebSocket",
@@ -197,8 +204,12 @@ impl RelaySocket {
         }
     }
 
-    /// Next frame from the server, non-blocking.
+    /// Next frame from the server (or from the peer over TURN, presented
+    /// as a relayed `DATA` frame), non-blocking.
     fn recv_frame(&mut self) -> Option<(Header, Vec<u8>)> {
+        if let Some(f) = self.turn_frame() {
+            return Some(f);
+        }
         loop {
             let raw: Vec<u8> = match &mut self.transport {
                 Transport::Udp { socket, server } => match socket.recv_from(&mut self.buf) {
@@ -309,7 +320,15 @@ impl RelaySocket {
             T_PING => {
                 let mut pong = p.to_vec();
                 pong[0] = T_PONG;
-                self.send_frame(wire::DATA, h.from, &pong);
+                self.send_payload(h.from, &pong);
+                None
+            }
+            crate::turn::T_TURN => {
+                if let Some(t) = self.turn.as_mut()
+                    && h.from == t.peer
+                {
+                    t.on_signal(&p[1..]);
+                }
                 None
             }
             T_PONG if p.len() == 9 => {
@@ -330,7 +349,7 @@ impl RelaySocket {
             if last.elapsed() >= Duration::from_millis(40) {
                 let mut p = vec![T_PING];
                 p.extend(self.now_ms().to_be_bytes());
-                self.send_frame(wire::DATA, peer, &p);
+                self.send_payload(peer, &p);
                 last = Instant::now();
             }
             while let Some((h, p)) = self.recv_frame() {
@@ -370,7 +389,106 @@ impl RelaySocket {
         median(&mut got)
     }
 
+    // ---- TURN overlay (crate::turn)
+
+    /// Send a `DATA` payload to slot `to`: over TURN when that path works,
+    /// else (or additionally, while TURN is quiet) through the server.
+    fn send_payload(&mut self, to: u8, p: &[u8]) {
+        if let Some(t) = self.turn.as_mut()
+            && t.carries(to)
+        {
+            t.send(p);
+            if t.healthy() {
+                return;
+            }
+        }
+        self.send_frame(wire::DATA, to, p);
+    }
+
+    /// Advance the TURN setup (signalling goes through the server) and
+    /// return the next payload the peer sent over TURN.
+    fn turn_frame(&mut self) -> Option<(Header, Vec<u8>)> {
+        let t = self.turn.as_mut()?;
+        if t.inbox.is_empty() {
+            let signals = t.pump();
+            t.poll();
+            let peer = t.peer;
+            for s in signals {
+                self.send_frame(wire::DATA, peer, &s);
+            }
+        }
+        let t = self.turn.as_mut()?;
+        let p = t.inbox.pop_front()?;
+        let h = Header {
+            kind: wire::DATA,
+            from: t.peer,
+            to: self.slot,
+            session: self.session,
+        };
+        Some((h, p))
+    }
+
+    /// Wait (at most `timeout`) until the player ↔ player TURN path works
+    /// or is ruled out; true when match traffic now goes over TURN. Call
+    /// after [`wait_for`](Self::wait_for). Without TURN credentials in the
+    /// ticket this returns false at once. The overlay keeps trying in the
+    /// background after the timeout and switches over mid-match.
+    pub fn settle_turn(&mut self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            match &self.turn {
+                Some(t) if t.pending() => {}
+                _ => break,
+            }
+            while let Some((h, p)) = self.recv_frame() {
+                self.answer(h, &p);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        self.turn.as_ref().is_some_and(|t| t.name().is_some())
+    }
+
+    /// Bytes this side moved through TURN so far.
+    pub fn turn_stats(&self) -> Option<crate::turn::TurnStats> {
+        self.turn.as_ref().map(|t| t.stats())
+    }
+
+    /// Live TURN byte counters that stay readable after the socket moved
+    /// into a ggrs session.
+    pub fn turn_meter(&self) -> Option<std::sync::Arc<std::sync::Mutex<crate::turn::TurnStats>>> {
+        self.turn.as_ref().map(|t| t.meter())
+    }
+
+    /// Diagnostic: send ggrs messages over TURN one per datagram in the
+    /// plain encoding (what the coalescing / compact encoding saves).
+    #[doc(hidden)]
+    pub fn set_turn_plain(&mut self, plain: bool) {
+        if let Some(t) = self.turn.as_mut() {
+            t.plain = plain;
+        }
+    }
+
+    /// Round trip to the peer measured over TURN during setup.
+    pub fn turn_rtt(&self) -> Option<u32> {
+        self.turn.as_ref().and_then(|t| t.rtt())
+    }
+
+    /// HELLO payload: TURN bytes received / sent (wire estimate, u64 BE
+    /// each); empty without TURN (older servers ignore hello payloads).
+    fn turn_usage_payload(&self) -> Vec<u8> {
+        match self.turn_stats() {
+            Some(s) if s.tx_packets > 0 => {
+                let mut p = s.rx_wire.to_be_bytes().to_vec();
+                p.extend(s.tx_wire.to_be_bytes());
+                p
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub fn bye(&mut self) {
+        // release the TURN allocation at once (stops any metering)
+        self.turn = None;
         self.send_frame(wire::BYE, 0, &[]);
         if let Transport::Ws(ws) = &mut self.transport {
             let _ = ws.flush();
@@ -393,14 +511,17 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
             let mut p = Vec::with_capacity(buf.len() + 1);
             p.push(T_GGRS);
             p.extend_from_slice(&buf);
-            self.send_frame(wire::DATA, to, &p);
+            self.send_payload(to, &p);
         }
     }
 
     fn receive_all_messages(&mut self) -> Vec<(SocketAddr, ggrs::Message)> {
-        // keep the UDP mapping / WebSocket alive even when ggrs is quiet
+        // keep the UDP mapping / WebSocket alive even when ggrs is quiet;
+        // with TURN in use the hello carries our TURN byte counters so the
+        // server can enforce its budget
         if self.last_hello.elapsed() >= Duration::from_secs(5) {
-            self.send_frame(wire::HELLO, 0, &[]);
+            let usage = self.turn_usage_payload();
+            self.send_frame(wire::HELLO, 0, &usage);
             self.last_hello = Instant::now();
         }
         let mut out = std::mem::take(&mut self.early);
@@ -513,6 +634,7 @@ mod tests {
             token: rugen_proto::to_hex(&tokens[slot as usize]),
             spectators: 0,
             udp: Some(server.to_string()),
+            transports: Vec::new(),
         };
         let mut a = RelaySocket::connect(
             &ticket(0),

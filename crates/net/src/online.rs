@@ -313,7 +313,19 @@ impl OnlineClient {
             b["checksum"] = json!(c);
         }
         if !evidence.inputs.is_empty() {
-            b["inputs"] = json!(rugen_proto::to_hex(&evidence.inputs));
+            if evidence.compact {
+                let rle = rugen_proto::evidence::encode_inputs(&evidence.inputs);
+                b["inputs_rle"] = json!(rugen_proto::to_hex(&rle));
+            } else {
+                b["inputs"] = json!(rugen_proto::to_hex(&evidence.inputs));
+            }
+        }
+        if !evidence.checksums.is_empty() {
+            let c = rugen_proto::evidence::encode_checksums(&evidence.checksums);
+            b["checksums"] = json!(rugen_proto::to_hex(&c));
+        }
+        if let Some((rx, tx)) = evidence.turn_bytes {
+            b["turn"] = json!({ "rx": rx, "tx": tx });
         }
         Self::decode(self.call("POST", "/result", Some(b))?)
     }
@@ -646,6 +658,13 @@ pub struct Evidence {
     pub frames: u32,
     pub checksum: Option<u64>,
     pub inputs: Vec<u8>,
+    /// World checksums every 60 frames ([`rugen_proto::evidence`]).
+    pub checksums: Vec<(u32, u64)>,
+    /// Upload the inputs run-length encoded (`inputs_rle`); only servers
+    /// that issue TURN transports understand it.
+    pub compact: bool,
+    /// Bytes received / sent through TURN (wire estimate), if used.
+    pub turn_bytes: Option<(u64, u64)>,
 }
 
 /// A call running on a worker thread; poll with [`Pending::take`].
