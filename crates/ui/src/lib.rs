@@ -1420,23 +1420,27 @@ impl Ui {
         }
 
         // items: instance the children once per element (children overlap in the slot)
-        let item_ctxs: Vec<(String, Value)> = match &n.items {
-            Some(path) => match lookup(ctx, bind_path(path)) {
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let mut c = ctx.clone();
-                        if let Value::Object(m) = &mut c {
-                            m.insert("item".into(), v.clone());
-                            m.insert("index".into(), Value::from(i));
-                        }
-                        (format!("{key}[{i}]."), c)
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            },
-            None => vec![(format!("{key}."), ctx.clone())],
+        // item contexts are built lazily: paged grids skip most of them
+        let items: Option<Vec<Value>> =
+            n.items
+                .as_ref()
+                .map(|path| match lookup(ctx, bind_path(path)) {
+                    Some(Value::Array(a)) => a.clone(),
+                    _ => Vec::new(),
+                });
+        let item_count = items.as_ref().map_or(1, Vec::len);
+        let item_ctx = |i: usize| -> (String, Value) {
+            match &items {
+                Some(a) => {
+                    let mut c = ctx.clone();
+                    if let Value::Object(m) = &mut c {
+                        m.insert("item".into(), a[i].clone());
+                        m.insert("index".into(), Value::from(i));
+                    }
+                    (format!("{key}[{i}]."), c)
+                }
+                None => (format!("{key}."), ctx.clone()),
+            }
         };
         let mut pen_x = inner.x;
         let mut pen_y = inner.y - scroll;
@@ -1451,10 +1455,11 @@ impl Ui {
             let first = libm::roundf(scroll / (ch + gap)).max(0.0) as usize;
             (first, per)
         });
-        for (i, (prefix, c)) in item_ctxs.iter().enumerate() {
+        for i in 0..item_count {
             let offpage = match page_rows {
                 Some((first, per)) => {
                     let row = i / cols;
+                    let prefix = format!("{key}[{i}].");
                     let held = [self.focus.as_deref(), self.focus2.as_deref()]
                         .into_iter()
                         .flatten()
@@ -1469,6 +1474,8 @@ impl Ui {
                 }
                 None => false,
             };
+            let (prefix, c) = item_ctx(i);
+            let (prefix, c) = (&prefix, &c);
             *cursor = start_cursor;
             let slot = match n.kind {
                 Kind::Vbox | Kind::List => Rect {
@@ -1529,7 +1536,7 @@ impl Ui {
         *cursor = start_cursor + subtree;
         if n.kind == Kind::Grid && n.paged {
             let page = Self::grid_page(n, rect);
-            let rows = item_ctxs.len().div_ceil(cols);
+            let rows = item_count.div_ceil(cols);
             let per_page = (libm::roundf(page / (ch + gap)).max(1.0)) as usize;
             let pages = rows.div_ceil(per_page).max(1);
             let max = (pages - 1) as f32 * page;
