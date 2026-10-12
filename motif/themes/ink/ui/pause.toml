@@ -85,9 +85,9 @@ ease = "back"
     [[node.children.children]]
     kind = "button"
     id = "slab"
-    w = 340
+    w = 360
     h = 44
-    w_focus = 380
+    w_focus = 400
     h_focus = 52
     image = "ui/slab_pause.webp"
     image_focus = "ui/slab_pause_lit.webp"
@@ -104,9 +104,9 @@ ease = "back"
     [[node.children.children]]
     kind = "button"
     id = "paper"
-    w = 340
+    w = 360
     h = 44
-    w_focus = 380
+    w_focus = 400
     h_focus = 52
     image = "ui/slab_pause_paper.webp"
     image_focus = "ui/slab_pause_lit.webp"
