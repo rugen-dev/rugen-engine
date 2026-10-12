@@ -323,6 +323,23 @@ pub fn resolve_in(dirs: &[&Path], name: &str) -> Result<PathBuf> {
     last
 }
 
+/// Lookup order for screenpack files: the motif (a theme folder), the flat
+/// `motif/` it lives under (`motif/themes/<x>` → `motif`), then `data_dir`.
+pub fn motif_chain(motif: &Path, data_dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![motif.to_path_buf()];
+    if let Some(parent) = motif.parent()
+        && parent.file_name().is_some_and(|n| n == "themes")
+        && let Some(flat) = parent.parent()
+        && flat != data_dir
+    {
+        out.push(flat.to_path_buf());
+    }
+    if data_dir != motif {
+        out.push(data_dir.to_path_buf());
+    }
+    out
+}
+
 impl FxData {
     pub fn load(data_dir: &Path) -> Result<Arc<Self>> {
         Self::load_with_motif(data_dir, data_dir)
@@ -331,7 +348,8 @@ impl FxData {
     /// `fight.def` (round timings, file names) comes from the motif when it
     /// has one; referenced files resolve in the motif first, then `data_dir`.
     pub fn load_with_motif(motif: &Path, data_dir: &Path) -> Result<Arc<Self>> {
-        let dirs: [&Path; 2] = [motif, data_dir];
+        let chain = motif_chain(motif, data_dir);
+        let dirs: Vec<&Path> = chain.iter().map(PathBuf::as_path).collect();
         let resolve = |name: &str| resolve_in(&dirs, name);
         let fight = resolve("fight.def").ok().and_then(|p| Def::open(p).ok());
         let files = fight.as_ref().and_then(|d| d.section("files").cloned());

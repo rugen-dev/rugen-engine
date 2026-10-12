@@ -210,7 +210,7 @@ impl Shell {
         replay: Option<crate::replay::Replay>,
     ) -> Self {
         let data_dir = lib.data_dir();
-        let motif_dir = lib.motif_dir();
+        let motif_dir = lib.motif_dir_for(&config.video.theme);
         let config_fullscreen = config.video.fullscreen;
         let system = match SystemData::load(&motif_dir, &data_dir) {
             Ok(s) => Some(s),
@@ -302,7 +302,16 @@ impl Shell {
         if !dirty {
             return;
         }
+        let theme_changed = !self
+            .config
+            .video
+            .theme
+            .trim()
+            .eq_ignore_ascii_case(config.video.theme.trim());
         self.config = config;
+        if theme_changed {
+            self.reload_motif();
+        }
         self.input.rebind(&self.config.input);
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
@@ -321,6 +330,16 @@ impl Shell {
             Ok(()) => log::info!("settings saved to rugen.toml"),
             Err(e) => log::warn!("settings not saved: {e}"),
         }
+    }
+
+    /// Switch to the configured UI theme: new motif dir, screenpack and fonts.
+    fn reload_motif(&mut self) {
+        self.motif_dir = self.lib.motif_dir_for(&self.config.video.theme);
+        match SystemData::load(&self.motif_dir, &self.data_dir) {
+            Ok(s) => self.system = Some(s),
+            Err(e) => log::warn!("system.def not loaded: {e:#}"),
+        }
+        log::info!("ui theme: {}", self.motif_dir.display());
     }
 
     /// system.def `[Music]`: `<screen>.bgm`, `<screen>.bgm.volume`, `<screen>.bgm.loop`.
@@ -654,13 +673,16 @@ impl Shell {
                                 Screen::Options(Box::new(OptionsScreen::new(
                                     self.config.clone(),
                                     sys,
+                                    self.lib.themes(),
                                 )))
                             }
                         }
                     }
-                    Some(sys) => {
-                        Screen::Options(Box::new(OptionsScreen::new(self.config.clone(), sys)))
-                    }
+                    Some(sys) => Screen::Options(Box::new(OptionsScreen::new(
+                        self.config.clone(),
+                        sys,
+                        self.lib.themes(),
+                    ))),
                     None => Screen::Blank,
                 };
             }

@@ -83,7 +83,8 @@ pub struct OnlineScreen {
 
 impl OnlineScreen {
     pub fn load(motif: &Path, root: &Path, lib: &Library, config: &Config) -> anyhow::Result<Self> {
-        let path = motif.join("ui/online.toml");
+        let path = crate::uiscreen::motif_file(motif, "ui/online.toml")
+            .unwrap_or_else(|| motif.join("ui/online.toml"));
         let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
         let def = ScreenDef::parse(&text).with_context(|| path.display().to_string())?;
         let profile = Profile::load(root);

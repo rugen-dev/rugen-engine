@@ -207,7 +207,8 @@ impl Lifebar {
     /// `motif` holds the screenpack (fight.def, fight.sff, fonts); anything
     /// missing there is looked up in `data_dir`.
     pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
-        let dirs: [&Path; 2] = [motif, data_dir];
+        let chain = rugen_sim::chardata::motif_chain(motif, data_dir);
+        let dirs: Vec<&Path> = chain.iter().map(std::path::PathBuf::as_path).collect();
         let fight_path = rugen_sim::chardata::resolve_in(&dirs, "fight.def")?;
         let def = Def::open(&fight_path).with_context(|| fight_path.display().to_string())?;
         let text = rugen_formats::text::decode(&std::fs::read(&fight_path)?);
@@ -223,13 +224,13 @@ impl Lifebar {
                 continue;
             };
             let name = name.trim();
-            let candidates = [
-                motif.join(name),
-                motif.join("font").join(name),
-                data_dir.join(name),
-                root.join("font").join(name),
-                root.join(name),
-            ];
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            for d in &chain {
+                candidates.push(d.join(name));
+                candidates.push(d.join("font").join(name));
+            }
+            candidates.push(root.join("font").join(name));
+            candidates.push(root.join(name));
             let Some(path) = candidates.iter().find(|p| p.exists()) else {
                 log::warn!("fight.def: font{i} = {name} not found");
                 continue;

@@ -111,7 +111,8 @@ pub struct SystemData {
 impl SystemData {
     /// `motif` holds the screenpack; files missing there come from `data_dir`.
     pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
-        let dirs: [&Path; 2] = [motif, data_dir];
+        let chain = rugen_sim::chardata::motif_chain(motif, data_dir);
+        let dirs: Vec<&Path> = chain.iter().map(std::path::PathBuf::as_path).collect();
         let def_path = rugen_sim::chardata::resolve_in(&dirs, "system.def")?;
         let def = Def::open(&def_path).with_context(|| def_path.display().to_string())?;
         let files = def.section("files").context("system.def has no [Files]")?;
@@ -129,13 +130,13 @@ impl SystemData {
                 continue;
             };
             let name = name.trim();
-            let candidates = [
-                motif.join(name),
-                motif.join("font").join(name),
-                data_dir.join(name),
-                root.join("font").join(name),
-                root.join(name),
-            ];
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            for d in &chain {
+                candidates.push(d.join(name));
+                candidates.push(d.join("font").join(name));
+            }
+            candidates.push(root.join("font").join(name));
+            candidates.push(root.join(name));
             let Some(path) = candidates.iter().find(|p| p.exists()) else {
                 log::warn!("system.def: font{i} = {name} not found");
                 continue;

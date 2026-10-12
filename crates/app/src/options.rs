@@ -23,12 +23,13 @@ enum Item {
     Fullscreen,
     AiLevel,
     InputDelay,
+    Theme,
     KeysP1,
     KeysP2,
     Back,
 }
 
-const ITEMS: [Item; 10] = [
+const ITEMS: [Item; 11] = [
     Item::Master,
     Item::Music,
     Item::ZoomOut,
@@ -36,6 +37,7 @@ const ITEMS: [Item; 10] = [
     Item::Fullscreen,
     Item::AiLevel,
     Item::InputDelay,
+    Item::Theme,
     Item::KeysP1,
     Item::KeysP2,
     Item::Back,
@@ -48,10 +50,11 @@ pub struct OptionsScreen {
     /// Rebinding (player, next button index).
     capture: Option<(usize, usize)>,
     pub dirty: bool,
+    themes: Vec<String>,
 }
 
 impl OptionsScreen {
-    pub fn new(config: Config, sys: &SystemData) -> Self {
+    pub fn new(config: Config, sys: &SystemData, themes: Vec<String>) -> Self {
         let bg = StageVisual::load_prefixed(&sys.def_path, "optionbg", Some(&sys.sff_path))
             .or_else(|_| StageVisual::load_prefixed(&sys.def_path, "titlebg", Some(&sys.sff_path)))
             .ok();
@@ -61,6 +64,7 @@ impl OptionsScreen {
             bg,
             capture: None,
             dirty: false,
+            themes,
         }
     }
 
@@ -108,6 +112,18 @@ impl OptionsScreen {
             Item::InputDelay => {
                 c.net.input_delay = (c.net.input_delay as i32 + dir).clamp(0, 8) as usize
             }
+            Item::Theme => {
+                if self.themes.is_empty() {
+                    return;
+                }
+                let cur = self
+                    .themes
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(c.video.theme.trim()))
+                    .unwrap_or(0) as i32;
+                let n = self.themes.len() as i32;
+                c.video.theme = self.themes[(cur + dir).rem_euclid(n) as usize].clone();
+            }
             Item::KeysP1 | Item::KeysP2 | Item::Back => return,
         }
         self.dirty = true;
@@ -123,6 +139,7 @@ impl OptionsScreen {
             Item::Fullscreen => if c.video.fullscreen { "ON" } else { "OFF" }.into(),
             Item::AiLevel => c.game.ai_level.to_string(),
             Item::InputDelay => format!("{} F", c.net.input_delay),
+            Item::Theme => c.video.theme.trim().to_uppercase(),
             Item::KeysP1 | Item::KeysP2 | Item::Back => String::new(),
         }
     }
@@ -136,6 +153,7 @@ impl OptionsScreen {
             Item::Fullscreen => "FULLSCREEN",
             Item::AiLevel => "COMPUTER LEVEL",
             Item::InputDelay => "NET INPUT DELAY",
+            Item::Theme => "UI THEME",
             Item::KeysP1 => "P1 KEYS",
             Item::KeysP2 => "P2 KEYS",
             Item::Back => "BACK",

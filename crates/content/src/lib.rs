@@ -173,6 +173,39 @@ impl Library {
         }
         self.data_dir()
     }
+
+    /// Motif directory for a UI theme: `<root>/motif/themes/<theme>` when it
+    /// exists (files missing there fall back to the flat `motif/`, then
+    /// `data/`), else [`Library::motif_dir`].
+    pub fn motif_dir_for(&self, theme: &str) -> PathBuf {
+        let theme = theme.trim();
+        if !theme.is_empty() {
+            let d = self.root.join("motif").join("themes").join(theme);
+            if d.join("system.def").exists() || d.join("ui").is_dir() {
+                return d;
+            }
+        }
+        self.motif_dir()
+    }
+
+    /// Installed UI themes: folders under `motif/themes/` (sorted) plus
+    /// `classic` for the flat `motif/` when it has its own screens.
+    pub fn themes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Ok(rd) = fs::read_dir(self.root.join("motif").join("themes")) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() && (p.join("system.def").exists() || p.join("ui").is_dir()) {
+                    out.push(e.file_name().to_string_lossy().to_string());
+                }
+            }
+        }
+        out.sort();
+        if self.root.join("motif").join("ui").is_dir() {
+            out.push("classic".into());
+        }
+        out
+    }
     pub fn cache_dir(&self) -> PathBuf {
         self.root.join("cache")
     }
