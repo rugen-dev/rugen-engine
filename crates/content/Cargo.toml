@@ -19,6 +19,7 @@ png.workspace = true
 rugen-fair.workspace = true
 rugen-proto.workspace = true
 image-webp = "0.2"
+rugen-sim.workspace = true
 
 [lints]
 workspace = true

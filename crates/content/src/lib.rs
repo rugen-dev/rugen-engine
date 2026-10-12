@@ -14,6 +14,14 @@
 //! manifest (main .def, display name, author, portraits converted to PNG so
 //! menus never open the full SFF) and returns the prepared directory.
 //! A `cache/VERSION` file invalidates every entry when the cache format changes.
+//!
+//! Each prepared character / stage also gets optimised artefacts in
+//! `.rugen-opt/<def stem>/` next to its def ([`rugen_sim::chardata::opt_dir`]):
+//! a sprite pack (SFF decoded once, deduplicated, trimmed, LZ4) and, for
+//! characters, the compiled AIR / CMD / CNS. They are a local derived cache:
+//! fingerprints, online packages and verification only ever read the
+//! original files, and loading falls back to them when an artefact is
+//! missing or stale (other engine build, edited source).
 
 #![forbid(unsafe_code)]
 
@@ -26,10 +34,17 @@ use serde::{Deserialize, Serialize};
 
 /// Bump when the cache layout or conversion output changes.
 ///
-/// v5 added the content fingerprint, the fairness profile and the card
-/// portrait to the manifest; v4 entries are upgraded in place (extracted
-/// files and verify results are kept), older ones are rebuilt.
-pub const CACHE_VERSION: u32 = 5;
+/// v6 added the optimised artefacts (`.rugen-opt/`); v5 entries just get
+/// them built (fingerprint and profile are kept). v5 added the content
+/// fingerprint, the fairness profile and the card portrait to the manifest;
+/// v4 entries are upgraded in place (extracted files and verify results are
+/// kept), older ones are rebuilt.
+pub const CACHE_VERSION: u32 = 6;
+
+/// Oldest engine cache version that can use an entry written now as is
+/// (the v6 additions are optional side files). Written into the manifest so
+/// later engines can tell older readers what they may reuse.
+const MIN_READER: u32 = 5;
 
 /// Mixed into the cache-directory hash. Frozen at the value
 /// [`CACHE_VERSION`] had when the scheme was introduced, so bumping the
@@ -117,6 +132,34 @@ pub struct Manifest {
     /// A stage (else a character).
     #[serde(default)]
     pub stage: bool,
+    /// Optimised artefacts as last built (informational: loading checks the
+    /// files themselves).
+    #[serde(default)]
+    pub optimised: Option<OptInfo>,
+    /// Oldest cache version able to read this entry unchanged (0: only the
+    /// version that wrote it).
+    #[serde(default)]
+    pub min_reader: u32,
+}
+
+impl Manifest {
+    /// Usable as is by this engine: written by it, or by a newer one that
+    /// declares this version a compatible reader.
+    fn readable(&self) -> bool {
+        self.cache_version == CACHE_VERSION
+            || (self.cache_version > CACHE_VERSION
+                && self.min_reader > 0
+                && self.min_reader <= CACHE_VERSION)
+    }
+}
+
+/// Optimised artefacts of a prepared entry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptInfo {
+    /// [`rugen_sim::chardata::LOGIC_SCHEMA`] of the engine that built them.
+    pub engine: String,
+    /// Bytes of `.rugen-opt/` on disk.
+    pub bytes: u64,
 }
 
 impl Manifest {
@@ -433,18 +476,27 @@ impl Library {
             .join(kind_dir)
             .join(format!("{}-{}", sanitize(&entry.id), hash));
         let manifest_path = dir.join("rugen.json");
+        let stage = kind_dir == "stages";
         if let Ok(text) = fs::read_to_string(&manifest_path)
             && let Ok(mut m) = serde_json::from_str::<Manifest>(&text)
             && m.source_hash == hash
             && dir.join(&m.def).exists()
         {
-            if m.cache_version == CACHE_VERSION {
+            if m.readable() {
+                if m.cache_version == CACHE_VERSION && self.optimise(&dir, &mut m, None) {
+                    // stale artefacts (engine upgrade, edited files) were rebuilt
+                    Self::save_manifest(&dir, &m)?;
+                }
                 return Ok((dir, m));
             }
             if (MIGRATABLE_FROM..CACHE_VERSION).contains(&m.cache_version) {
                 log::info!("upgrading cache entry {} to v{CACHE_VERSION}", entry.id);
-                self.add_fair_info(&dir, &mut m, kind_dir == "stages");
+                if m.cache_version < 5 {
+                    self.add_fair_info(&dir, &mut m, stage);
+                }
+                self.optimise(&dir, &mut m, None);
                 m.cache_version = CACHE_VERSION;
+                m.min_reader = MIN_READER;
                 Self::save_manifest(&dir, &m)?;
                 return Ok((dir, m));
             }
@@ -474,23 +526,26 @@ impl Library {
             .or_else(|| info("name"))
             .unwrap_or_else(|| entry.id.clone());
         let author = info("author").unwrap_or_default();
-        let (portrait_small, portrait_big) = if kind_dir == "chars" {
-            match parsed.as_ref() {
-                Some(d) => extract_portraits(&dir, &def, d),
-                None => (None, None),
-            }
-        } else {
-            (None, None)
-        };
+        // fingerprint + fairness profile (original files) while the sprites are converted
+        let fair = std::thread::scope(|s| {
+            let fair = s.spawn(|| self.fair_info(&dir.join(&def), stage));
+            // the SFF is decoded once: portraits / thumbnail, then the sprite pack
+            let sff = parsed.as_ref().and_then(|d| open_sff(&dir, &def, d, stage));
+            let looks = match (parsed.as_ref(), &sff) {
+                (Some(d), Some((_, sff))) if !stage => {
+                    let (a, b) = portraits_of(&dir, &def, d, sff);
+                    (a, b, None)
+                }
+                (Some(d), Some((_, sff))) => (None, None, extract_stage_thumb(&dir, d, sff)),
+                _ => (None, None, None),
+            };
+            let opt = self.build_opt(&dir.join(&def), stage, sff.map(|(_, s)| s));
+            let fair = fair.join().unwrap_or_else(|_| FairInfo::error("panicked"));
+            (looks, opt, fair)
+        });
+        let ((portrait_small, portrait_big, thumb), opt, fair) = fair;
         let art = if kind_dir == "chars" {
             copy_custom_art(&dir)
-        } else {
-            None
-        };
-        let thumb = if kind_dir == "stages" {
-            parsed
-                .as_ref()
-                .and_then(|d| extract_stage_thumb(&dir, &def, d))
         } else {
             None
         };
@@ -513,8 +568,15 @@ impl Library {
             card: None,
             fair_error: None,
             stage: false,
+            optimised: None,
+            min_reader: MIN_READER,
         };
-        self.add_fair_info(&dir, &mut m, kind_dir == "stages");
+        fair.apply(&mut m, stage);
+        m.card = card_for(&dir, &m);
+        match opt {
+            Ok(info) => m.optimised = info,
+            Err(e) => log::warn!("{}: not optimised: {e}", m.id),
+        }
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&m).map_err(|e| Error::Other(e.to_string()))?,
@@ -526,40 +588,106 @@ impl Library {
 impl Library {
     /// Fingerprint, fairness profile and card portrait of a prepared entry.
     fn add_fair_info(&self, dir: &Path, m: &mut Manifest, stage: bool) {
-        m.stage = stage;
-        let def = dir.join(&m.def);
+        self.fair_info(&dir.join(&m.def), stage).apply(m, stage);
+        m.card = card_for(dir, m);
+    }
+
+    /// Fingerprint and fairness profile of the ORIGINAL files of `def`.
+    fn fair_info(&self, def: &Path, stage: bool) -> FairInfo {
         let kind = if stage {
             rugen_fair::Kind::Stage
         } else {
             rugen_fair::Kind::Char
         };
         let data = self.data_dir();
-        match rugen_fair::files::content_files(kind, &def, Some(&data)) {
+        let mut out = FairInfo::default();
+        match rugen_fair::files::content_files(kind, def, Some(&data)) {
             Ok(files) => {
                 match rugen_fair::fingerprint(&files) {
-                    Ok(fp) => m.fingerprint = Some(fp),
-                    Err(e) => m.fair_error = Some(e.to_string()),
+                    Ok(fp) => out.fingerprint = Some(fp),
+                    Err(e) => out.error = Some(e.to_string()),
                 }
-                m.package_def = Some(files.def.clone());
-                m.content_size = files.total_size();
+                out.package_def = Some(files.def.clone());
+                out.content_size = files.total_size();
                 if !stage {
                     match rugen_fair::profile::analyze(&files) {
-                        Ok(p) => m.profile = Some(p),
-                        Err(e) => log::warn!("{}: fairness profile: {e}", m.id),
+                        Ok(p) => out.profile = Some(p),
+                        Err(e) => log::warn!("{}: fairness profile: {e}", def.display()),
                     }
                 }
             }
             Err(e) => {
-                log::warn!("{}: not shareable online: {e}", m.id);
-                m.fair_error = Some(e.to_string());
+                log::warn!("{}: not shareable online: {e}", def.display());
+                out.error = Some(e.to_string());
             }
         }
-        let src = if stage {
-            m.thumb.as_ref()
+        out
+    }
+
+    /// Build the missing or stale optimised artefacts of a prepared entry
+    /// (`sff`: its sprite file, if already parsed) and record them in `m`.
+    /// Returns whether anything was rebuilt. Failures only log: the
+    /// originals still load.
+    fn optimise(&self, dir: &Path, m: &mut Manifest, sff: Option<rugen_formats::sff::Sff>) -> bool {
+        match self.build_opt(&dir.join(&m.def), m.stage, sff) {
+            Ok(Some(info)) => {
+                m.optimised = Some(info);
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                log::warn!("{}: not optimised: {e}", m.id);
+                false
+            }
+        }
+    }
+
+    /// [`optimise`](Self::optimise) without a manifest: `Some` when something was built.
+    fn build_opt(
+        &self,
+        def: &Path,
+        stage: bool,
+        sff: Option<rugen_formats::sff::Sff>,
+    ) -> rugen_sim::Result<Option<OptInfo>> {
+        let t = std::time::Instant::now();
+        let built = if stage {
+            let spr = rugen_formats::def::Def::open(def).ok().and_then(|d| {
+                let name = d.section("bgdef")?.raw("spr")?.trim().to_string();
+                find_ci(def.parent()?, &name)
+            });
+            match spr {
+                Some(spr) => rugen_sim::chardata::optimise_stage(def, &spr, sff)?,
+                None => false,
+            }
         } else {
-            m.portrait_big.as_ref().or(m.portrait_small.as_ref())
+            let data = self.data_dir();
+            if sff.is_none() && rugen_sim::chardata::opt_fresh(def, &data) == (true, true) {
+                false
+            } else {
+                let r = rugen_sim::chardata::optimise(def, &data, sff)?;
+                r.sprites.is_some() || r.logic
+            }
         };
-        m.card = src.and_then(|p| write_card(&dir.join(&p.file), &dir.join("card.webp")).ok());
+        if !built {
+            return Ok(None);
+        }
+        let opt = rugen_sim::chardata::opt_dir(def);
+        let bytes = walk(&opt)
+            .iter()
+            .filter_map(|e| e.metadata().ok())
+            .filter(|md| md.is_file())
+            .map(|md| md.len())
+            .sum();
+        log::info!(
+            "{}: optimised in {} ms ({:.1} MB)",
+            def.display(),
+            t.elapsed().as_millis(),
+            bytes as f64 / 1e6
+        );
+        Ok(Some(OptInfo {
+            engine: rugen_sim::chardata::LOGIC_SCHEMA.to_string(),
+            bytes,
+        }))
     }
 
     /// `cache/packages/<fingerprint>.rgpk`: the optimised upload package of a
@@ -686,7 +814,9 @@ impl Library {
             _ => (None, None),
         };
         let thumb = match (&parsed, stage) {
-            (Some(d), true) => extract_stage_thumb(&dir, &u.def, d),
+            (Some(d), true) => {
+                open_sff(&dir, &u.def, d, true).and_then(|(_, s)| extract_stage_thumb(&dir, d, &s))
+            }
             _ => None,
         };
         let mut m = Manifest {
@@ -710,6 +840,8 @@ impl Library {
             card: None,
             fair_error: None,
             stage,
+            optimised: None,
+            min_reader: MIN_READER,
         };
         if !stage {
             m.profile = rugen_fair::profile::analyze(&u.files).ok();
@@ -744,7 +876,7 @@ impl Library {
             };
             for e in rd.flatten() {
                 if let Some(m) = read_manifest(&e.path())
-                    && m.cache_version == CACHE_VERSION
+                    && m.readable()
                     && m.fingerprint.as_deref() == Some(fp)
                     && e.path().join(&m.def).exists()
                 {
@@ -753,6 +885,76 @@ impl Library {
             }
         }
         None
+    }
+}
+
+/// Fairness fields of a manifest, computed off the main thread.
+#[derive(Default)]
+struct FairInfo {
+    fingerprint: Option<String>,
+    package_def: Option<String>,
+    content_size: u64,
+    profile: Option<rugen_proto::FairnessProfile>,
+    error: Option<String>,
+}
+
+impl FairInfo {
+    fn error(e: &str) -> Self {
+        Self {
+            error: Some(e.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn apply(self, m: &mut Manifest, stage: bool) {
+        m.stage = stage;
+        if self.fingerprint.is_some() {
+            m.fingerprint = self.fingerprint;
+        }
+        if self.package_def.is_some() {
+            m.package_def = self.package_def;
+            m.content_size = self.content_size;
+        }
+        if self.profile.is_some() {
+            m.profile = self.profile;
+        }
+        if self.error.is_some() {
+            m.fair_error = self.error;
+        }
+    }
+}
+
+/// Card portrait (`card.webp`) from the big portrait or the stage thumbnail.
+fn card_for(dir: &Path, m: &Manifest) -> Option<String> {
+    let src = if m.stage {
+        m.thumb.as_ref()
+    } else {
+        m.portrait_big.as_ref().or(m.portrait_small.as_ref())
+    };
+    src.and_then(|p| write_card(&dir.join(&p.file), &dir.join("card.webp")).ok())
+}
+
+/// The sprite file of a char (`[Files] sprite`) or stage (`[BGdef] spr`), parsed.
+fn open_sff(
+    dir: &Path,
+    def: &str,
+    parsed: &rugen_formats::def::Def,
+    stage: bool,
+) -> Option<(PathBuf, rugen_formats::sff::Sff)> {
+    let def_dir = dir.join(def);
+    let def_dir = def_dir.parent().unwrap_or(dir);
+    let name = if stage {
+        parsed.section("bgdef")?.raw("spr")?
+    } else {
+        parsed.section("files")?.raw("sprite")?
+    };
+    let path = find_ci(def_dir, name.trim())?;
+    match rugen_formats::sff::Sff::open(&path, !stage) {
+        Ok(s) => Some((path, s)),
+        Err(e) => {
+            log::warn!("{}: {e}", path.display());
+            None
+        }
     }
 }
 
@@ -797,23 +999,23 @@ fn extract_portraits(
     def: &str,
     parsed: &rugen_formats::def::Def,
 ) -> (Option<PortraitInfo>, Option<PortraitInfo>) {
+    match open_sff(dir, def, parsed, false) {
+        Some((_, sff)) => portraits_of(dir, def, parsed, &sff),
+        None => (None, None),
+    }
+}
+
+/// [`extract_portraits`] from an already parsed SFF.
+fn portraits_of(
+    dir: &Path,
+    def: &str,
+    parsed: &rugen_formats::def::Def,
+    sff: &rugen_formats::sff::Sff,
+) -> (Option<PortraitInfo>, Option<PortraitInfo>) {
     let def_dir = dir.join(def);
     let def_dir = def_dir.parent().unwrap_or(dir);
     let Some(files) = parsed.section("files") else {
         return (None, None);
-    };
-    let Some(spr) = files.raw("sprite") else {
-        return (None, None);
-    };
-    let Some(sff_path) = find_ci(def_dir, spr.trim()) else {
-        return (None, None);
-    };
-    let sff = match rugen_formats::sff::Sff::open(&sff_path, true) {
-        Ok(s) => s,
-        Err(e) => {
-            log::warn!("{}: {e}", sff_path.display());
-            return (None, None);
-        }
     };
     // SFF v1 chars take their colours from pal1 (.act)
     let act = files
@@ -916,14 +1118,9 @@ fn copy_custom_art(dir: &Path) -> Option<String> {
 /// Stage preview: the first `[BG]` sprite (or the largest sprite) scaled to 160 px wide.
 fn extract_stage_thumb(
     dir: &Path,
-    def: &str,
     parsed: &rugen_formats::def::Def,
+    sff: &rugen_formats::sff::Sff,
 ) -> Option<PortraitInfo> {
-    let def_dir = dir.join(def);
-    let def_dir = def_dir.parent().unwrap_or(dir);
-    let spr = parsed.section("bgdef")?.raw("spr")?.trim().to_string();
-    let path = find_ci(def_dir, &spr)?;
-    let sff = rugen_formats::sff::Sff::open(&path, false).ok()?;
     let first = parsed
         .sections_named("bg")
         .filter_map(|s| s.i32s("spriteno"))
@@ -1326,6 +1523,83 @@ mod tests {
             m2.fair_profile().unwrap().verify.as_deref(),
             Some("verified")
         );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// KFM prepared from a folder gets its optimised artefacts; they never
+    /// leak into the fingerprint / package, and a v5 entry upgrades by just
+    /// building them (fingerprint kept, nothing re-extracted).
+    #[test]
+    fn prepare_builds_optimised_artefacts() {
+        let kfm =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1/chars/kfm");
+        if !kfm.join("kfm.def").exists() {
+            eprintln!("reference tree missing; skipping");
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!("rugen-content-opt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("chars/kfm")).unwrap();
+        for e in fs::read_dir(&kfm).unwrap().flatten() {
+            fs::copy(e.path(), tmp.join("chars/kfm").join(e.file_name())).unwrap();
+        }
+        fs::create_dir_all(tmp.join("data")).unwrap();
+        let ref_data = kfm.join("../../data");
+        for f in ["common1.cns", "fightfx.sff", "fightfx.air"] {
+            let _ = fs::copy(ref_data.join(f), tmp.join("data").join(f));
+        }
+        let lib = Library::discover(Some(&tmp));
+        let e = lib.find_char("kfm").unwrap();
+        let (dir, m) = lib.prepare_char(&e).unwrap();
+        let def = dir.join(&m.def);
+        let opt = rugen_sim::chardata::opt_dir(&def);
+        assert!(opt.join(rugen_sim::chardata::SPRITES_FILE).exists());
+        assert!(opt.join(rugen_sim::chardata::LOGIC_FILE).exists());
+        assert!(m.optimised.as_ref().is_some_and(|o| o.bytes > 0));
+        assert_eq!(m.min_reader, MIN_READER);
+        assert_eq!(
+            rugen_sim::chardata::opt_fresh(&def, &lib.data_dir()),
+            (true, true)
+        );
+        // the fingerprint is over the original gameplay files only
+        let files =
+            rugen_fair::files::content_files(rugen_fair::Kind::Char, &def, Some(&lib.data_dir()))
+                .unwrap();
+        assert!(files.entries.iter().all(|f| !f.path.contains(".rugen-opt")));
+        let fp = m.fingerprint.clone().unwrap();
+        assert_eq!(rugen_fair::fingerprint(&files).unwrap(), fp);
+
+        // pretend it is a v5 entry from before the optimiser
+        let mut old = m.clone();
+        old.cache_version = 5;
+        old.optimised = None;
+        old.min_reader = 0;
+        Library::save_manifest(&dir, &old).unwrap();
+        fs::remove_dir_all(dir.join(".rugen-opt")).unwrap();
+        fs::write(dir.join("marker"), "kept").unwrap();
+        let (dir2, m2) = lib.prepare_char(&e).unwrap();
+        assert_eq!(dir, dir2);
+        assert!(dir.join("marker").exists(), "not re-extracted");
+        assert_eq!(m2.cache_version, CACHE_VERSION);
+        assert_eq!(m2.fingerprint.as_deref(), Some(fp.as_str()));
+        assert!(opt.join(rugen_sim::chardata::SPRITES_FILE).exists());
+
+        // a stale artefact (other engine / edited file) is rebuilt on prepare
+        fs::write(opt.join(rugen_sim::chardata::LOGIC_FILE), b"junk").unwrap();
+        let (_, m3) = lib.prepare_char(&e).unwrap();
+        assert!(m3.optimised.is_some());
+        assert_eq!(
+            rugen_sim::chardata::opt_fresh(&def, &lib.data_dir()),
+            (true, true)
+        );
+
+        // a newer engine's entry that declares us a compatible reader is used as is
+        let mut newer = m3.clone();
+        newer.cache_version = CACHE_VERSION + 1;
+        newer.min_reader = CACHE_VERSION;
+        Library::save_manifest(&dir, &newer).unwrap();
+        let (_, m4) = lib.prepare_char(&e).unwrap();
+        assert_eq!(m4.cache_version, CACHE_VERSION + 1, "left alone");
         let _ = fs::remove_dir_all(&tmp);
     }
 }
