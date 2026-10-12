@@ -80,7 +80,6 @@ group = "header"
   text = "DEVICE"
   font = 2
   bank = 11
-  alpha = 0.7
 
   [[node.children]]
   kind = "keycap"
@@ -141,7 +140,6 @@ enter_time = 14
   y = 18
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "image"
@@ -476,7 +474,6 @@ enter_time = 14
   y = 352
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "text"
@@ -485,7 +482,6 @@ enter_time = 14
   y = 352
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "image"
@@ -578,7 +574,6 @@ align = "center"
   text = "BACK TO OPTIONS"
   font = 2
   bank = 9
-  alpha = 0.6
 
 # ---------------------------------------------------------------- bindings
 [[node]]
@@ -749,7 +744,6 @@ enter_time = 18
       x = 160
       font = 2
       bank = 9
-      alpha = 0.6
       bank_focus = 11
       selected = "item.hot"
       visible = "item.show_group"
@@ -835,7 +829,6 @@ align = "center"
   text = "REBIND"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -848,7 +841,6 @@ align = "center"
   text = "CLEAR"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -862,7 +854,6 @@ align = "center"
   text = "DEFAULTS"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -876,4 +867,3 @@ align = "center"
   text = "1P/2P"
   font = 2
   bank = 9
-  alpha = 0.6

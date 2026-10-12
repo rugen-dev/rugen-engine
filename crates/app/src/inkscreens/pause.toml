@@ -139,7 +139,7 @@ ease = "back"
   x = 24
   y = 520
   font = 2
-  bank = 8
+  bank = 9
 
 # move list of the fighter who paused
 [[node]]
@@ -185,7 +185,7 @@ enter_time = 14
   x = 24
   y = 50
   font = 2
-  bank = 8
+  bank = 9
 
   [[node.children]]
   kind = "text"
@@ -254,7 +254,7 @@ enter_time = 14
       text = "SUPER"
       x = 10
       h = 40
-      font = 1
+      font = 2
       bank = 10
 
       [[node.children.children.children]]
@@ -284,7 +284,7 @@ enter_time = 14
   x = 24
   y = 18
   font = 2
-  bank = 8
+  bank = 9
   visible = "page"
 
 # key hints

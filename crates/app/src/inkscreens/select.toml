@@ -68,7 +68,7 @@ enter_time = 12
     image = "ui/key9_dark.webp"
     text_dy = -3
     nine = [4, 4, 4, 8]
-    font = 1
+    font = 2
     bank = 11
 
     [[node.children.children]]
@@ -85,7 +85,7 @@ enter_time = 12
     image = "ui/key9_dark.webp"
     text_dy = -3
     nine = [4, 4, 4, 8]
-    font = 1
+    font = 2
     bank = 11
 
     [[node.children.children]]
@@ -162,10 +162,10 @@ enter_time = 14
     kind = "text"
     text = "1P"
     anchor = "bl"
-    h = 18
+    h = 22
     pad = 3
     color = [0.88, 0.13, 0.13, 1.0]
-    font = 1
+    font = 2
     bank = 11
     visible = "item.p1"
 
@@ -173,10 +173,10 @@ enter_time = 14
     kind = "text"
     text = "2P"
     anchor = "br"
-    h = 18
+    h = 22
     pad = 3
     color = [0.07, 0.07, 0.07, 1.0]
-    font = 1
+    font = 2
     bank = 11
     visible = "item.p2"
 
@@ -207,7 +207,7 @@ text = "{roster_line}"
 x = 204
 y = 446
 font = 2
-bank = 8
+bank = 9
 visible = "!ready"
 
 [[node]]
@@ -219,19 +219,40 @@ w = 200
 align = "right"
 font = 2
 bank = 9
+visible = "!searching"
+
+# Tab search: a key-cap box while typing (arrows / Enter close it, Esc clears)
+[[node]]
+kind = "panel"
+x = 592
+y = 438
+w = 240
+h = 32
+image = "ui/key9.webp"
+nine = [4, 4, 4, 8]
+visible = "searching"
+
+[[node]]
+kind = "text"
+text = "ESC CLEARS"
+x = 840
+y = 446
+font = 2
+bank = 10
+visible = "searching"
 
 [[node]]
 kind = "input"
 id = "search"
-x = 600
-y = 444
+x = 604
+y = 446
 w = 220
 h = 24
 focus = false
 placeholder = ""
 max_len = 16
 font = 2
-bank = 10
+bank = 9
 on_change = "query:{value}"
 
 # 1P card: portrait, name slab across the bottom, facts on the right
@@ -304,7 +325,7 @@ enter_time = 16
   y = 54
   w = 180
   font = 2
-  bank = 8
+  bank = 9
   visible = "card1.present"
 
   [[node.children]]
@@ -453,7 +474,7 @@ enter_time = 16
   w = 180
   align = "right"
   font = 2
-  bank = 8
+  bank = 9
   visible = "card2.present"
 
   [[node.children]]
@@ -645,7 +666,7 @@ enter_delay = 4
   image_focus = "ui/key9_dark.webp"
   nine = [4, 4, 4, 8]
   text = "RANDOM"
-  font = 1
+  font = 2
   bank = 9
   bank_focus = 11
   on_press = "stage:random"
@@ -696,7 +717,7 @@ align = "center"
   kind = "text"
   text = "PICK  "
   font = 2
-  bank = 8
+  bank = 9
 
   [[node.children]]
   kind = "text"
@@ -714,4 +735,4 @@ align = "center"
   kind = "text"
   text = "BACK"
   font = 2
-  bank = 8
+  bank = 9

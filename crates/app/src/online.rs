@@ -595,6 +595,15 @@ impl OnlineScreen {
     }
 
     pub fn raw_key(&mut self, key: &Key) -> bool {
+        // up / down leave the text box and move on (the text stays)
+        if matches!(
+            key,
+            Key::Named(winit::keyboard::NamedKey::ArrowUp | winit::keyboard::NamedKey::ArrowDown)
+        ) && self.ui.text_focused()
+        {
+            self.ui.stop_edit();
+            return false;
+        }
         let Some(k) = crate::uiscreen::text_key(key) else {
             return self.ui.text_focused();
         };

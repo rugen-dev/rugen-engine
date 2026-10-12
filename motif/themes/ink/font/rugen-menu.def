@@ -6,7 +6,7 @@ name = "rugen-menu"
 [Def]
 Type = bitmap
 BankType = palette
-Size = 10,19
-Spacing = -2,0
+Size = 7,23
+Spacing = -1,0
 Offset = -1,2
 File = rugen-menu.sff

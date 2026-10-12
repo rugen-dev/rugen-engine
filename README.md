@@ -88,7 +88,7 @@ in them.
 The art direction is pixel art on a 640x360 grid shown at 2x: a night-sky
 palette (`motif/palette.gpl`: navy, maroon, gold, steel, teal), CC0 UI pieces
 from Kenney's "UI Pack - Pixel Adventure" (`motif/kit/`) recoloured onto that
-palette, OFL pixel fonts (Press Start 2P, Silkscreen) rendered at native size,
+palette, OFL pixel fonts (Press Start 2P, Jersey 10) rendered at whole multiples of their pixel grid,
 and three parallax background layers. `motif/STYLE.md` has the rules, sizes
 and prompts for making more. Drop any image into `motif/art/` and
 `rugen ui-gen` pixelizes it (`rugen pixelize in.png out.webp --width 640

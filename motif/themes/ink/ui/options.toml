@@ -45,7 +45,7 @@ anchor = "tr"
 x = 40
 y = 34
 font = 2
-bank = 6
+bank = 11
 
 # ---------------------------------------------------------------- tabs
 [[node]]
@@ -144,7 +144,6 @@ enter_time = 14
   y = 26
   font = 2
   bank = 9
-  alpha = 0.6
   visible = "!show_themes"
 
   [[node.children]]
@@ -404,7 +403,6 @@ enter_time = 14
       y = 242
       font = 2
       bank = 9
-      alpha = 0.6
       visible = "!item.active"
 
   [[node.children]]
@@ -414,7 +412,6 @@ enter_time = 14
   y = 400
   font = 2
   bank = 9
-  alpha = 0.6
   visible = "show_themes"
 
 # ---------------------------------------------------------------- help bar
@@ -458,7 +455,7 @@ enter_time = 18
   wrap = true
   line_gap = 8
   font = 2
-  scale = 1.25
+  scale = 1
   bank = 11
 
 # ---------------------------------------------------------------- key hints
@@ -495,7 +492,6 @@ align = "center"
   text = "CHANGE"
   font = 2
   bank = 9
-  alpha = 0.6
 
 [[node]]
 kind = "hbox"
@@ -519,4 +515,3 @@ align = "center"
   text = "SAVE & BACK"
   font = 2
   bank = 9
-  alpha = 0.6
