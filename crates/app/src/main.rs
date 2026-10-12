@@ -248,8 +248,13 @@ fn main() -> anyhow::Result<()> {
                 .or_else(fontgen::default_ttf)
                 .ok_or_else(|| anyhow::anyhow!("no bold TTF found; pass --font file.ttf"))?;
             let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
-            let out = opt("--out").unwrap_or_else(|| "motif".into());
-            screenpack::generate(&bytes, std::path::Path::new(&out))?;
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            screenpack::generate(
+                &bytes,
+                std::path::Path::new(&motif),
+                std::path::Path::new(&out),
+            )?;
             println!(
                 "wrote the rugen screenpack to {out}/ (font {})",
                 ttf.display()
@@ -263,9 +268,10 @@ fn main() -> anyhow::Result<()> {
                     .and_then(|i| args.get(i + 1).cloned())
             };
             let theme = opt("--theme");
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
             let out = opt("--out").unwrap_or_else(|| match &theme {
                 Some(t) => format!("motif/themes/{t}"),
-                None => "motif".into(),
+                None => "motif/themes/dojo".into(),
             });
             let ttf = opt("--font")
                 .map(std::path::PathBuf::from)
@@ -277,29 +283,35 @@ fn main() -> anyhow::Result<()> {
             match theme.as_deref() {
                 Some("ink") => {
                     inkgen::generate(
-                        std::path::Path::new("motif"),
+                        std::path::Path::new(&motif),
                         std::path::Path::new(&out),
                         bytes.as_deref(),
                     )?;
                     println!("wrote the Shonen Ink theme to {out}/");
                 }
-                Some(other) => anyhow::bail!(
-                    "unknown theme {other:?}: ui-gen knows `ink`; the default look is generated without --theme"
-                ),
-                None => {
-                    uigen::generate(bytes.as_deref(), std::path::Path::new(&out))?;
-                    println!("wrote the front end to {out}/ui/ (fonts from {out}/font/src)");
+                Some("dojo") | None => {
+                    uigen::generate(
+                        bytes.as_deref(),
+                        std::path::Path::new(&motif),
+                        std::path::Path::new(&out),
+                    )?;
+                    println!("wrote the Neon Dojo theme to {out}/ (fonts from {motif}/font/src)");
+                }
+                Some(other) => {
+                    anyhow::bail!("unknown theme {other:?}: ui-gen knows `ink` and `dojo`")
                 }
             }
             Ok(())
         }
         Some("kit-import") => {
-            let out = args
-                .iter()
-                .position(|a| a == "--out")
-                .and_then(|i| args.get(i + 1).cloned())
-                .unwrap_or_else(|| "motif".into());
-            let n = kit::import(std::path::Path::new(&out))?;
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            let n = kit::import(std::path::Path::new(&motif), std::path::Path::new(&out))?;
             println!("wrote {n} kit pieces to {out}/ui/kit/");
             Ok(())
         }

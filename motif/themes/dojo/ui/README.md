@@ -45,38 +45,3 @@ gamepad (spatial navigation) and mouse (hover focuses, click presses).
 Binds use dotted paths: `{profile.name}`, `{news.0.title}`, `{item.label}`.
 `visible = "capture.active"` hides a node when the value is false/empty;
 `"!path"` negates.
-
-## Layout engine (v2)
-
-Boxes without `items` stack their children as siblings: `vbox` / `hbox` take
-`gap`, `justify = "start" | "center" | "end" | "between"` and
-`align = "stretch" | "start" | "center" | "end"` (cross axis); a child with
-`grow = true` takes the remaining main-axis space. Boxes with `items` give
-each element one slot in which the children overlap (as before).
-
-Widgets:
-
-- `input` — one-line text field: `value` bind, `placeholder`, `max_len`,
-  `on_change` (fired with `{value}` replaced), `on_press` on Enter. Focus it
-  and press accept (or click) to type; Enter / Esc stop.
-- `slider` — `value` bind between `min` and `max`, `step`; left/right or
-  mouse drag fire `on_change` with `{value}`; `color2` is the fill.
-- `toggle` — `value` bind; shows `image_on` when truthy (or a drawn switch).
-- `particles` — drifting sparks inside the node: `count`, `speed`, `size`,
-  `color`, `color2`.
-- Any node: `selected = "bind"` draws it with the focus visuals (tabs),
-  `tip = "text"` shows a tooltip after the node has been focused a moment.
-
-Motion: `ease = "out" | "linear" | "in" | "back" | "bounce"`, `stagger`
-(extra enter delay per child / item), `exit` / `exit_time` (reverse of
-`enter` by default) played when the screen leaves; the screen-level
-`exit_time` sets the default.
-
-Two players: the roster navigates with two cursors; the second player's
-focus uses `image_focus2`, `color_focus2` (tinted over the image) and
-`bank_focus2`.
-
-Screens added here: `vs.toml` (p1/p2 name+art, stage, countdown; actions
-`fight`), `result.toml` (headline, winner, rounds, rating; actions
-`rematch`, `select`, `continue`, `title`, `quit`) and `pause.toml`
-(`resume`, `options`, `quit`).

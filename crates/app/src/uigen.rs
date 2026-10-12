@@ -1,8 +1,9 @@
-//! `rugen ui-gen`: writes the default front-end into `motif/ui/` — WebP
-//! assets built from the CC0 kit and the palette (see `kit.rs`), the
-//! `title.toml` / `options.toml` / `select.toml` screens, `news.json`,
-//! `palette.gpl` and a README for modders. Hero art dropped into
-//! `motif/art/` is pixelized into `motif/ui/art/`.
+//! `rugen ui-gen`: writes the "Neon Dojo" front-end into a theme dir
+//! (`motif/themes/dojo/ui/` by default) — WebP assets drawn with the
+//! palette (see `kit.rs`), the `title.toml` / `options.toml` /
+//! `select.toml` screens and a README for modders. Fonts, the CC0 kit,
+//! `palette.gpl` and `news.json` stay shared in `motif/`; hero art dropped
+//! into `motif/art/` is pixelized into `<theme>/ui/art/`.
 
 use std::path::Path;
 
@@ -11,11 +12,11 @@ use crate::fontgen::{self, Generator, Style};
 use crate::kit;
 use crate::pixelize;
 
-const SELECT_TOML: &str = r##"# rugen character select — Brawlhalla-style roster. Coordinates are 1280x720.
+const SELECT_TOML: &str = r##"# rugen character select — Neon Dojo roster. Coordinates are 1280x720.
 # Data: title, prompt, room, cells[] (name thumb badge broken p1 p2 hover index),
 # shown{name author art verdict badge stats present}, p1/p2 (same shape), versus,
 # ready, searching, query, sort, count, stage{name thumb has_thumb}, profile, rating.
-background = [0.03, 0.04, 0.08, 1.0]
+background = [0.05, 0.06, 0.1, 1.0]
 
 [[node]]
 kind = "image"
@@ -28,7 +29,7 @@ h = 720
 kind = "text"
 text = "{title}"
 x = 40
-y = 18
+y = 16
 font = 3
 bank = 0
 scale = 2
@@ -37,49 +38,41 @@ enter = "down"
 [[node]]
 kind = "text"
 text = "{prompt}"
-anchor = "top"
-y = 30
-font = 2
+x = 470
+y = 28
+font = 1
 bank = 4
 scale = 2
 
+# big art plate (left column)
 [[node]]
-kind = "text"
-text = "ROOM {room}"
-anchor = "tr"
-x = 40
-y = 30
-font = 1
-bank = 6
-scale = 2
-
-# big art plate (left)
-[[node]]
-kind = "panel"
+kind = "image"
 id = "art"
 image = "ui/art_frame.webp"
-nine = [10, 10, 10, 10]
 x = 40
-y = 70
+y = 68
 w = 400
 h = 440
 enter = "left"
 enter_time = 20
 
-  [[node.children]]
-  kind = "image"
-  image = "{shown.art}"
-  anchor = "top"
-  y = 14
-  h = 400
-  visible = "shown.present"
+[[node]]
+kind = "image"
+image = "{shown.art}"
+x = 60
+y = 84
+h = 404
+visible = "shown.present"
+enter = "left"
+enter_time = 20
 
+# info strip under the plate
 [[node]]
 kind = "panel"
 image = "ui/plate_lit.webp"
 x = 40
 y = 516
-w = 442
+w = 400
 h = 44
 enter = "left"
 enter_time = 22
@@ -94,59 +87,78 @@ enter_time = 22
   scale = 2
 
 [[node]]
-kind = "text"
-text = "BY {shown.author}"
-x = 48
-y = 568
-font = 1
-bank = 6
-scale = 2
+kind = "panel"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+x = 40
+y = 566
+w = 400
+h = 108
+enter = "left"
+enter_time = 24
 
-[[node]]
-kind = "image"
-image = "{shown.badge}"
-x = 48
-y = 594
-w = 16
-h = 16
-visible = "shown.badge"
+  [[node.children]]
+  kind = "text"
+  text = "BY {shown.author}"
+  x = 14
+  y = 10
+  font = 1
+  bank = 6
+  scale = 2
 
-[[node]]
-kind = "text"
-text = "{shown.verdict}"
-x = 72
-y = 592
-font = 1
-bank = 4
-scale = 2
+  [[node.children]]
+  kind = "image"
+  image = "{shown.badge}"
+  x = 14
+  y = 36
+  w = 16
+  h = 16
+  visible = "shown.badge"
 
-[[node]]
-kind = "text"
-text = "{shown.stats}"
-x = 48
-y = 616
-font = 1
-bank = 7
-scale = 2
+  [[node.children]]
+  kind = "text"
+  text = "{shown.verdict}"
+  x = 38
+  y = 34
+  font = 1
+  bank = 4
+  scale = 2
 
-[[node]]
-kind = "text"
-text = "P1  {p1.name}     P2  {p2.name}"
-x = 48
-y = 644
-font = 1
-bank = 6
-scale = 2
-visible = "versus"
+  [[node.children]]
+  kind = "text"
+  text = "{shown.stats}"
+  x = 14
+  y = 58
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "P1 {p1.name}   P2 {p2.name}"
+  x = 14
+  y = 82
+  font = 1
+  bank = 5
+  scale = 2
+  visible = "versus"
 
 # roster grid
+[[node]]
+kind = "panel"
+color = [0.05, 0.06, 0.12, 0.8]
+x = 466
+y = 62
+w = 780
+h = 330
+
 [[node]]
 kind = "grid"
 id = "cells"
 x = 470
-y = 70
+y = 66
 w = 772
-h = 386
+h = 322
 columns = 10
 cell_w = 77
 cell_h = 77
@@ -209,7 +221,7 @@ enter_time = 20
 kind = "text"
 text = "{count}"
 x = 474
-y = 466
+y = 406
 font = 1
 bank = 6
 scale = 2
@@ -218,7 +230,7 @@ scale = 2
 kind = "button"
 id = "search"
 x = 748
-y = 462
+y = 400
 w = 130
 h = 32
 image = "ui/plate.webp"
@@ -233,7 +245,7 @@ on_press = "search"
 kind = "button"
 id = "sort"
 x = 886
-y = 462
+y = 400
 w = 214
 h = 32
 image = "ui/plate.webp"
@@ -248,7 +260,7 @@ on_press = "sort"
 kind = "button"
 id = "random"
 x = 1108
-y = 462
+y = 400
 w = 134
 h = 32
 image = "ui/plate.webp"
@@ -259,23 +271,97 @@ bank = 7
 scale = 2
 on_press = "random"
 
+# player card (skewed, big gold number)
+[[node]]
+kind = "image"
+image = "ui/card.webp"
+x = 466
+y = 448
+w = 444
+h = 120
+enter = "up"
+enter_time = 20
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{profile.name}"
+x = 492
+y = 458
+font = 1
+bank = 2
+scale = 2
+
+[[node]]
+kind = "text"
+text = "{profile.wins}"
+x = 492
+y = 480
+font = 3
+bank = 3
+scale = 3
+
+[[node]]
+kind = "text"
+text = "WINS"
+x = 492
+y = 538
+font = 1
+bank = 6
+scale = 2
+
+[[node]]
+kind = "image"
+image = "{profile.avatar}"
+x = 818
+y = 462
+w = 56
+h = 56
+
+[[node]]
+kind = "text"
+text = "LEVEL {profile.level}"
+x = 636
+y = 470
+font = 1
+bank = 4
+scale = 2
+
+[[node]]
+kind = "text"
+text = "{profile.losses} LOSSES"
+x = 636
+y = 496
+font = 1
+bank = 6
+scale = 2
+
+[[node]]
+kind = "text"
+text = "RATING {rating}"
+x = 636
+y = 522
+font = 1
+bank = 7
+scale = 2
+
 # stage strip
 [[node]]
 kind = "panel"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
-x = 470
-y = 508
-w = 430
-h = 130
+x = 920
+y = 448
+w = 322
+h = 120
 enter = "up"
 enter_time = 20
 
   [[node.children]]
   kind = "text"
   text = "STAGE"
-  x = 14
-  y = 10
+  x = 12
+  y = 8
   font = 1
   bank = 4
   scale = 2
@@ -283,37 +369,37 @@ enter_time = 20
   [[node.children]]
   kind = "image"
   image = "{stage.thumb}"
-  x = 14
-  y = 34
-  w = 150
-  h = 84
+  x = 12
+  y = 32
+  w = 120
+  h = 68
   visible = "stage.has_thumb"
 
   [[node.children]]
   kind = "panel"
   color = [0.08, 0.1, 0.18, 1.0]
-  x = 14
-  y = 34
-  w = 150
-  h = 84
+  x = 12
+  y = 32
+  w = 120
+  h = 68
   visible = "!stage.has_thumb"
 
   [[node.children]]
   kind = "text"
   text = "{stage.name}"
-  x = 178
-  y = 48
-  w = 236
-  font = 2
+  x = 144
+  y = 34
+  w = 170
+  font = 1
   bank = 7
   scale = 2
 
   [[node.children]]
   kind = "button"
   id = "stage_prev"
-  x = 178
-  y = 84
-  w = 60
+  x = 144
+  y = 66
+  w = 44
   h = 32
   image = "ui/plate.webp"
   image_focus = "ui/plate_lit.webp"
@@ -326,9 +412,9 @@ enter_time = 20
   [[node.children]]
   kind = "button"
   id = "stage_next"
-  x = 246
-  y = 84
-  w = 60
+  x = 194
+  y = 66
+  w = 44
   h = 32
   image = "ui/plate.webp"
   image_focus = "ui/plate_lit.webp"
@@ -341,82 +427,25 @@ enter_time = 20
   [[node.children]]
   kind = "button"
   id = "stage_random"
-  x = 314
-  y = 84
-  w = 100
+  x = 244
+  y = 66
+  w = 68
   h = 32
   image = "ui/plate.webp"
   image_focus = "ui/plate_lit.webp"
-  text = "RANDOM"
+  text = "RND"
   font = 1
   bank = 7
   scale = 2
   on_press = "stage:random"
 
-# player card
-[[node]]
-kind = "panel"
-image = "ui/card.webp"
-nine = [10, 10, 10, 10]
-x = 920
-y = 508
-w = 322
-h = 130
-enter = "up"
-enter_time = 20
-enter_delay = 4
-
-  [[node.children]]
-  kind = "image"
-  image = "{profile.avatar}"
-  x = 12
-  y = 12
-  w = 56
-  h = 56
-
-  [[node.children]]
-  kind = "text"
-  text = "{profile.name}"
-  x = 80
-  y = 12
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "LEVEL {profile.level}"
-  x = 80
-  y = 44
-  font = 1
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{profile.wins} W / {profile.losses} L"
-  x = 80
-  y = 68
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "RATING {rating}"
-  x = 12
-  y = 98
-  font = 1
-  bank = 7
-  scale = 2
-
 # confirm / back
 [[node]]
 kind = "button"
 id = "confirm"
-x = 470
-y = 652
-w = 300
+x = 920
+y = 598
+w = 322
 h = 54
 image = "ui/button_lit.webp"
 image_focus = "ui/button_lit.webp"
@@ -432,9 +461,8 @@ hover_scale = 1.03
 [[node]]
 kind = "button"
 id = "back"
-anchor = "br"
-x = 40
-y = 14
+x = 466
+y = 598
 w = 200
 h = 54
 image = "ui/button.webp"
@@ -445,28 +473,63 @@ bank = 7
 bank_focus = 4
 scale = 2
 on_press = "back"
+
+# footer bar
+[[node]]
+kind = "panel"
+color = [0.04, 0.05, 0.08, 1.0]
+anchor = "bl"
+w = 1280
+h = 30
+
+[[node]]
+kind = "panel"
+color = [0.63, 0.07, 0.17, 1.0]
+anchor = "bl"
+y = 30
+w = 1280
+h = 2
+
+[[node]]
+kind = "text"
+text = "ROOM {room}     {count}"
+anchor = "bl"
+x = 24
+y = 8
+font = 1
+bank = 6
+scale = 2
+
+[[node]]
+kind = "text"
+text = "ENTER  PICK     ESC  BACK"
+anchor = "br"
+x = 24
+y = 8
+font = 1
+bank = 6
+scale = 2
 "##;
 
-const TITLE_TOML: &str = r##"# rugen title screen — edit freely, see README.md. Coordinates are 1280x720.
-background = [0.02, 0.03, 0.07, 1.0]
+const TITLE_TOML: &str = r##"# rugen title screen — Neon Dojo. Edit freely, see README.md. Coordinates are 1280x720.
+background = [0.05, 0.06, 0.1, 1.0]
 
-# background: three pixel layers (sky, far ridges, near arena) that slide in
-# at different speeds for a parallax feel
+# background: base gloss, slash layer, floor — each slides in at its own pace
 [[node]]
 kind = "image"
 image = "ui/bg_sky.webp"
 w = 1280
 h = 720
 enter = "fade"
-enter_time = 30
+enter_time = 24
 
 [[node]]
 kind = "image"
 image = "ui/bg_far.webp"
 w = 1280
 h = 720
-enter = "up"
-enter_time = 36
+enter = "right"
+enter_time = 30
 
 [[node]]
 kind = "image"
@@ -481,59 +544,72 @@ kind = "image"
 id = "logo"
 image = "ui/logo.webp"
 x = 56
-y = 30
+y = 36
 scale = 2
 enter = "down"
 enter_time = 22
 
-# profile strip
+# profile strip (skewed slab, red avatar square)
 [[node]]
-kind = "panel"
-id = "profile"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
+kind = "image"
+image = "ui/strip.webp"
 anchor = "tr"
 x = 24
-y = 22
+y = 28
 w = 560
 h = 76
 enter = "right"
 enter_time = 20
 
-  [[node.children]]
-  kind = "image"
-  image = "{profile.avatar}"
-  x = 10
-  y = 10
-  w = 56
-  h = 56
+[[node]]
+kind = "image"
+image = "{profile.avatar}"
+anchor = "tr"
+x = 514
+y = 38
+w = 56
+h = 56
+enter = "right"
+enter_time = 20
 
-  [[node.children]]
-  kind = "text"
-  text = "{profile.name}"
-  x = 80
-  y = 10
-  font = 2
-  bank = 7
-  scale = 2
+[[node]]
+kind = "text"
+text = "{profile.name}"
+anchor = "tr"
+x = 24
+y = 38
+w = 470
+font = 2
+bank = 7
+scale = 2
+align = "left"
+pad = 0
+enter = "right"
+enter_time = 20
 
-  [[node.children]]
-  kind = "text"
-  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
-  x = 80
-  y = 46
-  font = 1
-  bank = 4
-  scale = 2
+[[node]]
+kind = "text"
+text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
+anchor = "tr"
+x = 24
+y = 72
+w = 470
+font = 1
+bank = 4
+scale = 2
+align = "left"
+pad = 0
+enter = "right"
+enter_time = 20
 
 # main menu: one slanted button per entry of `menu`
 [[node]]
 kind = "vbox"
 id = "menu"
 x = 60
-y = 236
+y = 196
 w = 400
-gap = 10
+gap = 8
 items = "menu"
 enter = "left"
 enter_time = 20
@@ -547,132 +623,142 @@ enter_time = 20
   text = "{item.label}"
   font = 2
   bank = 7
-  bank_focus = 4
+  bank_focus = 7
   scale = 2
   align = "left"
-  pad = 26
+  pad = 28
   hover_scale = 1.03
   on_press = "{item.action}"
 
-# featured panel
+# featured panel (cut corner, eyebrow label)
 [[node]]
-kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 500
-y = 236
-w = 500
-h = 330
+kind = "image"
+image = "{news.0.image}"
+x = 520
+y = 196
+w = 488
+h = 258
 enter = "up"
 enter_time = 22
 enter_delay = 4
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.0.image}"
-  x = 6
-  y = 6
-  w = 488
-  h = 258
-
-  [[node.children]]
-  kind = "panel"
-  color = [0.0, 0.0, 0.0, 0.6]
-  anchor = "bl"
-  x = 6
-  y = 6
-  w = 488
-  h = 60
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.0.title}"
-  anchor = "bl"
-  x = 18
-  y = 34
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.0.subtitle}"
-  anchor = "bl"
-  x = 18
-  y = 12
-  w = 460
-  font = 1
-  bank = 6
-  scale = 2
-
-# two smaller panels
 [[node]]
 kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 1016
-y = 236
-w = 240
-h = 160
+color = [0.04, 0.05, 0.09, 0.92]
+x = 520
+y = 400
+w = 488
+h = 54
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "FEATURED"
+x = 534
+y = 406
+font = 1
+bank = 2
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{news.0.title}"
+x = 534
+y = 426
+font = 2
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{news.0.subtitle}"
+x = 520
+y = 464
+w = 488
+font = 1
+bank = 6
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 6
+
+# two smaller tiles
+[[node]]
+kind = "image"
+image = "{news.1.image}"
+x = 1024
+y = 196
+w = 228
+h = 120
 enter = "up"
 enter_time = 22
 enter_delay = 8
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.1.image}"
-  x = 6
-  y = 6
-  w = 228
-  h = 120
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.1.title}"
-  anchor = "bl"
-  x = 12
-  y = 8
-  font = 1
-  bank = 7
-  scale = 2
+[[node]]
+kind = "text"
+text = "{news.1.title}"
+x = 1024
+y = 322
+font = 1
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 8
 
 [[node]]
-kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 1016
-y = 406
-w = 240
-h = 160
+kind = "image"
+image = "{news.2.image}"
+x = 1024
+y = 352
+w = 228
+h = 120
 enter = "up"
 enter_time = 22
 enter_delay = 12
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.2.image}"
-  x = 6
-  y = 6
-  w = 228
-  h = 120
+[[node]]
+kind = "text"
+text = "{news.2.title}"
+x = 1024
+y = 478
+font = 1
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 12
 
-  [[node.children]]
-  kind = "text"
-  text = "{news.2.title}"
-  anchor = "bl"
-  x = 12
-  y = 8
-  font = 1
-  bank = 7
-  scale = 2
+# footer bar with a red rule
+[[node]]
+kind = "panel"
+color = [0.04, 0.05, 0.08, 1.0]
+anchor = "bl"
+w = 1280
+h = 30
 
-# footer
+[[node]]
+kind = "panel"
+color = [0.63, 0.07, 0.17, 1.0]
+anchor = "bl"
+y = 30
+w = 1280
+h = 2
+
 [[node]]
 kind = "text"
 text = "RUGEN {version}"
 anchor = "bl"
 x = 24
-y = 16
+y = 8
 font = 1
 bank = 6
 scale = 2
@@ -682,7 +768,7 @@ kind = "text"
 text = "ENTER / CLICK  SELECT     ESC  BACK     F11  FULLSCREEN"
 anchor = "br"
 x = 24
-y = 16
+y = 8
 font = 1
 bank = 6
 scale = 2
@@ -812,10 +898,13 @@ const NEWS_JSON: &str = r#"[
 ]
 "#;
 
-const README: &str = r#"# motif/ui — the data-driven front end
+const README: &str = r#"# ui/ — the data-driven front end (theme "dojo")
 
 Menus are TOML files rendered by the `rugen-ui` engine; no code needed to
-re-skin or re-arrange them. `rugen ui-gen` regenerates these defaults.
+re-skin or re-arrange them. A theme lives in `motif/themes/<name>/` (this
+folder plus `system.def` / `fight.def` / `.sff`); fonts, the CC0 kit, the
+palette, `news.json` and `art/` are shared in `motif/`. `rugen ui-gen
+[--out motif/themes/<name>]` regenerates these defaults for the Neon Dojo look.
 
 ## Files
 
@@ -861,10 +950,12 @@ Binds use dotted paths: `{profile.name}`, `{news.0.title}`, `{item.label}`.
 `"!path"` negates.
 "#;
 
-/// Generate `motif/ui/*` (assets, screens, news, README). `fallback_ttf` is
-/// only used when a role font is missing from `motif/font/src/`.
-pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()> {
-    let ui = motif.join("ui");
+/// Generate a theme's `ui/*` (assets, screens, README) into `theme`
+/// (`motif/themes/<name>`); fonts, the CC0 kit, the palette, `news.json` and
+/// `art/` are shared and live in `motif`. `fallback_ttf` is only used when a
+/// role font is missing from `motif/font/src/`.
+pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path, theme: &Path) -> anyhow::Result<()> {
+    let ui = theme.join("ui");
     std::fs::create_dir_all(&ui)?;
     std::fs::write(motif.join("palette.gpl"), pixelize::gpl())?;
     fontgen::generate_roles(motif, fallback_ttf)?;
@@ -881,7 +972,7 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
         },
     )?;
     let caption_gen = Generator::new(&title_ttf, title_role.style)?;
-    kit::import(motif)?;
+    kit::import(motif, theme)?;
     let w = |name: &str, c: &crate::screenpack::Canvas| pixelize::write_webp(&ui.join(name), c);
     w("bg.webp", &kit::bg_composite())?;
     w("bg_sky.webp", &kit::bg_sky())?;
@@ -894,6 +985,7 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
     w("row.webp", &kit::row(motif, false)?)?;
     w("row_lit.webp", &kit::row(motif, true)?)?;
     w("avatar.webp", &kit::avatar(motif)?)?;
+    w("strip.webp", &kit::strip(motif)?)?;
     w("cell.webp", &kit::cell(motif, "normal")?)?;
     w("cell_lit.webp", &kit::cell(motif, "lit")?)?;
     w("cell_p1.webp", &kit::cell(motif, "p1")?)?;
@@ -917,7 +1009,7 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
         "news3.webp",
         &kit::news_online(&caption_gen, 114, 60, "ONLINE"),
     )?;
-    pixelize_art(motif)?;
+    pixelize_art(motif, theme)?;
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
     std::fs::write(ui.join("options.toml"), OPTIONS_TOML)?;
     std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
@@ -929,14 +1021,14 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Hero images dropped into `motif/art/` (png / webp) → `motif/ui/art/<name>.webp`,
+/// Hero images dropped into `motif/art/` (png / webp) → `<theme>/ui/art/<name>.webp`,
 /// downscaled to the 640-px grid and quantised to the palette.
-pub fn pixelize_art(motif: &Path) -> anyhow::Result<usize> {
+pub fn pixelize_art(motif: &Path, theme: &Path) -> anyhow::Result<usize> {
     let src = motif.join("art");
     let Ok(rd) = std::fs::read_dir(&src) else {
         return Ok(0);
     };
-    let out = motif.join("ui").join("art");
+    let out = theme.join("ui").join("art");
     let pal = pixelize::full_palette();
     let mut n = 0;
     for e in rd.flatten() {

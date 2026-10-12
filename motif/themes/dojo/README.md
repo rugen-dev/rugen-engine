@@ -1,4 +1,4 @@
-# motif/
+# motif/themes/dojo — the Neon Dojo screenpack
 
 The rugen screenpack: an ordinary MUGEN motif (system.def, fight.def, SFF v2
 art, FNT v2 fonts) for a 426x240 (16:9) pixel grid. Everything here is

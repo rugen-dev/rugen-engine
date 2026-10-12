@@ -58,7 +58,8 @@ key rebinding; saves `rugen.toml`), NETPLAY, EXIT. `[camera] zoom_out` /
 `zoom_in` in `rugen.toml` decide how far players can separate before the
 screen edge stops them, on any stage.
 
-Menus are data: `motif/ui/*.toml` + WebP art (see `motif/ui/README.md`);
+Menus are data: `motif/themes/<theme>/ui/*.toml` + WebP art (see
+`motif/themes/dojo/ui/README.md`); themes live side by side under `motif/themes/`;
 `rugen ui-gen` regenerates the defaults. Mouse, keyboard and gamepad all work
 in them.
 
@@ -95,7 +96,7 @@ art, FNT v2 fonts) for a 426x240 pixel grid: dark slanted panels, slashed
 accents, pixel italic type. It is generated, not hand-drawn:
 
 ```
-rugen screenpack-gen [--font bold.ttf] [--out motif]   # regenerate art, fonts and defs
+rugen screenpack-gen [--font bold.ttf] [--out motif/themes/dojo]   # regenerate the fight/system screenpack of a theme
 rugen fontgen bold.ttf --size 13 --italic 3 --rim --out motif/font/my.def --preview my.png
 ```
 
