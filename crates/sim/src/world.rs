@@ -3228,6 +3228,12 @@ impl World {
         if self.stage.platforms.is_empty() && self.stage.arena.floor.is_none() {
             return false;
         }
+        // normal helpers (projectiles, effects, trackers) keep MUGEN's flat
+        // ground: pits and platforms are for the fighters
+        if !self.players[i].player_type {
+            self.players[i].ground = 0.0;
+            return false;
+        }
         let (x, old_y, new_y, vy, ground) = {
             let p = &self.players[i];
             (p.pos[0], p.old_pos[1], p.pos[1], p.vel[1], p.ground)
@@ -3277,11 +3283,16 @@ impl World {
             Some(k) if new_y >= k - 0.01 || k <= below => k,
             _ => below,
         };
-        // standing on nothing: the caller drops the player into the air-fall state
+        // walked off the surface it stood on (the ground under the feet dropped
+        // away this tick): the caller drops the player into the air-fall state.
+        // A body content placed in the air (PosSet, binds) is left alone.
         if p.physics != Physics::A
             && p.state_type != StateType::A
-            && p.pos[1] < p.ground - 0.5
             && p.move_type != MoveType::H
+            && p.bind.is_none()
+            && p.ground > ground
+            && old_y >= ground - 0.5
+            && p.pos[1] < p.ground - 0.5
         {
             p.vel[1] = 0.0;
             return true;
@@ -3689,6 +3700,57 @@ mod tests {
         let p = &w.players[0];
         assert_eq!(p.ground, -80.0, "still on the platform");
         assert_eq!(p.pos[1], -80.0, "PosSet y = 0 is relative to the platform");
+    }
+
+    /// Arena pits / platforms only drop fighters that walk off their surface.
+    /// G6 Sasuke's thrown kunai (a normal helper flying with physics S) left the
+    /// island, was forced into state 50 and never destroyed itself, so his throw
+    /// state (which waits for the kunai) never ended; a stand-type state held
+    /// in the air by PosSet (his Susanoo) was dropped into the fall state too.
+    #[test]
+    fn arena_floor_drops_only_fighters_that_walk_off() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n\
+                 [State 1001, h]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 80\n\
+                 [State 1001, back]\ntype = ChangeState\ntrigger1 = time = 2\nvalue = 1003\n\
+                 [Statedef 1002]\ntype = S\nphysics = S\nanim = 0\n\
+                 [State 1002, v]\ntype = VelSet\ntrigger1 = 1\nx = 15\n\
+                 [Statedef 1003]\ntype = S\nphysics = N\nanim = 0\nctrl = 0\n\
+                 [State 1003, p]\ntype = PosSet\ntrigger1 = 1\ny = -50\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        w.stage.arena.floor = Some([-150.0, 150.0]);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1001, None, None);
+        run(&mut w, 40, Buttons::default());
+        let h = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.helper_id == 80)
+            .expect("helper exists");
+        let h = &w.players[h];
+        assert!(
+            h.pos[0].abs() > 150.0,
+            "helper flew past the floor: {:?}",
+            h.pos
+        );
+        assert_eq!(
+            h.state_no, 1002,
+            "normal helpers are not dropped into a fall"
+        );
+        assert_eq!((h.pos[1], h.ground), (0.0, 0.0));
+        let p = &w.players[0];
+        assert_eq!(
+            p.state_no, 1003,
+            "held in the air by PosSet, not walked off"
+        );
+        assert_eq!(p.pos[1], -50.0);
     }
 
     fn arena_world() -> Option<World> {
