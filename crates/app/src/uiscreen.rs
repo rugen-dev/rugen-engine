@@ -174,6 +174,8 @@ pub struct UiScreen {
     netplay: bool,
     profile: Profile,
     news: Value,
+    /// Installed UI themes for the options row.
+    themes: Vec<String>,
     window: (u32, u32),
     mouse_px: Option<(f32, f32)>,
     pending: Option<Transition>,
@@ -203,9 +205,9 @@ pub(crate) fn viewport(window: (u32, u32)) -> (f32, f32) {
 }
 
 impl UiScreen {
-    /// True when the motif provides a TOML for this screen.
+    /// True when the motif (or the flat `motif/` it falls back to) provides a TOML for this screen.
     pub fn available(motif: &Path, kind: UiKind) -> bool {
-        motif.join("ui").join(Self::file(kind)).exists()
+        motif_file(motif, &format!("ui/{}", Self::file(kind))).is_some()
     }
 
     fn file(kind: UiKind) -> &'static str {
@@ -303,11 +305,12 @@ impl UiScreen {
         netplay: bool,
         lib: &rugen_content::Library,
     ) -> anyhow::Result<Self> {
-        let path = motif.join("ui").join(Self::file(kind));
+        let path = motif_file(motif, &format!("ui/{}", Self::file(kind)))
+            .unwrap_or_else(|| motif.join("ui").join(Self::file(kind)));
         let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
         let def = ScreenDef::parse(&text).with_context(|| path.display().to_string())?;
-        let news = std::fs::read(motif.join("news.json"))
-            .ok()
+        let news = motif_file(motif, "news.json")
+            .and_then(|p| std::fs::read(p).ok())
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .unwrap_or_else(|| json!([]));
         let mut s = Self {
@@ -320,6 +323,7 @@ impl UiScreen {
             dirty: false,
             netplay,
             profile: Profile::load(root),
+            themes: lib.themes(),
             news,
             window: (1280, 720),
             mouse_px: None,
@@ -529,6 +533,12 @@ impl UiScreen {
                         format!("{} F", c.net.input_delay),
                         true,
                     ),
+                    row(
+                        "theme",
+                        "UI THEME",
+                        c.video.theme.trim().to_uppercase(),
+                        true,
+                    ),
                     row("keys1", "P1 KEYS", short_keys(&c.input.p1), false),
                     row("keys2", "P2 KEYS", short_keys(&c.input.p2), false),
                 ];
@@ -609,6 +619,19 @@ impl UiScreen {
             "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
             "ai" => c.game.ai_level = (c.game.ai_level + dir).clamp(1, 8),
             "delay" => c.net.input_delay = (c.net.input_delay as i32 + dir).clamp(0, 8) as usize,
+            "theme" => {
+                if self.themes.is_empty() {
+                    return;
+                }
+                let cur = self
+                    .themes
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(c.video.theme.trim()))
+                    .unwrap_or(0) as i32;
+                let n = self.themes.len() as i32;
+                let next = (cur + dir).rem_euclid(n) as usize;
+                c.video.theme = self.themes[next].clone();
+            }
             _ => return,
         }
         self.dirty = true;
@@ -850,6 +873,18 @@ fn short_keys(k: &crate::config::PlayerKeys) -> String {
 }
 
 /// Decode a WebP or PNG file to straight RGBA.
+/// Resolve a relative screenpack file through the theme → flat `motif/` chain.
+pub fn motif_file(motif: &Path, rel: &str) -> Option<std::path::PathBuf> {
+    let mut dirs = vec![motif.to_path_buf()];
+    if let Some(parent) = motif.parent()
+        && parent.file_name().is_some_and(|n| n == "themes")
+        && let Some(flat) = parent.parent()
+    {
+        dirs.push(flat.to_path_buf());
+    }
+    dirs.into_iter().map(|d| d.join(rel)).find(|p| p.exists())
+}
+
 pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let ext = path
         .extension()
@@ -932,7 +967,8 @@ impl Host<'_> {
                 .get(self.r, g, n)
                 .map(|p| (p.tex, p.size[0] as u32, p.size[1] as u32, p.pal))
         } else {
-            match load_image(&self.motif.join(key)) {
+            let path = motif_file(self.motif, key).unwrap_or_else(|| self.motif.join(key));
+            match load_image(&path) {
                 Ok((w, h, rgba)) => Some((self.r.add_rgba(w, h, &rgba), w, h, None)),
                 Err(e) => {
                     log::warn!("ui asset {key}: {e}");

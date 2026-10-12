@@ -82,6 +82,8 @@ pub struct Video {
     pub width: u32,
     pub height: u32,
     pub fullscreen: bool,
+    /// UI theme: a folder under `motif/themes/` (`ink`, `dojo`, ...) or `classic` for the flat `motif/`.
+    pub theme: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +146,7 @@ impl Default for Video {
             width: 1280,
             height: 720,
             fullscreen: false,
+            theme: "ink".into(),
         }
     }
 }

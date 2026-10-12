@@ -30,8 +30,13 @@ pub struct Style {
     pub highlight: bool,
 }
 
+/// Bank indices for the ink theme (paper backgrounds).
+pub const BANK_INK: usize = 9;
+pub const BANK_RED: usize = 10;
+pub const BANK_PAPER: usize = 11;
+
 /// `(face, highlight, outline, shadow, rim)` RGBA per bank.
-pub const BANKS: [[[u8; 4]; 5]; 9] = [
+pub const BANKS: [[[u8; 4]; 5]; 12] = [
     [
         [255, 255, 255, 255],
         [255, 255, 255, 255],
@@ -93,6 +98,30 @@ pub const BANKS: [[[u8; 4]; 5]; 9] = [
         [70, 72, 88, 255],
         [8, 8, 12, 255],
         [0, 0, 0, 120],
+        [0, 0, 0, 0],
+    ],
+    // 9: ink on paper
+    [
+        [17, 17, 17, 255],
+        [17, 17, 17, 255],
+        [243, 239, 228, 255],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+    ],
+    // 10: red stamp ink
+    [
+        [224, 32, 32, 255],
+        [224, 32, 32, 255],
+        [17, 17, 17, 255],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+    ],
+    // 11: paper on ink slabs
+    [
+        [243, 239, 228, 255],
+        [255, 255, 255, 255],
+        [17, 17, 17, 255],
+        [0, 0, 0, 0],
         [0, 0, 0, 0],
     ],
 ];
@@ -409,14 +438,20 @@ pub fn role_ttf(motif: &Path, role: &Role, fallback: Option<&[u8]>) -> anyhow::R
 
 /// Write every role font into `motif/font/`.
 pub fn generate_roles(motif: &Path, fallback: Option<&[u8]>) -> anyhow::Result<()> {
+    generate_roles_into(motif, &motif.join("font"), fallback)
+}
+
+/// Write every role font into `out_dir`, reading the TTFs from `motif/font/src/`
+/// (themes keep their own copy of the fonts next to their screens).
+pub fn generate_roles_into(
+    motif: &Path,
+    out_dir: &Path,
+    fallback: Option<&[u8]>,
+) -> anyhow::Result<()> {
     for role in roles() {
         let bytes = role_ttf(motif, &role, fallback)?;
         let g = Generator::new(&bytes, role.style)?;
-        write_font(
-            &g,
-            &motif.join("font").join(format!("{}.def", role.name)),
-            role.name,
-        )?;
+        write_font(&g, &out_dir.join(format!("{}.def", role.name)), role.name)?;
     }
     Ok(())
 }

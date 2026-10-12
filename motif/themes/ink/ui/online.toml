@@ -1,0 +1,392 @@
+# rugen ONLINE screen — rooms, ranked queue, leaderboard. Coordinates are 1280x720.
+# Data: is_menu/is_room/is_join/is_queue/is_board, status, error, server.*, me.*,
+# room.code, typed, opponent.*, queue.*, board[] (pos/name/rating/rank/record), season, my_rank.
+background = [0.95, 0.94, 0.89, 1.0]
+
+[[node]]
+kind = "image"
+image = "ui/paper.webp"
+w = 1280
+h = 720
+
+[[node]]
+kind = "text"
+text = "ONLINE"
+x = 640
+y = 42
+font = 2
+bank = 9
+scale = 4
+align = "center"
+enter = "down"
+enter_time = 16
+
+[[node]]
+kind = "text"
+text = "{server.name}   {server.online} ONLINE   {server.queued} IN QUEUE"
+x = 640
+y = 112
+font = 1
+bank = 8
+scale = 2
+align = "center"
+
+# player card (always)
+[[node]]
+kind = "panel"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+anchor = "tr"
+x = 40
+y = 150
+w = 400
+h = 150
+enter = "right"
+enter_time = 18
+
+  [[node.children]]
+  kind = "text"
+  text = "{me.name}"
+  x = 18
+  y = 14
+  font = 2
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{me.rank}   {me.rating}"
+  x = 18
+  y = 48
+  font = 2
+  bank = 10
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "BEST {me.best}   {me.wins} W / {me.losses} L"
+  x = 18
+  y = 82
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "FIGHTER: {me.char}"
+  x = 18
+  y = 112
+  font = 1
+  bank = 9
+  scale = 2
+
+# ---- menu: one slanted button per entry of `menu`
+[[node]]
+kind = "vbox"
+visible = "is_menu"
+x = 60
+y = 190
+w = 400
+gap = 10
+items = "menu"
+enter = "left"
+enter_time = 18
+
+  [[node.children]]
+  kind = "button"
+  id = "{item.id}"
+  h = 54
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{item.label}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 26
+  hover_scale = 1.03
+  on_press = "{item.action}"
+
+# ---- room
+[[node]]
+kind = "panel"
+visible = "is_room"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 190
+w = 720
+h = 300
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "ROOM CODE"
+  x = 30
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{room.code}"
+  x = 30
+  y = 54
+  font = 2
+  bank = 10
+  scale = 5
+
+  [[node.children]]
+  kind = "text"
+  text = "GIVE THIS CODE TO YOUR OPPONENT"
+  visible = "room.waiting"
+  x = 30
+  y = 160
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}"
+  visible = "room.ready"
+  x = 30
+  y = 160
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "room_cancel"
+  anchor = "bl"
+  x = 30
+  y = 24
+  w = 260
+  h = 48
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "CANCEL"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 26
+  on_press = "online:cancel"
+
+# ---- join (typing)
+[[node]]
+kind = "panel"
+visible = "is_join"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 190
+w = 720
+h = 300
+
+  [[node.children]]
+  kind = "text"
+  text = "TYPE THE ROOM CODE AND PRESS ENTER"
+  x = 30
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "code"
+  x = 30
+  y = 60
+  w = 400
+  h = 80
+  font = 2
+  bank = 9
+  scale = 5
+  max_len = 5
+  placeholder = "_____"
+  value = "typed"
+  on_change = "typed:{value}"
+  on_press = "join"
+
+  [[node.children]]
+  kind = "text"
+  text = "LETTERS AND DIGITS   BACKSPACE ERASES   ESC CANCELS"
+  anchor = "bl"
+  x = 30
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+# ---- ranked queue
+[[node]]
+kind = "panel"
+visible = "is_queue"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 190
+w = 720
+h = 300
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "RANKED"
+  x = 30
+  y = 24
+  font = 2
+  bank = 10
+  scale = 3
+
+  [[node.children]]
+  kind = "text"
+  text = "WAITING {queue.secs} S   {queue.count} IN QUEUE"
+  x = 30
+  y = 90
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.record}"
+  visible = "queue.found"
+  x = 30
+  y = 130
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "queue_cancel"
+  anchor = "bl"
+  x = 30
+  y = 24
+  w = 260
+  h = 48
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "CANCEL"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 26
+  on_press = "online:cancel"
+
+# ---- leaderboard
+[[node]]
+kind = "panel"
+visible = "is_board"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 150
+w = 760
+h = 500
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "{season}   {my_rank}"
+  x = 24
+  y = 16
+  font = 1
+  bank = 10
+  scale = 2
+
+  [[node.children]]
+  kind = "list"
+  x = 16
+  y = 50
+  w = 728
+  h = 380
+  gap = 4
+  items = "board"
+
+    [[node.children.children]]
+    kind = "panel"
+    h = 34
+    image = "ui/row.webp"
+    nine = [4, 4, 4, 4]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "#{item.pos}  {item.name}"
+      x = 16
+      y = 8
+      font = 1
+      bank = 9
+      scale = 2
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.rank}  {item.rating}   {item.record}"
+      anchor = "tr"
+      x = 16
+      y = 8
+      font = 1
+      bank = 8
+      scale = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "board_back"
+  anchor = "bl"
+  x = 16
+  y = 16
+  w = 220
+  h = 44
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "BACK"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 26
+  on_press = "online:cancel"
+
+# status / error footer
+[[node]]
+kind = "text"
+text = "{status}"
+anchor = "bl"
+x = 60
+y = 60
+font = 2
+bank = 9
+scale = 2
+
+[[node]]
+kind = "text"
+text = "{error}"
+visible = "has_error"
+anchor = "bl"
+x = 60
+y = 28
+font = 1
+bank = 10
+scale = 2
+
+[[node]]
+kind = "text"
+text = "ENTER / CLICK  SELECT     ESC  BACK"
+anchor = "br"
+x = 24
+y = 16
+font = 1
+bank = 8
+scale = 2
