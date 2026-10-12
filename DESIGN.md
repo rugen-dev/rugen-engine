@@ -73,12 +73,36 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
 - Ordered containers only (`Vec`, `BTreeMap`, `IndexMap`). Never `HashMap` iteration in sim.
 - CNS VM state is part of the snapshot.
 - Sim runs fixed 60 Hz. Render reads state, never mutates it.
-- Target: full frame step < 2 ms so 7-frame rollback fits in budget.
+- Target: full frame step < 2 ms so 7-frame rollback fits in budget. Snapshots
+  must not copy immutable character data: compiled commands sit behind an
+  `Arc` (only their runtime state is cloned), animations are read in place.
+  `crates/sim/examples/rollbench.rs` measures save / load / step (Naruto vs
+  Sasuke: 36 / 40 / 99 µs mean, a 12-frame rollback ≈ 1.7 ms).
 
 ### Netplay
 
 - `ggrs` for rollback. Use its sync-test session mode in CI from day one; it catches nondeterminism locally with no network.
-- UDP, NAT hole-punch via tiny matchmaking/STUN server. Relay fallback for symmetric NAT.
+- Paths, chosen per match by round trip and jitter with hysteresis
+  (`rugen_net::path::PathSelector`; direct > TURN > relay on a tie; a path
+  that goes quiet for 0.8 s is left at once; a better one takes over after
+  holding for 2 s):
+  - **Direct** (`rugen_net::direct`, the default): a small ICE. One UDP socket
+    per address family; host candidates (route lookup, global IPv6 only),
+    server-reflexive (Cloudflare STUN, `stun.cloudflare.com:3478`; a second
+    probe to port 443 tells endpoint-dependent "symmetric" NATs apart) and
+    peer-reflexive (an authentic check from an unknown address). Signalling
+    is opaque `T_DIRECT` payloads in the relay session, between the two
+    players only: a hello with the privacy flag and a random nonce, then the
+    candidates, only when both players allow direct connections. Key =
+    HMAC-SHA256(nonce P1 ‖ nonce P2, "rugen direct v1" ‖ session); every
+    direct datagram carries a counter (64-entry replay window) and an 8-byte
+    truncated HMAC-SHA256 tag, anything else is dropped unparsed.
+    Simultaneous checks on every pair every 50 ms; the first working pair is
+    used at once, a faster one takes over (15 % / 10 ms margin); the selected
+    pair is checked every 200 ms (consent, RTT), others every 1 s, then 10 s
+    (NAT keep-alive). Both symmetric: only host pairs get 2.5 s, then TURN.
+    The relay session stays open (hello every 2 s; the server expires idle
+    sessions after 5 s) for signalling and fallback; BYE only at the end.
 - Per-frame state hash exchanged; desync surfaces as an error, never silent drift.
 - Content hashing: both sides verify char/stage hashes before match.
 - Replays = input log + content hashes. Spectating = same stream.
@@ -99,6 +123,28 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
     before expiry, allocation released on drop. ≈3.4 KB/s per player and
     direction (plain encoding: ≈7.7 KB/s).
   - **UDP relay** to the server (1.5 s probe), else the **WebSocket** `/relay`.
+- Lag hiding (measured with `crates/net/examples/netsim.rs`, two peers through
+  a delaying, lossy UDP proxy, Naruto vs Sasuke on recorded inputs):
+  - Input delay from the chosen path's p95 round trip
+    (`rugen_net::DelayPolicy`): `clamp(ceil((p95/2 + 16.7 ms) / 16.7) -
+    (window - headroom), min_delay, 8)` with a 12-frame window, 3 frames of
+    headroom (2 were not enough at 350 ms: ggrs still hit the window) and
+    `min_delay = 1`: 1 frame up to 300 ms (180 ms rolls back ~6 frames), 2 at
+    301-333, 3 at 334-366, 4 at 367-400, +1 per 33 ms after.
+  - Smooth time sync (`rugen_net::Pacer`): while ahead of the peer the tick
+    stretches by 1.5 % per frame of (smoothed) advantage, capped at 8 %
+    (58.5 Hz at two frames ahead); ggrs' wait recommendation (whole frozen
+    frames) is ignored. The renderer keeps the display rate.
+  - Correction smoothing (display only): the re-simulated copy of the frame
+    on screen gives each fighter / projectile an offset that decays over ~4
+    frames; jumps over 48 px and getting hit snap.
+  - Prediction stays ggrs' repeat-last: on 76k recorded frames it is within
+    2 points of the best "taps" model and much better than releasing
+    buttons (`rugen_net::predict`, `examples/predict.rs`).
+  - Local latency: draw right after the tick, mailbox or FIFO with one
+    queued frame, and on FIFO tick right after the vsync wait. Estimated
+    key → display on this machine: 57 ms (AutoVsync, two queued) → 19 ms
+    (mailbox) / 25 ms (FIFO).
 - Result evidence: confirmed input log (RLE when the server offers TURN) plus
   a world checksum every 60 frames; the server compares both reports on the
   confirmed frames and disputes (and re-simulates, when built with `resim`) on

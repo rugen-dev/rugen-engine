@@ -846,8 +846,13 @@ impl World {
             let p = &self.players[i];
             if p.helper_index > 0 {
                 // helpers with keyctrl read their root's buffer and commands
-                if p.keyctrl {
-                    let root = p.root;
+                let (keyctrl, root) = (p.keyctrl, p.root);
+                if keyctrl && root < i {
+                    let (roots, rest) = self.players.split_at_mut(i);
+                    let (src, dst) = (&roots[root], &mut rest[0]);
+                    dst.input = src.input.clone();
+                    dst.cmds.clone_from(&src.cmds);
+                } else if keyctrl && root != i {
                     let (input, cmds) = (
                         self.players[root].input.clone(),
                         self.players[root].cmds.clone(),

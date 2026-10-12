@@ -2700,10 +2700,12 @@ version = "0.4.0"
 dependencies = [
  "bincode",
  "crc32fast",
+ "env_logger",
  "ggrs",
  "hmac",
  "log",
  "md-5",
+ "ring",
  "rugen-proto",
  "rugen-sim",
  "rustls",

@@ -91,6 +91,10 @@ pub struct Video {
     pub fullscreen: bool,
     /// UI theme: a folder under `motif/themes/` (`ink`, `dojo`, ...) or `classic` for the flat `motif/`.
     pub theme: String,
+    /// Lowest-latency presentation: mailbox (or FIFO with one queued
+    /// frame), a frame drawn right after each tick. Off: the driver's
+    /// default vsync with frames drawn continuously (up to two queued).
+    pub low_latency: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -130,10 +134,23 @@ pub struct PlayerKeys {
 pub struct Net {
     /// Local UDP port for `--host` / `--join`.
     pub port: u16,
-    /// Frames of local input delay: `"auto"` (picked from the measured ping
-    /// when the match starts) or a number of frames.
+    /// Frames of local input delay: `"auto"` (picked from the measured
+    /// round trip of the chosen path when the match starts, see
+    /// `rugen_net::DelayPolicy`) or a number of frames.
     pub input_delay: InputDelay,
-    pub max_prediction: usize,
+    /// Smallest automatic input delay (frames).
+    pub min_delay: usize,
+    /// Rollback window: frames the game may predict the opponent before it
+    /// has to wait. Automatic input delay only covers latency beyond it.
+    pub prediction_window: usize,
+    /// Old name of the rollback window (read, never written: the old
+    /// default of 8 frames is replaced by `prediction_window`).
+    #[serde(skip_serializing)]
+    pub max_prediction: Option<usize>,
+    /// Online matches connect the two players directly (peer to peer, the
+    /// fastest path; the opponent's game sees your IP address). Off: always
+    /// relayed (TURN / the server), private. Off on either side = relayed.
+    pub direct: bool,
     /// Quick match / ranked: only accept opponents with an estimated ping
     /// up to [`GOOD_PING_MS`] (the window never widens past it).
     pub good_connections_only: bool,
@@ -168,6 +185,16 @@ pub struct ServerEntry {
 }
 
 impl Net {
+    /// The automatic input delay policy of these settings.
+    pub fn delay_policy(&self) -> rugen_net::DelayPolicy {
+        let d = rugen_net::DelayPolicy::default();
+        rugen_net::DelayPolicy {
+            min_delay: self.min_delay.min(InputDelay::MAX),
+            prediction_window: self.prediction_window.clamp(4, 16),
+            headroom: d.headroom,
+        }
+    }
+
     /// Bring `server` / `servers` to the official + community layout:
     /// the official address leaves `servers` (and `server` becomes empty
     /// when it named it); a custom default server (older configs) joins the
@@ -248,13 +275,14 @@ pub struct InputDelay(pub Option<usize>);
 impl InputDelay {
     pub const MAX: usize = 8;
 
-    /// Frames for a measured round trip (auto) or the fixed setting.
-    pub fn frames(self, rtt_ms: Option<u32>) -> usize {
-        match (self.0, rtt_ms) {
+    /// Frames for a measured p95 round trip (auto, with `policy`) or the
+    /// fixed setting.
+    pub fn frames(self, rtt_p95_ms: Option<u32>, policy: &rugen_net::DelayPolicy) -> usize {
+        match (self.0, rtt_p95_ms) {
             (Some(n), _) => n,
-            (None, Some(rtt)) => rugen_net::auto_input_delay(rtt),
-            // auto without a measurement (relayed path): a safe middle
-            (None, None) => 2,
+            (None, Some(rtt)) => policy.delay(rtt),
+            // auto without a measurement: a safe middle
+            (None, None) => 2usize.max(policy.min_delay),
         }
     }
 
@@ -322,6 +350,7 @@ impl Default for Video {
             height: 720,
             fullscreen: false,
             theme: "ink".into(),
+            low_latency: true,
         }
     }
 }
@@ -419,7 +448,10 @@ impl Default for Net {
         Self {
             port: 7000,
             input_delay: InputDelay(None),
-            max_prediction: 8,
+            min_delay: 1,
+            prediction_window: 12,
+            max_prediction: None,
+            direct: true,
             good_connections_only: false,
             remote: String::new(),
             side: 1,
@@ -558,10 +590,21 @@ mod tests {
         assert_eq!(Config::default().net.input_delay, InputDelay(None));
         let text = toml::to_string_pretty(&c).unwrap();
         assert!(text.contains("input_delay = \"auto\""), "{text}");
-        assert_eq!(InputDelay(None).frames(Some(10)), 0);
-        assert_eq!(InputDelay(None).frames(Some(100)), 2);
-        assert_eq!(InputDelay(None).frames(Some(150)), 3);
-        assert_eq!(InputDelay(Some(5)).frames(Some(10)), 5);
+        let p = Net::default().delay_policy();
+        assert_eq!(InputDelay(None).frames(Some(10), &p), 1);
+        assert_eq!(InputDelay(None).frames(Some(180), &p), 1);
+        assert_eq!(InputDelay(None).frames(Some(300), &p), 1);
+        assert_eq!(InputDelay(None).frames(Some(350), &p), 3);
+        assert_eq!(InputDelay(None).frames(None, &p), 2);
+        assert_eq!(InputDelay(Some(5)).frames(Some(10), &p), 5);
+        // an old rugen.toml: max_prediction is read and dropped
+        let c: Config = toml::from_str("[net]\nmax_prediction = 8\n").unwrap();
+        assert_eq!(c.net.prediction_window, 12);
+        assert!(c.net.direct);
+        assert!(!toml::to_string(&c).unwrap().contains("max_prediction"));
+        let c: Config = toml::from_str("[net]\ndirect = false\nmin_delay = 0\n").unwrap();
+        assert!(!c.net.direct);
+        assert_eq!(c.net.delay_policy().delay(10), 0);
         assert_eq!(InputDelay(None).step(1, false), InputDelay(Some(0)));
         assert_eq!(InputDelay(Some(0)).step(-1, false), InputDelay(None));
         assert_eq!(InputDelay(Some(8)).step(1, true), InputDelay(None));

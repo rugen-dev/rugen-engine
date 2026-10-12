@@ -1656,6 +1656,20 @@ align = "center"
 wrap = true
 line_gap = 4
 
+# how the match will connect (direct / relayed), estimated ping and delay
+[[node]]
+kind = "text"
+visible = "is_matchup"
+text = "{mx.net}"
+x = 470
+y = 482
+w = 340
+font = 2
+bank = 9
+scale = 1
+align = "center"
+wrap = true
+
 [[node]]
 kind = "vbox"
 visible = "mx.has_verdict"

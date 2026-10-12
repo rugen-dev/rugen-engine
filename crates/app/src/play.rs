@@ -128,6 +128,8 @@ pub struct Match {
     chars: Vec<CharGpu>,
     net: Option<Netplay>,
     net_status: String,
+    /// Eases rollback corrections on screen (display only).
+    smooth: crate::smooth::Smoother,
     paused: bool,
     step: bool,
     zoom: f32,
@@ -222,16 +224,18 @@ impl Match {
                         log::info!("netplay: {s}")
                     })
                     .with_context(|| format!("netplay with {remote}"))?;
-                let net_rtt = shake.rtt_ms;
+                let p95 = shake.rtt.map(|r| r.p95).or(shake.rtt_ms);
+                let policy = cfg.net.delay_policy();
                 let o = NetOptions {
-                    input_delay: cfg.net.input_delay.frames(net_rtt),
-                    max_prediction: cfg.net.max_prediction,
+                    input_delay: cfg.net.input_delay.frames(p95, &policy),
+                    max_prediction: policy.prediction_window,
                     ..Default::default()
                 };
                 log::info!(
-                    "netplay: port {port}, peer {remote}, playing P{}, rtt {:?} ms, input delay {}",
+                    "netplay: port {port}, playing P{}, rtt {:?} ms (p95 {:?}), input delay {}",
                     side + 1,
-                    net_rtt,
+                    shake.rtt_ms,
+                    p95,
                     o.input_delay
                 );
                 Some(Netplay::p2p_with_socket(socket, *remote, *side, &o)?)
@@ -269,6 +273,7 @@ impl Match {
             chars: Vec::new(),
             net,
             net_status: String::new(),
+            smooth: Default::default(),
             paused: false,
             step: false,
             zoom: 1.0,
@@ -432,8 +437,13 @@ impl Match {
         let advanced = match self.net.as_mut() {
             Some(net) => {
                 net.poll();
+                let shown = crate::smooth::positions(&self.world);
                 match net.advance(&mut self.world, inputs) {
                     Ok(adv) => {
+                        let corrected = adv.corrected.as_deref().map(crate::smooth::positions);
+                        if adv.new_frames > 0 || corrected.is_some() {
+                            self.smooth.tick(&shown, corrected.as_deref());
+                        }
                         for n in &adv.notices {
                             log::info!("netplay: {n}");
                             self.net_status = n.clone();
@@ -441,8 +451,12 @@ impl Match {
                         let st = net.stats();
                         if st.synchronized && adv.notices.is_empty() {
                             self.net_status = format!(
-                                "ping {} ms  rollbacks {}  ahead {}",
-                                st.ping_ms, st.rollbacks, st.frames_ahead
+                                "{} ping {} ms  delay {}  rollbacks {}  ahead {}",
+                                st.path.label(),
+                                st.ping_ms,
+                                st.input_delay,
+                                st.rollbacks,
+                                st.frames_ahead
                             );
                         }
                         let moved = adv.new_frames > 0;
@@ -530,6 +544,13 @@ impl Match {
         self.net.is_some()
     }
 
+    /// Length of the next tick (online: stretched while ahead of the peer).
+    pub fn tick_duration(&self) -> std::time::Duration {
+        self.net
+            .as_ref()
+            .map_or(rugen_net::TICK, Netplay::tick_duration)
+    }
+
     /// What a result report carries: last frame, world checksum and both
     /// players' inputs (the server compares the two reports).
     pub fn evidence(&self) -> rugen_net::online::Evidence {
@@ -590,10 +611,12 @@ impl Match {
             };
             r.rect(hud(x, y1 - h), hud(x + 3.5, y1), c);
         }
+        // connection type, ping and input delay (e.g. "DIRECT 182 MS D1")
+        let label = format!("{} {} MS D{}", st.path.label(), st.ping_ms, st.input_delay);
         draw_text(
             r,
-            &format!("{} MS", st.ping_ms),
-            hud(screen_w - 48.0, 43.0),
+            &label,
+            hud(screen_w - 30.0 - label.len() as f32 * 2.0, 43.0),
             u,
             [0.9, 0.9, 0.9, 0.8],
         );
@@ -828,8 +851,10 @@ impl Match {
                 continue;
             };
             let sprite_data = p.data;
+            // rollback corrections ease in on screen (display only)
+            let off = self.smooth.offset(crate::smooth::Key::Player(p.id));
             let (pos, facing, prio) = (
-                [p.pos[0] * scale, p.pos[1] * scale],
+                [(p.pos[0] + off[0]) * scale, (p.pos[1] + off[1]) * scale],
                 p.facing,
                 p.spr_priority,
             );
@@ -946,14 +971,17 @@ impl Match {
                 tint: tint(owner_pfx.stacked(all_pfx)),
             });
         }
-        let projs: Vec<rugen_sim::projectile::Projectile> = self
+        let keys = crate::smooth::proj_keys(&self.world);
+        let projs: Vec<(rugen_sim::projectile::Projectile, crate::smooth::Key)> = self
             .world
             .projs
             .iter()
-            .filter(|p| !p.removed && p.anim_no >= 0)
-            .cloned()
+            .zip(keys)
+            .filter(|(p, _)| !p.removed && p.anim_no >= 0)
+            .map(|(p, k)| (p.clone(), k))
             .collect();
-        for pr in projs {
+        for (pr, key) in projs {
+            let off = self.smooth.offset(key);
             let d = self.world.players[pr.owner].data;
             let lc = self.world.data[d].localcoord[0];
             let Some(frame) = self.world.data[d]
@@ -970,7 +998,7 @@ impl Match {
             let owner_pfx = self.world.players[pr.owner].palfx.sample();
             items.push(Item {
                 spr,
-                pos: pr.pos,
+                pos: [pr.pos[0] + off[0], pr.pos[1] + off[1]],
                 facing: pr.facing,
                 vfacing: 1.0,
                 scale: [scale * pr.scale[0], scale * pr.scale[1]],
@@ -1486,8 +1514,10 @@ fn ground_screen_frac(at_rest: f32, zoom: f32) -> f32 {
 }
 
 /// Join a relay session (UDP fast path, WebSocket fallback), wait for the
-/// other slots, measure the round trip through the server and start the
-/// rollback session (or a spectator session for slots 2+).
+/// other slots, bring up the fastest player ↔ player path (direct peer to
+/// peer unless either player opted out, else TURN, else the relay itself),
+/// measure the round trip on that path and start the rollback session (or
+/// a spectator session for slots 2+).
 fn relay_session(
     server: &str,
     ticket: &rugen_net::online::SessionTicket,
@@ -1516,27 +1546,67 @@ fn relay_session(
         let n = Netplay::spectate(socket, &NetOptions::default())?;
         return Ok((n, None));
     }
+    // players: gather direct candidates while the other player connects
+    // (exchanged only when both allow direct connections)
+    socket.enable_direct(&rugen_net::DirectConfig {
+        allowed: cfg.net.direct,
+        stun: stun_servers(ticket),
+        ..Default::default()
+    });
     socket.wait_for(0b011, Duration::from_secs(90), &mut |s| {
         log::info!("netplay: {s}")
     })?;
-    // a `turn` ticket transport: lift the match onto TURN when both sides
-    // reach it quickly (keeps trying in the background otherwise)
-    socket.settle_turn(Duration::from_millis(1500));
+    // direct, TURN or the relay: the fastest working path within 1.5 s
+    // (the others keep trying and take over mid-match when better)
+    let path = socket.settle_paths(Duration::from_millis(1500));
+    if let Some(off) = socket.direct_off() {
+        log::info!("netplay: direct path not used: {}", off.reason());
+    }
     let transport = socket.transport_name();
     let peer = 1 - ticket.slot;
-    let rtt = socket.peer_rtt(peer, 8, Duration::from_secs(2));
+    let samples = socket.peer_rtt_samples(peer, 24, Duration::from_millis(1500));
+    let rtt = rugen_net::RttStats::from_us(&samples);
+    let policy = cfg.net.delay_policy();
     let o = NetOptions {
-        input_delay: cfg.net.input_delay.frames(rtt),
-        max_prediction: cfg.net.max_prediction,
+        input_delay: cfg.net.input_delay.frames(rtt.map(|r| r.p95), &policy),
+        max_prediction: policy.prediction_window,
         ..Default::default()
     };
     log::info!(
-        "netplay: relay session {:08x} over {transport}, playing P{}, rtt {:?} ms, input delay {}",
+        "netplay: relay session {:08x}, path {} over {transport}, playing P{}, rtt {} ms (p95 {} ms, jitter {} ms), input delay {}",
         ticket.session,
+        path.label(),
         ticket.slot + 1,
-        rtt,
+        rtt.map_or(0, |r| r.median),
+        rtt.map_or(0, |r| r.p95),
+        rtt.map_or(0, |r| r.jitter),
         o.input_delay
     );
     let n = Netplay::relay(socket, ticket.slot as usize, ticket.spectators, &o)?;
-    Ok((n, rtt))
+    Ok((n, rtt.map(|r| r.median)))
+}
+
+/// STUN servers for the direct path: the ticket's (`stun:` URLs next to
+/// its TURN service), else Cloudflare's.
+fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
+    let mut v: Vec<String> = ticket
+        .transports
+        .iter()
+        .flat_map(|t| t.urls.iter())
+        .filter_map(|u| u.strip_prefix("stun:"))
+        .map(|h| {
+            let h = h.split('?').next().unwrap_or(h);
+            if h.rsplit_once(':')
+                .is_some_and(|(_, p)| p.parse::<u16>().is_ok())
+            {
+                h.to_string()
+            } else {
+                format!("{h}:3478")
+            }
+        })
+        .collect();
+    if v.is_empty() {
+        v.push(rugen_net::direct::DEFAULT_STUN.to_string());
+    }
+    v
 }

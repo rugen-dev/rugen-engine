@@ -209,6 +209,32 @@ pub struct Renderer {
     white: TextureId,
     verts: Vec<Vertex>,
     runs: Vec<Run>,
+    timing: FrameTiming,
+    /// Swapchain image acquired ahead of drawing ([`Renderer::acquire`]).
+    acquired: Option<wgpu::SurfaceTexture>,
+}
+
+/// How frames reach the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Presentation {
+    /// Lowest latency without tearing: mailbox when the driver offers it
+    /// (the newest frame replaces a waiting one), else FIFO with at most one
+    /// frame queued.
+    #[default]
+    LowLatency,
+    /// The driver's default vsync (FIFO, up to two frames queued).
+    Vsync,
+}
+
+/// Timing of the last presented frame (for latency measurements).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameTiming {
+    /// Time spent waiting for a swapchain image (vsync back-pressure).
+    pub acquire: std::time::Duration,
+    /// When `present` returned.
+    pub presented: Option<std::time::Instant>,
+    /// When the swapchain image was acquired.
+    pub acquired: Option<std::time::Instant>,
 }
 
 impl Renderer {
@@ -216,6 +242,15 @@ impl Renderer {
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
         height: u32,
+    ) -> Result<Self, Error> {
+        Self::with_presentation(target, width, height, Presentation::default()).await
+    }
+
+    pub async fn with_presentation(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        presentation: Presentation,
     ) -> Result<Self, Error> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(target)?;
@@ -232,7 +267,34 @@ impl Renderer {
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or(Error::SurfaceConfig)?;
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        let modes = surface.get_capabilities(&adapter).present_modes;
+        match presentation {
+            Presentation::LowLatency => {
+                config.present_mode = if modes.contains(&wgpu::PresentMode::Mailbox) {
+                    wgpu::PresentMode::Mailbox
+                } else {
+                    wgpu::PresentMode::Fifo
+                };
+                config.desired_maximum_frame_latency = 1;
+            }
+            Presentation::Vsync => config.present_mode = wgpu::PresentMode::AutoVsync,
+        }
+        // diagnostics: `RUGEN_PRESENT=fifo|mailbox|immediate`
+        let forced = match std::env::var("RUGEN_PRESENT").as_deref() {
+            Ok("fifo") => Some(wgpu::PresentMode::Fifo),
+            Ok("mailbox") => Some(wgpu::PresentMode::Mailbox),
+            Ok("immediate") => Some(wgpu::PresentMode::Immediate),
+            _ => None,
+        };
+        if let Some(m) = forced.filter(|m| modes.contains(m)) {
+            config.present_mode = m;
+        }
+        log::info!(
+            "render: present mode {:?}, at most {} frame(s) queued (offered: {:?})",
+            config.present_mode,
+            config.desired_maximum_frame_latency,
+            modes
+        );
         // MUGEN blends in raw 8-bit space; keep the whole pipeline linear-in-bytes.
         config.format = config.format.remove_srgb_suffix();
         surface.configure(&device, &config);
@@ -387,6 +449,8 @@ impl Renderer {
             white: TextureId(0),
             verts: Vec::new(),
             runs: Vec::new(),
+            timing: FrameTiming::default(),
+            acquired: None,
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
@@ -396,6 +460,7 @@ impl Renderer {
         if width == 0 || height == 0 {
             return;
         }
+        self.acquired = None;
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
@@ -403,6 +468,43 @@ impl Renderer {
 
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
+    }
+
+    /// The present mode in use.
+    pub fn present_mode(&self) -> wgpu::PresentMode {
+        self.config.present_mode
+    }
+
+    /// Frames the swapchain may queue.
+    pub fn frame_latency(&self) -> u32 {
+        self.config.desired_maximum_frame_latency
+    }
+
+    /// Timing of the last [`end`](Self::end).
+    pub fn timing(&self) -> FrameTiming {
+        self.timing
+    }
+
+    /// The swapchain applies vsync back-pressure on acquire (FIFO): the
+    /// caller can acquire first, then simulate, then draw, so the newest
+    /// state goes out right after the vblank that freed the image.
+    pub fn acquire_blocks(&self) -> bool {
+        matches!(
+            self.config.present_mode,
+            wgpu::PresentMode::Fifo | wgpu::PresentMode::FifoRelaxed | wgpu::PresentMode::AutoVsync
+        )
+    }
+
+    /// Wait for the next swapchain image now (vsync); [`end`](Self::end)
+    /// then draws into it without waiting.
+    pub fn acquire(&mut self) -> Result<(), wgpu::SurfaceError> {
+        if self.acquired.is_none() {
+            let t = std::time::Instant::now();
+            self.acquired = Some(self.surface.get_current_texture()?);
+            self.timing.acquire = t.elapsed();
+            self.timing.acquired = Some(std::time::Instant::now());
+        }
+        Ok(())
     }
 
     fn make_texture(
@@ -767,12 +869,22 @@ impl Renderer {
     /// Present the frame queued since [`begin`](Self::begin).
     pub fn end(&mut self, cam: &Camera, clear: [f64; 4]) -> Result<(), wgpu::SurfaceError> {
         let vbuf = self.prepare(cam);
-        let frame = self.surface.get_current_texture()?;
+        let frame = match self.acquired.take() {
+            Some(f) => f,
+            None => {
+                let t = std::time::Instant::now();
+                let f = self.surface.get_current_texture()?;
+                self.timing.acquire = t.elapsed();
+                self.timing.acquired = Some(std::time::Instant::now());
+                f
+            }
+        };
         let view = frame.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
         self.encode_pass(&mut enc, &view, &vbuf, clear);
         self.queue.submit([enc.finish()]);
         frame.present();
+        self.timing.presented = Some(std::time::Instant::now());
         Ok(())
     }
 

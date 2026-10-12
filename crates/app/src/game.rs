@@ -255,6 +255,15 @@ pub struct Shell {
     menu_taps: Buttons,
     /// Mouse cursor visibility last applied to the window.
     cursor_shown: Option<bool>,
+    /// Something changed since the last frame was drawn (a tick ran, a
+    /// window event arrived): low-latency mode draws only then.
+    dirty: bool,
+    /// `RUGEN_LATENCY=1`: input-to-display latency measurements.
+    latency: crate::latency::Probe,
+    /// Low latency on a FIFO swapchain: ticks run inside the redraw, right
+    /// after the vsync wait (acquire, simulate, draw, present).
+    vsync_paced: bool,
+    last_redraw: Instant,
 }
 
 impl Shell {
@@ -332,6 +341,10 @@ impl Shell {
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
             cursor_shown: None,
+            dirty: true,
+            latency: crate::latency::Probe::new(),
+            vsync_paced: false,
+            last_redraw: Instant::now(),
         }
     }
 
@@ -1072,7 +1085,51 @@ impl Shell {
         }
     }
 
+    /// One shell tick (menus or a match), measured by the latency probe.
     fn tick(&mut self) {
+        let start = Instant::now();
+        self.tick_inner();
+        self.dirty = true;
+        self.latency
+            .ticked(start, self.harness.script.is_some() && self.is_match());
+    }
+
+    /// Run the ticks that are due by the wall clock.
+    fn run_ticks(&mut self) {
+        let now = Instant::now();
+        self.tick_acc += now - self.last;
+        self.last = now;
+        // the tick length can stretch a little during online matches
+        // (time sync); it is read again before every tick
+        let mut len = self.tick_len();
+        while self.tick_acc >= len {
+            self.tick_acc -= len;
+            self.tick();
+            len = self.tick_len();
+            // a harness screenshot shows exactly frame N, even after a slow frame
+            if self.quit || (self.shot_armed && self.harness.shot.is_some()) {
+                break;
+            }
+        }
+        if self.tick_acc > len * 4 {
+            self.tick_acc = Duration::ZERO;
+        }
+    }
+
+    fn is_match(&self) -> bool {
+        matches!(self.screen, Screen::Match(_))
+    }
+
+    /// Length of the current tick: 1/60 s, stretched slightly by an online
+    /// match's time sync while this side runs ahead of the other player.
+    fn tick_len(&self) -> Duration {
+        match &self.screen {
+            Screen::Match(m) if self.pause.is_none() => m.tick_duration(),
+            _ => TICK,
+        }
+    }
+
+    fn tick_inner(&mut self) {
         if self.fade > 0.0 {
             self.fade -= 1.0 / 12.0;
         }
@@ -1431,7 +1488,12 @@ impl Shell {
             return;
         }
         match r.end(&cam, clear) {
-            Ok(()) => {}
+            Ok(()) => {
+                let t = r.timing();
+                if let Some(at) = t.presented {
+                    self.latency.presented(at, t.acquire, t.acquired);
+                }
+            }
             Err(rugen_render::SurfaceError::Lost | rugen_render::SurfaceError::Outdated) => {
                 let s = gpu.window.inner_size();
                 gpu.renderer.resize(s.width, s.height);
@@ -1629,7 +1691,19 @@ impl ApplicationHandler for Shell {
             self.config.video.width.max(320),
             self.config.video.height.max(240),
         );
-        let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen);
+        let presentation = if self.config.video.low_latency {
+            rugen_render::Presentation::LowLatency
+        } else {
+            rugen_render::Presentation::Vsync
+        };
+        let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen, presentation);
+        self.latency.set_mode(
+            format!("{:?}", gpu.renderer.present_mode()),
+            gpu.renderer.frame_latency(),
+        );
+        self.vsync_paced = self.config.video.low_latency
+            && gpu.renderer.acquire_blocks()
+            && std::env::var_os("RUGEN_NO_VSYNC_PACING").is_none();
         if let Screen::Match(m) = &mut self.screen {
             m.init_gpu(&mut gpu.renderer);
         }
@@ -1641,6 +1715,9 @@ impl ApplicationHandler for Shell {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.dirty = true;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(s) => {
@@ -1649,6 +1726,18 @@ impl ApplicationHandler for Shell {
                 }
             }
             WindowEvent::RedrawRequested => {
+                if self.vsync_paced {
+                    // wait for the vblank first, then simulate: the frame
+                    // drawn next carries the newest input to the screen
+                    let ok = self
+                        .gpu
+                        .as_mut()
+                        .is_some_and(|g| g.renderer.acquire().is_ok());
+                    if ok {
+                        self.run_ticks();
+                    }
+                    self.last_redraw = Instant::now();
+                }
                 self.render();
                 if self.quit {
                     event_loop.exit();
@@ -1662,6 +1751,9 @@ impl ApplicationHandler for Shell {
                 self.menu_taps = Buttons::default();
             }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
+                if event.state == ElementState::Pressed {
+                    self.latency.key();
+                }
                 let key = event.logical_key.clone();
                 self.key(&key, event.state == ElementState::Pressed);
                 if self.quit && self.harness.shot.is_none() {
@@ -1722,25 +1814,48 @@ impl ApplicationHandler for Shell {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
-        self.tick_acc += now - self.last;
-        self.last = now;
-        while self.tick_acc >= TICK {
-            self.tick_acc -= TICK;
-            self.tick();
-            // a harness screenshot shows exactly frame N, even after a slow frame
-            if self.quit || (self.shot_armed && self.harness.shot.is_some()) {
-                break;
+        if self.vsync_paced && self.gpu.is_some() {
+            // ticks run in the redraw; keep them going when the compositor
+            // stops sending frames (minimised window: an online match must
+            // not stall)
+            if now.duration_since(self.last_redraw) > Duration::from_millis(50) {
+                self.run_ticks();
             }
+            if self.quit && self.harness.shot.is_none() {
+                event_loop.exit();
+            }
+            self.update_cursor();
+            if let Some(g) = &self.gpu {
+                g.window.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_millis(20)));
+            return;
         }
-        if self.tick_acc > TICK * 4 {
-            self.tick_acc = Duration::ZERO;
-        }
+        self.run_ticks();
+        let len = self.tick_len();
         if self.quit && self.harness.shot.is_none() {
             event_loop.exit();
         }
         self.update_cursor();
-        if let Some(g) = &self.gpu {
+        let low_latency = self.config.video.low_latency;
+        // low latency: draw right after a tick (newest state, nothing
+        // queued behind it) instead of spinning frames between ticks
+        if let Some(g) = &self.gpu
+            && (self.dirty || !low_latency)
+        {
+            self.dirty = false;
             g.window.request_redraw();
+        }
+        if low_latency {
+            // sleep until shortly before the next tick, then poll to hit it
+            let left = len.saturating_sub(self.tick_acc);
+            if left > Duration::from_millis(2) {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    now + left - Duration::from_millis(1),
+                ));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Poll);
+            }
         }
     }
 }

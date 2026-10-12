@@ -66,11 +66,21 @@ bad signature is rejected. On a server: **Lobby** (public
 rooms: join or watch), **Create Room** (public or private, optional password,
 rounds, timer, classic / arena, free pick / mirror, spectator seats; the host
 can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
-ping-aware matchmaking), **Leaderboard**. Matches are **relayed by the
-server** (UDP, or a WebSocket fallback through HTTPS-only networks), or, when
-the server offers it, through **Cloudflare Realtime TURN** (real UDP over
-Cloudflare's anycast network, both players always relayed): players never
-learn each other's IP address. Accounts are anonymous keys per server in
+ping-aware matchmaking), **Leaderboard**. Matches connect the two players
+**directly, peer to peer** (UDP hole punching with authenticated checks, like
+SF6 / Tekken: the shortest path, so the lowest ping), with **Cloudflare
+Realtime TURN** and the **server relay** (UDP, or a WebSocket through
+HTTPS-only networks) as fallbacks; the game moves a match to the fastest
+working path at the start and switches mid-match when a path breaks or a
+better one comes up. **Privacy**: a direct connection lets the opponent's
+game see your IP address; OPTIONS > ONLINE > DIRECT CONNECTION OFF (`[net]
+direct = false`) keeps you always relayed and private (off on either side =
+relayed; IP addresses are never shown or logged). Two players behind
+symmetric NATs (some mobile / CGNAT networks) play over TURN. Lag hiding:
+input delay only beyond what the 12-frame rollback window hides (1 frame up
+to ~300 ms ping), smooth time sync (a few percent slower ticks instead of
+freezes), rollback corrections eased on screen, cheap rollbacks, and a
+low-latency renderer. Accounts are anonymous keys per server in
 `profile.json`. Both sides report results with their input streams; they
 only count when they agree.
 
@@ -98,8 +108,11 @@ after the match.
 Without a server, **direct matches** (LAN / explicit IP) still work: HOST
 (1P) / JOIN (2P) in ONLINE, each player types the other's address, or `[net]
 remote = "ip:port"`, `side = 1` or `2` → NETPLAY entry, or `rugen play kfm
---net ip:port [--p2]`. `[net] input_delay = "auto"` picks 0-3 frames from the
-measured ping (or set a number). Music: stage `bgmusic` and
+--net ip:port [--p2]`. `[net] input_delay = "auto"` adds delay only beyond
+what the rollback window hides (`prediction_window = 12`, `min_delay = 1`;
+or set a number). `[video] low_latency = true` (default) draws each frame
+right after its tick with at most one frame queued (mailbox / FIFO);
+`RUGEN_LATENCY=1` logs the input-to-display latency. Music: stage `bgmusic` and
 system.def `[Music]` entries play when they are mp3/ogg/flac/wav (MIDI is
 skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick

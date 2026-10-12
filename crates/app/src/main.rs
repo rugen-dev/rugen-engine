@@ -6,8 +6,9 @@
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
-//!   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (relayed,
-//!                                                               no IP is shared; `new` creates a room):
+//!   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (direct peer
+//!                                                               to peer, else TURN / relayed; [net] direct
+//!                                                               = false never shares the IP; `new` creates a room):
 //!                                                               brings <char>, shows the matchup, confirms
 //!                                                               unless BLOCKED, syncs files, fights, quits;
 //!                                                               with --shot: picture of the matchup screen
@@ -40,6 +41,7 @@ mod inkgen;
 mod inkscreens;
 mod input;
 mod kit;
+mod latency;
 mod lifebar;
 mod matchup;
 mod official;
@@ -54,6 +56,7 @@ mod screenpack;
 mod select;
 mod settings;
 mod settings_gen;
+mod smooth;
 mod sprites;
 mod stage;
 mod stagegen;

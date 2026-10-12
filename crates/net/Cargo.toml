@@ -25,6 +25,11 @@ md-5 = "0.10"
 crc32fast = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# direct path: per-match HMAC-SHA256 keys and nonces (already built for rustls)
+ring = "0.17"
+
+[dev-dependencies]
+env_logger.workspace = true
 
 [lints]
 workspace = true

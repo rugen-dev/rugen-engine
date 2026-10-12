@@ -33,6 +33,7 @@ fn synctest_kfm_mirror_match() {
         seed
     };
     let mut frames = 0;
+    let mut corrected = 0;
     for _ in 0..600 {
         let a = Buttons::from_bits((rnd() & 0x7ff) as u16);
         let b = Buttons::from_bits((rnd() & 0x7ff) as u16);
@@ -40,7 +41,14 @@ fn synctest_kfm_mirror_match() {
             .advance(&mut world, [a, b])
             .expect("no checksum mismatch");
         frames += adv.new_frames;
+        // the display-side copy of a rolled-back frame is a copy: the
+        // session keeps verifying checksums with it around
+        if let Some(c) = &adv.corrected {
+            assert!(c.frame <= world.frame);
+            corrected += 1;
+        }
     }
+    assert!(corrected > 500, "corrected snapshots {corrected}");
     assert!(frames >= 590, "advanced {frames} frames");
     assert!(world.frame >= 590);
 }
