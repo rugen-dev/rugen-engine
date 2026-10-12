@@ -1,8 +1,9 @@
-//! `rugen ui-gen`: writes the default front-end into `motif/ui/` — WebP
-//! assets built from the CC0 kit and the palette (see `kit.rs`), the
-//! `title.toml` / `options.toml` / `select.toml` screens, `news.json`,
-//! `palette.gpl` and a README for modders. Hero art dropped into
-//! `motif/art/` is pixelized into `motif/ui/art/`.
+//! `rugen ui-gen`: writes the "Neon Dojo" front-end into a theme dir
+//! (`motif/themes/dojo/ui/` by default) — WebP assets drawn with the
+//! palette (see `kit.rs`), the `title.toml` / `options.toml` /
+//! `select.toml` screens and a README for modders. Fonts, the CC0 kit,
+//! `palette.gpl` and `news.json` stay shared in `motif/`; hero art dropped
+//! into `motif/art/` is pixelized into `<theme>/ui/art/`.
 
 use std::path::Path;
 
@@ -897,10 +898,13 @@ const NEWS_JSON: &str = r#"[
 ]
 "#;
 
-const README: &str = r#"# motif/ui — the data-driven front end
+const README: &str = r#"# ui/ — the data-driven front end (theme "dojo")
 
 Menus are TOML files rendered by the `rugen-ui` engine; no code needed to
-re-skin or re-arrange them. `rugen ui-gen` regenerates these defaults.
+re-skin or re-arrange them. A theme lives in `motif/themes/<name>/` (this
+folder plus `system.def` / `fight.def` / `.sff`); fonts, the CC0 kit, the
+palette, `news.json` and `art/` are shared in `motif/`. `rugen ui-gen
+[--out motif/themes/<name>]` regenerates these defaults for the Neon Dojo look.
 
 ## Files
 
