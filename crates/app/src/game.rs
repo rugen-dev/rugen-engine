@@ -970,7 +970,10 @@ impl Shell {
                             m.init_gpu(&mut g.renderer);
                         }
                         // scripted screenshots start once the round is live
-                        if self.harness.script.is_some() && self.harness.frames.is_none() {
+                        if self.harness.script.is_some()
+                            && self.harness.frames.is_none()
+                            && setup.net.is_none()
+                        {
                             let mut guard = 0;
                             while m.world.round.round_state() != 2 && guard < 2000 {
                                 m.world.step(&[Buttons::default(), Buttons::default()]);
