@@ -18,7 +18,7 @@ text = "ONLINE"
 x = 0
 w = "100%"
 y = 42
-font = 2
+font = 1
 bank = 9
 scale = 4
 align = "center"
@@ -33,7 +33,7 @@ x = 0
 w = "100%"
 y = 112
 font = 1
-bank = 8
+bank = 9
 scale = 2
 align = "center"
 
@@ -76,7 +76,7 @@ enter_time = 18
   x = 18
   y = 82
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -137,7 +137,7 @@ enter_time = 16
   x = 30
   y = 24
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -206,7 +206,7 @@ h = 300
   x = 30
   y = 24
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -232,7 +232,7 @@ h = 300
   x = 30
   y = 24
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
 # ---- no server: what ONLINE needs, and the direct match that works without one
@@ -283,7 +283,7 @@ enter_time = 18
   x = 24
   y = 116
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -291,7 +291,7 @@ enter_time = 18
   text = "DIRECT MATCH (LAN / IP):"
   x = 24
   y = 166
-  font = 1
+  font = 2
   bank = 10
   scale = 2
 
@@ -328,7 +328,7 @@ enter_time = 18
   x = 24
   y = 306
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
 # ---- direct match: type the peer address
@@ -360,7 +360,7 @@ enter_time = 16
   x = 30
   y = 66
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -394,7 +394,7 @@ enter_time = 16
   x = 30
   y = 216
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
   [[node.children]]
@@ -404,7 +404,7 @@ enter_time = 16
   x = 30
   y = 24
   font = 1
-  bank = 8
+  bank = 9
   scale = 2
 
 # ---- ranked queue
@@ -487,7 +487,7 @@ enter_time = 16
   text = "{season}   {my_rank}"
   x = 24
   y = 16
-  font = 1
+  font = 2
   bank = 10
   scale = 2
 
@@ -522,7 +522,7 @@ enter_time = 16
       x = 16
       y = 8
       font = 1
-      bank = 8
+      bank = 9
       scale = 2
 
   [[node.children]]
@@ -564,7 +564,7 @@ visible = "has_error"
 anchor = "bl"
 x = 60
 y = 28
-font = 1
+font = 2
 bank = 10
 scale = 2
 
@@ -576,5 +576,5 @@ anchor = "br"
 x = 24
 y = 16
 font = 1
-bank = 8
+bank = 9
 scale = 2

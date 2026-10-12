@@ -322,7 +322,7 @@ anchor = "tr"
 x = 40
 y = 34
 font = 2
-bank = 6
+bank = 11
 
 # ---------------------------------------------------------------- tabs
 [[node]]
@@ -421,7 +421,6 @@ enter_time = 14
   y = 26
   font = 2
   bank = 9
-  alpha = 0.6
   visible = "!show_themes"
 
   [[node.children]]
@@ -681,7 +680,6 @@ enter_time = 14
       y = 242
       font = 2
       bank = 9
-      alpha = 0.6
       visible = "!item.active"
 
   [[node.children]]
@@ -691,7 +689,6 @@ enter_time = 14
   y = 400
   font = 2
   bank = 9
-  alpha = 0.6
   visible = "show_themes"
 
 # ---------------------------------------------------------------- help bar
@@ -735,7 +732,7 @@ enter_time = 18
   wrap = true
   line_gap = 8
   font = 2
-  scale = 1.25
+  scale = 1
   bank = 11
 
 # ---------------------------------------------------------------- key hints
@@ -772,7 +769,6 @@ align = "center"
   text = "CHANGE"
   font = 2
   bank = 9
-  alpha = 0.6
 
 [[node]]
 kind = "hbox"
@@ -796,7 +792,6 @@ align = "center"
   text = "SAVE & BACK"
   font = 2
   bank = 9
-  alpha = 0.6
 "##;
 
 const INK_CONTROLS: &str = r##"# rugen controls — Shonen Ink. Coordinates are 1280x720; data in ../README.md.
@@ -881,7 +876,6 @@ group = "header"
   text = "DEVICE"
   font = 2
   bank = 11
-  alpha = 0.7
 
   [[node.children]]
   kind = "keycap"
@@ -942,7 +936,6 @@ enter_time = 14
   y = 18
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "image"
@@ -1043,7 +1036,6 @@ enter_time = 14
   y = 352
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "text"
@@ -1052,7 +1044,6 @@ enter_time = 14
   y = 352
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "image"
@@ -1145,7 +1136,6 @@ align = "center"
   text = "BACK TO OPTIONS"
   font = 2
   bank = 9
-  alpha = 0.6
 
 # ---------------------------------------------------------------- bindings
 [[node]]
@@ -1316,7 +1306,6 @@ enter_time = 18
       x = 160
       font = 2
       bank = 9
-      alpha = 0.6
       bank_focus = 11
       selected = "item.hot"
       visible = "item.show_group"
@@ -1402,7 +1391,6 @@ align = "center"
   text = "REBIND"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -1415,7 +1403,6 @@ align = "center"
   text = "CLEAR"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -1429,7 +1416,6 @@ align = "center"
   text = "DEFAULTS"
   font = 2
   bank = 9
-  alpha = 0.6
 
   [[node.children]]
   kind = "keycap"
@@ -1443,7 +1429,6 @@ align = "center"
   text = "1P/2P"
   font = 2
   bank = 9
-  alpha = 0.6
 "##;
 
 const DOJO_OPTIONS: &str = r##"# rugen options — Neon Dojo. Coordinates are 1280x720; data in README.md.

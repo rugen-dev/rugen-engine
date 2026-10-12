@@ -164,6 +164,9 @@ pub struct FontGpu {
     pub font: Font,
     glyphs: HashMap<char, TextureId>,
     banks: Vec<PaletteId>,
+    /// Window pixels per drawing unit: upright glyphs start on whole window
+    /// pixels so a fractionally scaled pixel font keeps even pixel columns.
+    pub snap: Option<[f32; 2]>,
 }
 
 impl FontGpu {
@@ -172,6 +175,7 @@ impl FontGpu {
             font,
             glyphs: HashMap::new(),
             banks: Vec::new(),
+            snap: None,
         }
     }
 
@@ -269,7 +273,13 @@ impl FontGpu {
                     .glyphs
                     .entry(c)
                     .or_insert_with(|| r.add_indexed(g.width as u32, g.height as u32, &g.pixels));
-                let mut d = Draw::new(tex, Some(bank), [x, y], [0.0, 0.0]);
+                let at = match self.snap {
+                    Some([kx, ky]) if xf.is_none() && kx > 0.0 && ky > 0.0 => {
+                        [libm::roundf(x * kx) / kx, libm::roundf(y * ky) / ky]
+                    }
+                    _ => [x, y],
+                };
+                let mut d = Draw::new(tex, Some(bank), at, [0.0, 0.0]);
                 d.scale = [scale, scale];
                 d.clip = clip;
                 if let Some((angle, pivot)) = xf {

@@ -27,7 +27,7 @@ colours; `rugen pixelize` snaps anything else to them.
 
 | asset | source |
 |---|---|
-| `font/rugen-*.def` | `font/src/*.ttf` (OFL pixel fonts) through `rugen fontgen` roles: title = Press Start 2P 16 px, menu = Silkscreen Bold 16 px, small = Press Start 2P 8 px, numbers = Press Start 2P 16 px |
+| `font/rugen-*.def` | `font/src/*.ttf` (OFL pixel fonts) through `rugen fontgen` roles: title = Press Start 2P 16 px, menu / captions = Jersey 10 at 20 px (2x its grid), small = Press Start 2P 8 px, numbers = Press Start 2P 16 px |
 | `ui/kit/*.webp` | `kit/kenney-pixel-adventure/` (CC0) tiles recoloured by luminance onto a ramp (`rugen kit-import`) |
 | `ui/button*.webp`, `panel`, `row*`, `plate*`, `cell*`, `art_frame`, `card` | kit tiles 9-sliced (edges repeated, never stretched) and sheared into parallelograms |
 | `ui/bg_sky.webp` `bg_far.webp` `bg_near.webp` | drawn: dithered sky + moon + stars, two ridge silhouettes with fog, arena floor + torii gates + light shafts; `bg.webp` is the merge |

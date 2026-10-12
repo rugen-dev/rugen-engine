@@ -1659,7 +1659,14 @@ impl Painter for Host<'_> {
         alpha: f32,
         clip: Option<Rect>,
     ) {
+        // start the text on a whole window pixel: pixel fonts scaled by a
+        // fractional virtual-to-window factor (1.5 at 1080p) then keep every
+        // font pixel the same width
+        let win = self.r.size();
+        let (vw, vh) = viewport(win);
+        let k = [win.0 as f32 / vw, win.1 as f32 / vh];
         if let Some(f) = self.fonts.get_mut(&font) {
+            f.snap = Some(k);
             f.draw_xf(
                 self.r,
                 text,
@@ -1671,6 +1678,7 @@ impl Painter for Host<'_> {
                 alpha,
                 self.rot.map(|r| (-r.deg, [r.cx, r.cy])),
             );
+            f.snap = None;
         }
     }
 }
