@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Diary-Axel-RAKOTOARIVAO/RUGEN"
+repository = "https://github.com/rugen-dev/rugen-engine"
 rust-version = "1.85"
 
 [workspace.dependencies]

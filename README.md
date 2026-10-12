@@ -6,6 +6,8 @@ MUGEN-compatible 2D fighting game engine in Rust.
 - Runs on Windows, Linux, macOS from one codebase.
 - Rollback netplay designed in from the first commit.
 
+Docs: <https://rugen-dev.github.io/rugen-docs/>. Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server).
+
 See [DESIGN.md](DESIGN.md) for architecture and phase plan, [reference/README.md](reference/README.md) for reference material.
 
 ## Build
@@ -146,23 +148,12 @@ falls back to `data/`.
 
 ## Hosting a server
 
-Docker Compose + Cloudflare Tunnel (Dokploy-ready): see
-[`deploy/README.md`](deploy/README.md). Or directly:
-
-```
-cargo build --release -p rugen-relay --bin rugen-server
-RUGEN_DATA=/var/lib/rugen RUGEN_NAME="my server" ./target/release/rugen-server
-```
-
-One binary with SQLite inside: HTTP + WebSocket on 8080 (lobby, presence,
-WebSocket relay; fine behind a tunnel / reverse proxy) and the UDP match relay
-on 7001. Everything is rate-limited and validated; there are no account
-passwords (anonymous keys), room passwords are Argon2id hashes, and no client
-address is ever sent to another client. Seasons roll every 90 days with a
-soft rating reset. Players add `https://your-host` in ONLINE. The server also
-judges matchups and passes character packages between the two players of a
-match (`RUGEN_PKG_TTL`, `RUGEN_PKG_MAX_TOTAL`, `RUGEN_PKG_MAX`: see the deploy
-README, including the note on hosted content).
+The online hub lives in its own repository,
+[rugen-server](https://github.com/rugen-dev/rugen-server): one small binary
+with SQLite inside (lobby, rooms, ranked, the match relay that keeps player
+IPs private, bring-your-own-character matchups). Docker Compose / Dokploy
+guide and image `ghcr.io/rugen-dev/rugen-server` there. Players add
+`https://your-host` in ONLINE.
 
 ## Status
 
