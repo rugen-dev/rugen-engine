@@ -79,6 +79,7 @@ pub struct RelaySocket {
     /// Player ↔ player round trip through the server relay (ms).
     relay_rtt: Option<f32>,
     relay_srtt: crate::path::Srtt,
+    rpongs: u32,
     last_rping: Instant,
     last_select: Instant,
     /// What the HUD shows; stays readable after the socket moved into ggrs.
@@ -153,6 +154,7 @@ impl RelaySocket {
             selector: PathSelector::default(),
             relay_rtt: None,
             relay_srtt: Default::default(),
+            rpongs: 0,
             last_rping: Instant::now(),
             last_select: Instant::now(),
             link: Default::default(),
@@ -577,6 +579,7 @@ impl RelaySocket {
                 let t = u64::from_be_bytes(p[1..9].try_into().ok()?);
                 let us = self.now_us().saturating_sub(t);
                 self.relay_srtt.sample(us as f32 / 1000.0);
+                self.rpongs += 1;
                 None
             }
             T_PONG if p.len() == 9 => {
@@ -609,8 +612,11 @@ impl RelaySocket {
                 last = Instant::now();
             }
             while let Some((h, p)) = self.recv_frame() {
+                // only pings sent by this call: late answers to earlier pings
+                // (e.g. through the slow relay) would skew the sample
                 if let Some(rtt) = self.answer(h, &p)
                     && h.from == peer
+                    && u128::from(rtt) <= start.elapsed().as_micros()
                 {
                     got.push(rtt);
                 }
@@ -739,24 +745,23 @@ impl RelaySocket {
         let start = Instant::now();
         // the relay round trip, for comparison (the peer answers pings)
         if self.relay_rtt.is_none() {
-            let mut got = Vec::new();
+            // pings the peer answers through the relay whatever path it uses
             let mut last = start - Duration::from_secs(1);
-            while got.len() < 3 && start.elapsed() < Duration::from_millis(600) {
+            let before = self.rpongs;
+            while self.rpongs < before + 3 && start.elapsed() < Duration::from_millis(800) {
                 if last.elapsed() >= Duration::from_millis(40) {
-                    let mut p = vec![T_PING];
+                    let mut p = vec![T_RPING];
                     p.extend(self.now_us().to_be_bytes());
                     let peer = 1 - self.slot.min(1);
                     self.send_frame(wire::DATA, peer, &p);
                     last = Instant::now();
                 }
                 while let Some((h, p)) = self.recv_frame() {
-                    if let Some(rtt) = self.answer(h, &p) {
-                        got.push(rtt);
-                    }
+                    self.answer(h, &p);
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
-            self.relay_rtt = median(&mut got).map(|us| us as f32 / 1000.0);
+            self.relay_rtt = self.relay_srtt.rtt;
         }
         while start.elapsed() < timeout {
             let direct_done = self.direct.as_ref().is_none_or(|d| !d.pending());
