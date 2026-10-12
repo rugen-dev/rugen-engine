@@ -74,24 +74,9 @@ impl Trust {
     }
 }
 
-/// A random challenge for `GET /v1/identity`.
+/// A random challenge for `GET /v1/identity` (OS cryptographic RNG).
 pub fn nonce() -> String {
-    use std::hash::{BuildHasher as _, Hasher as _};
-    // the std hasher keys are random per process (OS randomness): enough for
-    // a challenge that only has to be unpredictable to the probed server
-    let mut out = Vec::with_capacity(16);
-    for i in 0..2u64 {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u64(i);
-        h.write_u128(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
-        );
-        out.extend_from_slice(&h.finish().to_le_bytes());
-    }
-    rugen_proto::to_hex(&out)
+    rugen_fair::trust::random_hex(16)
 }
 
 /// Judge a server's identity answer to our `nonce`. `claims_official` = it

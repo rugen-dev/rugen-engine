@@ -413,6 +413,16 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// `n` bytes from the OS cryptographic RNG, as hex (challenges, nonces).
+pub fn random_hex(n: usize) -> String {
+    use ring::rand::SecureRandom as _;
+    let mut b = vec![0u8; n];
+    ring::rand::SystemRandom::new()
+        .fill(&mut b)
+        .expect("OS random number generator");
+    to_hex(&b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
