@@ -85,7 +85,7 @@ impl CharData {
         let sff_name = files
             .raw("sprite")
             .ok_or_else(|| Error::Load("no sprite= in [Files]".into()))?;
-        let sff = Sff::open(find(sff_name)?, true)?;
+        let mut sff = Sff::open(find(sff_name)?, true)?;
         let air_name = files
             .raw("anim")
             .ok_or_else(|| Error::Load("no anim= in [Files]".into()))?;
@@ -109,6 +109,13 @@ impl CharData {
                     Ok(path) => palette_files.push(path),
                     Err(e) => warnings.push(format!("pal{i}: {e}")),
                 }
+            }
+        }
+        // SFFv1 sprites 0,0 / 9000,0 (and those sharing their palette) take pal1's colours
+        if let Some(first) = palette_files.first() {
+            match rugen_formats::act::open(first) {
+                Ok(act) => sff.apply_v1_act(&act),
+                Err(e) => warnings.push(format!("{}: {e}", first.display())),
             }
         }
 
