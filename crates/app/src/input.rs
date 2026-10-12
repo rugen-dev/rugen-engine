@@ -6,7 +6,7 @@ use winit::keyboard::{Key, NamedKey};
 use crate::config;
 
 /// Parse a config key name into a winit logical key.
-fn parse_key(name: &str) -> Key {
+pub fn parse_key(name: &str) -> Key {
     let named = match name {
         "ArrowUp" => Some(NamedKey::ArrowUp),
         "ArrowDown" => Some(NamedKey::ArrowDown),
@@ -20,6 +20,8 @@ fn parse_key(name: &str) -> Key {
         "Tab" => Some(NamedKey::Tab),
         "Backspace" => Some(NamedKey::Backspace),
         "Escape" => Some(NamedKey::Escape),
+        "Delete" => Some(NamedKey::Delete),
+        "F5" => Some(NamedKey::F5),
         _ => None,
     };
     match named {
@@ -184,6 +186,26 @@ impl InputState {
                 _ => {}
             }
         }
+    }
+
+    /// Connected gamepads in slot order: name and held buttons (stick included).
+    pub fn pads(&self) -> Vec<(String, Buttons)> {
+        let Some(g) = self.gilrs.as_ref() else {
+            return Vec::new();
+        };
+        self.pads
+            .iter()
+            .filter_map(|p| {
+                let gp = g.connected_gamepad(p.id)?;
+                let mut b = p.held;
+                let dz = self.deadzone;
+                b.l |= p.stick[0] < -dz;
+                b.r |= p.stick[0] > dz;
+                b.u |= p.stick[1] > dz;
+                b.d |= p.stick[1] < -dz;
+                Some((gp.name().to_string(), b))
+            })
+            .collect()
     }
 
     /// Current buttons for both players (keyboard OR gamepad).

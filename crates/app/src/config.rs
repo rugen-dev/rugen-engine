@@ -26,6 +26,8 @@ pub struct GameCfg {
     pub air_dash: bool,
     /// Hold down while falling to drop faster.
     pub fast_fall: bool,
+    /// Seconds on the round clock in offline matches; 0 = no timer.
+    pub round_time: i32,
 }
 
 impl Default for GameCfg {
@@ -35,6 +37,7 @@ impl Default for GameCfg {
             air_jumps: 0,
             air_dash: false,
             fast_fall: false,
+            round_time: 99,
         }
     }
 }
@@ -170,7 +173,8 @@ impl Default for PlayerKeys {
 }
 
 impl PlayerKeys {
-    fn p1() -> Self {
+    /// AZERTY ZQSD layout (player 1 default).
+    pub fn p1() -> Self {
         Self {
             up: "z".into(),
             down: "s".into(),
@@ -185,7 +189,8 @@ impl PlayerKeys {
             start: "m".into(),
         }
     }
-    fn p2() -> Self {
+    /// Arrows + number keys (player 2 default).
+    pub fn p2() -> Self {
         Self {
             up: "ArrowUp".into(),
             down: "ArrowDown".into(),

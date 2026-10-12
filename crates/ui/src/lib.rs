@@ -23,11 +23,14 @@
 //! Boxes without `items` stack their children as siblings (`gap`, `justify`,
 //! `align`, child `grow`); boxes with `items` give every element one slot in
 //! which the children overlap. Widgets: `panel image text button vbox hbox
-//! list grid input slider toggle particles`. Two players can navigate at once
+//! list grid input slider toggle particles pips choice keycap icon` (see
+//! `widgets.rs`). Two players can navigate at once
 //! (`set_dual`): P2's focus uses the `*_focus2` visuals and fires
 //! [`Event::Action2`].
 
 #![forbid(unsafe_code)]
+
+mod widgets;
 
 use std::collections::HashMap;
 
@@ -46,14 +49,21 @@ pub enum Dim {
 }
 
 impl Dim {
-    fn resolve(&self, parent: f32) -> f32 {
+    /// Pixels; strings may bind (`"{item.dx}"`, `"{pad.x}%"`) and end in `%`.
+    fn resolve(&self, parent: f32, ctx: &Value) -> f32 {
         match self {
             Dim::Px(v) => *v,
-            Dim::Pct(s) => s
-                .trim()
-                .trim_end_matches('%')
-                .parse::<f32>()
-                .map_or(0.0, |p| p / 100.0 * parent),
+            Dim::Pct(s) => {
+                let s = interpolate(s, ctx);
+                let t = s.trim();
+                match t.strip_suffix('%') {
+                    Some(pct) => pct
+                        .trim()
+                        .parse::<f32>()
+                        .map_or(0.0, |p| p / 100.0 * parent),
+                    None => t.parse::<f32>().unwrap_or(0.0),
+                }
+            }
         }
     }
 }
@@ -80,6 +90,14 @@ pub enum Kind {
     Toggle,
     /// Drifting pixel sparks inside the node's rectangle.
     Particles,
+    /// Level squares: `max` (or `max_from`) boxes, the first `value` filled with `color2`.
+    Pips,
+    /// Segmented options from the `options` array; `value` is the selected index (or string).
+    Choice,
+    /// A key cap showing `text` (or the built-in `glyph`); `w` is its minimum width.
+    Keycap,
+    /// One built-in glyph (`glyph = "up"`, ...) in `color`.
+    Icon,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -165,6 +183,39 @@ pub struct NodeDef {
     pub count: Option<u32>,
     pub speed: Option<f32>,
     pub size: Option<f32>,
+    /// Outline drawn inside the rect (any kind; pips / choice / keycap / slider use it too).
+    pub border: Option<f32>,
+    pub border_color: Option<[f32; 4]>,
+    pub border_color_focus: Option<[f32; 4]>,
+    /// Keycap: extra thickness of the bottom edge.
+    pub depth: Option<f32>,
+    /// Glyph colour on choices and keycaps (`@name` labels, `glyph`).
+    pub text_color: Option<[f32; 4]>,
+    pub text_color_focus: Option<[f32; 4]>,
+    /// Built-in glyph name for `icon` / `keycap` (may bind: `"{item.glyph}"`).
+    pub glyph: Option<String>,
+    /// Choice: bind path to the array of option labels.
+    pub options: Option<String>,
+    /// Bind path overriding `max` (pips count).
+    pub max_from: Option<String>,
+    /// Styled slider: knob `[w, h]`, knob and track fills.
+    pub knob: Option<[f32; 2]>,
+    pub knob_color: Option<[f32; 4]>,
+    pub track_color: Option<[f32; 4]>,
+    /// Image: repeat at its own size (times `scale`) instead of stretching.
+    pub tile: bool,
+    /// `focus` / `idle`: draw only while the node or an ancestor is (not) focused or selected.
+    pub when: Option<String>,
+    /// Use the focus visuals while an ancestor is focused.
+    pub inherit_focus: bool,
+    /// Blink with this period in ticks.
+    pub blink: Option<f32>,
+    /// Navigation group (inherited by children): up/down stay inside the group when they can.
+    pub group: Option<String>,
+    /// Text: break into lines at spaces to fit `w`, centred vertically in `h`.
+    pub wrap: bool,
+    /// Extra space between wrapped lines (default 40% of the line height).
+    pub line_gap: Option<f32>,
     pub children: Vec<NodeDef>,
 }
 
@@ -465,6 +516,16 @@ fn hash01(seed: u32) -> f32 {
     (x & 0xFFFF) as f32 / 65535.0
 }
 
+/// Candidates for spatial navigation.
+#[derive(Clone, Copy)]
+enum Pool<'a> {
+    All,
+    /// Same navigation group only.
+    Group(&'a str),
+    /// Nodes entirely past the current one along the direction, in the same column.
+    Beyond,
+}
+
 fn is_box(k: Kind) -> bool {
     matches!(k, Kind::Vbox | Kind::Hbox | Kind::List)
 }
@@ -728,8 +789,8 @@ impl Ui {
 
     fn node_rect(n: &NodeDef, parent: Rect, ctx: &Value, p: &mut dyn Painter) -> Rect {
         let (mut w, mut h) = (
-            n.w.as_ref().map(|d| d.resolve(parent.w)),
-            n.h.as_ref().map(|d| d.resolve(parent.h)),
+            n.w.as_ref().map(|d| d.resolve(parent.w, ctx)),
+            n.h.as_ref().map(|d| d.resolve(parent.h, ctx)),
         );
         // text sizes itself; buttons fill the parent's width unless sized
         if n.kind == Kind::Text {
@@ -770,10 +831,23 @@ impl Ui {
                 _ => {}
             }
         }
+        if matches!(n.kind, Kind::Pips | Kind::Choice | Kind::Keycap) {
+            let hh = *h.get_or_insert_with(|| {
+                p.text_height(n.font.unwrap_or(1), n.scale.unwrap_or(1.0)) * 2.0
+            });
+            if let Some(nat) = widgets::natural_w(n, ctx, hh, p) {
+                // a keycap's `w` is its minimum width
+                w = Some(match (n.kind, w) {
+                    (Kind::Keycap, Some(min)) => nat.max(min),
+                    (_, Some(given)) => given,
+                    (_, None) => nat,
+                });
+            }
+        }
         let w = w.unwrap_or(parent.w);
         let h = h.unwrap_or(parent.h);
-        let x = n.x.as_ref().map_or(0.0, |d| d.resolve(parent.w));
-        let y = n.y.as_ref().map_or(0.0, |d| d.resolve(parent.h));
+        let x = n.x.as_ref().map_or(0.0, |d| d.resolve(parent.w, ctx));
+        let y = n.y.as_ref().map_or(0.0, |d| d.resolve(parent.h, ctx));
         let (ax, ay) = match n.anchor.as_deref().unwrap_or("tl") {
             "tr" => (parent.w - w - x, y),
             "bl" => (x, parent.h - h - y),
@@ -1388,15 +1462,63 @@ impl Ui {
         self.instances.iter().find(|i| i.key == key)
     }
 
+    /// True when `key` sits inside the focused node (`<focus>.child`, `<focus>[i]...`).
+    fn ancestor_focused(&self, key: &str) -> bool {
+        self.focus.as_deref().is_some_and(|f| {
+            key.len() > f.len()
+                && key.starts_with(f)
+                && matches!(key.as_bytes()[f.len()], b'.' | b'[')
+        })
+    }
+
+    /// Navigation group of an instance: its own `group`, else the nearest ancestor's.
+    fn group_of(&self, inst: &Instance) -> Option<&str> {
+        if let Some(g) = self.defs[inst.def].group.as_deref() {
+            return Some(g);
+        }
+        self.instances
+            .iter()
+            .filter(|a| {
+                a.key.len() < inst.key.len()
+                    && inst.key.starts_with(&a.key)
+                    && matches!(inst.key.as_bytes()[a.key.len()], b'.' | b'[')
+                    && self.defs[a.def].group.is_some()
+            })
+            .max_by_key(|a| a.key.len())
+            .and_then(|a| self.defs[a.def].group.as_deref())
+    }
+
     /// Spatial navigation: nearest focusable instance in direction `(dx, dy)`.
+    /// Up/down prefer the focused node's `group` and only leave it when it has nothing there.
     fn nearest(&self, from: &Instance, dx: f32, dy: f32) -> Option<String> {
+        if dy != 0.0
+            && let Some(g) = self.group_of(from)
+        {
+            // leave the group only for nodes clearly beyond this one
+            return self
+                .nearest_in(from, dx, dy, Pool::Group(g))
+                .or_else(|| self.nearest_in(from, dx, dy, Pool::Beyond));
+        }
+        self.nearest_in(from, dx, dy, Pool::All)
+    }
+
+    fn nearest_in(&self, from: &Instance, dx: f32, dy: f32, pool: Pool<'_>) -> Option<String> {
         let (fx, fy) = from.rect.center();
         let mut best: Option<(f32, &Instance)> = None;
-        for i in self
-            .instances
-            .iter()
-            .filter(|i| i.focusable && i.key != from.key)
-        {
+        for i in self.instances.iter().filter(|i| {
+            i.focusable
+                && i.key != from.key
+                && match pool {
+                    Pool::All => true,
+                    Pool::Beyond => {
+                        let gap = (from.rect.h + i.rect.h) / 2.0;
+                        let overlap = i.rect.x < from.rect.x + from.rect.w
+                            && from.rect.x < i.rect.x + i.rect.w;
+                        overlap && (i.rect.center().1 - from.rect.center().1) * dy >= gap
+                    }
+                    Pool::Group(g) => self.group_of(i) == Some(g),
+                }
+        }) {
             let (cx, cy) = i.rect.center();
             let (vx, vy) = (cx - fx, cy - fy);
             let along = vx * dx + vy * dy;
@@ -1447,6 +1569,60 @@ impl Ui {
                 self.particles(p, n, rect, alpha, clip);
                 continue;
             }
+            let inside = self.ancestor_focused(&inst.key);
+            match n.when.as_deref() {
+                Some("focus") if !(lit || inside) => continue,
+                Some("idle") if lit || inside => continue,
+                _ => {}
+            }
+            if let Some(period) = n.blink
+                && period > 0.0
+                && self.time % period >= period / 2.0
+            {
+                continue;
+            }
+            let lit = lit || (n.inherit_focus && inside);
+            match n.kind {
+                Kind::Pips => {
+                    widgets::draw_pips(p, n, &inst.ctx, rect, alpha, clip);
+                    continue;
+                }
+                Kind::Choice => {
+                    widgets::draw_choice(p, n, &inst.ctx, rect, lit, alpha, clip);
+                    continue;
+                }
+                Kind::Keycap => {
+                    widgets::draw_keycap(
+                        p,
+                        n,
+                        &inst.ctx,
+                        inst.text.as_deref(),
+                        rect,
+                        lit,
+                        alpha,
+                        clip,
+                    );
+                    continue;
+                }
+                Kind::Icon => {
+                    widgets::draw_icon(p, n, &inst.ctx, rect, lit, alpha, clip);
+                    continue;
+                }
+                Kind::Slider
+                    if n.knob.is_some() || n.knob_color.is_some() || n.track_color.is_some() =>
+                {
+                    let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
+                    let v = self.slider_value(inst);
+                    let frac = if max > min {
+                        ((v - min) / (max - min)).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    widgets::draw_slider(p, n, frac, rect, lit, alpha, clip);
+                    continue;
+                }
+                _ => {}
+            }
             let color = if lit {
                 n.color_focus.or(n.color)
             } else {
@@ -1472,8 +1648,20 @@ impl Ui {
                 let key = interpolate(img, &inst.ctx);
                 match n.nine {
                     Some(b) => Self::nine_slice(p, &key, b, rect, alpha, clip),
+                    None if n.tile => {
+                        widgets::draw_tiled(p, &key, rect, n.scale.unwrap_or(1.0), alpha, clip)
+                    }
                     None => p.draw_image(&key, None, rect, skew, alpha, clip),
                 }
+            }
+            if let Some(b) = n.border {
+                let edge = if lit {
+                    n.border_color_focus.or(n.border_color)
+                } else {
+                    n.border_color
+                }
+                .unwrap_or(widgets::INK);
+                widgets::draw_border(p, rect, b, n.depth.unwrap_or(0.0), edge, alpha, clip);
             }
             // the second player's focus tints over the image
             if focused2 && let Some(c) = n.color_focus2 {
@@ -1597,6 +1785,26 @@ impl Ui {
                 } else {
                     clip
                 };
+                if n.wrap && n.kind == Kind::Text {
+                    let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
+                    let step = th + n.line_gap.unwrap_or(th * 0.4);
+                    let total = step * lines.len() as f32 - (step - th);
+                    let top = rect.y + ((rect.h - total) / 2.0).max(0.0);
+                    for (i, line) in lines.iter().enumerate() {
+                        p.draw_text(
+                            font,
+                            line,
+                            x,
+                            top + th + step * i as f32,
+                            bank,
+                            align,
+                            scale,
+                            alpha,
+                            clip,
+                        );
+                    }
+                    continue;
+                }
                 p.draw_text(
                     font,
                     &text,
@@ -2191,5 +2399,136 @@ count = 30
         for r in &p.rects {
             assert!(r.x >= 80.0 && r.x <= 320.0 && r.y >= 100.0 && r.y + r.h <= 200.0);
         }
+    }
+
+    #[test]
+    fn widgets_size_themselves_and_bind_positions() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "pips"
+id = "pips"
+h = 20
+gap = 5
+max_from = "row.max"
+value = "row.on"
+[[node]]
+kind = "choice"
+id = "choice"
+y = 100
+h = 30
+pad = 10
+options = "row.opts"
+value = "row.sel"
+[[node]]
+kind = "keycap"
+id = "cap"
+y = 200
+w = 60
+h = 30
+text = "{row.cap}"
+[[node]]
+kind = "icon"
+id = "ico"
+x = "{row.dx}"
+y = "50%"
+w = 14
+h = 14
+glyph = "up"
+"#,
+        )
+        .unwrap();
+        let data = serde_json::json!({ "row": { "max": 8, "on": 3, "opts": ["0", "1", "@inf"], "sel": 2, "cap": "ENTER", "dx": 42 } });
+        let mut ui = Ui::new(def, data);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.rect_of("pips").unwrap().w, 8.0 * 20.0 + 7.0 * 5.0);
+        // "0" and "1" are 8 px wide + 2*10 pad; the glyph is 15 px + pad; borders overlap
+        let c = ui.rect_of("choice").unwrap();
+        assert_eq!(c.w, 28.0 + 28.0 + 35.0 - 2.0 * 3.0);
+        // the keycap grows past its minimum width for long labels
+        assert_eq!(ui.rect_of("cap").unwrap().w, 40.0 + 16.0 + 6.0);
+        let i = ui.rect_of("ico").unwrap();
+        assert_eq!((i.x, i.y), (42.0, 360.0));
+        ui.draw(&mut p);
+        assert!(p.drawn.contains(&"text:ENTER".to_string()));
+        assert!(p.drawn.contains(&"text:1".to_string()));
+    }
+
+    #[test]
+    fn groups_keep_vertical_navigation_and_when_follows_focus() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "vbox"
+id = "tabs"
+x = 0
+y = 0
+w = 200
+h = 300
+group = "tabs"
+items = "tabs"
+gap = 10
+[[node.children]]
+kind = "button"
+id = "tab"
+h = 40
+on_press = "tab:{index}"
+[[node]]
+kind = "button"
+id = "head"
+x = 450
+y = 0
+w = 100
+h = 40
+on_press = "head"
+[[node]]
+kind = "vbox"
+id = "rows"
+x = 400
+y = 100
+w = 400
+h = 300
+group = "rows"
+items = "rows"
+[[node.children]]
+kind = "button"
+id = "row"
+h = 40
+on_press = "row:{index}"
+  [[node.children.children]]
+  kind = "text"
+  text = "MARK{index}"
+  when = "focus"
+"#,
+        )
+        .unwrap();
+        let data = serde_json::json!({ "tabs": [1, 2, 3], "rows": [1, 2] });
+        let mut ui = Ui::new(def, data);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.set_focus(Some("rows[1].row"));
+        // nothing below in the group and nothing focusable lower down: stays
+        ui.tick(nav_down(), &mut p);
+        assert_eq!(ui.focused(), Some("rows[1].row"));
+        ui.tick(
+            Nav {
+                up: true,
+                ..Default::default()
+            },
+            &mut p,
+        );
+        assert_eq!(ui.focused(), Some("rows[0].row"), "stays in the rows group");
+        p.drawn.clear();
+        ui.draw(&mut p);
+        assert!(p.drawn.contains(&"text:MARK0".to_string()));
+        assert!(!p.drawn.contains(&"text:MARK1".to_string()));
+        // leaving the group: only a node above in the same column, never the tab column
+        let up = Nav {
+            up: true,
+            ..Default::default()
+        };
+        ui.tick(up, &mut p);
+        assert_eq!(ui.focused(), Some("head"));
     }
 }

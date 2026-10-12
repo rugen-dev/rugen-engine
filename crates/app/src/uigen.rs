@@ -774,123 +774,6 @@ bank = 6
 scale = 2
 "##;
 
-const OPTIONS_TOML: &str = r##"# rugen options screen — rows come from the engine (`rows`), layout is yours.
-background = [0.03, 0.04, 0.08, 1.0]
-
-[[node]]
-kind = "image"
-image = "ui/bg.webp"
-w = 1280
-h = 720
-
-[[node]]
-kind = "text"
-text = "OPTIONS"
-anchor = "top"
-y = 44
-font = 3
-bank = 0
-scale = 2
-enter = "down"
-
-[[node]]
-kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 220
-y = 130
-w = 840
-h = 540
-pad = 24
-enter = "up"
-enter_time = 18
-
-  [[node.children]]
-  kind = "list"
-  id = "rows"
-  w = 792
-  h = 420
-  gap = 6
-  items = "rows"
-
-    [[node.children.children]]
-    kind = "button"
-    id = "{item.id}"
-    h = 40
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
-    on_press = "{item.press}"
-    on_left = "{item.left}"
-    on_right = "{item.right}"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.label}"
-      anchor = "left"
-      x = 24
-      font = 2
-      bank = 7
-      scale = 2
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.value}"
-      anchor = "right"
-      x = 28
-      font = 2
-      bank = 4
-      scale = 2
-
-  [[node.children]]
-  kind = "button"
-  id = "back"
-  anchor = "bl"
-  w = 220
-  h = 54
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "BACK"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  on_press = "back"
-
-  [[node.children]]
-  kind = "text"
-  text = "< >  CHANGE     ENTER  SELECT     SAVED ON EXIT"
-  anchor = "br"
-  x = 8
-  y = 60
-  font = 1
-  bank = 6
-  scale = 2
-
-# key capture overlay
-[[node]]
-kind = "panel"
-color = [0.0, 0.0, 0.0, 0.75]
-visible = "capture.active"
-
-  [[node.children]]
-  kind = "text"
-  text = "{capture.prompt}"
-  anchor = "center"
-  y = -20
-  font = 2
-  bank = 4
-  scale = 3
-
-  [[node.children]]
-  kind = "text"
-  text = "{capture.progress}     ESC  CANCEL"
-  anchor = "center"
-  y = 36
-  font = 1
-  bank = 7
-  scale = 2
-"##;
-
 const NEWS_JSON: &str = r#"[
   { "title": "WELCOME TO RUGEN", "subtitle": "Drop .zip / .rar characters into chars/ and play.", "image": "ui/news1.webp" },
   { "title": "ARENAS", "subtitle": "Platforms, blast zones, stocks.", "image": "ui/news2.webp" },
@@ -911,7 +794,8 @@ palette, `news.json` and `art/` are shared in `motif/`. `rugen ui-gen
 | file | purpose |
 |---|---|
 | `title.toml` | main menu (data: `menu[]`, `news[]`, `profile`, `version`) |
-| `options.toml` | settings (data: `rows[]` with `label`/`value`/`press`/`left`/`right`, `capture`) |
+| `options.toml` | settings in tabs (see "Options and controls" below) |
+| `controls.toml` | key bindings page, test pad, presets |
 | `select.toml` | roster / character select (data: `cells[]`, `shown`, `p1`, `p2`, `stage`, `profile`, `rating`, `prompt`, `count`, `sort`, `ready`); actions `pick:<i>`, `confirm`, `random`, `search`, `sort`, `stage:prev|next|random`, `back` |
 | `news.json` | the three feature panels: `title`, `subtitle`, `image` |
 | `*.webp` | art. **Prefer WebP** (lossless or lossy) — a quarter the size of PNG. PNG also works. |
@@ -942,7 +826,7 @@ Text: `text` with `{binds}`, `font` (system.def font index), `bank`
 
 Buttons: `on_press`, `on_left`, `on_right` are action strings the engine
 understands (`mode:arcade`, `mode:options`, `netplay`, `quit`, `back`,
-`adjust:<row>:<±1>`, `open:keys1`). Buttons are reachable by keyboard /
+`adjust:<row>:<±1>`, `open:keys1` opens the controls page). Buttons are reachable by keyboard /
 gamepad (spatial navigation) and mouse (hover focuses, click presses).
 
 Binds use dotted paths: `{profile.name}`, `{news.0.title}`, `{item.label}`.
@@ -1011,9 +895,12 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path, theme: &Path) -> anyh
     )?;
     pixelize_art(motif, theme)?;
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
-    std::fs::write(ui.join("options.toml"), OPTIONS_TOML)?;
+    crate::settings_gen::dojo(&ui, &title_ttf)?;
     std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
-    std::fs::write(ui.join("README.md"), README)?;
+    std::fs::write(
+        ui.join("README.md"),
+        format!("{README}{}", crate::settings_gen::README),
+    )?;
     let news = motif.join("news.json");
     if !news.exists() {
         std::fs::write(news, NEWS_JSON)?;

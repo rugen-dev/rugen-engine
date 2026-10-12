@@ -50,6 +50,8 @@ pub enum Transition {
     /// ONLINE menu: rooms, ranked, leaderboard (needs `[net] server`).
     Online,
     Options,
+    /// Key bindings page for player 0 / 1 (`ui/controls.toml`).
+    Controls(usize),
     /// Show the VS screen, then fight.
     Versus(FightSetup, [Portrait; 2]),
     Fight(FightSetup),
@@ -154,6 +156,18 @@ pub struct Harness {
     pub script2: Option<Vec<Buttons>>,
     /// Write a replay of every match here (quick play) or into `replays/`.
     pub record: Option<PathBuf>,
+    /// Raw keys to press: `(tick, key name)` (`--keys 90:Enter,120:k`).
+    pub keys: Vec<(u32, String)>,
+}
+
+/// `--keys "90:Enter,120:k"`: raw key presses at shell ticks (released 3 ticks later).
+pub fn parse_keys(s: &str) -> Vec<(u32, String)> {
+    s.split(',')
+        .filter_map(|t| {
+            let (n, k) = t.trim().split_once(':')?;
+            Some((n.trim().parse().ok()?, k.trim().to_string()))
+        })
+        .collect()
 }
 
 pub struct Shell {
@@ -198,6 +212,11 @@ pub struct Shell {
     deferred: Option<Transition>,
     /// P1 won the arcade match that just ended.
     arcade_won: bool,
+    /// Options tab to open next (back from the controls page).
+    reopen_tab: Option<usize>,
+    /// Shell ticks for `--keys`, and harness key releases due.
+    key_ticks: u32,
+    key_releases: Vec<(u32, Key)>,
 }
 
 impl Shell {
@@ -259,6 +278,9 @@ impl Shell {
             parked: None,
             deferred: None,
             arcade_won: false,
+            reopen_tab: None,
+            key_ticks: 0,
+            key_releases: Vec::new(),
         }
     }
 
@@ -296,7 +318,9 @@ impl Shell {
     fn apply_options(&mut self) {
         let (dirty, config) = match &self.screen {
             Screen::Options(o) => (o.dirty, o.config.clone()),
-            Screen::Ui(u) if u.kind == UiKind::Options => (u.dirty, u.config.clone()),
+            Screen::Ui(u) if matches!(u.kind, UiKind::Options | UiKind::Controls) => {
+                (u.dirty, u.config.clone())
+            }
             _ => return,
         };
         if !dirty {
@@ -316,6 +340,18 @@ impl Shell {
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
             a.set_music_volume(self.config.audio.music);
+        }
+        if let Some(g) = &self.gpu
+            && !self.fullscreen
+            && !self.config.video.fullscreen
+        {
+            let want = winit::dpi::PhysicalSize::new(
+                self.config.video.width.max(320),
+                self.config.video.height.max(240),
+            );
+            if g.window.inner_size() != want {
+                let _ = g.window.request_inner_size(want);
+            }
         }
         if self.fullscreen != self.config.video.fullscreen {
             self.fullscreen = self.config.video.fullscreen;
@@ -685,6 +721,45 @@ impl Shell {
                     ))),
                     None => Screen::Blank,
                 };
+                if let (Some(tab), Screen::Ui(u), Some(sys)) = (
+                    self.reopen_tab.take(),
+                    &mut self.screen,
+                    self.system.as_ref(),
+                ) {
+                    u.set_tab(tab, sys);
+                }
+            }
+            Transition::Controls(player) => {
+                let loaded = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Controls) => {
+                        match UiScreen::load(
+                            UiKind::Controls,
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            false,
+                            &self.lib,
+                        ) {
+                            Ok(mut u) => {
+                                u.set_player(player, sys);
+                                Some(u)
+                            }
+                            Err(e) => {
+                                log::error!("ui/controls.toml: {e:#}");
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+                match loaded {
+                    Some(u) => self.screen = Screen::Ui(Box::new(u)),
+                    None => {
+                        log::warn!("no ui/controls.toml in this theme");
+                        self.transition(Transition::Options);
+                    }
+                }
             }
             Transition::Select(mode) => {
                 self.play_system_music("select");
@@ -803,6 +878,27 @@ impl Shell {
             self.fade -= 1.0 / 12.0;
         }
         self.input.poll();
+        self.key_ticks += 1;
+        let due: Vec<String> = self
+            .harness
+            .keys
+            .iter()
+            .filter(|(t, _)| *t == self.key_ticks)
+            .map(|(_, k)| k.clone())
+            .collect();
+        for name in due {
+            let key = crate::input::parse_key(&name);
+            self.key(&key, true);
+            self.key_releases.push((self.key_ticks + 3, key));
+        }
+        let t = self.key_ticks;
+        let (up, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.key_releases)
+            .into_iter()
+            .partition(|(at, _)| *at <= t);
+        self.key_releases = keep;
+        for (_, key) in up {
+            self.key(&key, false);
+        }
         let mut now = self.input.buttons();
         if let Some(script) = self.harness.script.as_mut() {
             if script.is_empty() {
@@ -851,6 +947,11 @@ impl Shell {
                 }
             }
             Screen::Ui(u) => {
+                if u.kind == UiKind::Controls
+                    && let Some(sys) = self.system.as_ref()
+                {
+                    u.set_pads(self.input.pads(), sys);
+                }
                 if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
                     next = u.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
@@ -868,7 +969,10 @@ impl Shell {
                 if self.deferred.is_some() && u.left() {
                     next = self.deferred.take();
                 }
-                let is_options = u.kind == UiKind::Options;
+                let is_options = matches!(u.kind, UiKind::Options | UiKind::Controls);
+                if u.kind == UiKind::Controls && matches!(next, Some(Transition::Options)) {
+                    self.reopen_tab = Some(crate::settings::CONTROLS_TAB);
+                }
                 let arcade_pick = match (&next, u.mode()) {
                     (Some(Transition::Versus(setup, _)), Some(Mode::Arcade)) => {
                         Some(setup.p1.clone())
@@ -1095,7 +1199,28 @@ impl Shell {
         }
     }
 
-    fn key(&mut self, key: &Key, pressed: bool, event_loop: &ActiveEventLoop) {
+    fn key(&mut self, key: &Key, pressed: bool) {
+        // controls page: held keys light the test pad, page keys act
+        let mut page = None;
+        if let Screen::Ui(u) = &mut self.screen
+            && u.kind == UiKind::Controls
+            && !u.capturing()
+            && let Some(sys) = self.system.as_ref()
+        {
+            let owns = u.controls_owns(key);
+            let t = u.controls_key(key, pressed, sys);
+            page = Some((owns, t));
+        }
+        if let Some((owns, t)) = page {
+            if let Some(t) = t {
+                self.apply_options();
+                self.transition(t);
+                return;
+            }
+            if owns {
+                return;
+            }
+        }
         if let Screen::Options(o) = &mut self.screen
             && o.capturing()
         {
@@ -1145,11 +1270,21 @@ impl Shell {
         }
         if pressed && key == &Key::Named(NamedKey::Escape) {
             match self.screen {
-                Screen::Title(_) | Screen::Blank => event_loop.exit(),
-                Screen::Ui(ref u) if u.kind == UiKind::Title => event_loop.exit(),
-                Screen::Ui(_) => {
-                    self.apply_options();
-                    self.transition(Transition::Title);
+                Screen::Title(_) | Screen::Blank => self.quit = true,
+                Screen::Ui(ref u) if u.kind == UiKind::Title => self.quit = true,
+                Screen::Ui(ref mut u) => {
+                    let kind = u.kind;
+                    let t = match self.system.as_ref() {
+                        Some(sys) => u.escape(sys),
+                        None => Some(Transition::Title),
+                    };
+                    if let Some(t) = t {
+                        if kind == UiKind::Controls {
+                            self.reopen_tab = Some(crate::settings::CONTROLS_TAB);
+                        }
+                        self.apply_options();
+                        self.transition(t);
+                    }
                 }
                 Screen::Online(ref mut o) => {
                     if o.back() {
@@ -1179,7 +1314,7 @@ impl Shell {
                 }
                 Screen::Versus(_) | Screen::Match(_) => {
                     if self.quick {
-                        event_loop.exit();
+                        self.quit = true;
                     } else {
                         self.transition(Transition::Title);
                     }
@@ -1231,7 +1366,10 @@ impl ApplicationHandler for Shell {
             }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 let key = event.logical_key.clone();
-                self.key(&key, event.state == ElementState::Pressed, event_loop);
+                self.key(&key, event.state == ElementState::Pressed);
+                if self.quit && self.harness.shot.is_none() {
+                    event_loop.exit();
+                }
             }
             // a scripted run is driven by the script alone; a stray cursor would steal focus
             WindowEvent::CursorMoved { .. }
