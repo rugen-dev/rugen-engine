@@ -60,6 +60,43 @@ pub struct Registered {
     pub key: String,
 }
 
+/// One way to reach a server's match relay. Servers list them in their
+/// order of preference; clients try the kinds they know in that order and
+/// ignore unknown ones (so new transports, e.g. TURN, need no API break).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RelayTransport {
+    /// `udp` (addr = `host:port`) or `ws` (addr = path like `/relay` on the
+    /// server's own URL, or an absolute `ws(s)://` URL).
+    pub kind: String,
+    pub addr: String,
+}
+
+impl RelayTransport {
+    pub fn udp(addr: &str) -> Self {
+        Self {
+            kind: "udp".into(),
+            addr: addr.into(),
+        }
+    }
+
+    pub fn ws(addr: &str) -> Self {
+        Self {
+            kind: "ws".into(),
+            addr: addr.into(),
+        }
+    }
+}
+
+/// The transports a server offers: UDP first when it has a public UDP
+/// relay, then the `/relay` WebSocket (always).
+pub fn relay_transports(udp: Option<&str>) -> Vec<RelayTransport> {
+    udp.map(RelayTransport::udp)
+        .into_iter()
+        .chain(std::iter::once(RelayTransport::ws("/relay")))
+        .collect()
+}
+
 /// `GET /` and `GET /health`: what the server list shows.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct ServerInfo {
@@ -81,6 +118,10 @@ pub struct ServerInfo {
     /// This is the server's own address, never a player's.
     #[serde(default)]
     pub udp: Option<String>,
+    /// Match relay transports in order of preference (API 4; `udp` above
+    /// stays for older clients). Empty from older servers.
+    #[serde(default)]
+    pub transports: Vec<RelayTransport>,
     /// The server's Ed25519 public key (hex) when it signs (API 4). A claim
     /// only: clients trust a server once it signed their identity nonce.
     #[serde(default)]
@@ -131,6 +172,10 @@ pub struct SessionTicket {
     pub spectators: u8,
     /// Server UDP relay `host:port` (fast path); WebSocket `/relay` otherwise.
     pub udp: Option<String>,
+    /// Transports in order of preference (API 4); when present, clients use
+    /// these instead of `udp`. Unknown kinds are skipped.
+    #[serde(default)]
+    pub transports: Vec<RelayTransport>,
 }
 
 /// One entry of the public lobby (`GET /rooms`).
@@ -345,6 +390,26 @@ mod tests {
             serde_json::from_str(r#"{"api":1,"name":"x","udp_port":7777,"online":0,"queued":0}"#)
                 .unwrap();
         assert!(i.udp.is_none() && i.motd.is_empty());
+    }
+
+    #[test]
+    fn transports_are_ordered_and_extensible() {
+        let t = relay_transports(Some("relay.example:7001"));
+        assert_eq!(t[0], RelayTransport::udp("relay.example:7001"));
+        assert_eq!(t[1], RelayTransport::ws("/relay"));
+        assert_eq!(relay_transports(None), vec![RelayTransport::ws("/relay")]);
+        // a future kind decodes fine (clients skip what they do not know)
+        let s: SessionTicket = serde_json::from_str(
+            r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":null,
+               "transports":[{"kind":"turn","addr":"x","creds":"y"},{"kind":"ws","addr":"/relay"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.transports.len(), 2);
+        // and an API 3 ticket still decodes
+        let old: SessionTicket =
+            serde_json::from_str(r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":"h:1"}"#)
+                .unwrap();
+        assert!(old.transports.is_empty());
     }
 
     #[test]

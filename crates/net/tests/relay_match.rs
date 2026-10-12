@@ -97,6 +97,7 @@ fn ticket(server: SocketAddr, slot: usize) -> SessionTicket {
         token: rugen_proto::to_hex(&token(slot)),
         spectators: 1,
         udp: Some(server.to_string()),
+        transports: Vec::new(),
     }
 }
 
