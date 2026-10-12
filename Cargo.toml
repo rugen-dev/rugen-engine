@@ -14,6 +14,7 @@ rugen-formats = { path = "crates/formats" }
 rugen-cns = { path = "crates/cns" }
 rugen-sim = { path = "crates/sim" }
 rugen-net = { path = "crates/net" }
+rugen-proto = { path = "crates/proto" }
 rugen-render = { path = "crates/render" }
 rugen-audio = { path = "crates/audio" }
 rugen-content = { path = "crates/content" }
