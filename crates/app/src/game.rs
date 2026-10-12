@@ -27,6 +27,14 @@ use crate::uiscreen::{MouseEvent, UiKind, UiScreen};
 use crate::versus::{Portrait, VersusScreen};
 
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
+
+/// Win lines for characters without `[Quotes]`.
+const STOCK_QUOTES: [&str; 4] = [
+    "Is that all you've got?",
+    "Train harder and come back!",
+    "Next chapter, same result.",
+    "Victory is written in ink!",
+];
 const SYSTEM_SND: u32 = u32::MAX - 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +67,8 @@ pub enum Transition {
     Continue,
     /// Pause menu: back to the match.
     Resume,
+    /// Pause menu: restart the current round.
+    Restart,
     Quit,
 }
 
@@ -74,6 +84,10 @@ pub struct ResultInfo {
     pub quick: bool,
     pub arcade: bool,
     pub rating: String,
+    /// Winner's victory quote (or a stock line).
+    pub quote: String,
+    /// Winner's match report rows.
+    pub stats: Vec<(String, String)>,
 }
 
 /// Raw result data pulled out of a finished match: setup, winner, wins, names, arts, quick, arcade.
@@ -198,6 +212,8 @@ pub struct Shell {
     deferred: Option<Transition>,
     /// P1 won the arcade match that just ended.
     arcade_won: bool,
+    /// Stats of the match being played (read-only observer).
+    match_stats: crate::screeninfo::MatchStats,
 }
 
 impl Shell {
@@ -259,12 +275,13 @@ impl Shell {
             parked: None,
             deferred: None,
             arcade_won: false,
+            match_stats: Default::default(),
         }
     }
 
-    /// Open the pause menu over the current match (local matches only).
-    fn open_pause(&mut self) {
-        let Screen::Match(m) = &self.screen else {
+    /// Open the pause menu over the current match (local matches only); `side` paused.
+    fn open_pause(&mut self, side: usize) {
+        let Screen::Match(m) = &mut self.screen else {
             return;
         };
         if m.is_net() || !UiScreen::available(&self.motif_dir, UiKind::Pause) {
@@ -273,12 +290,35 @@ impl Shell {
         let Some(sys) = self.system.as_ref() else {
             return;
         };
+        // freeze the current frame under the menu
+        let scene = self.gpu.as_mut().map(|g| {
+            let r = &mut g.renderer;
+            m.refresh_gpu(r);
+            r.begin();
+            let (cam, clear) = m.render(r);
+            let (w, h) = r.size();
+            (w, h, r.end_to_image(&cam, clear, w, h))
+        });
+        let setup = m.setup().clone();
+        let def = if side == 0 { &setup.p1 } else { &setup.p2 };
+        let (name, art) = char_card(def);
+        let (cmd, moves) = crate::screeninfo::move_list(def);
+        let info = crate::uiscreen::PauseInfo {
+            side,
+            name,
+            art,
+            cmd,
+            moves,
+            scene,
+            mode: setup.mode.filter(|_| !setup.tutorial),
+        };
         match UiScreen::load_pause(
             &self.motif_dir,
             &self.lib.root,
             sys,
             &self.config,
             &self.lib,
+            info,
         ) {
             Ok(u) => self.pause = Some(Box::new(u)),
             Err(e) => log::warn!("ui/pause.toml: {e:#}"),
@@ -562,6 +602,15 @@ impl Shell {
                 self.pause = None;
                 self.fade = 0.0;
             }
+            Transition::Restart => {
+                self.pause = None;
+                self.fade = 0.0;
+                if let Screen::Match(m) = &mut self.screen {
+                    m.world.start_round();
+                    // the recording no longer replays from the first frame
+                    m.record = None;
+                }
+            }
             Transition::Continue => {
                 let won = self.arcade_won;
                 match self.arcade_next(won) {
@@ -619,7 +668,7 @@ impl Shell {
                 // the options were opened from the pause menu: back to the match
                 if let Some(m) = self.parked.take() {
                     self.screen = Screen::Match(m);
-                    self.open_pause();
+                    self.open_pause(0);
                 }
             }
             Transition::Title => {
@@ -751,6 +800,7 @@ impl Shell {
             Transition::Fight(setup) => {
                 self.pause = None;
                 self.parked = None;
+                self.match_stats = Default::default();
                 match Match::load(&setup, &self.motif_dir, &self.data_dir, &self.config) {
                     Ok(mut m) => {
                         if setup.tutorial {
@@ -832,7 +882,7 @@ impl Shell {
         let mut sfx_queue: Vec<Option<(i32, i32)>> = Vec::new();
         let mut next: Option<Transition> = None;
         let mut advanced = true;
-        let mut open_pause = false;
+        let mut open_pause: Option<usize> = None;
         let mut arcade_won: Option<bool> = None;
         let mut result: Option<ResultCard> = None;
         match &mut self.screen {
@@ -937,9 +987,12 @@ impl Shell {
                     && !m.world.round.match_over
                     && m.world.round.round_state() == 2
                 {
-                    open_pause = true;
+                    open_pause = Some(usize::from(!pressed[0].s));
                 }
                 advanced = m.tick(now, &mut self.audio);
+                if advanced {
+                    self.match_stats.observe(&m.world);
+                }
                 if m.leave {
                     if let Some(om) = self.online_match.take() {
                         let wins = m.world.round.wins;
@@ -973,8 +1026,8 @@ impl Shell {
                 }
             }
         }
-        if open_pause {
-            self.open_pause();
+        if let Some(side) = open_pause {
+            self.open_pause(side);
         }
         if let Some(w) = arcade_won {
             self.arcade_won = w;
@@ -986,6 +1039,17 @@ impl Shell {
             } else {
                 profile.rating_text()
             };
+            let side = winner.unwrap_or(0);
+            let quote = {
+                let def = if side == 0 { &setup.p1 } else { &setup.p2 };
+                let quotes = crate::screeninfo::victory_quotes(def);
+                match quotes.len() {
+                    0 => STOCK_QUOTES[self.match_stats.ticks as usize % STOCK_QUOTES.len()]
+                        .to_string(),
+                    n => quotes[self.match_stats.ticks as usize % n].clone(),
+                }
+            };
+            let stats = self.match_stats.rows(side, wins);
             next = Some(Transition::Result(Box::new(ResultInfo {
                 setup,
                 winner,
@@ -995,6 +1059,8 @@ impl Shell {
                 quick,
                 arcade,
                 rating,
+                quote,
+                stats,
             })));
         }
         if next.is_some() {
@@ -1133,6 +1199,13 @@ impl Shell {
         {
             return;
         }
+        if pressed
+            && let Screen::Ui(u) = &mut self.screen
+            && let Some(sys) = self.system.as_ref()
+            && u.hotkey(key, sys)
+        {
+            return;
+        }
         if pressed && key == &Key::Named(NamedKey::F11) {
             self.fullscreen = !self.fullscreen;
             if let Some(g) = &self.gpu {
@@ -1175,7 +1248,7 @@ impl Shell {
                         && !m.world.round.match_over
                         && UiScreen::available(&self.motif_dir, UiKind::Pause) =>
                 {
-                    self.open_pause();
+                    self.open_pause(0);
                 }
                 Screen::Versus(_) | Screen::Match(_) => {
                     if self.quick {

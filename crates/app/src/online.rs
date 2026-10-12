@@ -696,6 +696,7 @@ impl OnlineScreen {
                 textures: &mut self.textures,
                 motif: &self.motif,
                 mem: None,
+                rot: None,
             };
             self.ui.tick(nav, &mut host)
         };
@@ -744,6 +745,7 @@ impl OnlineScreen {
                 textures: &mut self.textures,
                 motif: &self.motif,
                 mem: None,
+                rot: None,
             };
             self.ui.draw(&mut host);
         }
