@@ -1,4 +1,4 @@
-# rugen options screen — rows come from the engine (`rows`), layout is yours.
+# rugen options — Neon Dojo. Coordinates are 1280x720; data in README.md.
 background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
@@ -10,37 +10,106 @@ h = 720
 [[node]]
 kind = "text"
 text = "OPTIONS"
-anchor = "top"
-y = 44
+x = 60
+y = 34
 font = 3
 bank = 0
 scale = 2
 enter = "down"
 
 [[node]]
+kind = "text"
+text = "SAVED TO RUGEN.TOML"
+anchor = "tr"
+x = 60
+y = 46
+font = 2
+bank = 6
+
+[[node]]
+kind = "vbox"
+id = "tabs"
+x = 60
+y = 120
+w = 260
+h = 470
+gap = 10
+items = "tabs"
+group = "tabs"
+enter = "left"
+
+  [[node.children]]
+  kind = "button"
+  id = "tab"
+  h = 54
+  image = "ui/button.webp"
+  image_focus = "ui/button_lit.webp"
+  selected = "item.active"
+  on_press = "{item.press}"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    anchor = "left"
+    x = 26
+    font = 2
+    bank = 7
+    bank_focus = 4
+    selected = "item.active"
+
+    [[node.children.children]]
+    kind = "icon"
+    glyph = "ext"
+    anchor = "right"
+    x = 24
+    w = 14
+    h = 14
+    color = [0.85, 0.87, 0.95, 1.0]
+    visible = "item.ext"
+
+[[node]]
 kind = "panel"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
-x = 220
-y = 130
-w = 840
-h = 540
+x = 350
+y = 110
+w = 870
+h = 480
 pad = 24
 enter = "up"
-enter_time = 18
+
+  [[node.children]]
+  kind = "text"
+  text = "{tab.title}"
+  x = 4
+  font = 2
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{tab.subtitle}"
+  x = 260
+  y = 10
+  font = 2
+  bank = 6
+  visible = "!show_themes"
 
   [[node.children]]
   kind = "list"
   id = "rows"
-  w = 792
-  h = 420
+  y = 54
+  w = 822
+  h = 370
   gap = 6
   items = "rows"
+  group = "rows"
+  visible = "show_rows"
 
     [[node.children.children]]
     kind = "button"
-    id = "{item.id}"
-    h = 40
+    id = "row"
+    h = 44
     image = "ui/row.webp"
     image_focus = "ui/row_lit.webp"
     on_press = "{item.press}"
@@ -51,65 +120,194 @@ enter_time = 18
       kind = "text"
       text = "{item.label}"
       anchor = "left"
-      x = 24
+      x = 22
       font = 2
       bank = 7
-      scale = 2
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      anchor = "right"
+      x = 18
+      w = 600
+      gap = 10
+      justify = "end"
+      align = "center"
+
+        [[node.children.children.children.children]]
+        kind = "icon"
+        glyph = "tri_left"
+        w = 10
+        h = 10
+        color = [1.0, 0.8, 0.3, 1.0]
+        when = "focus"
+        visible = "item.adjustable"
+
+        [[node.children.children.children.children]]
+        kind = "pips"
+        h = 18
+        gap = 4
+        max_from = "item.max"
+        value = "item.on"
+        border = 2
+        color = [0.1, 0.12, 0.2, 1.0]
+        color2 = [1.0, 0.75, 0.25, 1.0]
+        border_color = [0.45, 0.55, 0.8, 1.0]
+        visible = "item.is_pips"
+
+        [[node.children.children.children.children]]
+        kind = "choice"
+        h = 28
+        pad = 12
+        border = 2
+        font = 2
+        bank = 7
+        bank_focus = 4
+        color = [0.1, 0.12, 0.2, 1.0]
+        color2 = [0.6, 0.12, 0.2, 1.0]
+        border_color = [0.45, 0.55, 0.8, 1.0]
+        text_color = [0.85, 0.87, 0.95, 1.0]
+        text_color_focus = [1.0, 0.8, 0.3, 1.0]
+        options = "item.options"
+        value = "item.sel"
+        visible = "item.is_choice"
+
+        [[node.children.children.children.children]]
+        kind = "slider"
+        w = 220
+        h = 12
+        min = 0
+        max = 1
+        value = "item.frac"
+        knob = [14, 24]
+        border = 2
+        track_color = [0.1, 0.12, 0.2, 1.0]
+        color2 = [0.6, 0.12, 0.2, 1.0]
+        knob_color = [1.0, 0.75, 0.25, 1.0]
+        border_color = [0.45, 0.55, 0.8, 1.0]
+        focus = false
+        visible = "item.is_slider"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        font = 2
+        bank = 4
+        visible = "item.has_text"
+
+        [[node.children.children.children.children]]
+        kind = "icon"
+        glyph = "ext"
+        w = 14
+        h = 14
+        color = [1.0, 0.8, 0.3, 1.0]
+        visible = "item.is_link"
+
+        [[node.children.children.children.children]]
+        kind = "icon"
+        glyph = "tri_right"
+        w = 10
+        h = 10
+        color = [1.0, 0.8, 0.3, 1.0]
+        when = "focus"
+        visible = "item.adjustable"
+
+  [[node.children]]
+  kind = "hbox"
+  id = "themes"
+  y = 60
+  w = 822
+  h = 320
+  gap = 30
+  items = "themes"
+  group = "themes"
+  visible = "show_themes"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "card"
+    w = 390
+    h = 280
+    image = "ui/row.webp"
+    image_focus = "ui/row_lit.webp"
+    on_press = "{item.press}"
+
+      [[node.children.children.children]]
+      kind = "image"
+      image = "{item.preview}"
+      x = 9
+      y = 9
+      w = 372
+      h = 206
+      visible = "item.has_preview"
 
       [[node.children.children.children]]
       kind = "text"
-      text = "{item.value}"
-      anchor = "right"
-      x = 28
+      text = "{item.label}"
+      x = 16
+      y = 232
+      font = 2
+      bank = 7
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "ACTIVE"
+      anchor = "tr"
+      x = 16
+      y = 232
       font = 2
       bank = 4
-      scale = 2
+      visible = "item.active"
 
-  [[node.children]]
-  kind = "button"
-  id = "back"
-  anchor = "bl"
-  w = 220
-  h = 54
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "BACK"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  on_press = "back"
+      [[node.children.children.children]]
+      kind = "text"
+      text = "ENTER TO USE"
+      anchor = "tr"
+      x = 16
+      y = 232
+      font = 2
+      bank = 6
+      visible = "!item.active"
 
-  [[node.children]]
-  kind = "text"
-  text = "< >  CHANGE     ENTER  SELECT     SAVED ON EXIT"
-  anchor = "br"
-  x = 8
-  y = 60
-  font = 1
-  bank = 6
-  scale = 2
-
-# key capture overlay
 [[node]]
 kind = "panel"
-color = [0.0, 0.0, 0.0, 0.75]
-visible = "capture.active"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+x = 350
+y = 604
+w = 870
+h = 76
 
   [[node.children]]
   kind = "text"
-  text = "{capture.prompt}"
-  anchor = "center"
-  y = -20
+  text = "{help}"
+  x = 24
+  w = 820
+  h = 76
+  wrap = true
   font = 2
-  bank = 4
-  scale = 3
+  bank = 7
+
+[[node]]
+kind = "hbox"
+x = 60
+y = 640
+w = 280
+h = 34
+gap = 10
+align = "center"
+
+  [[node.children]]
+  kind = "keycap"
+  h = 30
+  text = "ESC"
+  font = 2
+  bank = 7
+  color = [0.1, 0.12, 0.2, 1.0]
+  border = 2
+  border_color = [0.45, 0.55, 0.8, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "{capture.progress}     ESC  CANCEL"
-  anchor = "center"
-  y = 36
-  font = 1
-  bank = 7
-  scale = 2
+  text = "BACK / SAVE"
+  font = 2
+  bank = 6
