@@ -771,6 +771,9 @@ impl RelaySocket {
             std::thread::sleep(Duration::from_millis(1));
         }
         self.update_path(true);
+        // measure the relay again right away under match conditions (the
+        // other paths' round trips include the per-tick polling too)
+        self.last_rping = Instant::now() - Duration::from_secs(3);
         self.selector.current()
     }
 

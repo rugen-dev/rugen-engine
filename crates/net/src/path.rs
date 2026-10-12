@@ -27,12 +27,13 @@ impl PathKind {
     }
 
     /// Score bias in ms: on a tie the more direct path wins (fewer hops
-    /// that can fail, and TURN bytes are metered).
+    /// that can fail, TURN bytes are metered, and the server relay is the
+    /// last resort: its bandwidth is the server's).
     fn bias(self) -> f32 {
         match self {
             PathKind::Direct => 0.0,
             PathKind::Turn => 5.0,
-            PathKind::Relay => 20.0,
+            PathKind::Relay => 30.0,
         }
     }
 }
