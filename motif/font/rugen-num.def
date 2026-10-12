@@ -6,7 +6,7 @@ name = "rugen-num"
 [Def]
 Type = bitmap
 BankType = palette
-Size = 13,23
+Size = 20,21
 Spacing = -4,0
 Offset = -2,3
 File = rugen-num.sff

@@ -344,6 +344,83 @@ pub fn write_font(generator: &Generator, out_def: &Path, name: &str) -> anyhow::
     Ok(())
 }
 
+/// A font role of the motif: which TTF under `motif/font/src/` renders it and how.
+#[derive(Clone, Debug)]
+pub struct Role {
+    /// Output name (`motif/font/<name>.def`).
+    pub name: &'static str,
+    /// Source TTF file name under `motif/font/src/`.
+    pub file: &'static str,
+    pub style: Style,
+}
+
+/// The four motif fonts: chunky display, menu, small body, HUD numbers.
+/// All OFL pixel fonts rendered at their native pixel size (crisp, no AA).
+pub fn roles() -> [Role; 4] {
+    let st = |size, italic, rim, highlight| Style {
+        size,
+        italic,
+        condense: 1.0,
+        rim,
+        highlight,
+    };
+    [
+        Role {
+            name: "rugen-title",
+            file: "PressStart2P-Regular.ttf",
+            style: st(16, 0, true, true),
+        },
+        Role {
+            name: "rugen-menu",
+            file: "Silkscreen-Bold.ttf",
+            style: st(16, 0, false, true),
+        },
+        Role {
+            name: "rugen-small",
+            file: "PressStart2P-Regular.ttf",
+            style: st(8, 0, false, false),
+        },
+        Role {
+            name: "rugen-num",
+            file: "PressStart2P-Regular.ttf",
+            style: st(16, 0, true, true),
+        },
+    ]
+}
+
+/// Bytes of a role's TTF: `motif/font/src/<file>`, else `fallback`.
+pub fn role_ttf(motif: &Path, role: &Role, fallback: Option<&[u8]>) -> anyhow::Result<Vec<u8>> {
+    let p = motif.join("font").join("src").join(role.file);
+    if p.exists() {
+        return Ok(std::fs::read(&p)?);
+    }
+    match fallback {
+        Some(b) => {
+            log::warn!(
+                "{} missing, using the fallback TTF for {}",
+                p.display(),
+                role.name
+            );
+            Ok(b.to_vec())
+        }
+        None => anyhow::bail!("{} missing and no fallback TTF", p.display()),
+    }
+}
+
+/// Write every role font into `motif/font/`.
+pub fn generate_roles(motif: &Path, fallback: Option<&[u8]>) -> anyhow::Result<()> {
+    for role in roles() {
+        let bytes = role_ttf(motif, &role, fallback)?;
+        let g = Generator::new(&bytes, role.style)?;
+        write_font(
+            &g,
+            &motif.join("font").join(format!("{}.def", role.name)),
+            role.name,
+        )?;
+    }
+    Ok(())
+}
+
 /// A bold (preferably condensed) sans TTF from the system when none is given.
 pub fn default_ttf() -> Option<std::path::PathBuf> {
     [

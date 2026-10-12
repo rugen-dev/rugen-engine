@@ -1,11 +1,31 @@
 # rugen title screen — edit freely, see README.md. Coordinates are 1280x720.
-background = [0.03, 0.04, 0.08, 1.0]
+background = [0.02, 0.03, 0.07, 1.0]
+
+# background: three pixel layers (sky, far ridges, near arena) that slide in
+# at different speeds for a parallax feel
+[[node]]
+kind = "image"
+image = "ui/bg_sky.webp"
+w = 1280
+h = 720
+enter = "fade"
+enter_time = 30
 
 [[node]]
 kind = "image"
-image = "ui/bg.webp"
+image = "ui/bg_far.webp"
 w = 1280
 h = 720
+enter = "up"
+enter_time = 36
+
+[[node]]
+kind = "image"
+image = "ui/bg_near.webp"
+w = 1280
+h = 720
+enter = "up"
+enter_time = 22
 
 [[node]]
 kind = "image"
@@ -26,7 +46,7 @@ nine = [8, 8, 8, 8]
 anchor = "tr"
 x = 24
 y = 22
-w = 440
+w = 560
 h = 76
 enter = "right"
 enter_time = 20
@@ -50,7 +70,7 @@ enter_time = 20
 
   [[node.children]]
   kind = "text"
-  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins} W / {profile.losses} L"
+  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
   x = 80
   y = 46
   font = 1

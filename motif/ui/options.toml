@@ -82,7 +82,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "LEFT / RIGHT  CHANGE      ENTER  SELECT      SAVED ON EXIT"
+  text = "< >  CHANGE     ENTER  SELECT     SAVED ON EXIT"
   anchor = "br"
   x = 8
   y = 60
