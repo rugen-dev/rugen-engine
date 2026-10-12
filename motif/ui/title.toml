@@ -70,7 +70,7 @@ enter_time = 20
 
   [[node.children]]
   kind = "text"
-  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins} W / {profile.losses} L"
+  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
   x = 80
   y = 46
   font = 1

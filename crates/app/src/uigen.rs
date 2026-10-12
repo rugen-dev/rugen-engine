@@ -217,7 +217,7 @@ scale = 2
 [[node]]
 kind = "button"
 id = "search"
-x = 736
+x = 748
 y = 462
 w = 130
 h = 32
@@ -232,9 +232,9 @@ on_press = "search"
 [[node]]
 kind = "button"
 id = "sort"
-x = 876
+x = 886
 y = 462
-w = 170
+w = 214
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -247,9 +247,9 @@ on_press = "sort"
 [[node]]
 kind = "button"
 id = "random"
-x = 1056
+x = 1108
 y = 462
-w = 186
+w = 134
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
@@ -519,7 +519,7 @@ enter_time = 20
 
   [[node.children]]
   kind = "text"
-  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins} W / {profile.losses} L"
+  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
   x = 80
   y = 46
   font = 1

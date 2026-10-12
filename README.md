@@ -62,6 +62,15 @@ Menus are data: `motif/ui/*.toml` + WebP art (see `motif/ui/README.md`);
 `rugen ui-gen` regenerates the defaults. Mouse, keyboard and gamepad all work
 in them.
 
+The art direction is pixel art on a 640x360 grid shown at 2x: a night-sky
+palette (`motif/palette.gpl`: navy, maroon, gold, steel, teal), CC0 UI pieces
+from Kenney's "UI Pack - Pixel Adventure" (`motif/kit/`) recoloured onto that
+palette, OFL pixel fonts (Press Start 2P, Silkscreen) rendered at native size,
+and three parallax background layers. `motif/STYLE.md` has the rules, sizes
+and prompts for making more. Drop any image into `motif/art/` and
+`rugen ui-gen` pixelizes it (`rugen pixelize in.png out.webp --width 640
+--dither` does one by hand); `rugen kit-import` re-exports the kit pieces.
+
 For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
 match runs reloads it in place (checked once a second), and `rugen check`
 lists what the engine cannot run yet.
