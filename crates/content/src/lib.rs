@@ -573,6 +573,42 @@ impl Library {
         Ok(out)
     }
 
+    /// What a client declares online for a prepared entry: fingerprint,
+    /// cached fairness profile, card portrait. `None` when it cannot go
+    /// online (no fingerprint).
+    pub fn declare(&self, dir: &Path, m: &Manifest) -> Option<rugen_proto::FighterDecl> {
+        let fingerprint = m.fingerprint.clone()?;
+        let portrait = m
+            .card
+            .as_ref()
+            .and_then(|c| fs::read(dir.join(c)).ok())
+            .map(|b| rugen_proto::b64_encode(&b))
+            .filter(|b| b.len() <= rugen_proto::MAX_PORTRAIT_B64);
+        let size = fs::metadata(
+            self.cache_dir()
+                .join("packages")
+                .join(format!("{fingerprint}.rgpk")),
+        )
+        .map(|x| x.len())
+        .unwrap_or(m.content_size);
+        Some(rugen_proto::FighterDecl {
+            fingerprint,
+            kind: if m.stage { "stage" } else { "char" }.into(),
+            id: m.id.clone(),
+            name: m.display_name.clone(),
+            author: m.author.clone(),
+            def: m.package_def.clone().unwrap_or_else(|| m.def.clone()),
+            size,
+            profile: if m.stage { None } else { m.fair_profile() },
+            portrait,
+        })
+    }
+
+    /// Main .def of the prepared entry (local or downloaded) with this fingerprint.
+    pub fn def_for_fingerprint(&self, fp: &str) -> Option<PathBuf> {
+        self.find_fingerprint(fp).map(|(d, m)| d.join(m.def))
+    }
+
     /// Where downloaded packages are unpacked: `cache/net/<kind>/<fingerprint>/`.
     /// Never inside `chars/` / `stages/`, never over local files.
     pub fn net_dir(&self, stage: bool) -> PathBuf {

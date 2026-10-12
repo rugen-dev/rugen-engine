@@ -8,10 +8,40 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 pub use rugen_proto::{
-    Leaderboard, MatchInfo, ProfileInfo, QueueStatus, Registered, Replay, ResultAck, RoomInfo,
-    RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, ping_bars,
-    rank_name,
+    CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo, MatchupView,
+    PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay, ResultAck, RoomInfo,
+    RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, Verdict,
+    VerdictKind, ping_bars, rank_name,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Upload / download chunk size (the server accepts up to 4 MB).
+pub const CHUNK: usize = 2 << 20;
+
+/// Progress of a package transfer, shared with the UI thread.
+#[derive(Debug, Default)]
+pub struct Transfer {
+    pub done: AtomicU64,
+    pub total: AtomicU64,
+    pub cancel: AtomicBool,
+}
+
+impl Transfer {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// 0.0 ..= 1.0
+    pub fn fraction(&self) -> f32 {
+        let t = self.total.load(Ordering::Relaxed);
+        if t == 0 {
+            0.0
+        } else {
+            (self.done.load(Ordering::Relaxed) as f32 / t as f32).min(1.0)
+        }
+    }
+}
 use serde_json::{Value, json};
 
 #[derive(Debug, thiserror::Error)]
@@ -90,8 +120,12 @@ impl OnlineClient {
     }
 
     fn agent(&self) -> ureq::Agent {
+        self.agent_with(self.timeout)
+    }
+
+    fn agent_with(&self, timeout: Duration) -> ureq::Agent {
         ureq::Agent::config_builder()
-            .timeout_global(Some(self.timeout))
+            .timeout_global(Some(timeout))
             .http_status_as_error(false)
             .user_agent(concat!("rugen/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -282,6 +316,215 @@ impl OnlineClient {
             b["inputs"] = json!(rugen_proto::to_hex(&evidence.inputs));
         }
         Self::decode(self.call("POST", "/result", Some(b))?)
+    }
+
+    // ---- bring-your-own-character matchup
+
+    pub fn matchup(&self, id: u64) -> OnlineResult<MatchupView> {
+        let k = self.key()?;
+        Self::decode(self.call("GET", &format!("/matchup/{id}?key={k}"), None)?)
+    }
+
+    /// Declare the fighter we bring (and, as P1, the stage).
+    pub fn pick(
+        &self,
+        id: u64,
+        fighter: Option<&FighterDecl>,
+        stage: Option<&FighterDecl>,
+    ) -> OnlineResult<MatchupView> {
+        let b = self.with_key(json!({ "fighter": fighter, "stage": stage }))?;
+        Self::decode(self.call("POST", &format!("/matchup/{id}/pick"), Some(b))?)
+    }
+
+    /// Accept the verdict; `unbalanced` = we agree to an unbalanced fight (casual only).
+    pub fn accept(&self, id: u64, unbalanced: bool) -> OnlineResult<MatchupView> {
+        let b = self.with_key(json!({ "unbalanced": unbalanced }))?;
+        Self::decode(self.call("POST", &format!("/matchup/{id}/accept"), Some(b))?)
+    }
+
+    /// We hold every file of the match.
+    pub fn ready(&self, id: u64, report: &ReadyReport) -> OnlineResult<MatchupView> {
+        let b = self.with_key(json!({ "ready": report }))?;
+        Self::decode(self.call("POST", &format!("/matchup/{id}/ready"), Some(b))?)
+    }
+
+    pub fn leave_matchup(&self, id: u64) -> OnlineResult<()> {
+        let b = self.with_key(json!({}))?;
+        self.call("POST", &format!("/matchup/{id}/leave"), Some(b))?;
+        Ok(())
+    }
+
+    /// `HAS <fingerprint>`: stored on the server, or how much of our upload it has.
+    pub fn pkg_status(&self, fp: &str) -> OnlineResult<PackageStatus> {
+        let k = self.key()?;
+        Self::decode(self.call("GET", &format!("/pkg/{fp}?key={k}"), None)?)
+    }
+
+    /// Upload the package file at `path` as `fp`, resuming where the server
+    /// is, in [`CHUNK`]s. Returns once the server stored and verified it.
+    pub fn upload_package(
+        &self,
+        fp: &str,
+        path: &std::path::Path,
+        progress: &Transfer,
+    ) -> OnlineResult<PackageStatus> {
+        use std::io::{Read, Seek, SeekFrom};
+        let total = std::fs::metadata(path)?.len();
+        progress.total.store(total, Ordering::Relaxed);
+        let st = self.pkg_status(fp)?;
+        if st.complete {
+            progress.done.store(total, Ordering::Relaxed);
+            return Ok(st);
+        }
+        let mut offset = st.offset.min(total);
+        let mut f = std::fs::File::open(path)?;
+        let key = self.key()?.to_string();
+        let base = self.base()?;
+        let mut buf = vec![0u8; CHUNK];
+        let mut retries = 0;
+        loop {
+            if progress.cancel.load(Ordering::Relaxed) {
+                return Err(OnlineError::Server("cancelled".into()));
+            }
+            progress.done.store(offset, Ordering::Relaxed);
+            f.seek(SeekFrom::Start(offset))?;
+            let n = (&mut f).take(CHUNK as u64).read(&mut buf)?;
+            let url = format!("{base}/pkg/{fp}/upload?key={key}&offset={offset}&total={total}");
+            let res = self
+                .agent_with(Duration::from_secs(120))
+                .post(&url)
+                .header("Content-Type", "application/octet-stream")
+                .send(&buf[..n]);
+            let mut resp = match res {
+                Ok(r) => r,
+                Err(e) if retries < 5 => {
+                    // network hiccup: ask the server where it is and resume
+                    retries += 1;
+                    log::info!("upload {fp}: {e}, resuming");
+                    std::thread::sleep(Duration::from_millis(500 * retries));
+                    let st = self.pkg_status(fp)?;
+                    if st.complete {
+                        return Ok(st);
+                    }
+                    offset = st.offset;
+                    continue;
+                }
+                Err(e) => return Err(OnlineError::Http(format!("{url}: {e}"))),
+            };
+            let status = resp.status().as_u16();
+            let text = resp
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| OnlineError::Http(e.to_string()))?;
+            let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            match status {
+                200 => {
+                    let st: PackageStatus = Self::decode(v)?;
+                    if st.complete {
+                        progress.done.store(total, Ordering::Relaxed);
+                        return Ok(st);
+                    }
+                    if st.offset <= offset && n > 0 {
+                        return Err(OnlineError::Server("upload made no progress".into()));
+                    }
+                    offset = st.offset;
+                    retries = 0;
+                }
+                409 if v.get("offset").is_some() => {
+                    offset = v["offset"].as_u64().unwrap_or(0);
+                }
+                _ => {
+                    let msg = v
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("http {status}"));
+                    return Err(OnlineError::Server(msg));
+                }
+            }
+        }
+    }
+
+    /// Download package `fp` (`size` bytes) into `dest`, resuming a partial
+    /// file left there by an interrupted download.
+    pub fn download_package(
+        &self,
+        fp: &str,
+        size: u64,
+        dest: &std::path::Path,
+        progress: &Transfer,
+    ) -> OnlineResult<()> {
+        use std::io::Write;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        progress.total.store(size, Ordering::Relaxed);
+        let mut have = std::fs::metadata(dest).map_or(0, |m| m.len());
+        if have > size {
+            std::fs::remove_file(dest)?;
+            have = 0;
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dest)?;
+        let key = self.key()?.to_string();
+        let base = self.base()?;
+        let mut retries = 0;
+        while have < size {
+            if progress.cancel.load(Ordering::Relaxed) {
+                return Err(OnlineError::Server("cancelled".into()));
+            }
+            progress.done.store(have, Ordering::Relaxed);
+            let url = format!("{base}/pkg/{fp}/data?key={key}&offset={have}&len={CHUNK}");
+            let res = self.agent_with(Duration::from_secs(120)).get(&url).call();
+            let mut resp = match res {
+                Ok(r) => r,
+                Err(e) if retries < 5 => {
+                    retries += 1;
+                    log::info!("download {fp}: {e}, resuming");
+                    std::thread::sleep(Duration::from_millis(500 * retries));
+                    continue;
+                }
+                Err(e) => return Err(OnlineError::Http(format!("{url}: {e}"))),
+            };
+            let status = resp.status().as_u16();
+            let bytes = resp
+                .body_mut()
+                .with_config()
+                .limit(8 << 20)
+                .read_to_vec()
+                .map_err(|e| OnlineError::Http(e.to_string()))?;
+            if status != 200 {
+                let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                let msg = v
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("http {status}"));
+                return Err(OnlineError::Server(msg));
+            }
+            if bytes.is_empty() {
+                return Err(OnlineError::Server("package shorter than announced".into()));
+            }
+            f.write_all(&bytes)?;
+            have += bytes.len() as u64;
+            retries = 0;
+        }
+        f.flush()?;
+        progress.done.store(size, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Tell the server this match desynchronised (it will not resolve by agreement).
+    pub fn report_desync(&self, match_id: u64, frame: u32) -> OnlineResult<()> {
+        let b = self.with_key(json!({ "frame": frame }))?;
+        self.call("POST", &format!("/match/{match_id}/desync"), Some(b))?;
+        Ok(())
+    }
+
+    pub fn char_rating(&self, fp: &str) -> OnlineResult<Option<CharRating>> {
+        Self::decode(self.call("GET", &format!("/char/{fp}"), None)?)
     }
 
     pub fn replay(&self, match_id: u64) -> OnlineResult<Replay> {
