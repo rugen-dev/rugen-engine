@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Context;
 use rugen_formats::air::Air;
 use rugen_formats::def::Def;
-use rugen_formats::sff::{Pixels, Sff};
+use rugen_formats::sff::Sff;
 use rugen_render::{Blend, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::anim::AnimState;
 
@@ -61,6 +61,7 @@ pub struct StageVisual {
     pub localcoord: [f32; 2],
     pub clear_color: [f64; 4],
     textures: HashMap<(u16, u16), Option<Tex>>,
+    shared: crate::sprites::Shared,
     palettes: Vec<PaletteId>,
     tick: i32,
 }
@@ -217,6 +218,7 @@ impl StageVisual {
             localcoord,
             clear_color,
             textures: HashMap::new(),
+            shared: Default::default(),
             palettes: Vec::new(),
             tick: 0,
         })
@@ -250,18 +252,11 @@ impl StageVisual {
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
         let spr = self.sff.get(key.0, key.1)?;
         let (w, h) = (spr.width as f32, spr.height as f32);
+        let shared = &mut self.shared;
         let entry = self
             .textures
             .entry(key)
-            .or_insert_with(|| match &spr.pixels {
-                Pixels::Indexed(px) => Some((
-                    r.add_indexed(spr.width as u32, spr.height as u32, px),
-                    spr.palette,
-                )),
-                Pixels::Rgba(px) => {
-                    Some((r.add_rgba(spr.width as u32, spr.height as u32, px), None))
-                }
-            });
+            .or_insert_with(|| Some(crate::sprites::upload_sprite(r, spr, shared)));
         let (tex, pal) = (*entry)?;
         let pal = pal.map(|p| self.palettes[p.min(self.palettes.len() - 1)]);
         Some((

@@ -249,6 +249,7 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         .map(|s| match &s.pixels {
             rugen_formats::sff::Pixels::Indexed(p) => p.len(),
             rugen_formats::sff::Pixels::Rgba(p) => p.len(),
+            rugen_formats::sff::Pixels::Packed(p) => p.raw_len(),
         })
         .sum();
     // AIR frames pointing at sprites the SFF does not have

@@ -826,7 +826,8 @@ fn extract_portraits(
         let Some(s) = sff.get(9000, number) else {
             continue;
         };
-        let rgba: Vec<u8> = match &s.pixels {
+        let rgba: Vec<u8> = match s.decoded().as_ref() {
+            rugen_formats::sff::Pixels::Packed(_) => continue,
             rugen_formats::sff::Pixels::Rgba(px) => px.clone(),
             rugen_formats::sff::Pixels::Indexed(px) => {
                 // pal1 replaces the shared (first) palette; sprites with their own palette keep it
@@ -941,9 +942,11 @@ fn extract_stage_thumb(
         .and_then(|i| sff.palettes.get(i))
         .cloned()
         .unwrap_or_default();
+    let pixels = sprite.decoded();
     let rgba_at = |x: usize, y: usize| -> [u8; 4] {
         let i = y * sprite.width as usize + x;
-        match &sprite.pixels {
+        match pixels.as_ref() {
+            rugen_formats::sff::Pixels::Packed(_) => [0; 4],
             rugen_formats::sff::Pixels::Rgba(px) => px
                 .get(i * 4..i * 4 + 4)
                 .map_or([0; 4], |p| [p[0], p[1], p[2], p[3]]),

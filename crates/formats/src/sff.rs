@@ -40,6 +40,19 @@ pub enum Pixels {
     Indexed(Vec<u8>),
     /// Straight (non-premultiplied) RGBA8, `w * h * 4` bytes.
     Rgba(Vec<u8>),
+    /// Still compressed, from an optimised sprite pack ([`crate::pack`]);
+    /// [`Sprite::decoded`] turns it into one of the variants above.
+    Packed(crate::pack::Packed),
+}
+
+impl Pixels {
+    /// Decompressed form (borrowed when not packed).
+    pub fn decoded(&self) -> std::borrow::Cow<'_, Pixels> {
+        match self {
+            Pixels::Packed(p) => std::borrow::Cow::Owned(p.decode()),
+            other => std::borrow::Cow::Borrowed(other),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +76,23 @@ pub struct Sff {
     pub palettes: Vec<Palette>,
     /// SFFv2 palette keys. SFFv1 palettes are anonymous.
     pub palette_keys: BTreeMap<Key, usize>,
+}
+
+impl Sprite {
+    /// Pixels ready for upload: `Indexed` or `Rgba`, `width * height` texels.
+    pub fn decoded(&self) -> std::borrow::Cow<'_, Pixels> {
+        self.pixels.decoded()
+    }
+
+    /// Identity of the pixel data for texture sharing: sprites with the same
+    /// key hold the same pixels (linked / duplicate sprites in a sprite pack).
+    /// `None` when the data is not shared.
+    pub fn share_key(&self) -> Option<(usize, usize)> {
+        match &self.pixels {
+            Pixels::Packed(p) => Some(p.share_key()),
+            _ => None,
+        }
+    }
 }
 
 impl Sff {
@@ -777,6 +807,7 @@ mod tests {
                     );
                 }
                 Pixels::Rgba(px) => assert_eq!(px.len(), n * 4, "sprite {k:?} rgba size"),
+                Pixels::Packed(_) => panic!("parse never packs"),
             }
         }
     }
@@ -949,7 +980,8 @@ impl Sff {
         let mut spr_nodes: Vec<u8> = Vec::new();
         for ((g, n), s) in &self.sprites {
             let ofs = ldata.len() as u32;
-            let (fmt, depth, len) = match &s.pixels {
+            let (fmt, depth, len) = match s.decoded().as_ref() {
+                Pixels::Packed(_) => unreachable!("decoded"),
                 Pixels::Indexed(px) => {
                     ldata.extend_from_slice(px);
                     (0u8, 8u8, px.len() as u32)

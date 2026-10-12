@@ -11,6 +11,7 @@ pub mod act;
 pub mod air;
 pub mod def;
 pub mod fnt;
+pub mod pack;
 pub mod sff;
 pub mod snd;
 pub mod text;

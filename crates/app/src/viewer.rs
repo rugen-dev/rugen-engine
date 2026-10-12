@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use rugen_formats::air::{Action, Air};
 use rugen_formats::def::Def;
-use rugen_formats::sff::{Pixels, Sff};
+use rugen_formats::sff::Sff;
 use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -231,12 +231,13 @@ impl App {
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
         let gpu = self.gpu.as_mut()?;
         let spr = self.content.sff.get(key.0, key.1)?;
+        let mut shared = crate::sprites::Shared::new();
         let entry = gpu.textures.entry(key).or_insert_with(|| {
-            let (w, h) = (spr.width as u32, spr.height as u32);
-            match &spr.pixels {
-                Pixels::Indexed(px) => Some((gpu.renderer.add_indexed(w, h, px), spr.palette)),
-                Pixels::Rgba(px) => Some((gpu.renderer.add_rgba(w, h, px), None)),
-            }
+            Some(crate::sprites::upload_sprite(
+                &mut gpu.renderer,
+                spr,
+                &mut shared,
+            ))
         });
         let (tex, pal) = (*entry)?;
         // palette ↑/↓ swaps the char's base palette (sprites bound to palette 0 = pal.defaults slot);
