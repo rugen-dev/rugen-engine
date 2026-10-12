@@ -159,6 +159,9 @@ pub struct Draw {
     pub src: Option<[u32; 4]>,
     /// Logical-space clip rectangle `[min x, min y, max x, max y]` (unrotated draws only).
     pub clip: Option<[f32; 4]>,
+    /// Horizontal shear: the top edge is shifted right by `skew` logical pixels
+    /// relative to the bottom edge (slanted UI panels).
+    pub skew: f32,
 }
 
 impl Draw {
@@ -177,6 +180,7 @@ impl Draw {
             tint: Tint::default(),
             src: None,
             clip: None,
+            skew: 0.0,
         }
     }
 }
@@ -552,6 +556,10 @@ impl Renderer {
             (x0, x1, y0, y1) = (cx0, cx1, cy0, cy1);
         }
         let mut corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        if d.skew != 0.0 {
+            corners[0][0] += d.skew;
+            corners[1][0] += d.skew;
+        }
         if d.angle != 0.0 {
             let rad = d.angle * (std::f32::consts::PI / 180.0);
             let (sn, cs) = (libm::sinf(rad), libm::cosf(rad));

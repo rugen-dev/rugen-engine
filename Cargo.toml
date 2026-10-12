@@ -17,6 +17,7 @@ rugen-net = { path = "crates/net" }
 rugen-render = { path = "crates/render" }
 rugen-audio = { path = "crates/audio" }
 rugen-content = { path = "crates/content" }
+rugen-ui = { path = "crates/ui" }
 
 thiserror = "2"
 anyhow = "1"
