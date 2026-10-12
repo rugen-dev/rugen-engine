@@ -2595,7 +2595,7 @@ checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
 
 [[package]]
 name = "rugen"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kira",
  "libm",
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-cns"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "indexmap",
  "libm",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-content"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "image-webp",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-fair"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libm",
  "log",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-formats"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "indexmap",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "crc32fast",
@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-proto"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-render"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "libm",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-sim"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "indexmap",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-ui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libm",
  "log",
