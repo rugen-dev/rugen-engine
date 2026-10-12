@@ -1006,3 +1006,25 @@ impl Lifebar {
         let _ = self.round_offset_time;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ink_fight_def_uses_the_extensions() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif/themes/ink");
+        let lb = Lifebar::load(&motif, &motif).expect("ink fight.def loads");
+        assert_eq!(lb.localcoord, [1280.0, 720.0]);
+        assert_eq!(lb.power[0].segments, 3);
+        assert!(lb.power[1].seg_part.present() && lb.power[1].stamp_lit.present());
+        assert_eq!(lb.life[0].flash_low, 25.0);
+        assert!(lb.life[1].fg0.present() && lb.life[1].flash.present());
+        assert!(lb.names[0].bg.present() && lb.names[0].upper);
+        assert_eq!(lb.faces[1].fit, Some([90.0, 90.0]));
+        assert_eq!(lb.winicon_follow, [true, true]);
+        assert!(lb.round_tag.font.is_some());
+        assert_eq!(lb.combo[0].angle, 6.0);
+        assert_eq!(lb.time_counter.1.map(|f| f.scale), Some(4.0));
+    }
+}

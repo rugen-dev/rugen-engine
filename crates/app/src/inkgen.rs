@@ -330,59 +330,224 @@ pub fn badge(col: Rgba) -> Canvas {
     c
 }
 
-// ---------------------------------------------------------------- fight HUD pieces
+// ---------------------------------------------------------------- fight HUD pieces ("Ink Slab", 1280x720)
 
-fn bar_plate(w: i32, h: i32) -> Canvas {
-    let mut c = Canvas::new(w as u32, h as u32);
-    c.rect(0, 0, w, h, WHITE);
-    border(&mut c, 0, 0, w, h, 2, INK);
+const WELL: Rgba = [58, 54, 49, 255];
+const LIFE_HI: Rgba = [255, 122, 100, 255];
+const LIFE_LO: Rgba = [160, 16, 16, 255];
+
+/// Distance from `p` to segment `a`-`b`.
+fn seg_dist(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = (dx * dx + dy * dy).max(1e-6);
+    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
+    let (qx, qy) = (a[0] + dx * t - p[0], a[1] + dy * t - p[1]);
+    libm::sqrtf(qx * qx + qy * qy)
+}
+
+/// Fill a polygon (even-odd) with `fill` and stroke its edges in `stroke`:
+/// `inner` px inside the shape, `outer` px outside. Hard pixels, no AA.
+fn poly(c: &mut Canvas, pts: &[[f32; 2]], fill: Rgba, stroke: Rgba, inner: f32, outer: f32) {
+    let n = pts.len();
+    for y in 0..c.h as i32 {
+        for x in 0..c.w as i32 {
+            let p = [x as f32 + 0.5, y as f32 + 0.5];
+            let mut inside = false;
+            let mut d = f32::MAX;
+            for i in 0..n {
+                let (a, b) = (pts[i], pts[(i + 1) % n]);
+                if (a[1] > p[1]) != (b[1] > p[1])
+                    && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+                {
+                    inside = !inside;
+                }
+                d = d.min(seg_dist(p, a, b));
+            }
+            if (inside && d < inner) || (!inside && d < outer) {
+                c.put(x, y, stroke);
+            } else if inside {
+                c.put(x, y, fill);
+            }
+        }
+    }
+}
+
+/// Life bar frame: black slab slanted toward the clock, dark inner well.
+fn life_frame() -> Canvas {
+    let mut c = Canvas::new(448, 44);
+    poly(
+        &mut c,
+        &[[0.0, 0.0], [448.0, 0.0], [426.0, 44.0], [0.0, 44.0]],
+        INK,
+        INK,
+        0.0,
+        0.0,
+    );
+    poly(
+        &mut c,
+        &[[6.0, 6.0], [424.0, 6.0], [408.0, 38.0], [6.0, 38.0]],
+        WELL,
+        WELL,
+        0.0,
+        0.0,
+    );
     c
 }
 
-fn bar_fill(w: i32, h: i32, col: Rgba) -> Canvas {
-    let mut c = Canvas::new(w as u32, h as u32);
-    c.rect(0, 0, w, h, col);
-    // segment ticks every 16 px
-    for x in (16..w).step_by(16) {
-        c.rect(x, 0, 1, h, [col[0] / 2, col[1] / 2, col[2] / 2, 255]);
+/// Life fill (418x32, slanted end): `top` band, `mid` body, `bottom` band.
+fn life_fill(top: Rgba, mid: Rgba, bottom: Rgba) -> Canvas {
+    let mut c = Canvas::new(418, 32);
+    poly(
+        &mut c,
+        &[[0.0, 0.0], [418.0, 0.0], [402.0, 32.0], [0.0, 32.0]],
+        mid,
+        mid,
+        0.0,
+        0.0,
+    );
+    for y in 0..32 {
+        let col = if y < 7 {
+            top
+        } else if y >= 25 {
+            bottom
+        } else {
+            continue;
+        };
+        for x in 0..418 {
+            if c.get(x, y)[3] > 0 {
+                c.put(x, y, col);
+            }
+        }
     }
     c
 }
 
-fn face_frame(size: i32, accent: Rgba) -> Canvas {
-    let mut c = Canvas::new(size as u32, size as u32);
-    c.rect(0, 0, size, size, WHITE);
-    border(&mut c, 0, 0, size, size, 2, INK);
-    c.rect(2, size - 5, size - 4, 3, accent);
+/// 10% notches along the top of the life well.
+fn life_ticks() -> Canvas {
+    let mut c = Canvas::new(418, 32);
+    for i in 1..10 {
+        c.rect(libm::roundf(i as f32 * 41.8) as i32, 0, 2, 8, INK);
+    }
     c
 }
 
-fn timer_slab() -> Canvas {
-    let mut c = Canvas::new(60, 34);
-    c.rect(4, 4, 52, 28, RED);
-    c.rect(0, 0, 52, 28, INK);
-    border(&mut c, 0, 0, 52, 28, 2, PAPER);
+/// Portrait box: white, 5 px ink border, hard red shadow, tilted 4 degrees.
+/// The box centre is the canvas centre.
+fn portrait_frame() -> Canvas {
+    let mut c = Canvas::new(112, 112);
+    c.rect(12, 12, 100, 100, RED);
+    c.rect(6, 6, 100, 100, WHITE);
+    border(&mut c, 6, 6, 100, 100, 5, INK);
+    rotate(&c, 4.0)
+}
+
+/// Name plate: white, 3 px ink border, skewed like italics (3-slice source).
+fn name_plate() -> Canvas {
+    let mut c = Canvas::new(48, 28);
+    let pts = [[6.0, 0.0], [48.0, 0.0], [42.0, 28.0], [0.0, 28.0]];
+    poly(&mut c, &pts, WHITE, INK, 3.0, 0.0);
     c
 }
 
-fn win_mark(kind: u8) -> Canvas {
-    let mut c = Canvas::new(11, 11);
-    let fill = match kind {
-        0 => RED,
-        1 => [255, 150, 30, 255],
-        2 => [255, 225, 70, 255],
-        3 => [90, 160, 255, 255],
-        _ => INK,
-    };
-    c.rect(1, 1, 9, 9, fill);
-    border(&mut c, 0, 0, 11, 11, 1, INK);
+fn star_points(cx: f32, cy: f32, ro: f32, ri: f32) -> Vec<[f32; 2]> {
+    (0..10)
+        .map(|i| {
+            let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+            let r = if i % 2 == 0 { ro } else { ri };
+            [cx + libm::cosf(a) * r, cy + libm::sinf(a) * r]
+        })
+        .collect()
+}
+
+/// Round-win star: red with an ink outline and a hard ink shadow.
+fn win_star() -> Canvas {
+    let mut c = Canvas::new(22, 22);
+    poly(
+        &mut c,
+        &star_points(12.0, 12.0, 9.5, 4.0),
+        INK,
+        INK,
+        0.0,
+        1.0,
+    );
+    poly(
+        &mut c,
+        &star_points(10.0, 10.0, 9.5, 4.0),
+        RED,
+        INK,
+        2.0,
+        0.0,
+    );
     c
 }
 
-fn empty_mark() -> Canvas {
-    let mut c = Canvas::new(11, 11);
-    c.rect(0, 0, 11, 11, WHITE);
-    border(&mut c, 0, 0, 11, 11, 1, INK);
+/// Round still to win: hollow white star with an ink shadow, half faded.
+fn empty_star() -> Canvas {
+    let mut c = Canvas::new(22, 22);
+    let (shadow, white) = ([17, 17, 17, 120], [255, 255, 255, 150]);
+    poly(
+        &mut c,
+        &star_points(12.0, 12.0, 9.5, 4.0),
+        [0; 4],
+        shadow,
+        2.0,
+        0.0,
+    );
+    poly(
+        &mut c,
+        &star_points(10.0, 10.0, 9.5, 4.0),
+        [0; 4],
+        white,
+        2.0,
+        0.0,
+    );
+    c
+}
+
+/// Clock speech-burst: 12 jittered spikes, white with a 6 px ink outline
+/// (the mock's SVG polygon, same seed).
+fn timer_burst() -> Canvas {
+    let (w, h, n, inner) = (136.0f32, 116.0f32, 12, 0.78f32);
+    let mut pts = Vec::new();
+    let mut s: u64 = 3;
+    for i in 0..n * 2 {
+        s = (s * 48271) % 2_147_483_647;
+        let a = i as f32 / (n * 2) as f32 * std::f32::consts::TAU;
+        let k = if i % 2 == 1 {
+            inner + (s % 100) as f32 / 1000.0
+        } else {
+            1.0 - (s % 60) as f32 / 1000.0
+        };
+        pts.push([
+            w / 2.0 + libm::cosf(a) * (w / 2.0 - 6.0) * k,
+            h / 2.0 + libm::sinf(a) * (h / 2.0 - 6.0) * k,
+        ]);
+    }
+    let mut c = Canvas::new(w as u32, h as u32);
+    poly(&mut c, &pts, WHITE, INK, 3.0, 3.0);
+    c
+}
+
+/// Power level stamp: 56 px disc, 5 px ink ring.
+fn level_stamp(fill: Rgba) -> Canvas {
+    let mut c = Canvas::new(56, 56);
+    for y in 0..56 {
+        for x in 0..56 {
+            let (dx, dy) = (x as f32 + 0.5 - 28.0, y as f32 + 0.5 - 28.0);
+            let d = libm::sqrtf(dx * dx + dy * dy);
+            if d < 23.0 {
+                c.put(x, y, fill);
+            } else if d < 28.0 {
+                c.put(x, y, INK);
+            }
+        }
+    }
+    c
+}
+
+fn solid(w: i32, h: i32, col: Rgba) -> Canvas {
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.rect(0, 0, w, h, col);
     c
 }
 
@@ -1309,7 +1474,7 @@ pub fn generate(flat: &Path, out: &Path, fallback_ttf: Option<&[u8]>) -> anyhow:
 /// The MUGEN-side screenpack of the theme: `system.sff` / `fight.sff` and their defs.
 fn screenpack(
     out: &Path,
-    _ttf: &[u8],
+    ttf: &[u8],
     logo_gen: &Generator,
     menu_gen: &Generator,
 ) -> anyhow::Result<()> {
@@ -1372,21 +1537,53 @@ fn screenpack(
         version: Some(Version::V2 { patch: 1 }),
         ..Default::default()
     };
-    to_sprite(&mut fight, (10, 0), &bar_plate(140, 14), [0, 0]);
-    to_sprite(&mut fight, (12, 0), &bar_fill(128, 8, INK), [0, 0]);
-    to_sprite(&mut fight, (13, 0), &bar_fill(128, 8, RED), [0, 0]);
-    to_sprite(&mut fight, (40, 0), &bar_plate(104, 8), [0, 0]);
-    to_sprite(&mut fight, (43, 0), &bar_fill(96, 4, INK), [0, 0]);
-    to_sprite(&mut fight, (50, 0), &face_frame(34, RED), [0, 0]);
-    to_sprite(&mut fight, (51, 0), &face_frame(34, INK), [0, 0]);
-    to_sprite(&mut fight, (60, 0), &timer_slab(), [26, 17]);
-    for k in 0..7u16 {
-        to_sprite(&mut fight, (100 + k, 0), &win_mark(k as u8), [5, 5]);
-    }
-    to_sprite(&mut fight, (110, 0), &empty_mark(), [5, 5]);
+    fight_hud(&mut fight, ttf)?;
     write(&out.join("fight.sff"), &fight.write_v2())?;
     write(&out.join("system.def"), SYSTEM_DEF.as_bytes())?;
     write(&out.join("fight.def"), FIGHT_DEF.as_bytes())?;
+    Ok(())
+}
+
+/// The "Ink Slab" fight HUD sprites, drawn at 1280x720 (see `FIGHT_DEF`).
+fn fight_hud(fight: &mut Sff, ttf: &[u8]) -> anyhow::Result<()> {
+    let small = Generator::new(
+        ttf,
+        Style {
+            size: 8,
+            italic: 0,
+            condense: 1.0,
+            rim: false,
+            highlight: false,
+        },
+    )?;
+    // life bar: frame, notches, damage trail, fill, low-life flash
+    to_sprite(fight, (10, 0), &life_frame(), [0, 0]);
+    to_sprite(fight, (11, 0), &life_ticks(), [0, 0]);
+    to_sprite(fight, (12, 0), &life_fill(WHITE, WHITE, WHITE), [0, 0]);
+    to_sprite(fight, (13, 0), &life_fill(LIFE_HI, RED, LIFE_LO), [0, 0]);
+    let flash = life_fill([255, 214, 200, 255], [255, 130, 105, 255], RED);
+    to_sprite(fight, (14, 0), &flash, [0, 0]);
+    // name plate (3-slice)
+    to_sprite(fight, (20, 0), &name_plate(), [0, 0]);
+    // power: label (left / right anchored), segment frame and fills, level stamps
+    let (w, h, px) = small.text_rgba("POWER", 7, 3);
+    let label = Canvas::from_rgba(w, h, px);
+    to_sprite(fight, (30, 0), &label, [0, 0]);
+    to_sprite(fight, (30, 1), &label, [label.w as i16, 0]);
+    to_sprite(fight, (31, 0), &solid(100, 26, INK), [0, 0]);
+    to_sprite(fight, (32, 0), &solid(92, 18, RED), [0, 0]);
+    to_sprite(fight, (33, 0), &solid(92, 18, WHITE), [0, 0]);
+    to_sprite(fight, (40, 0), &level_stamp(WHITE), [28, 28]);
+    to_sprite(fight, (41, 0), &level_stamp(RED), [28, 28]);
+    // portrait box, centred axis (P2 draws it mirrored)
+    let pf = portrait_frame();
+    to_sprite(fight, (50, 0), &pf, [(pf.w / 2) as i16, (pf.h / 2) as i16]);
+    // clock burst and round tag
+    to_sprite(fight, (60, 0), &timer_burst(), [68, 58]);
+    to_sprite(fight, (61, 0), &solid(96, 20, INK), [48, 0]);
+    // round stars
+    to_sprite(fight, (100, 0), &win_star(), [10, 10]);
+    to_sprite(fight, (110, 0), &empty_star(), [10, 10]);
     Ok(())
 }
 
@@ -1606,9 +1803,10 @@ spriteno = 300,0
 start = 0,36
 "#;
 
-const FIGHT_DEF: &str = r#"; rugen Shonen Ink fight screen, generated by `rugen ui-gen --theme ink`
+const FIGHT_DEF: &str = r#"; rugen Shonen Ink fight screen ("Ink Slab" HUD), generated by `rugen ui-gen --theme ink`
+; Drawn in 1280x720; see the rugen extension keys documented in crates/app/src/lifebar.rs.
 [Info]
-localcoord = 426,240
+localcoord = 1280,720
 
 [Files]
 sff = fight.sff
@@ -1625,87 +1823,164 @@ common.snd = common.snd
 scale = 1
 
 [Lifebar]
-p1.pos = 46,16
+p1.pos = 118,24
 p1.bg0.spr = 10,0
 p1.mid.spr = 12,0
-p1.mid.offset = 6,3
+p1.mid.offset = 6,6
+p1.mid.delay = 30
 p1.front.spr = 13,0
-p1.front.offset = 6,3
-p1.range.x = 0,128
-p2.pos = 380,16
+p1.front.offset = 6,6
+p1.fg0.spr = 11,0
+p1.fg0.offset = 6,6
+p1.range.x = 0,418
+p1.flash.low = 25
+p1.flash.spr = 14,0
+p1.flash.offset = 6,6
+p1.flash.period = 16
+p2.pos = 1162,24
 p2.bg0.spr = 10,0
 p2.bg0.facing = -1
 p2.mid.spr = 12,0
-p2.mid.offset = -6,3
+p2.mid.offset = -6,6
 p2.mid.facing = -1
+p2.mid.delay = 30
 p2.front.spr = 13,0
-p2.front.offset = -6,3
+p2.front.offset = -6,6
 p2.front.facing = -1
-p2.range.x = 0,-128
+p2.fg0.spr = 11,0
+p2.fg0.offset = -6,6
+p2.fg0.facing = -1
+p2.range.x = 0,-418
+p2.flash.low = 25
+p2.flash.spr = 14,0
+p2.flash.offset = -6,6
+p2.flash.facing = -1
+p2.flash.period = 16
 
 [Powerbar]
-p1.pos = 46,33
-p1.bg0.spr = 40,0
-p1.front.spr = 43,0
-p1.front.offset = 4,2
-p1.range.x = 0,96
-p1.counter.offset = 112,8
-p1.counter.font = 1,10,1
-p2.pos = 380,33
-p2.bg0.spr = 40,0
-p2.bg0.facing = -1
-p2.front.spr = 43,0
-p2.front.offset = -4,2
-p2.front.facing = -1
-p2.range.x = 0,-96
-p2.counter.offset = -112,8
-p2.counter.font = 1,10,-1
+p1.pos = 24,648
+p1.bg0.spr = 30,0
+p1.bg0.offset = 69,43
+p1.range.x = 0,300
+p1.segments = 3
+p1.segment.step = 106,0
+p1.segment.bg.spr = 31,0
+p1.segment.bg.offset = 59,14
+p1.segment.bg.skew = 9.5
+p1.segment.full.spr = 32,0
+p1.segment.full.offset = 65,18
+p1.segment.full.skew = 6.5
+p1.segment.part.spr = 33,0
+p1.segment.part.offset = 65,18
+p1.segment.part.skew = 6.5
+p1.stamp.spr = 40,0
+p1.stamp.offset = 28,28
+p1.stamp.lit.spr = 41,0
+p1.stamp.lit.offset = 28,28
+p1.counter.offset = 29,37
+p1.counter.font = 1,9,0
+p1.counter.scale = 3
+p1.counter.lit.font = 1,11,0
+p1.counter.lit.scale = 3
+p2.pos = 1256,648
+p2.bg0.spr = 30,1
+p2.bg0.offset = -69,43
+p2.range.x = 0,-300
+p2.segments = 3
+p2.segment.step = -106,0
+p2.segment.bg.spr = 31,0
+p2.segment.bg.offset = -69,14
+p2.segment.bg.facing = -1
+p2.segment.bg.skew = 9.5
+p2.segment.full.spr = 32,0
+p2.segment.full.offset = -71,18
+p2.segment.full.facing = -1
+p2.segment.full.skew = 6.5
+p2.segment.part.spr = 33,0
+p2.segment.part.offset = -71,18
+p2.segment.part.facing = -1
+p2.segment.part.skew = 6.5
+p2.stamp.spr = 40,0
+p2.stamp.offset = -28,28
+p2.stamp.lit.spr = 41,0
+p2.stamp.lit.offset = -28,28
+p2.counter.offset = -27,37
+p2.counter.font = 1,9,0
+p2.counter.scale = 3
+p2.counter.lit.font = 1,11,0
+p2.counter.lit.scale = 3
 level1.snd = 21,0
 level2.snd = 21,0
 level3.snd = 21,0
 
 [Face]
-p1.pos = 4,8
+p1.pos = 72,68
 p1.bg.spr = 50,0
 p1.face.spr = 9000,0
 p1.face.facing = 1
-p1.face.offset = 9,4
-p2.pos = 382,8
-p2.bg.spr = 51,0
-p2.bg.facing = 1
+p1.face.fit = 90,90
+p1.face.angle = 4
+p2.pos = 1208,68
+p2.bg.spr = 50,0
+p2.bg.facing = -1
 p2.face.spr = 9000,0
 p2.face.facing = -1
-p2.face.offset = 31,4
+p2.face.fit = 90,90
+p2.face.angle = -4
 
 [Name]
-p1.pos = 52,13
+p1.pos = 147,97
 p1.name.font = 1,9,1
-p2.pos = 374,13
+p1.name.scale = 2
+p1.name.upper = 1
+p1.bg.spr = 20,0
+p1.bg.offset = 0,-21
+p1.bg.slice = 16,16
+p1.bg.pad = 11
+p2.pos = 1133,97
 p2.name.font = 1,9,-1
+p2.name.scale = 2
+p2.name.upper = 1
+p2.bg.spr = 20,0
+p2.bg.offset = 0,-21
+p2.bg.slice = 16,16
+p2.bg.pad = 11
 
 [Time]
-pos = 213,30
+pos = 640,70
 bg.spr = 60,0
-counter.offset = 0,10
-counter.font = 2,11,0
+counter.offset = 2,14
+counter.font = 1,9,0
+counter.scale = 4
+round.bg.spr = 61,0
+round.bg.offset = 0,56
+round.text = ROUND %i
+round.offset = 1,69
+round.font = 1,11,0
 framespercount = 60
 
 [Combo]
-team1.pos = 22,206
-team1.start.x = -40
-team1.counter.font = 4,10,1
+team1.pos = 60,300
+team1.start.x = -120
+team1.counter.font = 2,10,1
+team1.counter.scale = 3
 team1.counter.shake = 1
 team1.text.text = HITS!!
-team1.text.font = 3,9,1
-team1.text.offset = 2,12
+team1.text.font = 1,7,1
+team1.text.scale = 2
+team1.text.offset = 4,26
+team1.angle = 6
 team1.displaytime = 90
-team2.pos = 404,206
-team2.start.x = 460
-team2.counter.font = 4,10,-1
+team2.pos = 1220,300
+team2.start.x = 1400
+team2.counter.font = 2,10,-1
+team2.counter.scale = 3
 team2.counter.shake = 1
 team2.text.text = HITS!!
-team2.text.font = 3,9,-1
-team2.text.offset = -2,12
+team2.text.font = 1,7,-1
+team2.text.scale = 2
+team2.text.offset = -4,26
+team2.angle = -6
 team2.displaytime = 90
 
 [Round]
@@ -1714,8 +1989,9 @@ match.maxdrawgames = 1
 start.waittime = 30
 pos = 0,0
 round.time = 0
-round.default.offset = 213,104
+round.default.offset = 640,312
 round.default.font = 4,9,0
+round.default.scale = 3
 round.default.text = ROUND %i
 round.default.displaytime = 60
 round1.snd = 0,1
@@ -1723,26 +1999,30 @@ round2.snd = 0,2
 round3.snd = 0,3
 round.sndtime = 0
 fight.time = 0
-fight.offset = 213,112
+fight.offset = 640,336
 fight.font = 4,10,0
+fight.scale = 3
 fight.text = FIGHT!!
 fight.displaytime = 45
 fight.snd = 1,0
 fight.sndtime = 0
 ctrl.time = 30
 KO.time = 0
-KO.offset = 213,104
+KO.offset = 640,312
 KO.font = 4,10,0
+KO.scale = 3
 KO.text = K.O.!!
 KO.displaytime = 90
 KO.snd = 2,0
-DKO.offset = 213,104
+DKO.offset = 640,312
 DKO.font = 4,10,0
+DKO.scale = 3
 DKO.text = DOUBLE K.O.!!
 DKO.displaytime = 60
 DKO.snd = 2,1
-TO.offset = 213,104
+TO.offset = 640,312
 TO.font = 4,9,0
+TO.scale = 3
 TO.text = TIME OVER
 TO.displaytime = 60
 TO.snd = 2,2
@@ -1753,24 +2033,29 @@ over.hittime = 10
 over.wintime = 45
 over.time = 210
 win.time = 60
-win.offset = 213,104
+win.offset = 640,312
 win.font = 4,9,0
+win.scale = 3
 win.text = %s WINS!!
 win.displaytime = 540
-win2.offset = 213,104
+win2.offset = 640,312
 win2.font = 4,9,0
+win2.scale = 3
 win2.text = %s AND %s WIN!!
 win2.displaytime = 540
-draw.offset = 213,104
+draw.offset = 640,312
 draw.font = 4,9,0
+draw.scale = 3
 draw.text = DRAW GAME
 draw.displaytime = 540
 
 [WinIcon]
-p1.pos = 52,44
-p2.pos = 374,44
-p1.iconoffset = 13,0
-p2.iconoffset = -13,0
+p1.follow = 1
+p2.follow = 1
+p1.pos = 20,90
+p2.pos = -20,90
+p1.iconoffset = 26,0
+p2.iconoffset = -26,0
 p1.counter.offset = 0,0
 p1.counter.font = 1,9
 p2.counter.offset = 0,0
@@ -1779,18 +2064,18 @@ p1.empty.spr = 110,0
 p2.empty.spr = 110,0
 p1.n.spr = 100,0
 p2.n.spr = 100,0
-p1.s.spr = 101,0
-p2.s.spr = 101,0
-p1.h.spr = 102,0
-p2.h.spr = 102,0
-p1.throw.spr = 103,0
-p2.throw.spr = 103,0
-p1.c.spr = 104,0
-p2.c.spr = 104,0
-p1.t.spr = 105,0
-p2.t.spr = 105,0
-p1.suicide.spr = 106,0
-p2.suicide.spr = 106,0
-p1.perfect.spr = 105,0
-p2.perfect.spr = 105,0
+p1.s.spr = 100,0
+p2.s.spr = 100,0
+p1.h.spr = 100,0
+p2.h.spr = 100,0
+p1.throw.spr = 100,0
+p2.throw.spr = 100,0
+p1.c.spr = 100,0
+p2.c.spr = 100,0
+p1.t.spr = 100,0
+p2.t.spr = 100,0
+p1.suicide.spr = 100,0
+p2.suicide.spr = 100,0
+p1.perfect.spr = 100,0
+p2.perfect.spr = 100,0
 "#;
