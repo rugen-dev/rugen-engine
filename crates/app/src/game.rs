@@ -246,6 +246,12 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Report the result of the starting fight to its server (CLI online play).
+    pub fn with_online_match(mut self, om: OnlineMatch) -> Self {
+        self.online_match = Some(om);
+        self
+    }
+
     pub fn new(
         config: Config,
         lib: Library,
@@ -664,36 +670,16 @@ impl Shell {
                         .ok()
                 };
                 let side = usize::from(n.side == 2);
-                let net = if !n.relay.trim().is_empty() {
-                    match n.relay.parse::<std::net::SocketAddr>() {
-                        Ok(server) => crate::play::NetMode::Rendezvous {
-                            port: n.port,
-                            server,
-                            room: if n.room.trim().is_empty() {
-                                "rugen".into()
-                            } else {
-                                n.room.trim().to_string()
-                            },
-                            side,
-                        },
-                        Err(e) => {
-                            log::error!("[net] relay {:?}: {e}", n.relay);
-                            self.transition(Transition::Title);
-                            return;
-                        }
-                    }
-                } else {
-                    match n.remote.parse::<std::net::SocketAddr>() {
-                        Ok(remote) => crate::play::NetMode::P2P {
-                            port: n.port,
-                            remote,
-                            side,
-                        },
-                        Err(e) => {
-                            log::error!("[net] remote {:?}: {e}", n.remote);
-                            self.transition(Transition::Title);
-                            return;
-                        }
+                let net = match n.remote.parse::<std::net::SocketAddr>() {
+                    Ok(remote) => crate::play::NetMode::P2P {
+                        port: n.port,
+                        remote,
+                        side,
+                    },
+                    Err(e) => {
+                        log::error!("[net] remote {:?}: {e}", n.remote);
+                        self.transition(Transition::Title);
+                        return;
                     }
                 };
                 let (Some(p1), Some(p2)) = (resolve(self, &n.p1), resolve(self, &n.p2)) else {
@@ -797,8 +783,7 @@ impl Shell {
                 self.pause = None;
                 self.arcade = None;
                 self.play_system_music("title");
-                let netplay = !self.config.net.remote.trim().is_empty()
-                    || !self.config.net.relay.trim().is_empty();
+                let netplay = !self.config.net.remote.trim().is_empty();
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Title) => {
                         match UiScreen::load(
@@ -957,7 +942,12 @@ impl Shell {
                 self.pause = None;
                 self.parked = None;
                 self.match_stats = Default::default();
-                match Match::load(&setup, &self.motif_dir, &self.data_dir, &self.config) {
+                // online: both sides must simulate with the same settings
+                let cfg = match (&setup.net, &self.online_match) {
+                    (Some(_), Some(om)) => crate::online::match_config(&self.config, &om.rules),
+                    _ => self.config.clone(),
+                };
+                match Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg) {
                     Ok(mut m) => {
                         if setup.tutorial {
                             m.tutorial = Some(crate::tutorial::Tutorial::new(
@@ -1195,9 +1185,13 @@ impl Shell {
                             None
                         };
                         let won = winner == Some(om.my_side);
-                        if let Some(p) =
-                            crate::online::report_result(&self.config, &self.lib.root, &om, winner)
-                        {
+                        if let Some(p) = crate::online::report_result(
+                            &self.lib.root,
+                            &self.config,
+                            &om,
+                            winner,
+                            m.evidence(),
+                        ) {
                             self.reports.push((p, won));
                         }
                         // back to the online screen after an online match

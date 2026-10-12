@@ -82,6 +82,9 @@ pub struct Profile {
     /// Character brought into online matches (empty = `[net] p1`).
     #[serde(default)]
     pub main_char: String,
+    /// Accounts on other servers, keyed by server address: (id, key).
+    #[serde(default)]
+    pub online_accounts: std::collections::BTreeMap<String, (u64, String)>,
 }
 
 impl Default for Profile {
@@ -98,6 +101,7 @@ impl Default for Profile {
             online_key: String::new(),
             online_id: 0,
             main_char: String::new(),
+            online_accounts: Default::default(),
         }
     }
 }

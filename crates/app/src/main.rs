@@ -5,8 +5,9 @@
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
-//!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
-//!   --room code --relay ip:port [--p2]                          same, peer found through rugen-server
+//!   --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
+//!   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (relayed,
+//!                                                               no IP is shared; `new` creates a room)
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
@@ -100,7 +101,7 @@ fn main() -> anyhow::Result<()> {
             let script2 = opt("--script2");
             let net = opt("--net");
             let port = opt("--port");
-            let relay = opt("--relay");
+            let server = opt("--server");
             let room = opt("--room");
             let frames = opt("--frames");
             let ai = opt("--ai");
@@ -113,7 +114,7 @@ fn main() -> anyhow::Result<()> {
                 script2.clone(),
                 net.clone(),
                 port.clone(),
-                relay.clone(),
+                server.clone(),
                 room.clone(),
                 frames.clone(),
                 ai.clone(),
@@ -123,6 +124,8 @@ fn main() -> anyhow::Result<()> {
             let watch = args.iter().any(|a| a == "--watch");
             let force = args.iter().any(|a| a == "--force");
             let synctest = args.iter().any(|a| a == "--synctest");
+            let spectate = args.iter().any(|a| a == "--spectate");
+            let guest = args.iter().any(|a| a == "--guest");
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .filter(|a| !a.starts_with("--"))
@@ -130,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--server url --room CODE|new [--spectate] [--guest]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
                 )
             })?;
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
@@ -153,8 +156,27 @@ fn main() -> anyhow::Result<()> {
                 }
                 Ok(dir.join(m.def))
             };
-            let p1 = resolve(p1)?;
-            let p2 = rest.get(1).map(|s| resolve(s)).transpose()?;
+            // online: the room decides both fighters
+            let config = config::Config::load(&lib.root);
+            let mut online_match = None;
+            let mut online_mode = None;
+            let mut names: (String, Option<String>) =
+                (p1.to_string(), rest.get(1).map(|s| s.to_string()));
+            if let Some(room) = &room {
+                let server = server
+                    .clone()
+                    .or_else(|| Some(config.net.server.clone()).filter(|s| !s.trim().is_empty()))
+                    .context("--room needs --server URL (or [net] server in rugen.toml)")?;
+                let my_char = rest.get(1).filter(|_| room != "new").unwrap_or(p1);
+                let (mode, c1, c2, om) = online::cli_session(
+                    &lib.root, &config, &server, room, my_char, spectate, guest,
+                )?;
+                names = (c1, Some(c2));
+                online_mode = Some(mode);
+                online_match = Some(om);
+            }
+            let p1 = resolve(&names.0)?;
+            let p2 = names.1.as_deref().map(resolve).transpose()?;
             let stage = stage.or_else(|| lib.default_stage().map(|p| p.display().to_string()));
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
@@ -171,23 +193,8 @@ fn main() -> anyhow::Result<()> {
                     Ok(dir.join(m.def))
                 })
                 .transpose()?;
-            let config = config::Config::load(&lib.root);
-            let net_mode = if let Some(room) = room {
-                let server = relay
-                    .as_deref()
-                    .unwrap_or(config.net.relay.as_str())
-                    .parse::<std::net::SocketAddr>()
-                    .context("--room needs --relay ip:port (or [net] relay in rugen.toml)")?;
-                let port = match port {
-                    Some(p) => p.parse().context("--port expects a number")?,
-                    None => config.net.port,
-                };
-                Some(play::NetMode::Rendezvous {
-                    port,
-                    server,
-                    room,
-                    side: usize::from(p2_side),
-                })
+            let net_mode = if let Some(mode) = online_mode {
+                Some(mode)
             } else if let Some(remote) = net {
                 let remote: std::net::SocketAddr = remote
                     .parse()
@@ -230,15 +237,18 @@ fn main() -> anyhow::Result<()> {
                 record: record.map(std::path::PathBuf::from),
                 keys: Vec::new(),
             };
-            game::Shell::new(
+            let shell = game::Shell::new(
                 config,
                 lib,
                 game::Transition::Fight(setup),
                 true,
                 harness,
                 None,
-            )
-            .run()
+            );
+            match online_match {
+                Some(om) => shell.with_online_match(om).run(),
+                None => shell.run(),
+            }
         }
         Some("screenpack-gen") => {
             let opt = |name: &str| {
