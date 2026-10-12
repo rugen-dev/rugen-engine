@@ -34,6 +34,8 @@ pub enum UiKind {
     Result,
     /// In-match pause menu (`ui/pause.toml`).
     Pause,
+    /// Key bindings page for one player (`ui/controls.toml`).
+    Controls,
 }
 
 /// A decoded RGBA image kept in memory and drawn through a `mem:<name>` asset key.
@@ -167,9 +169,8 @@ pub struct UiScreen {
     ui: Ui,
     motif: PathBuf,
     textures: HashMap<String, Cached>,
-    /// Options screen: edited config, key capture `(player, button index)`.
+    /// Options / controls screens: the edited config.
     pub config: Config,
-    capture: Option<(usize, usize)>,
     pub dirty: bool,
     netplay: bool,
     profile: Profile,
@@ -188,11 +189,21 @@ pub struct UiScreen {
     result: Option<ResultInfo>,
     /// In-memory images (`mem:p1`...) for portraits that are not files.
     mem: HashMap<String, MemImage>,
+    /// Options / controls pages (see `settings.rs`).
+    settings: SettingsPage,
 }
 
-const BUTTON_NAMES: [&str; 11] = [
-    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "START",
-];
+/// State of the options tabs and the controls page.
+#[derive(Default)]
+struct SettingsPage {
+    /// Active options tab.
+    tab: usize,
+    /// Focus key seen last tick (help line and tab follow it).
+    last_focus: Option<String>,
+    controls: Option<crate::settings::Controls>,
+    root: PathBuf,
+    ticks: u64,
+}
 
 /// Virtual viewport for a window: 1280 wide on 16:9, letterboxed otherwise.
 pub(crate) fn viewport(window: (u32, u32)) -> (f32, f32) {
@@ -218,6 +229,7 @@ impl UiScreen {
             UiKind::Versus => "vs.toml",
             UiKind::Result => "result.toml",
             UiKind::Pause => "pause.toml",
+            UiKind::Controls => "controls.toml",
         }
     }
 
@@ -319,7 +331,6 @@ impl UiScreen {
             motif: motif.to_path_buf(),
             textures: HashMap::new(),
             config: config.clone(),
-            capture: None,
             dirty: false,
             netplay,
             profile: Profile::load(root),
@@ -336,6 +347,11 @@ impl UiScreen {
             versus: None,
             result: None,
             mem: HashMap::new(),
+            settings: SettingsPage {
+                root: root.to_path_buf(),
+                controls: (kind == UiKind::Controls).then(|| crate::settings::Controls::new(0)),
+                ..Default::default()
+            },
         };
         if let Some(r) = &s.roster
             && r.dual()
@@ -483,86 +499,126 @@ impl UiScreen {
                     "version": env!("CARGO_PKG_VERSION"),
                 })
             }
-            UiKind::Options => {
-                let c = &self.config;
-                let row = |id: &str, label: &str, value: String, adjustable: bool| {
-                    json!({
-                        "id": id,
-                        "label": label,
-                        "value": value,
-                        "press": if adjustable { format!("adjust:{id}:1") } else { format!("open:{id}") },
-                        "left": if adjustable { format!("adjust:{id}:-1") } else { String::new() },
-                        "right": if adjustable { format!("adjust:{id}:1") } else { String::new() },
-                    })
+            UiKind::Options | UiKind::Controls => {
+                let mut d = match &self.settings.controls {
+                    Some(ctl) => ctl.data(&self.config, self.settings.ticks),
+                    None => crate::settings::options_data(
+                        self.settings.tab,
+                        &self.config,
+                        &self.themes,
+                        &self.settings.root,
+                        self.ui.focused(),
+                    ),
                 };
-                let rows = vec![
-                    row(
-                        "master",
-                        "MASTER VOLUME",
-                        format!("{}%", libm::roundf(c.audio.master * 100.0)),
-                        true,
-                    ),
-                    row(
-                        "music",
-                        "MUSIC VOLUME",
-                        format!("{}%", libm::roundf(c.audio.music * 100.0)),
-                        true,
-                    ),
-                    row(
-                        "zoom_out",
-                        "CAMERA ZOOM OUT",
-                        format!("{:.2}", c.camera.zoom_out),
-                        true,
-                    ),
-                    row(
-                        "zoom_in",
-                        "CAMERA ZOOM IN",
-                        format!("{:.2}", c.camera.zoom_in),
-                        true,
-                    ),
-                    row(
-                        "fullscreen",
-                        "FULLSCREEN",
-                        if c.video.fullscreen { "ON" } else { "OFF" }.into(),
-                        true,
-                    ),
-                    row("ai", "COMPUTER LEVEL", c.game.ai_level.to_string(), true),
-                    row(
-                        "delay",
-                        "NET INPUT DELAY",
-                        format!("{} F", c.net.input_delay),
-                        true,
-                    ),
-                    row(
-                        "theme",
-                        "UI THEME",
-                        c.video.theme.trim().to_uppercase(),
-                        true,
-                    ),
-                    row("keys1", "P1 KEYS", short_keys(&c.input.p1), false),
-                    row("keys2", "P2 KEYS", short_keys(&c.input.p2), false),
-                ];
-                let capture = match self.capture {
-                    Some((p, i)) => json!({
-                        "active": true,
-                        "prompt": format!("P{} : PRESS KEY FOR {}", p + 1, BUTTON_NAMES[i]),
-                        "progress": format!("{} / 11", i + 1),
-                    }),
-                    None => json!({ "active": false, "prompt": "", "progress": "" }),
-                };
-                json!({
-                    "rows": rows,
-                    "capture": capture,
-                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
-                    "version": env!("CARGO_PKG_VERSION"),
-                })
+                if let Value::Object(m) = &mut d {
+                    m.insert(
+                        "profile".into(),
+                        serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    );
+                    m.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
+                }
+                d
             }
         };
         self.ui.set_data(data);
     }
 
     pub fn capturing(&self) -> bool {
-        self.capture.is_some() || self.ui.text_focused()
+        self.ui.text_focused()
+            || self
+                .settings
+                .controls
+                .as_ref()
+                .is_some_and(|c| c.listen.is_some())
+    }
+
+    // ------------------------------------------------------------ options / controls
+
+    /// Open the options on tab `tab` with the focus on its tab slab.
+    pub fn set_tab(&mut self, tab: usize, sys: &SystemData) {
+        self.settings.tab = tab.min(crate::settings::TABS.len() - 1);
+        self.ui
+            .set_focus(Some(&format!("tabs[{}].tab", self.settings.tab)));
+        self.refresh_data(sys);
+    }
+
+    /// Show `player`'s bindings on the controls page.
+    pub fn set_player(&mut self, player: usize, sys: &SystemData) {
+        if let Some(c) = self.settings.controls.as_mut() {
+            c.player = player.min(1);
+        }
+        self.ui.set_focus(Some("binds[0].row"));
+        self.refresh_data(sys);
+    }
+
+    /// Connected gamepads (name, held buttons) for the controls page device chip / test pad.
+    pub fn set_pads(&mut self, pads: Vec<(String, Buttons)>, sys: &SystemData) {
+        if let Some(c) = self.settings.controls.as_mut()
+            && (c.pads != pads)
+        {
+            c.pads = pads;
+            if c.device > c.pads.len() {
+                c.device = 0;
+            }
+            self.refresh_data(sys);
+        }
+    }
+
+    /// Escape: `None` when the screen handled it (options content → tab column),
+    /// else where to go.
+    pub fn escape(&mut self, sys: &SystemData) -> Option<Transition> {
+        match self.kind {
+            UiKind::Options if self.settings.controls.is_none() => {
+                let on_tabs = self.ui.focused().is_some_and(|f| f.starts_with("tabs["));
+                if on_tabs || !self.ui.data()["tabs"].is_array() {
+                    return Some(Transition::Title);
+                }
+                self.set_tab(self.settings.tab, sys);
+                None
+            }
+            UiKind::Controls => Some(Transition::Options),
+            _ => Some(Transition::Title),
+        }
+    }
+
+    /// Raw keys on the controls page (held keys light the test pad; Tab, Backspace,
+    /// Delete, F5, Enter are page keys). Returns a transition when Enter pressed a link.
+    pub fn controls_key(
+        &mut self,
+        key: &Key,
+        pressed: bool,
+        sys: &SystemData,
+    ) -> Option<Transition> {
+        let focused = self.ui.focused().map(str::to_string);
+        let ctl = self.settings.controls.as_mut()?;
+        let before = (self.config.input.p1.clone(), self.config.input.p2.clone());
+        let out = ctl.key(&mut self.config, key, pressed, focused.as_deref());
+        let changed = before.0.names() != self.config.input.p1.names()
+            || before.1.names() != self.config.input.p2.names();
+        if changed {
+            self.dirty = true;
+        }
+        let mut t = None;
+        if out && let Some(a) = self.ui.focused_action() {
+            t = self.action(&a, sys);
+        }
+        self.refresh_data(sys);
+        t
+    }
+
+    /// True for the keys `controls_key` keeps from the player mapping.
+    pub fn controls_owns(&self, key: &Key) -> bool {
+        self.settings.controls.is_some()
+            && matches!(
+                key,
+                Key::Named(
+                    NamedKey::Tab
+                        | NamedKey::Backspace
+                        | NamedKey::Delete
+                        | NamedKey::F5
+                        | NamedKey::Enter
+                )
+            )
     }
 
     /// Raw key while rebinding or editing a text input. Returns true when consumed.
@@ -573,27 +629,20 @@ impl UiScreen {
             }
             return true;
         }
-        let Some((player, idx)) = self.capture else {
-            return false;
-        };
-        if *key == Key::Named(winit::keyboard::NamedKey::Escape) {
-            self.capture = None;
+        if let Some(ctl) = self.settings.controls.as_mut()
+            && ctl.listen.is_some()
+        {
+            let before = self.config.input.clone();
+            ctl.bind(&mut self.config, key);
+            if before.p1.names() != self.config.input.p1.names()
+                || before.p2.names() != self.config.input.p2.names()
+            {
+                self.dirty = true;
+            }
             self.refresh_data(sys);
             return true;
         }
-        let Some(name) = crate::input::key_name(key) else {
-            return true;
-        };
-        let keys = if player == 0 {
-            &mut self.config.input.p1
-        } else {
-            &mut self.config.input.p2
-        };
-        keys.set(idx, &name);
-        self.dirty = true;
-        self.capture = (idx + 1 < 11).then_some((player, idx + 1));
-        self.refresh_data(sys);
-        true
+        false
     }
 
     pub fn mouse(&mut self, ev: MouseEvent) {
@@ -608,33 +657,10 @@ impl UiScreen {
         }
     }
 
-    fn adjust(&mut self, id: &str, dir: i32) {
-        let c = &mut self.config;
-        let step = dir as f32;
-        match id {
-            "master" => c.audio.master = (c.audio.master + 0.1 * step).clamp(0.0, 1.0),
-            "music" => c.audio.music = (c.audio.music + 0.1 * step).clamp(0.0, 1.0),
-            "zoom_out" => c.camera.zoom_out = (c.camera.zoom_out + 0.05 * step).clamp(0.3, 1.0),
-            "zoom_in" => c.camera.zoom_in = (c.camera.zoom_in + 0.05 * step).clamp(1.0, 2.0),
-            "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
-            "ai" => c.game.ai_level = (c.game.ai_level + dir).clamp(1, 8),
-            "delay" => c.net.input_delay = (c.net.input_delay as i32 + dir).clamp(0, 8) as usize,
-            "theme" => {
-                if self.themes.is_empty() {
-                    return;
-                }
-                let cur = self
-                    .themes
-                    .iter()
-                    .position(|t| t.eq_ignore_ascii_case(c.video.theme.trim()))
-                    .unwrap_or(0) as i32;
-                let n = self.themes.len() as i32;
-                let next = (cur + dir).rem_euclid(n) as usize;
-                c.video.theme = self.themes[next].clone();
-            }
-            _ => return,
+    fn adjust(&mut self, id: &str, dir: i32, wrap: bool) {
+        if crate::settings::adjust(&mut self.config, id, dir, wrap) {
+            self.dirty = true;
         }
-        self.dirty = true;
     }
 
     fn action(&mut self, a: &str, sys: &SystemData) -> Option<Transition> {
@@ -672,6 +698,22 @@ impl UiScreen {
                 _ => None,
             };
         }
+        if let Some(ctl) = self.settings.controls.as_mut() {
+            let before = self.config.input.clone();
+            if ctl.action(&mut self.config, a) {
+                if before.p1.names() != self.config.input.p1.names()
+                    || before.p2.names() != self.config.input.p2.names()
+                {
+                    self.dirty = true;
+                }
+                self.refresh_data(sys);
+                return None;
+            }
+            return match a {
+                "back" => Some(Transition::Options),
+                _ => None,
+            };
+        }
         if self.kind == UiKind::Pause {
             return match a {
                 "resume" | "back" => Some(Transition::Resume),
@@ -699,15 +741,40 @@ impl UiScreen {
                 _ => return None,
             }),
             "adjust" => {
-                self.adjust(arg, arg2.parse().unwrap_or(1));
+                self.adjust(arg, arg2.parse().unwrap_or(1), false);
                 self.refresh_data(sys);
                 None
             }
-            "open" => {
-                match arg {
-                    "keys1" => self.capture = Some((0, 0)),
-                    "keys2" => self.capture = Some((1, 0)),
-                    _ => {}
+            "cycle" => {
+                self.adjust(arg, 1, true);
+                self.refresh_data(sys);
+                None
+            }
+            "open" => match arg {
+                "keys1" | "controls" | "controls1" => Some(Transition::Controls(0)),
+                "keys2" | "controls2" => Some(Transition::Controls(1)),
+                _ => None,
+            },
+            "tab" => {
+                let i = arg.parse::<usize>().unwrap_or(0);
+                if i == crate::settings::CONTROLS_TAB {
+                    return Some(Transition::Controls(0));
+                }
+                self.settings.tab = i.min(crate::settings::TABS.len() - 1);
+                self.refresh_data(sys);
+                // into the tab: first row, or the first theme card
+                let first = if self.ui.data()["show_rows"] == json!(true) {
+                    "rows[0].row"
+                } else {
+                    "themes[0].card"
+                };
+                self.ui.set_focus(Some(first));
+                None
+            }
+            "theme" => {
+                if !arg.is_empty() && !self.config.video.theme.eq_ignore_ascii_case(arg) {
+                    self.config.video.theme = arg.to_string();
+                    self.dirty = true;
                 }
                 self.refresh_data(sys);
                 None
@@ -748,7 +815,12 @@ impl UiScreen {
             back: false,
         };
         let dual = self.roster.as_ref().is_some_and(|r| r.dual());
-        let (nav, nav2) = if self.capture.is_some() {
+        let listening = self
+            .settings
+            .controls
+            .as_ref()
+            .is_some_and(|c| c.listen.is_some());
+        let (mut nav, nav2) = if listening {
             (Nav::default(), Nav::default())
         } else if dual {
             (of(&pressed[0]), of(&pressed[1]))
@@ -756,6 +828,37 @@ impl UiScreen {
             let merged = Buttons::from_bits(pressed[0].bits() | pressed[1].bits());
             (of(&merged), Nav::default())
         };
+        if self.kind == UiKind::Controls {
+            // fight buttons only light the test pad here; Enter / clicks press
+            nav.accept = false;
+            self.settings.ticks += 1;
+            if self.settings.ticks % 10 == 0 {
+                self.refresh_data(sys);
+            }
+        }
+        if self.kind == UiKind::Options && (nav.up || nav.right) {
+            let f = self.ui.focused().unwrap_or("").to_string();
+            if nav.up && (f == "rows[0].row" || f.starts_with("themes[")) {
+                // up from the top of a tab goes back to the tab column
+                self.ui
+                    .set_focus(Some(&format!("tabs[{}].tab", self.settings.tab)));
+                nav.up = false;
+                sfx(sys.title.move_snd);
+            } else if nav.right
+                && f.starts_with("tabs[")
+                && self.settings.tab != crate::settings::CONTROLS_TAB
+            {
+                // right from a tab enters it at the top
+                let first = if self.ui.data()["show_rows"] == json!(true) {
+                    "rows[0].row"
+                } else {
+                    "themes[0].card"
+                };
+                self.ui.set_focus(Some(first));
+                nav.right = false;
+                sfx(sys.title.move_snd);
+            }
+        }
         // VS screen: count down, any button skips
         let mut vs_done = None;
         let mut vs_refresh = false;
@@ -812,6 +915,22 @@ impl UiScreen {
                 }
             }
         }
+        // options: the focused tab is the tab on display; the help line follows the focus
+        if self.kind == UiKind::Options {
+            let f = self.ui.focused().map(str::to_string);
+            if f != self.settings.last_focus {
+                if let Some(i) = f
+                    .as_deref()
+                    .and_then(|f| f.strip_prefix("tabs["))
+                    .and_then(|r| r.split(']').next())
+                    .and_then(|i| i.parse::<usize>().ok())
+                {
+                    self.settings.tab = i.min(crate::settings::TABS.len() - 1);
+                }
+                self.settings.last_focus = f;
+                self.refresh_data(sys);
+            }
+        }
         // roster: the focused cell is the character on display
         if let Some(r) = self.roster.as_mut()
             && let Some(f) = self.ui.focused()
@@ -849,27 +968,6 @@ impl UiScreen {
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],
         )
     }
-}
-
-fn short_keys(k: &crate::config::PlayerKeys) -> String {
-    let short = |s: &str| -> String {
-        match s {
-            "ArrowUp" => "UP".into(),
-            "ArrowDown" => "DN".into(),
-            "ArrowLeft" => "LT".into(),
-            "ArrowRight" => "RT".into(),
-            "Enter" => "ENT".into(),
-            "Space" => "SPC".into(),
-            "Shift" => "SHF".into(),
-            "Control" => "CTL".into(),
-            other => other.to_uppercase(),
-        }
-    };
-    k.names()
-        .iter()
-        .map(|s| short(s))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Decode a WebP or PNG file to straight RGBA.

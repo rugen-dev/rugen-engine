@@ -10,6 +10,7 @@
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
+//!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
@@ -40,6 +41,8 @@ mod replay;
 mod roster;
 mod screenpack;
 mod select;
+mod settings;
+mod settings_gen;
 mod sprites;
 mod stage;
 mod system;
@@ -226,6 +229,7 @@ fn main() -> anyhow::Result<()> {
                 script: script.as_deref().map(play::parse_script),
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
+                keys: Vec::new(),
             };
             game::Shell::new(
                 config,
@@ -425,6 +429,7 @@ fn main() -> anyhow::Result<()> {
                 script: None,
                 script2: None,
                 record: None,
+                keys: Vec::new(),
             };
             let setup = r.setup();
             game::Shell::new(
@@ -563,6 +568,10 @@ fn main() -> anyhow::Result<()> {
                 script: opt("--script").as_deref().map(play::parse_script),
                 script2: opt("--script2").as_deref().map(play::parse_script),
                 record: None,
+                keys: opt("--keys")
+                    .as_deref()
+                    .map(game::parse_keys)
+                    .unwrap_or_default(),
             };
             game::Shell::new(config, lib, game::Transition::Title, false, harness, None).run()
         }

@@ -1276,20 +1276,19 @@ pub fn generate(flat: &Path, out: &Path, fallback_ttf: Option<&[u8]>) -> anyhow:
     // screens
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
     std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
-    for name in [
-        "options.toml",
-        "vs.toml",
-        "result.toml",
-        "pause.toml",
-        "online.toml",
-    ] {
+    // options / controls: own layouts and pieces (settings_gen.rs)
+    crate::settings_gen::ink(&ui, &ttf)?;
+    for name in ["vs.toml", "result.toml", "pause.toml", "online.toml"] {
         let src = flat.join("ui").join(name);
         match std::fs::read_to_string(&src) {
             Ok(text) => std::fs::write(ui.join(name), reskin(&text))?,
             Err(e) => log::warn!("{}: {e} (screen not re-skinned)", src.display()),
         }
     }
-    std::fs::write(out.join("README.md"), README)?;
+    std::fs::write(
+        out.join("README.md"),
+        format!("{README}{}", crate::settings_gen::README),
+    )?;
     let news_json = out.join("news.json");
     if !news_json.exists() {
         std::fs::write(
