@@ -205,9 +205,12 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 row(
                     "delay",
                     "NET INPUT DELAY",
-                    Widget::Pips(8, c.net.input_delay.min(8) as u32),
-                    format!("{} F", c.net.input_delay),
-                    "Frames of local input delay online. More delay = fewer rollbacks on slow links.",
+                    {
+                        let (opts, sel) = c.net.input_delay.choice();
+                        Widget::Choice(opts, Some(sel))
+                    },
+                    c.net.input_delay.to_string(),
+                    "AUTO picks 0-3 frames from the measured ping. More delay = fewer rollbacks.",
                 ),
                 row(
                     "server",
@@ -217,11 +220,11 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                     "rugen-server address for rooms and ranked. Set [net] server in rugen.toml.",
                 ),
                 row(
-                    "relay",
-                    "RELAY",
-                    Widget::Text,
-                    show(&c.net.relay),
-                    "Relay used to find the peer of a NETPLAY room. Set [net] relay in rugen.toml.",
+                    "good_conn",
+                    "GOOD CONNECTIONS ONLY",
+                    on_off(c.net.good_connections_only),
+                    String::new(),
+                    "Quick match and ranked only pair you with opponents under 80 ms.",
                 ),
             ]
         }
@@ -426,13 +429,8 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
                 (c.game.ai_level + dir).clamp(1, 8)
             }
         }
-        "delay" => {
-            c.net.input_delay = if wrap && c.net.input_delay as i32 + dir > 8 {
-                0
-            } else {
-                (c.net.input_delay as i32 + dir).clamp(0, 8) as usize
-            }
-        }
+        "delay" => c.net.input_delay = c.net.input_delay.step(dir, wrap),
+        "good_conn" => c.net.good_connections_only = !c.net.good_connections_only,
         "air_jumps" => c.game.air_jumps = cycle(c.game.air_jumps.clamp(0, 3) as usize, 4) as i32,
         "round_time" => {
             let cur = ROUND_TIMES

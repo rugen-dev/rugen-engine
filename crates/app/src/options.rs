@@ -109,9 +109,7 @@ impl OptionsScreen {
             Item::ZoomIn => c.camera.zoom_in = (c.camera.zoom_in + 0.05 * step).clamp(1.0, 2.0),
             Item::Fullscreen => c.video.fullscreen = !c.video.fullscreen,
             Item::AiLevel => c.game.ai_level = (c.game.ai_level + dir).clamp(1, 8),
-            Item::InputDelay => {
-                c.net.input_delay = (c.net.input_delay as i32 + dir).clamp(0, 8) as usize
-            }
+            Item::InputDelay => c.net.input_delay = c.net.input_delay.step(dir, false),
             Item::Theme => {
                 if self.themes.is_empty() {
                     return;
@@ -138,7 +136,7 @@ impl OptionsScreen {
             Item::ZoomIn => format!("{:.2}", c.camera.zoom_in),
             Item::Fullscreen => if c.video.fullscreen { "ON" } else { "OFF" }.into(),
             Item::AiLevel => c.game.ai_level.to_string(),
-            Item::InputDelay => format!("{} F", c.net.input_delay),
+            Item::InputDelay => c.net.input_delay.to_string(),
             Item::Theme => c.video.theme.trim().to_uppercase(),
             Item::KeysP1 | Item::KeysP2 | Item::Back => String::new(),
         }

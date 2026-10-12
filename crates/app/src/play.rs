@@ -33,12 +33,14 @@ pub enum NetMode {
         remote: SocketAddr,
         side: usize,
     },
-    /// Online through a `rugen-server` rendezvous: server, room code, side.
-    Rendezvous {
-        port: u16,
-        server: SocketAddr,
-        room: String,
-        side: usize,
+    /// Online through a `rugen-server` relay session: every datagram goes
+    /// through the server (nobody learns the other player's address).
+    /// `server` is the base URL, `ticket` comes from the lobby.
+    Relay {
+        server: String,
+        ticket: rugen_net::online::SessionTicket,
+        /// Skip the UDP probe and relay over the WebSocket.
+        websocket_only: bool,
     },
     /// Local two-player game that rolls back every frame to prove determinism.
     SyncTest,
@@ -237,42 +239,33 @@ impl Match {
 
         let net = match &setup.net {
             Some(NetMode::P2P { port, remote, side }) => {
-                let o = NetOptions {
-                    input_delay: cfg.net.input_delay,
-                    max_prediction: cfg.net.max_prediction,
-                    ..Default::default()
-                };
-                let n = Netplay::p2p(*port, *remote, *side, &o)
-                    .with_context(|| format!("netplay on port {port} to {remote}"))?;
-                log::info!(
-                    "netplay: listening on {port}, peer {remote}, playing P{}",
-                    side + 1
-                );
-                Some(n)
-            }
-            Some(NetMode::Rendezvous {
-                port,
-                server,
-                room,
-                side,
-            }) => {
-                let o = NetOptions {
-                    input_delay: cfg.net.input_delay,
-                    max_prediction: cfg.net.max_prediction,
-                    ..Default::default()
-                };
-                let mut socket = rugen_net::Socket::bind(*port)?;
-                let remote = socket.rendezvous(
-                    *server,
-                    room,
-                    *side,
-                    std::time::Duration::from_secs(90),
-                    &mut |s| log::info!("netplay: {s}"),
-                )?;
-                let n = Netplay::p2p_with_socket(socket, remote, *side, &o)
+                // LAN / explicit IP: wait for the peer, measure the round trip
+                let mut socket = rugen_net::Socket::bind(*port)
+                    .with_context(|| format!("netplay on port {port}"))?;
+                let shake = socket
+                    .handshake(*remote, std::time::Duration::from_secs(60), &mut |s| {
+                        log::info!("netplay: {s}")
+                    })
                     .with_context(|| format!("netplay with {remote}"))?;
-                Some(n)
+                let net_rtt = shake.rtt_ms;
+                let o = NetOptions {
+                    input_delay: cfg.net.input_delay.frames(net_rtt),
+                    max_prediction: cfg.net.max_prediction,
+                    ..Default::default()
+                };
+                log::info!(
+                    "netplay: port {port}, peer {remote}, playing P{}, rtt {:?} ms, input delay {}",
+                    side + 1,
+                    net_rtt,
+                    o.input_delay
+                );
+                Some(Netplay::p2p_with_socket(socket, *remote, *side, &o)?)
             }
+            Some(NetMode::Relay {
+                server,
+                ticket,
+                websocket_only,
+            }) => Some(relay_session(server, ticket, *websocket_only, cfg)?.0),
             Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
             None => None,
         };
@@ -558,6 +551,74 @@ impl Match {
 
     pub fn is_net(&self) -> bool {
         self.net.is_some()
+    }
+
+    /// What a result report carries: last frame, world checksum and both
+    /// players' inputs (the server compares the two reports).
+    pub fn evidence(&self) -> rugen_net::online::Evidence {
+        rugen_net::online::Evidence {
+            frames: self.world.frame,
+            checksum: Some(self.world.checksum()),
+            inputs: self
+                .net
+                .as_ref()
+                .map(|n| n.input_log_bytes())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Tiny connection indicator for online matches: 1-4 bars from the
+    /// ping and a warning while the connection is unstable.
+    fn draw_net_quality(
+        &self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        screen_w: f32,
+    ) {
+        let Some(net) = self.net.as_ref().filter(|n| !n.is_synctest()) else {
+            return;
+        };
+        let st = net.stats();
+        if !st.synchronized {
+            return;
+        }
+        let bars = st.bars();
+        let color = match bars {
+            4 => [0.3, 0.9, 0.4, 0.9],
+            3 => [0.7, 0.9, 0.3, 0.9],
+            2 => [1.0, 0.7, 0.2, 0.9],
+            _ => [1.0, 0.3, 0.2, 0.9],
+        };
+        let x0 = screen_w - 26.0;
+        // top right, under the name plate (clear of power gauges)
+        let y1 = 46.0;
+        for i in 0..4u8 {
+            let h = 2.0 + f32::from(i) * 1.5;
+            let x = x0 + f32::from(i) * 5.0;
+            let c = if i < bars {
+                color
+            } else {
+                [0.2, 0.2, 0.2, 0.6]
+            };
+            r.rect(hud(x, y1 - h), hud(x + 3.5, y1), c);
+        }
+        draw_text(
+            r,
+            &format!("{} MS", st.ping_ms),
+            hud(screen_w - 48.0, 43.0),
+            u,
+            [0.9, 0.9, 0.9, 0.8],
+        );
+        if st.unstable {
+            draw_text(
+                r,
+                "CONNECTION UNSTABLE",
+                hud(screen_w / 2.0, 56.0),
+                1.5 * u,
+                [1.0, 0.5, 0.3, 0.95],
+            );
+        }
     }
 
     /// Winning side (0/1) once the match is over, None for a draw or unfinished match.
@@ -1272,6 +1333,7 @@ impl Match {
                 );
             }
         }
+        self.draw_net_quality(r, &hud, u, screen_w);
         let _ = hud_w;
         let cam = Camera {
             screen: [screen_w, stage.height],
@@ -1436,4 +1498,56 @@ fn ground_screen_frac(at_rest: f32, zoom: f32) -> f32 {
     let target = 0.66f32.min(at_rest);
     let t = ((1.0 - zoom) / 0.7).clamp(0.0, 1.0);
     at_rest + (target - at_rest) * t
+}
+
+/// Join a relay session (UDP fast path, WebSocket fallback), wait for the
+/// other slots, measure the round trip through the server and start the
+/// rollback session (or a spectator session for slots 2+).
+fn relay_session(
+    server: &str,
+    ticket: &rugen_net::online::SessionTicket,
+    websocket_only: bool,
+    cfg: &Config,
+) -> anyhow::Result<(Netplay, Option<u32>)> {
+    use std::time::Duration;
+    let base = rugen_net::online::base_url(server);
+    let probe = if websocket_only {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(1500)
+    };
+    let mut socket =
+        rugen_net::RelaySocket::connect(ticket, &base, probe, &mut |s| log::info!("netplay: {s}"))
+            .context("joining the relay session")?;
+    let transport = socket.transport_name();
+    if ticket.slot >= 2 {
+        socket.wait_for(0b001, Duration::from_secs(60), &mut |s| {
+            log::info!("netplay: {s}")
+        })?;
+        log::info!(
+            "netplay: spectating session {:08x} over {transport}",
+            ticket.session
+        );
+        let n = Netplay::spectate(socket, &NetOptions::default())?;
+        return Ok((n, None));
+    }
+    socket.wait_for(0b011, Duration::from_secs(90), &mut |s| {
+        log::info!("netplay: {s}")
+    })?;
+    let peer = 1 - ticket.slot;
+    let rtt = socket.peer_rtt(peer, 8, Duration::from_secs(2));
+    let o = NetOptions {
+        input_delay: cfg.net.input_delay.frames(rtt),
+        max_prediction: cfg.net.max_prediction,
+        ..Default::default()
+    };
+    log::info!(
+        "netplay: relay session {:08x} over {transport}, playing P{}, rtt {:?} ms, input delay {}",
+        ticket.session,
+        ticket.slot + 1,
+        rtt,
+        o.input_delay
+    );
+    let n = Netplay::relay(socket, ticket.slot as usize, ticket.spectators, &o)?;
+    Ok((n, rtt))
 }

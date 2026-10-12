@@ -126,10 +126,16 @@ pub struct PlayerKeys {
 pub struct Net {
     /// Local UDP port for `--host` / `--join`.
     pub port: u16,
-    /// Frames of local input delay.
-    pub input_delay: usize,
+    /// Frames of local input delay: `"auto"` (picked from the measured ping
+    /// when the match starts) or a number of frames.
+    pub input_delay: InputDelay,
     pub max_prediction: usize,
-    /// Peer `ip:port` used by the NETPLAY menu entry (empty = entry hidden).
+    /// Quick match / ranked: only accept opponents with an estimated ping
+    /// up to [`GOOD_PING_MS`] (the window never widens past it).
+    pub good_connections_only: bool,
+    /// LAN / explicit-IP peer `ip:port` used by the NETPLAY menu entry
+    /// (empty = entry hidden). The address is typed by the players
+    /// themselves; online play never exchanges addresses.
     pub remote: String,
     /// Which side this machine plays in the NETPLAY menu entry: 1 or 2.
     pub side: u8,
@@ -137,12 +143,106 @@ pub struct Net {
     pub p1: String,
     pub p2: String,
     pub stage: String,
-    /// `rugen-server` `ip:port` and room code; when set, the peer address is
-    /// discovered through the relay instead of `remote`.
-    pub relay: String,
+    /// Room code pre-filled by JOIN A ROOM.
     pub room: String,
-    /// `rugen-server` `host:port` for the ONLINE menu (rooms, ranked, leaderboard).
+    /// Default `rugen-server` (`https://rugen.example.com` or `host:port`)
+    /// for the ONLINE menu. All online traffic goes through it.
     pub server: String,
+    /// Favourite servers shown in the ONLINE server list.
+    pub servers: Vec<String>,
+    /// Skip the UDP fast path and relay over the WebSocket only.
+    pub websocket_only: bool,
+}
+
+impl Net {
+    /// The server list: `server` first, then the favourites, no duplicates.
+    pub fn server_list(&self) -> Vec<String> {
+        let mut v: Vec<String> = Vec::new();
+        for s in std::iter::once(&self.server).chain(&self.servers) {
+            let s = s.trim();
+            if !s.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(s)) {
+                v.push(s.to_string());
+            }
+        }
+        v
+    }
+}
+
+/// Estimated ping limit for `good_connections_only`.
+pub const GOOD_PING_MS: u32 = 80;
+
+/// `input_delay = "auto"` or `input_delay = 2` in rugen.toml.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct InputDelay(pub Option<usize>);
+
+impl InputDelay {
+    pub const MAX: usize = 8;
+
+    /// Frames for a measured round trip (auto) or the fixed setting.
+    pub fn frames(self, rtt_ms: Option<u32>) -> usize {
+        match (self.0, rtt_ms) {
+            (Some(n), _) => n,
+            (None, Some(rtt)) => rugen_net::auto_input_delay(rtt),
+            // auto without a measurement (relayed path): a safe middle
+            (None, None) => 2,
+        }
+    }
+
+    /// Cycle AUTO, 0 .. MAX (menus): `dir` +1 / -1.
+    pub fn step(self, dir: i32, wrap: bool) -> Self {
+        // AUTO is position 0, n frames is n + 1
+        let pos = self.0.map_or(0, |n| n as i32 + 1);
+        let last = Self::MAX as i32 + 1;
+        let next = if wrap && pos + dir > last {
+            0
+        } else {
+            (pos + dir).clamp(0, last)
+        };
+        Self((next > 0).then(|| next as usize - 1))
+    }
+
+    /// Menu position (0 = AUTO) and labels.
+    pub fn choice(self) -> (Vec<String>, usize) {
+        let mut v = vec!["AUTO".to_string()];
+        v.extend((0..=Self::MAX).map(|n| format!("{n} F")));
+        (v, self.0.map_or(0, |n| n + 1))
+    }
+}
+
+impl std::fmt::Display for InputDelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(n) => write!(f, "{n} F"),
+            None => f.write_str("AUTO"),
+        }
+    }
+}
+
+impl Serialize for InputDelay {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Some(n) => s.serialize_u64(n as u64),
+            None => s.serialize_str("auto"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for InputDelay {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            N(i64),
+            S(String),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::N(n) => InputDelay(Some(n.clamp(0, Self::MAX as i64) as usize)),
+            Raw::S(s) => match s.trim().parse::<usize>() {
+                Ok(n) => InputDelay(Some(n.min(Self::MAX))),
+                Err(_) => InputDelay(None),
+            },
+        })
+    }
 }
 
 impl Default for Video {
@@ -248,16 +348,18 @@ impl Default for Net {
     fn default() -> Self {
         Self {
             port: 7000,
-            input_delay: 2,
+            input_delay: InputDelay(None),
             max_prediction: 8,
+            good_connections_only: false,
             remote: String::new(),
             side: 1,
             p1: "kfm".into(),
             p2: "kfm".into(),
             stage: String::new(),
-            relay: String::new(),
             room: String::new(),
             server: String::new(),
+            servers: Vec::new(),
+            websocket_only: false,
         }
     }
 }
@@ -311,5 +413,24 @@ mod tests {
         let back: Config = toml::from_str("[net]\nport = 9000\n").unwrap();
         assert_eq!(back.net.port, 9000);
         assert_eq!(back.video.width, 1280);
+    }
+
+    #[test]
+    fn input_delay_auto_or_frames() {
+        let c: Config = toml::from_str("[net]\ninput_delay = 3\n").unwrap();
+        assert_eq!(c.net.input_delay, InputDelay(Some(3)));
+        let c: Config = toml::from_str("[net]\ninput_delay = \"auto\"\n").unwrap();
+        assert_eq!(c.net.input_delay, InputDelay(None));
+        assert_eq!(Config::default().net.input_delay, InputDelay(None));
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert!(text.contains("input_delay = \"auto\""), "{text}");
+        assert_eq!(InputDelay(None).frames(Some(10)), 0);
+        assert_eq!(InputDelay(None).frames(Some(100)), 2);
+        assert_eq!(InputDelay(None).frames(Some(150)), 3);
+        assert_eq!(InputDelay(Some(5)).frames(Some(10)), 5);
+        assert_eq!(InputDelay(None).step(1, false), InputDelay(Some(0)));
+        assert_eq!(InputDelay(Some(0)).step(-1, false), InputDelay(None));
+        assert_eq!(InputDelay(Some(8)).step(1, true), InputDelay(None));
+        assert_eq!(InputDelay(Some(2)).to_string(), "2 F");
     }
 }

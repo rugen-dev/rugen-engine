@@ -3,17 +3,27 @@
 //! The simulation ([`World`]) is deterministic, plain data and `Clone`, so
 //! ggrs can snapshot it every frame and re-simulate after late inputs arrive.
 //! The only thing on the wire is each player's [`NetInput`] (11 button bits).
+//!
+//! Online matches go through the player's chosen `rugen-server`
+//! ([`relay::RelaySocket`]): nobody learns the other player's address. LAN /
+//! explicit-IP matches use a plain UDP [`Socket`].
 
 #![forbid(unsafe_code)]
 
 pub mod online;
+pub mod quality;
+pub mod relay;
+pub mod socket;
 
-use std::net::{SocketAddr, UdpSocket};
-use std::time::{Duration, Instant};
+pub use quality::{EventFilter, Quality, auto_input_delay};
+pub use relay::{RelaySocket, slot_addr};
+pub use socket::{Punched, Socket};
+
+use std::net::SocketAddr;
 
 use ggrs::{
     DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, NonBlockingSocket, P2PSession, PlayerType,
-    SessionBuilder, SessionState, SyncTestSession,
+    SessionBuilder, SessionState, SpectatorSession, SyncTestSession,
 };
 use rugen_sim::world::Event;
 use rugen_sim::{Buttons, World};
@@ -66,102 +76,7 @@ impl ggrs::Config for NetConfig {
 enum Session {
     P2P(Box<P2PSession<NetConfig>>),
     SyncTest(Box<SyncTestSession<NetConfig>>),
-}
-
-/// Non-blocking UDP socket for ggrs that can first be used for the
-/// rendezvous handshake, so the NAT mapping the peer learns is the one the
-/// game traffic uses.
-pub struct Socket {
-    socket: UdpSocket,
-    buffer: [u8; 4096],
-}
-
-impl Socket {
-    pub fn bind(port: u16) -> Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", port))?;
-        socket.set_nonblocking(true)?;
-        Ok(Self {
-            socket,
-            buffer: [0; 4096],
-        })
-    }
-
-    /// Ask a `rugen-server` for the peer in `room`. Blocks up to `timeout`,
-    /// calling `progress` with status lines. Returns the peer's public address.
-    pub fn rendezvous(
-        &mut self,
-        server: SocketAddr,
-        room: &str,
-        side: usize,
-        timeout: Duration,
-        progress: &mut dyn FnMut(&str),
-    ) -> Result<SocketAddr> {
-        let hello = format!("rugen1 hello {room} {}", side + 1);
-        let start = Instant::now();
-        let mut last_send = Instant::now() - Duration::from_secs(1);
-        let mut buf = [0u8; 512];
-        progress(&format!("waiting for a peer in room {room} via {server}"));
-        while start.elapsed() < timeout {
-            if last_send.elapsed() >= Duration::from_millis(300) {
-                self.socket.send_to(hello.as_bytes(), server)?;
-                last_send = Instant::now();
-            }
-            match self.socket.recv_from(&mut buf) {
-                Ok((n, from)) if from == server => {
-                    let text = String::from_utf8_lossy(&buf[..n]);
-                    let mut it = text.split_whitespace();
-                    if it.next() == Some("rugen1")
-                        && it.next() == Some("peer")
-                        && let Some(addr) = it.next().and_then(|a| a.parse::<SocketAddr>().ok())
-                    {
-                        progress(&format!("peer found at {addr}"));
-                        // open the NAT mapping toward the peer before ggrs starts
-                        for _ in 0..3 {
-                            let _ = self.socket.send_to(b"rugen1 punch", addr);
-                        }
-                        return Ok(addr);
-                    }
-                }
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Err(Error::Rendezvous(format!(
-            "no peer joined room {room} within {} s",
-            timeout.as_secs()
-        )))
-    }
-}
-
-impl NonBlockingSocket<SocketAddr> for Socket {
-    fn send_to(&mut self, msg: &ggrs::Message, addr: &SocketAddr) {
-        if let Ok(buf) = bincode::serialize(msg) {
-            let _ = self.socket.send_to(&buf, addr);
-        }
-    }
-
-    fn receive_all_messages(&mut self) -> Vec<(SocketAddr, ggrs::Message)> {
-        let mut out = Vec::new();
-        loop {
-            match self.socket.recv_from(&mut self.buffer) {
-                Ok((n, from)) => {
-                    // text datagrams (rendezvous / punch) are not game messages
-                    if let Ok(msg) = bincode::deserialize(&self.buffer[..n]) {
-                        out.push((from, msg));
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return out,
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => continue,
-                Err(e) => {
-                    log::warn!("udp recv: {e}");
-                    return out;
-                }
-            }
-        }
-    }
+    Spectator(Box<SpectatorSession<NetConfig>>),
 }
 
 /// Options for a two-player session.
@@ -194,6 +109,19 @@ pub struct Stats {
     pub frames_ahead: i32,
     pub rollbacks: u64,
     pub synchronized: bool,
+    /// Average frames re-simulated per tick over the last second.
+    pub avg_rollback: f32,
+    /// Interruptions, a large frame advantage or deep rollbacks right now.
+    pub unstable: bool,
+    /// Input delay this session runs with.
+    pub input_delay: usize,
+}
+
+impl Stats {
+    /// 1-4 bars from the measured ping (see [`rugen_proto::ping_bars`]).
+    pub fn bars(&self) -> u8 {
+        rugen_proto::ping_bars(self.ping_ms.min(u32::MAX as u128) as u32)
+    }
 }
 
 /// What happened during one call to [`Netplay::advance`].
@@ -201,7 +129,8 @@ pub struct Stats {
 pub struct Advanced {
     /// Frames the authoritative timeline moved forward (0 while stalled / synchronizing).
     pub new_frames: u32,
-    /// Sim events from newly reached frames only (re-simulated frames are muted).
+    /// Sim events to play: everything from newly reached frames, plus events a
+    /// rollback revealed that were not played for that frame yet ([`EventFilter`]).
     pub events: Vec<Event>,
     /// Human-readable session notices (sync progress, interruptions).
     pub notices: Vec<String>,
@@ -210,10 +139,15 @@ pub struct Advanced {
 pub struct Netplay {
     session: Session,
     local_handle: usize,
-    /// Highest frame the world has ever reached; events from frames at or below are rollback noise.
-    highest_frame: u32,
+    /// Rollback-safe sound / announcer emission.
+    events: EventFilter,
+    quality: Quality,
     stats: Stats,
     skip_frames: u32,
+    /// Inputs of both players per simulated frame (corrected on rollback),
+    /// for result verification and replays.
+    log: Vec<[u16; 2]>,
+    log_start: Option<u32>,
 }
 
 impl Netplay {
@@ -228,10 +162,82 @@ impl Netplay {
         Self::p2p_with_socket(socket, remote, local_handle, opts)
     }
 
-    /// Peer-to-peer session over an already bound [`Socket`] (after a rendezvous).
+    /// Peer-to-peer session over an already bound [`Socket`] (after a handshake).
     pub fn p2p_with_socket(
         socket: Socket,
         remote: SocketAddr,
+        local_handle: usize,
+        opts: &Options,
+    ) -> Result<Self> {
+        let players: Vec<(PlayerType<SocketAddr>, usize)> = (0..2)
+            .map(|h| {
+                let kind = if h == local_handle {
+                    PlayerType::Local
+                } else {
+                    PlayerType::Remote(remote)
+                };
+                (kind, h)
+            })
+            .collect();
+        Self::start(socket, &players, local_handle, opts)
+    }
+
+    /// Match through a `rugen-server` relay session. `local_handle` is our
+    /// slot (0 = P1, 1 = P2); P1 also feeds `spectators` spectator slots.
+    pub fn relay(
+        socket: RelaySocket,
+        local_handle: usize,
+        spectators: u8,
+        opts: &Options,
+    ) -> Result<Self> {
+        let mut players: Vec<(PlayerType<SocketAddr>, usize)> = (0..2)
+            .map(|h| {
+                let kind = if h == local_handle {
+                    PlayerType::Local
+                } else {
+                    PlayerType::Remote(slot_addr(h as u8))
+                };
+                (kind, h)
+            })
+            .collect();
+        if local_handle == 0 {
+            for i in 0..spectators {
+                let slot = 2 + i;
+                players.push((PlayerType::Spectator(slot_addr(slot)), slot as usize));
+            }
+        }
+        Self::start(socket, &players, local_handle, opts)
+    }
+
+    /// Watch a relayed match: inputs come from P1 (slot 0), confirmed only.
+    pub fn spectate(socket: RelaySocket, opts: &Options) -> Result<Self> {
+        let session = SessionBuilder::<NetConfig>::new()
+            .with_num_players(2)
+            .with_max_frames_behind(10)?
+            .with_catchup_speed(2)?
+            .start_spectator_session(slot_addr(0), socket);
+        Ok(Self::wrap(Session::Spectator(Box::new(session)), 0, opts))
+    }
+
+    fn wrap(session: Session, local_handle: usize, opts: &Options) -> Self {
+        Self {
+            session,
+            local_handle,
+            events: EventFilter::new(opts.max_prediction as u32 + 2),
+            quality: Quality::default(),
+            stats: Stats {
+                input_delay: opts.input_delay,
+                ..Default::default()
+            },
+            skip_frames: 0,
+            log: Vec::new(),
+            log_start: None,
+        }
+    }
+
+    fn start<S: NonBlockingSocket<SocketAddr> + 'static>(
+        socket: S,
+        players: &[(PlayerType<SocketAddr>, usize)],
         local_handle: usize,
         opts: &Options,
     ) -> Result<Self> {
@@ -245,22 +251,15 @@ impl Netplay {
                 interval: opts.desync_interval,
             });
         }
-        for handle in 0..2 {
-            let kind = if handle == local_handle {
-                PlayerType::Local
-            } else {
-                PlayerType::Remote(remote)
-            };
-            b = b.add_player(kind, handle)?;
+        for (kind, handle) in players {
+            b = b.add_player(*kind, *handle)?;
         }
         let session = b.start_p2p_session(socket)?;
-        Ok(Self {
-            session: Session::P2P(Box::new(session)),
+        Ok(Self::wrap(
+            Session::P2P(Box::new(session)),
             local_handle,
-            highest_frame: 0,
-            stats: Stats::default(),
-            skip_frames: 0,
-        })
+            opts,
+        ))
     }
 
     /// Local session that rolls back `check_distance` frames every tick and
@@ -274,16 +273,31 @@ impl Netplay {
         for handle in 0..2 {
             b = b.add_player(PlayerType::Local, handle)?;
         }
-        Ok(Self {
-            session: Session::SyncTest(Box::new(b.start_synctest_session()?)),
-            local_handle: 0,
-            highest_frame: 0,
-            stats: Stats {
-                synchronized: true,
-                ..Default::default()
-            },
-            skip_frames: 0,
-        })
+        let mut n = Self::wrap(
+            Session::SyncTest(Box::new(b.start_synctest_session()?)),
+            0,
+            opts,
+        );
+        n.events = EventFilter::new(check_distance as u32 + 2);
+        n.stats.synchronized = true;
+        Ok(n)
+    }
+
+    pub fn is_spectator(&self) -> bool {
+        matches!(self.session, Session::Spectator(_))
+    }
+
+    /// Both players' inputs per frame since the session started (4 bytes per
+    /// frame, P1 then P2, little endian), for result reports and replays.
+    pub fn input_log_bytes(&self) -> Vec<u8> {
+        self.log
+            .iter()
+            .flat_map(|[a, b]| {
+                let mut v = a.to_le_bytes().to_vec();
+                v.extend(b.to_le_bytes());
+                v
+            })
+            .collect()
     }
 
     pub fn is_synctest(&self) -> bool {
@@ -300,8 +314,10 @@ impl Netplay {
 
     /// Pump the network. Call once per tick before [`advance`](Self::advance).
     pub fn poll(&mut self) {
-        if let Session::P2P(s) = &mut self.session {
-            s.poll_remote_clients();
+        match &mut self.session {
+            Session::P2P(s) => s.poll_remote_clients(),
+            Session::Spectator(s) => s.poll_remote_clients(),
+            Session::SyncTest(_) => {}
         }
     }
 
@@ -327,16 +343,22 @@ impl Netplay {
                         }
                         GgrsEvent::Disconnected { addr } => {
                             self.stats.synchronized = false;
+                            self.quality.interrupted = true;
                             out.notices.push(format!("{addr} disconnected"));
                         }
                         GgrsEvent::NetworkInterrupted {
                             disconnect_timeout, ..
-                        } => out
-                            .notices
-                            .push(format!("connection interrupted ({disconnect_timeout} ms)")),
+                        } => {
+                            self.quality.interrupted = true;
+                            out.notices
+                                .push(format!("connection interrupted ({disconnect_timeout} ms)"))
+                        }
                         GgrsEvent::NetworkResumed { .. } => {
+                            self.quality.interrupted = false;
                             out.notices.push("connection resumed".into())
                         }
+                        // time sync: we are ahead of the peer, so pause a few
+                        // frames (a brief slowdown instead of big rollbacks)
                         GgrsEvent::WaitRecommendation { skip_frames } => {
                             self.skip_frames = skip_frames;
                         }
@@ -373,7 +395,34 @@ impl Netplay {
                 }
                 s.advance_frame()?
             }
+            Session::Spectator(s) => {
+                for ev in s.events() {
+                    match ev {
+                        GgrsEvent::Synchronized { .. } => {
+                            self.stats.synchronized = true;
+                            out.notices.push("watching".into());
+                        }
+                        GgrsEvent::Disconnected { .. } => {
+                            self.stats.synchronized = false;
+                            out.notices.push("the host disconnected".into());
+                        }
+                        GgrsEvent::Synchronizing { total, count, .. } => {
+                            out.notices.push(format!("synchronizing {count}/{total}"));
+                        }
+                        _ => {}
+                    }
+                }
+                if s.current_state() != SessionState::Running {
+                    return Ok(out);
+                }
+                match s.advance_frame() {
+                    Ok(r) => r,
+                    Err(GgrsError::PredictionThreshold) => return Ok(out),
+                    Err(e) => return Err(e.into()),
+                }
+            }
         };
+        let mut resimulated = 0;
         for req in requests {
             match req {
                 GgrsRequest::SaveGameState { cell, frame } => {
@@ -388,15 +437,26 @@ impl Netplay {
                 }
                 GgrsRequest::AdvanceFrame { inputs } => {
                     let b: Vec<Buttons> = inputs.iter().map(|(i, _)| Buttons::from(*i)).collect();
+                    let start = *self.log_start.get_or_insert(world.frame);
+                    let idx = world.frame.saturating_sub(start) as usize;
+                    self.log.truncate(idx);
+                    self.log.push([
+                        inputs.first().map_or(0, |(i, _)| i.0),
+                        inputs.get(1).map_or(0, |(i, _)| i.0),
+                    ]);
                     world.step(&b);
-                    if world.frame > self.highest_frame {
-                        self.highest_frame = world.frame;
+                    if world.frame > self.events.highest() {
                         out.new_frames += 1;
-                        out.events.extend(world.events.iter().cloned());
+                    } else {
+                        resimulated += 1;
                     }
+                    out.events
+                        .extend(self.events.filter(world.frame, &world.events));
                 }
             }
         }
+        self.quality.push_tick(resimulated);
+        self.stats.avg_rollback = self.quality.avg_rollback();
         if let Session::P2P(s) = &self.session {
             self.stats.frames_ahead = s.frames_ahead();
             if let Some(h) = s.remote_player_handles().first()
@@ -404,6 +464,7 @@ impl Netplay {
             {
                 self.stats.ping_ms = st.ping;
             }
+            self.stats.unstable = self.quality.unstable(self.stats.frames_ahead);
         }
         Ok(out)
     }

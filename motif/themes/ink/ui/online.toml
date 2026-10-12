@@ -1,7 +1,9 @@
-# rugen ONLINE screen — rooms, ranked queue, leaderboard. Coordinates are 1280x720.
-# Data: is_menu/is_room/is_join/is_queue/is_board/is_direct, has_server, no_server,
-# server_line, direct.* (title addr mine fighters), status, error, me.*,
-# room.code, typed, opponent.*, queue.*, board[] (pos/name/rating/rank/record), season, my_rank.
+# rugen ONLINE screen: servers, lobby, rooms, quick match, ranked, leaderboard. 1280x720.
+# Data: is_servers/is_add/is_menu/is_lobby/is_create/is_room/is_join/is_queue/is_board/is_direct,
+# has_server, no_server, server_line, motd, lobby[] (name host rules count join watch), lobby_empty,
+# create.* (name password public rounds time mode chars spect), direct.* (title addr mine fighters),
+# status, error, me.*, room.* (code name rules ready waiting rematch role members[] (name role ping
+# kick can_kick)), typed, password, opponent.* (.. ping), queue.* (title ..), board[], season, my_rank.
 background = [0.95, 0.94, 0.89, 1.0]
 
 [[node]]
@@ -161,13 +163,83 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}"
-  visible = "room.ready"
+  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.ping}"
+  visible = "room.rematch"
   x = 30
   y = 160
   font = 1
   bank = 9
   scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{room.name}   {room.rules}"
+  x = 260
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "list"
+  x = 360
+  y = 54
+  w = 340
+  h = 150
+  gap = 4
+  items = "room.members"
+
+    [[node.children.children]]
+    kind = "panel"
+    h = 34
+    image = "ui/row.webp"
+    nine = [4, 4, 4, 4]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name} {item.role} {item.ping}"
+      x = 8
+      y = 8
+      font = 1
+      bank = 9
+      scale = 1
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "room_kick"
+      visible = "item.can_kick"
+      anchor = "tr"
+      x = 4
+      y = 3
+      w = 70
+      h = 28
+      image = "ui/slab.webp"
+      image_focus = "ui/slab_lit.webp"
+      text = "KICK"
+      font = 1
+      bank = 11
+      bank_focus = 11
+      scale = 1
+      on_press = "{item.kick}"
+
+  [[node.children]]
+  kind = "button"
+  id = "room_rematch"
+  visible = "room.rematch"
+  anchor = "br"
+  x = 30
+  y = 24
+  w = 260
+  h = 48
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "REMATCH"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  pad = 26
+  on_press = "room:rematch"
 
   [[node.children]]
   kind = "button"
@@ -227,6 +299,30 @@ h = 300
 
   [[node.children]]
   kind = "text"
+  text = "PASSWORD (IF THE ROOM HAS ONE)"
+  x = 30
+  y = 156
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "password"
+  x = 30
+  y = 182
+  w = 400
+  h = 48
+  font = 2
+  bank = 9
+  scale = 2
+  max_len = 32
+  value = "password"
+  on_change = "pw:{value}"
+  on_press = "join"
+
+  [[node.children]]
+  kind = "text"
   text = "LETTERS AND DIGITS   BACKSPACE ERASES   ESC CANCELS"
   anchor = "bl"
   x = 30
@@ -252,7 +348,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "NO RUGEN SERVER SET"
+  text = "PLAY ONLINE THROUGH A SERVER"
   x = 24
   y = 20
   font = 2
@@ -261,7 +357,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "ROOMS, RANKED AND LEADERBOARD"
+  text = "PICK ONE ON THE LEFT OR ADD ONE:"
   x = 24
   y = 64
   font = 1
@@ -270,7 +366,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "NEED [NET] SERVER = HOST:PORT"
+  text = "HTTPS://HOST OR IP:PORT. MATCHES"
   x = 24
   y = 90
   font = 1
@@ -279,7 +375,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "IN RUGEN.TOML (RUGEN-SERVER)."
+  text = "GO THROUGH IT: NO IP IS SHARED."
   x = 24
   y = 116
   font = 1
@@ -423,7 +519,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "RANKED"
+  text = "{queue.title}"
   x = 30
   y = 24
   font = 2
@@ -441,7 +537,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.record}"
+  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.ping}"
   visible = "queue.found"
   x = 30
   y = 130
@@ -478,7 +574,7 @@ nine = [12, 12, 24, 24]
 x = 60
 y = 150
 w = 760
-h = 500
+h = 466
 enter = "up"
 enter_time = 16
 
@@ -543,6 +639,374 @@ enter_time = 16
   align = "left"
   pad = 26
   on_press = "online:cancel"
+
+# ---- message of the day of the chosen server
+[[node]]
+kind = "text"
+dock = "top"
+text = "{motd}"
+visible = "has_server"
+x = 0
+w = "100%"
+y = 146
+font = 1
+bank = 8
+scale = 2
+align = "center"
+
+# ---- add a server (saved to [net] servers)
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_add"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 190
+w = 720
+h = 260
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "SERVER ADDRESS (HTTPS://HOST OR IP:PORT)"
+  x = 30
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "server_addr"
+  x = 30
+  y = 60
+  w = 660
+  h = 60
+  font = 2
+  bank = 9
+  scale = 2
+  max_len = 80
+  placeholder = "https://rugen.example.com"
+  value = "direct.addr"
+  on_change = "server_addr:{value}"
+  on_press = "server_add"
+
+  [[node.children]]
+  kind = "text"
+  text = "ENTER SAVES IT TO YOUR SERVER LIST   ESC CANCELS"
+  anchor = "bl"
+  x = 30
+  y = 24
+  font = 1
+  bank = 8
+  scale = 2
+
+# ---- lobby: public rooms of this server
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_lobby"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 170
+w = 760
+h = 440
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "PUBLIC ROOMS"
+  x = 24
+  y = 16
+  font = 2
+  bank = 10
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "NOBODY YET - CREATE A ROOM FROM THE MENU"
+  visible = "lobby_empty"
+  x = 24
+  y = 70
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "list"
+  x = 16
+  y = 54
+  w = 728
+  h = 350
+  gap = 6
+  items = "lobby"
+
+    [[node.children.children]]
+    kind = "panel"
+    h = 74
+    image = "ui/row.webp"
+    nine = [4, 4, 4, 4]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}  BY {item.host}"
+      x = 14
+      y = 8
+      font = 1
+      bank = 9
+      scale = 2
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.rules}   {item.count}"
+      x = 14
+      y = 40
+      font = 1
+      bank = 8
+      scale = 2
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "lobby_join"
+      anchor = "tr"
+      x = 120
+      y = 14
+      w = 100
+      h = 44
+      image = "ui/slab.webp"
+      image_focus = "ui/slab_lit.webp"
+      text = "JOIN"
+      font = 2
+      bank = 11
+      bank_focus = 11
+      scale = 2
+      on_press = "{item.join}"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "lobby_watch"
+      anchor = "tr"
+      x = 10
+      y = 14
+      w = 104
+      h = 44
+      image = "ui/slab.webp"
+      image_focus = "ui/slab_lit.webp"
+      text = "WATCH"
+      font = 2
+      bank = 11
+      bank_focus = 11
+      scale = 2
+      on_press = "{item.watch}"
+
+  [[node.children]]
+  kind = "button"
+  id = "lobby_back"
+  anchor = "bl"
+  x = 16
+  y = 16
+  w = 220
+  h = 44
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "BACK"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 26
+  on_press = "online:cancel"
+
+# ---- create a room
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_create"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 60
+y = 170
+w = 720
+h = 466
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "ROOM NAME"
+  x = 30
+  y = 16
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "room_name"
+  x = 30
+  y = 40
+  w = 400
+  h = 44
+  font = 2
+  bank = 9
+  scale = 2
+  max_len = 24
+  value = "create.name"
+  on_change = "room_name:{value}"
+
+  [[node.children]]
+  kind = "text"
+  text = "PASSWORD (EMPTY = NONE)"
+  x = 30
+  y = 96
+  font = 1
+  bank = 8
+  scale = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "room_password"
+  x = 30
+  y = 120
+  w = 400
+  h = 44
+  font = 2
+  bank = 9
+  scale = 2
+  max_len = 32
+  value = "create.password"
+  on_change = "room_password:{value}"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_public"
+  x = 30
+  y = 180
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.public}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:public"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_rounds"
+  x = 30
+  y = 226
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.rounds}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:rounds"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_time"
+  x = 30
+  y = 272
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.time}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:time"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_mode"
+  x = 30
+  y = 318
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.mode}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:mode"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_chars"
+  x = 30
+  y = 364
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.chars}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:chars"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_spect"
+  x = 30
+  y = 410
+  w = 420
+  h = 40
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "{create.spect}"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  align = "left"
+  pad = 20
+  on_press = "form:spect"
+
+  [[node.children]]
+  kind = "button"
+  id = "form_go"
+  anchor = "br"
+  x = 30
+  y = 24
+  w = 200
+  h = 48
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "CREATE"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  pad = 26
+  on_press = "form:go"
 
 # status / error footer
 [[node]]

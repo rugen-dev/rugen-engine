@@ -1,0 +1,6 @@
+# docker build -f deploy/Dockerfile . only needs the workspace sources
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+crates/*/target

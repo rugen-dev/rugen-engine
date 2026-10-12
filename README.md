@@ -44,23 +44,26 @@ the other attack buttons, Start) confirm and **B cancels** (pad South / East).
 The mouse is off by default (cursor hidden, no hover): `[input] mouse = true`
 or OPTIONS > VIDEO > MOUSE IN MENUS turns it on.
 
-ONLINE is always on the title screen. Without a server it offers a **direct
-match** (LAN / internet): one player picks HOST (plays 1P), the other JOIN
-(2P), each types the other's address (the screen shows yours; port `[net]
-port`, fighters / stage from `[net] p1` / `p2` / `stage`). Set `[net] server =
-"host:7777"` in `rugen.toml` (a `rugen-server`, see below) for **Custom Room**
-(create a 5-letter code, the other player types it under **Join a Room**),
-**Ranked** (queue, Elo matchmaking with a widening rating window, seasons),
-**Leaderboard**. Accounts are anonymous keys stored in `profile.json`; the
-character you bring online is `profile.json` `main_char` (else `[net] p1`).
-Results are reported by both sides and only count when they agree. Both
-machines need the same characters installed (a match is declined otherwise).
+ONLINE is always on the title screen. It first lists **servers** (`[net]
+server` plus `[net] servers` favourites; ADD SERVER saves one) with name,
+message of the day, players online and ping. On a server: **Lobby** (public
+rooms: join or watch), **Create Room** (public or private, optional password,
+rounds, timer, classic / arena, free pick / mirror, spectator seats; the host
+can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
+ping-aware matchmaking), **Leaderboard**. Matches are **relayed by the
+server** (UDP, or a WebSocket fallback through HTTPS-only networks): players
+never learn each other's IP address. Accounts are anonymous keys per server in
+`profile.json`; the character you bring online is `profile.json` `main_char`
+(else `[net] p1`). Both sides report results with their input streams; they
+only count when they agree. Both machines need the same characters installed.
+Command line: `rugen play kfm --server https://host --room new` (prints a
+code) / `--room CODE [--spectate]`.
 
-Without a server you can still connect directly: `[net] remote = "ip:port"`,
-`side = 1` or `2`, `p1` / `p2` / `stage` ids → NETPLAY entry in ONLINE; or by room code
-through the server's rendezvous only: `[net] relay = "host:7777"`, `room =
-"code"` (or `rugen play kfm --room code --relay host:7777 [--p2]`). The
-server only swaps addresses; every match stays peer to peer. Music: stage `bgmusic` and
+Without a server, **direct matches** (LAN / explicit IP) still work: HOST
+(1P) / JOIN (2P) in ONLINE, each player types the other's address, or `[net]
+remote = "ip:port"`, `side = 1` or `2` → NETPLAY entry, or `rugen play kfm
+--net ip:port [--p2]`. `[net] input_delay = "auto"` picks 0-3 frames from the
+measured ping (or set a number). Music: stage `bgmusic` and
 system.def `[Music]` entries play when they are mp3/ogg/flac/wav (MIDI is
 skipped). F11 toggles fullscreen. Menu matches are
 recorded into `replays/`; `rugen play ... --record file.json` records quick
@@ -125,17 +128,20 @@ falls back to `data/`.
 
 ## Hosting a server
 
+Docker Compose + Cloudflare Tunnel (Dokploy-ready): see
+[`deploy/README.md`](deploy/README.md). Or directly:
+
 ```
 cargo build --release -p rugen-relay --bin rugen-server
-./target/release/rugen-server --port 7777 --data /var/lib/rugen --name "my server"
+RUGEN_DATA=/var/lib/rugen RUGEN_NAME="my server" ./target/release/rugen-server
 ```
 
-One binary, one data directory (`state.json`, written atomically), one port
-number open for **both UDP and TCP**. UDP is the rendezvous (NAT hole
-punching), TCP is the JSON API (`GET /` shows it is up). Everything is
-rate-limited per IP and validated; there are no passwords, accounts are random
-keys the clients keep. Seasons roll every 90 days with a soft rating reset.
-Players point `[net] server` at `host:7777`.
+One binary with SQLite inside: HTTP + WebSocket on 8080 (lobby, presence,
+WebSocket relay; fine behind a tunnel / reverse proxy) and the UDP match relay
+on 7001. Everything is rate-limited and validated; there are no account
+passwords (anonymous keys), room passwords are Argon2id hashes, and no client
+address is ever sent to another client. Seasons roll every 90 days with a
+soft rating reset. Players add `https://your-host` in ONLINE.
 
 ## Status
 
