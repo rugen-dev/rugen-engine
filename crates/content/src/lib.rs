@@ -157,7 +157,11 @@ pub struct PortraitInfo {
 
 #[derive(Clone, Debug)]
 pub struct Library {
+    /// Player files: `chars/`, `stages/`, `cache/`, `rugen.toml`, replays.
     pub root: PathBuf,
+    /// The directory holding `motif/`: `root` for a portable folder,
+    /// `/usr/share/rugen` (next to the binary's `../share`) for a system package.
+    pub assets: PathBuf,
 }
 
 impl Library {
@@ -179,12 +183,29 @@ impl Library {
                 candidates.push(up.to_path_buf());
             }
         }
-        let root = candidates
-            .iter()
-            .find(|c| c.join("chars").is_dir())
-            .cloned()
-            .unwrap_or_else(|| candidates[0].clone());
-        Self { root }
+        if let Some(root) = candidates.iter().find(|c| c.join("chars").is_dir()) {
+            return Self::portable(root.clone());
+        }
+        // system package (rpm / deb): /usr/bin/rugen with the read-only
+        // assets in /usr/share/rugen, player files in the user data dir
+        let share = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("share/rugen")))
+            .filter(|s| s.join("motif").is_dir());
+        if let (Some(assets), Some(root)) = (share, user_data_dir()) {
+            for d in ["chars", "stages"] {
+                let _ = fs::create_dir_all(root.join(d));
+            }
+            return Self { root, assets };
+        }
+        Self::portable(candidates[0].clone())
+    }
+
+    fn portable(root: PathBuf) -> Self {
+        Self {
+            assets: root.clone(),
+            root,
+        }
     }
 
     pub fn chars_dir(&self) -> PathBuf {
@@ -209,7 +230,7 @@ impl Library {
     /// else `<root>/data`, else the data dir. Files missing from the motif fall
     /// back to [`Library::data_dir`].
     pub fn motif_dir(&self) -> PathBuf {
-        for d in [self.root.join("motif"), self.root.join("data")] {
+        for d in [self.assets.join("motif"), self.root.join("data")] {
             if d.join("system.def").exists() {
                 return d;
             }
@@ -223,7 +244,7 @@ impl Library {
     pub fn motif_dir_for(&self, theme: &str) -> PathBuf {
         let theme = theme.trim();
         if !theme.is_empty() {
-            let d = self.root.join("motif").join("themes").join(theme);
+            let d = self.assets.join("motif").join("themes").join(theme);
             if d.join("system.def").exists() || d.join("ui").is_dir() {
                 return d;
             }
@@ -235,7 +256,7 @@ impl Library {
     /// `classic` for the flat `motif/` when it has its own screens.
     pub fn themes(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if let Ok(rd) = fs::read_dir(self.root.join("motif").join("themes")) {
+        if let Ok(rd) = fs::read_dir(self.assets.join("motif").join("themes")) {
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() && (p.join("system.def").exists() || p.join("ui").is_dir()) {
@@ -244,7 +265,7 @@ impl Library {
             }
         }
         out.sort();
-        if self.root.join("motif").join("ui").is_dir() {
+        if self.assets.join("motif").join("ui").is_dir() {
             out.push("classic".into());
         }
         out
@@ -293,7 +314,7 @@ impl Library {
     /// stage with the same id wins).
     pub fn stages(&self) -> Vec<Entry> {
         let mut out = Self::scan(&self.stages_dir());
-        for e in Self::scan(&self.root.join("motif").join("stages")) {
+        for e in Self::scan(&self.assets.join("motif").join("stages")) {
             if !out.iter().any(|o| o.id.eq_ignore_ascii_case(&e.id)) {
                 out.push(e);
             }
@@ -1142,6 +1163,14 @@ fn find_main_def(dir: &Path, id: &str, stage: bool) -> Option<String> {
         }
     }
     None
+}
+
+/// `$XDG_DATA_HOME/rugen`, else `~/.local/share/rugen`.
+fn user_data_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(d).join("rugen"));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/rugen"))
 }
 
 #[cfg(test)]

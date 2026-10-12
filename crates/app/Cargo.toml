@@ -1,6 +1,6 @@
 [package]
 name = "rugen"
-description = "rugen binary: window, input, config, glue"
+description = "MUGEN-compatible 2D fighting game engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -36,6 +36,25 @@ winresource = "0.1"
 [lints]
 workspace = true
 
+[package.metadata.deb]
+name = "rugen"
+maintainer = "rugen-dev <https://github.com/rugen-dev>"
+section = "games"
+extended-description = """\
+MUGEN-compatible 2D fighting game engine with rollback netplay. \
+Put characters and stages (.zip / .rar) in ~/.local/share/rugen/chars and \
+~/.local/share/rugen/stages."""
+depends = "$auto"
+assets = [
+  ["target/release/rugen", "usr/bin/", "755"],
+  ["../../README.md", "usr/share/doc/rugen/README.md", "644"],
+  ["../../LICENSE-MIT", "usr/share/doc/rugen/", "644"],
+  ["../../LICENSE-APACHE", "usr/share/doc/rugen/", "644"],
+  ["../../packaging/rugen.desktop", "usr/share/applications/", "644"],
+  ["../../motif/brand/rugen.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+  ["../../motif/**/*", "usr/share/rugen/motif/", "644"],
+]
+
 [package.metadata.generate-rpm]
 summary = "MUGEN-compatible 2D fighting game engine"
 license = "MIT OR Apache-2.0"
@@ -46,6 +65,7 @@ assets = [
   { source = "README.md", dest = "/usr/share/doc/rugen/README.md", mode = "644", doc = true },
   { source = "packaging/rugen.desktop", dest = "/usr/share/applications/rugen.desktop", mode = "644" },
   { source = "motif/brand/rugen.png", dest = "/usr/share/icons/hicolor/256x256/apps/rugen.png", mode = "644" },
+  { source = "motif/**/*", dest = "/usr/share/rugen/motif/", mode = "644" },
 ]
 [package.metadata.generate-rpm.requires]
 systemd-libs = "*"

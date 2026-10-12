@@ -529,7 +529,7 @@ impl UiScreen {
             result: None,
             mem: HashMap::new(),
             settings: SettingsPage {
-                root: root.to_path_buf(),
+                root: lib.assets.clone(),
                 controls: (kind == UiKind::Controls).then(|| crate::settings::Controls::new(0)),
                 ..Default::default()
             },

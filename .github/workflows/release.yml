@@ -1,3 +1,5 @@
+# Release builds, tags only (free tier). One job per OS, several targets
+# per job (Windows / macOS runners bill 2x / 10x minutes).
 name: Release
 on:
   push:
@@ -8,58 +10,93 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux-x86_64
-          - os: windows-latest
-            name: windows-x86_64
-          - os: macos-latest
-            name: macos-aarch64
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and package
+        shell: bash
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          for pair in x86_64-pc-windows-msvc:x64 i686-pc-windows-msvc:x86 aarch64-pc-windows-msvc:arm64; do
+            target=${pair%%:*}; arch=${pair##*:}
+            cargo build --release -p rugen --bin rugen --target $target
+            d=dist-$arch; mkdir -p $d/chars $d/stages
+            cp README.md LICENSE-MIT LICENSE-APACHE $d/
+            cp -r motif $d/
+            cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
+            cp target/$target/release/rugen.exe $d/
+            (cd $d && 7z a ../rugen-$v-windows-$arch.zip . > /dev/null)
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: rugen-*.zip
+
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
       - run: cargo build --release -p rugen --bin rugen
-      - name: Package
-        shell: bash
+      - name: Portable tarball
         run: |
-          mkdir -p dist/chars dist/stages
-          cp README.md dist/
-          cp -r motif dist/
-          cp chars/README.md dist/chars/
-          cp stages/README.md dist/stages/
-          cp packaging/rugen.desktop dist/
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/rugen.exe dist/
-            7z a rugen-${{ matrix.name }}.zip ./dist/*
-          else
-            cp target/release/rugen dist/
-            tar -C dist -czf rugen-${{ matrix.name }}.tar.gz .
-          fi
-      - name: RPM (Fedora)
-        if: runner.os == 'Linux'
+          v=${GITHUB_REF_NAME#v}
+          d=rugen-$v-linux-x86_64; mkdir -p $d/chars $d/stages
+          cp README.md LICENSE-MIT LICENSE-APACHE packaging/rugen.desktop $d/
+          cp -r motif $d/
+          cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
+          cp target/release/rugen $d/
+          tar -czf $d.tar.gz $d
+      - name: .deb and .rpm
         run: |
-          cargo install cargo-generate-rpm
+          cargo install --locked cargo-deb cargo-generate-rpm
+          cargo deb -p rugen --no-build
           cargo generate-rpm -p crates/app
-          cp target/generate-rpm/*.rpm .
+          cp target/debian/*.deb target/generate-rpm/*.rpm .
       - uses: actions/upload-artifact@v4
         with:
-          name: rugen-${{ matrix.name }}
+          name: linux
           path: |
-            rugen-*.zip
             rugen-*.tar.gz
+            *.deb
             *.rpm
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and package
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          for pair in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x64; do
+            target=${pair%%:*}; arch=${pair##*:}
+            cargo build --release -p rugen --bin rugen --target $target
+            d=rugen-$v-macos-$arch; mkdir -p $d/chars $d/stages
+            cp README.md LICENSE-MIT LICENSE-APACHE $d/
+            cp -r motif $d/
+            cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
+            cp target/$target/release/rugen $d/
+            tar -czf $d.tar.gz $d
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: rugen-*.tar.gz
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -67,9 +104,55 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      - name: Release notes
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          url=https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME
+          link() { f=$(ls $1 | head -1); echo "[\`$f\`]($url/$f)"; }
+          cat > notes.md <<NOTES
+          ## Downloads
+
+          ### Windows
+
+          | Version | File |
+          |---|---|
+          | 64-bit (x64), most PCs | $(link "rugen-$v-windows-x64.zip") |
+          | 32-bit (x86), older PCs | $(link "rugen-$v-windows-x86.zip") |
+          | ARM64 (Snapdragon / Copilot+ PCs) | $(link "rugen-$v-windows-arm64.zip") |
+
+          Unzip anywhere and run \`rugen.exe\`. Fighters go in \`chars/\`, stages in \`stages/\`.
+
+          ### Linux (x86_64)
+
+          | Package | File |
+          |---|---|
+          | Fedora / RHEL / openSUSE (.rpm) | $(link "rugen-$v-*.rpm") |
+          | Debian / Ubuntu / Mint (.deb) | $(link "rugen_$v-*.deb") |
+          | Any distro, portable (.tar.gz) | $(link "rugen-$v-linux-x86_64.tar.gz") |
+
+          Packages install the game for every user; fighters and stages then go in
+          \`~/.local/share/rugen/chars\` and \`~/.local/share/rugen/stages\`.
+          The tarball is a self-contained folder like the Windows zip.
+
+          ### macOS
+
+          | Mac | File |
+          |---|---|
+          | Apple Silicon (M1 and later) | $(link "rugen-$v-macos-arm64.tar.gz") |
+          | Intel | $(link "rugen-$v-macos-x64.tar.gz") |
+
+          Unsigned: the first time, right-click \`rugen\` → Open (or \`xattr -dr com.apple.quarantine <folder>\`).
+
+          Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server) ·
+          Docs: https://rugen-dev.github.io/rugen-docs/
+          NOTES
+          sed -i 's/^          //' notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: notes.md
+          generate_release_notes: true
           files: |
             rugen-*.zip
             rugen-*.tar.gz
+            *.deb
             *.rpm

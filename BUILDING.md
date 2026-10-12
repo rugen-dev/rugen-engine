@@ -28,6 +28,12 @@ cargo test --workspace
 
 ## Releases
 
-Push a tag `vX.Y.Z` (or run the Release workflow manually). It builds release binaries for Linux, Windows and macOS, a Fedora `.rpm` via `cargo-generate-rpm`, and attaches them to a GitHub release. CI itself never does release builds, to keep free-tier minutes low.
+Push a tag `vX.Y.Z` (or run the Release workflow manually). One job per OS builds, in this order in the release notes:
 
-Local rpm: `cargo install cargo-generate-rpm && cargo build --release && cargo generate-rpm -p crates/app`.
+- **Windows**: x64, x86 (32-bit) and ARM64 zips (cross-compiled on one runner)
+- **Linux** x86_64: `.rpm` (`cargo-generate-rpm`), `.deb` (`cargo-deb`) and a portable `.tar.gz`
+- **macOS**: Apple Silicon and Intel tarballs
+
+The packages install the binary to `/usr/bin` and `motif/` to `/usr/share/rugen`; the game then keeps player files (chars, stages, cache, `rugen.toml`) in `~/.local/share/rugen`. Zips and tarballs are self-contained folders. CI itself never does release builds, to keep free-tier minutes low.
+
+Local packages: `cargo install cargo-generate-rpm cargo-deb && cargo build --release -p rugen && cargo generate-rpm -p crates/app && cargo deb -p rugen --no-build`.
