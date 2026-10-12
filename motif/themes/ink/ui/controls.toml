@@ -4,19 +4,22 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/paper.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # ---------------------------------------------------------------- header
 [[node]]
 kind = "panel"
-w = 1280
+dock = "top"
+w = "100%"
 h = 84
 color = [0.067, 0.067, 0.067, 1.0]
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 44
 y = 25
@@ -26,6 +29,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 40
 y = 21
@@ -35,6 +39,7 @@ scale = 2
 
 [[node]]
 kind = "hbox"
+dock = "top"
 x = 470
 y = 22
 w = 300
@@ -59,6 +64,7 @@ group = "header"
 
 [[node]]
 kind = "hbox"
+dock = "right top"
 anchor = "tr"
 x = 40
 y = 22
@@ -100,6 +106,7 @@ group = "header"
 # ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 40
@@ -508,6 +515,7 @@ enter_time = 14
 # ---------------------------------------------------------------- presets
 [[node]]
 kind = "text"
+dock = "left"
 text = "PRESETS"
 x = 40
 y = 580
@@ -516,6 +524,7 @@ bank = 9
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 40
 y = 604
 w = 620
@@ -549,6 +558,7 @@ group = "presets"
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 40
 y = 664
 w = 600
@@ -573,6 +583,7 @@ align = "center"
 # ---------------------------------------------------------------- bindings
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 680
@@ -632,6 +643,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "binds"
   x = 16
   y = 46
@@ -803,6 +815,7 @@ enter_time = 18
 # ---------------------------------------------------------------- footer
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 680
 y = 656
 w = 580

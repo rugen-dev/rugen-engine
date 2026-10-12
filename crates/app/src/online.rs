@@ -14,7 +14,7 @@ use rugen_net::online::{
 };
 use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
-use rugen_ui::{Event, Nav, ScreenDef, Ui, VIRTUAL_H, VIRTUAL_W};
+use rugen_ui::{Event, Nav, ScreenDef, Ui};
 use serde_json::{Value, json};
 use winit::keyboard::Key;
 
@@ -664,13 +664,11 @@ impl OnlineScreen {
             return Some(Transition::Fight(f));
         }
         self.window = r.size();
+        let (vw, vh) = viewport(self.window);
+        self.ui.set_size(vw, vh);
         if let Some((px, py)) = self.mouse_px {
-            let (vw, vh) = viewport(self.window);
-            let vx =
-                VIRTUAL_W / 2.0 + (px - self.window.0 as f32 / 2.0) * vw / self.window.0 as f32;
-            let vy =
-                VIRTUAL_H / 2.0 + (py - self.window.1 as f32 / 2.0) * vh / self.window.1 as f32;
-            self.ui.mouse_move(Some((vx, vy)));
+            self.ui
+                .mouse_move(Some(rugen_ui::window_to_virtual(self.window, px, py)));
         }
         let nav = if self.capturing() {
             Nav::default()
@@ -734,6 +732,8 @@ impl OnlineScreen {
 
     pub fn render(&mut self, r: &mut Renderer, sys: &mut SystemData) -> (Camera, [f64; 4]) {
         self.window = r.size();
+        let (vw, vh) = viewport(self.window);
+        self.ui.set_size(vw, vh);
         {
             let mut host = Host {
                 r,
@@ -746,12 +746,11 @@ impl OnlineScreen {
             };
             self.ui.draw(&mut host);
         }
-        let (vw, vh) = viewport(self.window);
         let bg = self.ui.background();
         (
             Camera {
                 screen: [vw, vh],
-                center: [VIRTUAL_W / 2.0, VIRTUAL_H / 2.0],
+                center: [vw / 2.0, vh / 2.0],
                 zoom: 1.0,
             },
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],

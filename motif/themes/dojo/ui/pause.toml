@@ -4,9 +4,10 @@ exit_time = 6
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 alpha = 0.5
 
 [[node]]
@@ -79,6 +80,7 @@ ease = "back"
 
 [[node]]
 kind = "text"
+dock = "bottom"
 text = "ESC OR START RESUMES"
 anchor = "bottom"
 y = 24

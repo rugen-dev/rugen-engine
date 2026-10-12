@@ -4,19 +4,22 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/paper.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 # ---------------------------------------------------------------- header
 [[node]]
 kind = "panel"
-w = 1280
+dock = "top"
+w = "100%"
 h = 84
 color = [0.067, 0.067, 0.067, 1.0]
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 44
 y = 25
@@ -26,6 +29,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "OPTIONS"
 x = 40
 y = 21
@@ -35,6 +39,7 @@ scale = 2
 
 [[node]]
 kind = "text"
+dock = "right top"
 text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
 x = 40
@@ -45,6 +50,7 @@ bank = 6
 # ---------------------------------------------------------------- tabs
 [[node]]
 kind = "vbox"
+dock = "left"
 id = "tabs"
 x = 30
 y = 120
@@ -112,6 +118,7 @@ stagger = 2
 # ---------------------------------------------------------------- content panel
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9.webp"
 nine = [12, 12, 24, 24]
 x = 360
@@ -142,6 +149,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "rows"
   x = 20
   y = 62
@@ -412,6 +420,7 @@ enter_time = 14
 # ---------------------------------------------------------------- help bar
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel9_black.webp"
 nine = [12, 12, 24, 24]
 x = 360
@@ -440,6 +449,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
+  dock = "stretch-x"
   text = "{help}"
   x = 114
   y = 4
@@ -454,6 +464,7 @@ enter_time = 18
 # ---------------------------------------------------------------- key hints
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 30
 y = 624
 w = 320
@@ -488,6 +499,7 @@ align = "center"
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 30
 y = 664
 w = 320

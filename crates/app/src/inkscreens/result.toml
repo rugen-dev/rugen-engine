@@ -6,12 +6,14 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/result_bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "image"
+dock = "left bottom"
 image = "{winner_art}"
 x = 60
 y = 118
@@ -25,6 +27,7 @@ enter_time = 16
 
 [[node]]
 kind = "image"
+dock = "left"
 image = "ui/win.webp"
 x = 40
 y = 34
@@ -36,6 +39,7 @@ ease = "back"
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "DRAW"
 x = 40
 y = 40
@@ -47,6 +51,7 @@ visible = "draw"
 
 [[node]]
 kind = "panel"
+dock = "left"
 x = 470
 y = 150
 w = 300
@@ -76,6 +81,7 @@ enter_delay = 10
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "{winner_up}"
 x = 40
 y = 620
@@ -96,6 +102,7 @@ enter_delay = 6
 # match report
 [[node]]
 kind = "panel"
+dock = "right"
 x = 800
 y = 60
 w = 438
@@ -188,6 +195,7 @@ enter_time = 16
 # buttons
 [[node]]
 kind = "vbox"
+dock = "right"
 id = "menu"
 x = 800
 y = 496

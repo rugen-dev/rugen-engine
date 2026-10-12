@@ -21,9 +21,16 @@ Assets are also addressable as SFF sprites: `image = "sff:100,0"` (system.sff).
 
 ## Layout
 
-Everything is laid out in a virtual **1280x720** space, scaled to the window
-with letterboxing; pixel art is scaled nearest-neighbour, so draw assets at
-half size and show them with `scale = 2` (or `w`/`h` doubled).
+Screens are designed in a virtual **1280x720** space. The window is always
+720 units high (wider windows get more width, narrower ones keep 1280 and get
+more height), and top-level nodes sit in the 1280x720 design frame, centred,
+unless they say otherwise with `dock`: `left` / `center` / `right` and `top` /
+`middle` / `bottom` pin a node to that edge of the window, `fill` (or a
+`"100%"` size) stretches it edge to edge (backgrounds, bands: pair with
+`fit = "cover"` for art), and `stretch-x` keeps a panel's left edge and grows
+its width by the extra room. Children of a filled or stretched node can dock
+inside it the same way. Pixel art is scaled nearest-neighbour, so draw assets
+at half size and show them with `scale = 2` (or `w`/`h` doubled).
 
 A node has `kind` = `panel` | `image` | `text` | `button` | `vbox` | `hbox` |
 `list` | `grid`, a position (`x`, `y`, `w`, `h`, numbers or `"50%"`), an

@@ -783,7 +783,10 @@ impl Lifebar {
 
     /// Draw everything. `hud(x, y)` maps fight.def coordinates to world
     /// space, `u` is world units per HUD pixel. `portraits[i]` is player i's
-    /// 9000,0 sprite if the app uploaded it.
+    /// 9000,0 sprite if the app uploaded it. `spread` (fight.def units) moves
+    /// P1's elements left and P2's right, onto the edges of a window wider
+    /// than the fight.def; the clock and announcements stay centred. Only
+    /// widescreen fight.defs spread: 4:3 ones often draw both bars as one frame.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -792,7 +795,10 @@ impl Lifebar {
         hud: &dyn Fn(f32, f32) -> [f32; 2],
         u: f32,
         portraits: [Option<Portrait>; 2],
+        spread: f32,
     ) {
+        let lc = self.localcoord;
+        let spread = if lc[0] >= lc[1] * 1.7 { spread } else { 0.0 };
         let roots: Vec<usize> = w
             .players
             .iter()
@@ -802,6 +808,9 @@ impl Lifebar {
             .take(2)
             .collect();
         for (side, &pi) in roots.iter().enumerate() {
+            let dx = if side == 0 { -spread } else { spread };
+            let side_hud = move |x: f32, y: f32| hud(x + dx, y);
+            let hud: &dyn Fn(f32, f32) -> [f32; 2] = &side_hud;
             let p = &w.players[pi];
             let life = (p.life.max(0) as f32 / p.life_max.max(1) as f32).min(1.0);
             let bar = self.life[side].clone();
@@ -966,6 +975,9 @@ impl Lifebar {
             let Some(&other) = roots.get(1 - side) else {
                 continue;
             };
+            let dx = if side == 0 { -spread } else { spread };
+            let side_hud = move |x: f32, y: f32| hud(x + dx, y);
+            let hud: &dyn Fn(f32, f32) -> [f32; 2] = &side_hud;
             let hits = w.players[other].received_hits;
             let c = self.combo[side].clone();
             let st = &mut self.combo_state[side];

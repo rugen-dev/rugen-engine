@@ -5,12 +5,14 @@ exit_time = 8
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/vs_bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "image"
+dock = "left bottom"
 image = "{p1.art}"
 x = 30
 y = 118
@@ -24,6 +26,7 @@ enter_time = 16
 
 [[node]]
 kind = "image"
+dock = "right bottom"
 image = "{p2.art}"
 x = 734
 y = 118
@@ -38,9 +41,10 @@ enter_time = 16
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/vs_line.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "image"
@@ -56,6 +60,7 @@ ease = "back"
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "{p1.name_up}"
 x = 40
 y = 40
@@ -74,6 +79,7 @@ enter_delay = 4
 
 [[node]]
 kind = "text"
+dock = "right"
 text = "{p2.name_up}"
 anchor = "tr"
 x = 40
@@ -111,6 +117,7 @@ enter_delay = 18
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "ROUND 1 · {stage.name}"
 x = 40
 y = 650

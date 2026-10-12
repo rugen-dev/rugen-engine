@@ -3,12 +3,14 @@ background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
 kind = "image"
+fit = "cover"
 image = "ui/bg.webp"
-w = 1280
-h = 720
+w = "100%"
+h = "100%"
 
 [[node]]
 kind = "text"
+dock = "left top"
 text = "CONTROLS"
 x = 60
 y = 34
@@ -18,6 +20,7 @@ scale = 2
 
 [[node]]
 kind = "hbox"
+dock = "top"
 x = 470
 y = 30
 w = 200
@@ -41,6 +44,7 @@ group = "header"
 
 [[node]]
 kind = "keycap"
+dock = "right top"
 anchor = "tr"
 x = 60
 y = 30
@@ -60,6 +64,7 @@ group = "header"
 
 [[node]]
 kind = "panel"
+dock = "left"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 60
@@ -315,6 +320,7 @@ pad = 24
 
 [[node]]
 kind = "hbox"
+dock = "left"
 x = 60
 y = 580
 w = 600
@@ -343,6 +349,7 @@ group = "presets"
 
 [[node]]
 kind = "panel"
+dock = "stretch-x"
 image = "ui/panel.webp"
 nine = [8, 8, 8, 8]
 x = 660
@@ -375,6 +382,7 @@ pad = 20
 
   [[node.children]]
   kind = "list"
+  dock = "stretch-x"
   id = "binds"
   y = 30
   w = 520
@@ -466,6 +474,7 @@ pad = 20
 
 [[node]]
 kind = "text"
+dock = "left"
 text = "ENTER REBIND   BACKSPACE CLEAR   F5 DEFAULTS   TAB 1P/2P   ESC BACK"
 x = 60
 y = 660
