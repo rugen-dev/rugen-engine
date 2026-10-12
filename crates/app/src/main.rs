@@ -28,6 +28,7 @@ mod config;
 mod fontgen;
 mod game;
 mod gpu;
+mod inkgen;
 mod input;
 mod kit;
 mod lifebar;
@@ -261,7 +262,11 @@ fn main() -> anyhow::Result<()> {
                     .position(|a| a == name)
                     .and_then(|i| args.get(i + 1).cloned())
             };
-            let out = opt("--out").unwrap_or_else(|| "motif".into());
+            let theme = opt("--theme");
+            let out = opt("--out").unwrap_or_else(|| match &theme {
+                Some(t) => format!("motif/themes/{t}"),
+                None => "motif".into(),
+            });
             let ttf = opt("--font")
                 .map(std::path::PathBuf::from)
                 .or_else(fontgen::default_ttf);
@@ -269,8 +274,23 @@ fn main() -> anyhow::Result<()> {
                 Some(p) => Some(std::fs::read(p).with_context(|| p.display().to_string())?),
                 None => None,
             };
-            uigen::generate(bytes.as_deref(), std::path::Path::new(&out))?;
-            println!("wrote the front end to {out}/ui/ (fonts from {out}/font/src)");
+            match theme.as_deref() {
+                Some("ink") => {
+                    inkgen::generate(
+                        std::path::Path::new("motif"),
+                        std::path::Path::new(&out),
+                        bytes.as_deref(),
+                    )?;
+                    println!("wrote the Shonen Ink theme to {out}/");
+                }
+                Some(other) => anyhow::bail!(
+                    "unknown theme {other:?}: ui-gen knows `ink`; the default look is generated without --theme"
+                ),
+                None => {
+                    uigen::generate(bytes.as_deref(), std::path::Path::new(&out))?;
+                    println!("wrote the front end to {out}/ui/ (fonts from {out}/font/src)");
+                }
+            }
             Ok(())
         }
         Some("kit-import") => {
