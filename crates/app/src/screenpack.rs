@@ -220,7 +220,8 @@ impl Canvas {
         }
     }
 
-    fn put_raw(&mut self, x: i32, y: i32, c: Rgba) {
+    /// Write a pixel even when it is transparent (cuts, clears).
+    pub fn put_raw(&mut self, x: i32, y: i32, c: Rgba) {
         if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
         }

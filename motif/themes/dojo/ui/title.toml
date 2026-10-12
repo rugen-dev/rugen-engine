@@ -1,23 +1,22 @@
-# rugen title screen — edit freely, see README.md. Coordinates are 1280x720.
-background = [0.02, 0.03, 0.07, 1.0]
+# rugen title screen — Neon Dojo. Edit freely, see README.md. Coordinates are 1280x720.
+background = [0.05, 0.06, 0.1, 1.0]
 
-# background: three pixel layers (sky, far ridges, near arena) that slide in
-# at different speeds for a parallax feel
+# background: base gloss, slash layer, floor — each slides in at its own pace
 [[node]]
 kind = "image"
 image = "ui/bg_sky.webp"
 w = 1280
 h = 720
 enter = "fade"
-enter_time = 30
+enter_time = 24
 
 [[node]]
 kind = "image"
 image = "ui/bg_far.webp"
 w = 1280
 h = 720
-enter = "up"
-enter_time = 36
+enter = "right"
+enter_time = 30
 
 [[node]]
 kind = "image"
@@ -32,59 +31,72 @@ kind = "image"
 id = "logo"
 image = "ui/logo.webp"
 x = 56
-y = 30
+y = 36
 scale = 2
 enter = "down"
 enter_time = 22
 
-# profile strip
+# profile strip (skewed slab, red avatar square)
 [[node]]
-kind = "panel"
-id = "profile"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
+kind = "image"
+image = "ui/strip.webp"
 anchor = "tr"
 x = 24
-y = 22
+y = 28
 w = 560
 h = 76
 enter = "right"
 enter_time = 20
 
-  [[node.children]]
-  kind = "image"
-  image = "{profile.avatar}"
-  x = 10
-  y = 10
-  w = 56
-  h = 56
+[[node]]
+kind = "image"
+image = "{profile.avatar}"
+anchor = "tr"
+x = 514
+y = 38
+w = 56
+h = 56
+enter = "right"
+enter_time = 20
 
-  [[node.children]]
-  kind = "text"
-  text = "{profile.name}"
-  x = 80
-  y = 10
-  font = 2
-  bank = 7
-  scale = 2
+[[node]]
+kind = "text"
+text = "{profile.name}"
+anchor = "tr"
+x = 24
+y = 38
+w = 470
+font = 2
+bank = 7
+scale = 2
+align = "left"
+pad = 0
+enter = "right"
+enter_time = 20
 
-  [[node.children]]
-  kind = "text"
-  text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
-  x = 80
-  y = 46
-  font = 1
-  bank = 4
-  scale = 2
+[[node]]
+kind = "text"
+text = "LEVEL {profile.level}   {profile.shards} SHARDS   {profile.wins}W {profile.losses}L"
+anchor = "tr"
+x = 24
+y = 72
+w = 470
+font = 1
+bank = 4
+scale = 2
+align = "left"
+pad = 0
+enter = "right"
+enter_time = 20
 
 # main menu: one slanted button per entry of `menu`
 [[node]]
 kind = "vbox"
 id = "menu"
 x = 60
-y = 236
+y = 196
 w = 400
-gap = 10
+gap = 8
 items = "menu"
 enter = "left"
 enter_time = 20
@@ -98,132 +110,142 @@ enter_time = 20
   text = "{item.label}"
   font = 2
   bank = 7
-  bank_focus = 4
+  bank_focus = 7
   scale = 2
   align = "left"
-  pad = 26
+  pad = 28
   hover_scale = 1.03
   on_press = "{item.action}"
 
-# featured panel
+# featured panel (cut corner, eyebrow label)
 [[node]]
-kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 500
-y = 236
-w = 500
-h = 330
+kind = "image"
+image = "{news.0.image}"
+x = 520
+y = 196
+w = 488
+h = 258
 enter = "up"
 enter_time = 22
 enter_delay = 4
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.0.image}"
-  x = 6
-  y = 6
-  w = 488
-  h = 258
-
-  [[node.children]]
-  kind = "panel"
-  color = [0.0, 0.0, 0.0, 0.6]
-  anchor = "bl"
-  x = 6
-  y = 6
-  w = 488
-  h = 60
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.0.title}"
-  anchor = "bl"
-  x = 18
-  y = 34
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.0.subtitle}"
-  anchor = "bl"
-  x = 18
-  y = 12
-  w = 460
-  font = 1
-  bank = 6
-  scale = 2
-
-# two smaller panels
 [[node]]
 kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 1016
-y = 236
-w = 240
-h = 160
+color = [0.04, 0.05, 0.09, 0.92]
+x = 520
+y = 400
+w = 488
+h = 54
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "FEATURED"
+x = 534
+y = 406
+font = 1
+bank = 2
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{news.0.title}"
+x = 534
+y = 426
+font = 2
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{news.0.subtitle}"
+x = 520
+y = 464
+w = 488
+font = 1
+bank = 6
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 6
+
+# two smaller tiles
+[[node]]
+kind = "image"
+image = "{news.1.image}"
+x = 1024
+y = 196
+w = 228
+h = 120
 enter = "up"
 enter_time = 22
 enter_delay = 8
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.1.image}"
-  x = 6
-  y = 6
-  w = 228
-  h = 120
-
-  [[node.children]]
-  kind = "text"
-  text = "{news.1.title}"
-  anchor = "bl"
-  x = 12
-  y = 8
-  font = 1
-  bank = 7
-  scale = 2
+[[node]]
+kind = "text"
+text = "{news.1.title}"
+x = 1024
+y = 322
+font = 1
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 8
 
 [[node]]
-kind = "panel"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 1016
-y = 406
-w = 240
-h = 160
+kind = "image"
+image = "{news.2.image}"
+x = 1024
+y = 352
+w = 228
+h = 120
 enter = "up"
 enter_time = 22
 enter_delay = 12
 
-  [[node.children]]
-  kind = "image"
-  image = "{news.2.image}"
-  x = 6
-  y = 6
-  w = 228
-  h = 120
+[[node]]
+kind = "text"
+text = "{news.2.title}"
+x = 1024
+y = 478
+font = 1
+bank = 7
+scale = 2
+enter = "up"
+enter_time = 22
+enter_delay = 12
 
-  [[node.children]]
-  kind = "text"
-  text = "{news.2.title}"
-  anchor = "bl"
-  x = 12
-  y = 8
-  font = 1
-  bank = 7
-  scale = 2
+# footer bar with a red rule
+[[node]]
+kind = "panel"
+color = [0.04, 0.05, 0.08, 1.0]
+anchor = "bl"
+w = 1280
+h = 30
 
-# footer
+[[node]]
+kind = "panel"
+color = [0.63, 0.07, 0.17, 1.0]
+anchor = "bl"
+y = 30
+w = 1280
+h = 2
+
 [[node]]
 kind = "text"
 text = "RUGEN {version}"
 anchor = "bl"
 x = 24
-y = 16
+y = 8
 font = 1
 bank = 6
 scale = 2
@@ -233,7 +255,7 @@ kind = "text"
 text = "ENTER / CLICK  SELECT     ESC  BACK     F11  FULLSCREEN"
 anchor = "br"
 x = 24
-y = 16
+y = 8
 font = 1
 bank = 6
 scale = 2
