@@ -203,7 +203,12 @@ impl Match {
         let mut world = World::new(stage, 1);
         match FxData::load_with_motif(motif, data_dir) {
             Ok(fx) => {
-                world.round = rugen_sim::RoundState::new(fx.round.clone());
+                let mut round = fx.round.clone();
+                // the options' round time; online peers keep the motif's so both sides agree
+                if setup.net.is_none() {
+                    round.round_time = cfg.game.round_time;
+                }
+                world.round = rugen_sim::RoundState::new(round);
                 world.fx = Some(fx);
             }
             Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
