@@ -91,6 +91,33 @@ impl Sff {
     pub fn open(path: impl AsRef<std::path::Path>, is_char: bool) -> Result<Self> {
         Self::parse(&std::fs::read(path)?, is_char)
     }
+
+    /// Give an SFFv1 character the colours of its selected `.act`.
+    ///
+    /// MUGEN (and Ikemen's `remapPal` of 1,1) replaces the palette used by sprite
+    /// `0,0` and the `9000,0` portrait; sprites flagged as sharing that palette
+    /// follow, while sprites carrying their own palette keep it. The palette read
+    /// from `0,0` itself is never shown, and in some files it is junk.
+    pub fn apply_v1_act(&mut self, act: &Palette) {
+        if self.version != Some(Version::V1) {
+            return;
+        }
+        let mut targets: Vec<usize> = Vec::new();
+        for key in [(0, 0), (9000, 0)] {
+            if let Some(p) = self.sprites.get(&key).and_then(|s| s.palette)
+                && !targets.contains(&p)
+            {
+                targets.push(p);
+            }
+        }
+        for p in targets {
+            if let Some(dst) = self.palettes.get_mut(p) {
+                *dst = act.clone();
+                dst.resize(256, [0; 4]);
+                dst[0][3] = 0;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- readers
@@ -752,6 +779,37 @@ mod tests {
                 Pixels::Rgba(px) => assert_eq!(px.len(), n * 4, "sprite {k:?} rgba size"),
             }
         }
+    }
+
+    #[test]
+    fn v1_act_replaces_the_shared_palette_only() {
+        // G6 Sasuke: junk palette behind 0,0 made every other idle frame dark
+        let spr = |group, number, palette| Sprite {
+            group,
+            number,
+            width: 1,
+            height: 1,
+            offset: [0, 0],
+            palette: Some(palette),
+            pixels: Pixels::Indexed(vec![1]),
+        };
+        let mut sff = Sff {
+            version: Some(Version::V1),
+            palettes: vec![vec![[9, 9, 9, 255]; 256], vec![[7, 7, 7, 255]; 256]],
+            ..Default::default()
+        };
+        sff.sprites.insert((0, 0), spr(0, 0, 0));
+        sff.sprites.insert((0, 1), spr(0, 1, 0));
+        sff.sprites.insert((5, 0), spr(5, 0, 1));
+        let act = vec![[1, 2, 3, 255]; 256];
+        let mut v2 = sff.clone();
+        v2.version = Some(Version::V2 { patch: 1 });
+        sff.apply_v1_act(&act);
+        assert_eq!(sff.palettes[0][1], [1, 2, 3, 255], "0,0 and its sharers");
+        assert_eq!(sff.palettes[0][0][3], 0, "index 0 stays transparent");
+        assert_eq!(sff.palettes[1][1], [7, 7, 7, 255], "own palettes kept");
+        v2.apply_v1_act(&act);
+        assert_eq!(v2.palettes[0][1], [9, 9, 9, 255], "SFFv2 untouched");
     }
 
     #[test]

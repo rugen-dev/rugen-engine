@@ -984,8 +984,10 @@ impl Parser<'_> {
             }
             // old-style clauses
             "animelem" => {
-                // `AnimElem != n` is tolerated by MUGEN; we read it as the negation
-                let ne = self.eq_or_ne("AnimElem")?;
+                // `AnimElem != n` is tolerated by MUGEN, but the '!' is dropped: it reads
+                // exactly like `AnimElem = n` (Ikemen `parseOldAnimElemStyle` ignores the
+                // negation). G6 Naruto's Gamakichi relies on it to let its anim run out.
+                self.eq_or_ne("AnimElem")?;
                 let n = self.integer()?;
                 if n <= 0 {
                     return Err(Error::new("AnimElem must be greater than 0"));
@@ -996,9 +998,6 @@ impl Parser<'_> {
                 self.emit(Op::Jbottom(0));
                 self.old_comparison(false)?;
                 self.patch_jump(jb);
-                if ne {
-                    self.emit(Op::LNot);
-                }
                 Ok(())
             }
             "timemod" => {
@@ -1291,6 +1290,12 @@ mod tests {
             "animelemtime(2)=20 != 0"
         );
         assert_eq!(evf("AnimElem = 2, = 20"), Value::Int(1));
+        assert_eq!(
+            evf("AnimElem != 2"),
+            Value::Int(0),
+            "MUGEN drops the '!': AnimElem != n reads as AnimElem = n"
+        );
+        assert_eq!(evf("AnimElem != 2, = 20"), Value::Int(1));
         assert_eq!(evf("AnimElem = 2, >= 0"), Value::Int(1));
         assert_eq!(evf("AnimElem = 2, [19, 21]"), Value::Int(1));
         assert_eq!(
