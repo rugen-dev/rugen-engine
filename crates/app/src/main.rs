@@ -40,6 +40,7 @@ mod inkgen;
 mod inkscreens;
 mod input;
 mod kit;
+mod latency;
 mod lifebar;
 mod matchup;
 mod official;

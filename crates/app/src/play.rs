@@ -222,16 +222,18 @@ impl Match {
                         log::info!("netplay: {s}")
                     })
                     .with_context(|| format!("netplay with {remote}"))?;
-                let net_rtt = shake.rtt_ms;
+                let p95 = shake.rtt.map(|r| r.p95).or(shake.rtt_ms);
+                let policy = cfg.net.delay_policy();
                 let o = NetOptions {
-                    input_delay: cfg.net.input_delay.frames(net_rtt),
-                    max_prediction: cfg.net.max_prediction,
+                    input_delay: cfg.net.input_delay.frames(p95, &policy),
+                    max_prediction: policy.prediction_window,
                     ..Default::default()
                 };
                 log::info!(
-                    "netplay: port {port}, peer {remote}, playing P{}, rtt {:?} ms, input delay {}",
+                    "netplay: port {port}, playing P{}, rtt {:?} ms (p95 {:?}), input delay {}",
                     side + 1,
-                    net_rtt,
+                    shake.rtt_ms,
+                    p95,
                     o.input_delay
                 );
                 Some(Netplay::p2p_with_socket(socket, *remote, *side, &o)?)
@@ -528,6 +530,13 @@ impl Match {
 
     pub fn is_net(&self) -> bool {
         self.net.is_some()
+    }
+
+    /// Length of the next tick (online: stretched while ahead of the peer).
+    pub fn tick_duration(&self) -> std::time::Duration {
+        self.net
+            .as_ref()
+            .map_or(rugen_net::TICK, Netplay::tick_duration)
     }
 
     /// What a result report carries: last frame, world checksum and both
@@ -1486,8 +1495,10 @@ fn ground_screen_frac(at_rest: f32, zoom: f32) -> f32 {
 }
 
 /// Join a relay session (UDP fast path, WebSocket fallback), wait for the
-/// other slots, measure the round trip through the server and start the
-/// rollback session (or a spectator session for slots 2+).
+/// other slots, bring up the fastest player ↔ player path (direct peer to
+/// peer unless either player opted out, else TURN, else the relay itself),
+/// measure the round trip on that path and start the rollback session (or
+/// a spectator session for slots 2+).
 fn relay_session(
     server: &str,
     ticket: &rugen_net::online::SessionTicket,
@@ -1516,27 +1527,67 @@ fn relay_session(
         let n = Netplay::spectate(socket, &NetOptions::default())?;
         return Ok((n, None));
     }
+    // players: gather direct candidates while the other player connects
+    // (exchanged only when both allow direct connections)
+    socket.enable_direct(&rugen_net::DirectConfig {
+        allowed: cfg.net.direct,
+        stun: stun_servers(ticket),
+        ..Default::default()
+    });
     socket.wait_for(0b011, Duration::from_secs(90), &mut |s| {
         log::info!("netplay: {s}")
     })?;
-    // a `turn` ticket transport: lift the match onto TURN when both sides
-    // reach it quickly (keeps trying in the background otherwise)
-    socket.settle_turn(Duration::from_millis(1500));
+    // direct, TURN or the relay: the fastest working path within 1.5 s
+    // (the others keep trying and take over mid-match when better)
+    let path = socket.settle_paths(Duration::from_millis(1500));
+    if let Some(off) = socket.direct_off() {
+        log::info!("netplay: direct path not used: {}", off.reason());
+    }
     let transport = socket.transport_name();
     let peer = 1 - ticket.slot;
-    let rtt = socket.peer_rtt(peer, 8, Duration::from_secs(2));
+    let samples = socket.peer_rtt_samples(peer, 24, Duration::from_millis(1500));
+    let rtt = rugen_net::RttStats::from_us(&samples);
+    let policy = cfg.net.delay_policy();
     let o = NetOptions {
-        input_delay: cfg.net.input_delay.frames(rtt),
-        max_prediction: cfg.net.max_prediction,
+        input_delay: cfg.net.input_delay.frames(rtt.map(|r| r.p95), &policy),
+        max_prediction: policy.prediction_window,
         ..Default::default()
     };
     log::info!(
-        "netplay: relay session {:08x} over {transport}, playing P{}, rtt {:?} ms, input delay {}",
+        "netplay: relay session {:08x}, path {} over {transport}, playing P{}, rtt {} ms (p95 {} ms, jitter {} ms), input delay {}",
         ticket.session,
+        path.label(),
         ticket.slot + 1,
-        rtt,
+        rtt.map_or(0, |r| r.median),
+        rtt.map_or(0, |r| r.p95),
+        rtt.map_or(0, |r| r.jitter),
         o.input_delay
     );
     let n = Netplay::relay(socket, ticket.slot as usize, ticket.spectators, &o)?;
-    Ok((n, rtt))
+    Ok((n, rtt.map(|r| r.median)))
+}
+
+/// STUN servers for the direct path: the ticket's (`stun:` URLs next to
+/// its TURN service), else Cloudflare's.
+fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
+    let mut v: Vec<String> = ticket
+        .transports
+        .iter()
+        .flat_map(|t| t.urls.iter())
+        .filter_map(|u| u.strip_prefix("stun:"))
+        .map(|h| {
+            let h = h.split('?').next().unwrap_or(h);
+            if h.rsplit_once(':')
+                .is_some_and(|(_, p)| p.parse::<u16>().is_ok())
+            {
+                h.to_string()
+            } else {
+                format!("{h}:3478")
+            }
+        })
+        .collect();
+    if v.is_empty() {
+        v.push(rugen_net::direct::DEFAULT_STUN.to_string());
+    }
+    v
 }

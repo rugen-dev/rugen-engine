@@ -13,7 +13,12 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    pub fn create(event_loop: &ActiveEventLoop, size: (u32, u32), fullscreen: bool) -> Self {
+    pub fn create(
+        event_loop: &ActiveEventLoop,
+        size: (u32, u32),
+        fullscreen: bool,
+        presentation: rugen_render::Presentation,
+    ) -> Self {
         let mut attrs = Window::default_attributes()
             .with_title("rugen")
             .with_window_icon(window_icon())
@@ -29,8 +34,13 @@ impl Gpu {
         }
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let s = window.inner_size();
-        let renderer =
-            pollster::block_on(Renderer::new(window.clone(), s.width, s.height)).expect("renderer");
+        let renderer = pollster::block_on(Renderer::with_presentation(
+            window.clone(),
+            s.width,
+            s.height,
+            presentation,
+        ))
+        .expect("renderer");
         Self { renderer, window }
     }
 }
