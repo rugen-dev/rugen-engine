@@ -71,6 +71,18 @@ fn would_block(e: &std::io::Error) -> bool {
     )
 }
 
+/// The UDP relay address to use: a server bound to 0.0.0.0 without a
+/// configured public address advertises `0.0.0.0:port`, meaning "my HTTP
+/// host, this port".
+pub fn udp_target(advertised: &str, server_base: &str) -> String {
+    match advertised.parse::<SocketAddr>() {
+        Ok(a) if a.ip().is_unspecified() => {
+            format!("{}:{}", crate::online::url_host(server_base), a.port())
+        }
+        _ => advertised.to_string(),
+    }
+}
+
 /// `https://host` → `wss://host/relay`.
 pub fn relay_ws_url(server_base: &str) -> String {
     let base = server_base.trim_end_matches('/');
@@ -111,7 +123,8 @@ impl RelaySocket {
         progress: &mut dyn FnMut(&str),
     ) -> Result<Self> {
         if let Some(udp) = ticket.udp.as_deref().filter(|_| !udp_probe.is_zero()) {
-            match Self::connect_udp(ticket, udp, udp_probe) {
+            let udp = udp_target(udp, server_base);
+            match Self::connect_udp(ticket, &udp, udp_probe) {
                 Ok(s) => {
                     progress("relay: UDP");
                     return Ok(s);
