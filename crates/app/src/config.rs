@@ -49,15 +49,19 @@ impl Default for GameCfg {
 pub struct CameraCfg {
     /// Smallest scale (1 = never pull back, 0.5 = twice the width visible).
     pub zoom_out: f32,
-    /// Largest scale when players are close (1 = never close in).
+    /// Largest scale when players are close (1 = the stage's own screen,
+    /// below 1 = always a wider view).
     pub zoom_in: f32,
 }
+
+/// `zoom_in` default before v0.3.1; configs still holding it get the new one.
+const OLD_DEFAULT_ZOOM_IN: f32 = 1.25;
 
 impl Default for CameraCfg {
     fn default() -> Self {
         Self {
             zoom_out: 0.6,
-            zoom_in: 1.25,
+            zoom_in: 0.85,
         }
     }
 }
@@ -376,7 +380,12 @@ impl Config {
         let path = root.join("rugen.toml");
         match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<Config>(&text) {
-                Ok(c) => c,
+                Ok(mut c) => {
+                    if c.camera.zoom_in == OLD_DEFAULT_ZOOM_IN {
+                        c.camera.zoom_in = CameraCfg::default().zoom_in;
+                    }
+                    c
+                }
                 Err(e) => {
                     log::warn!("{}: {e}; using defaults", path.display());
                     Config::default()

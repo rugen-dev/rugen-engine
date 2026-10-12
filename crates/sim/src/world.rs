@@ -360,6 +360,8 @@ const MAX_STATE_LOOP: usize = 2500;
 
 impl World {
     pub fn new(stage: Stage, seed: u64) -> Self {
+        // start at the resting zoom instead of easing out from 1
+        let cam_zoom = stage.zoom_in.min(1.0).max(stage.zoom_out);
         Self {
             data: Vec::new(),
             fx: None,
@@ -371,7 +373,7 @@ impl World {
             rng: Rng::new(seed),
             cam_x: 0.0,
             cam_y: 0.0,
-            cam_zoom: 1.0,
+            cam_zoom,
             pausetime: 0,
             supertime: 0,
             pausetime_buffer: 0,
@@ -495,12 +497,17 @@ impl World {
     /// out the stage allows, around the camera. A hard hit sends the target
     /// flying while the camera pulls back instead of bouncing it off the
     /// current screen edge; stages without zoom keep MUGEN's screen bounds.
+    /// Never past the furthest edge the camera can show (`boundleft` minus
+    /// half a screen), so a zoomed-in camera at the stage edge can always
+    /// pan or pull back to keep both players in view.
     pub fn play_bounds(&self) -> (f32, f32) {
-        let zoom = self.stage.zoom_out.min(self.cam_zoom).max(0.05);
-        let half = self.stage.width / (2.0 * zoom);
+        let st = &self.stage;
+        let zoom = st.zoom_out.min(self.cam_zoom).max(0.05);
+        let half = st.width / (2.0 * zoom);
+        let edge = st.width / 2.0;
         (
-            self.cam_x - half + self.stage.screen_left,
-            self.cam_x + half - self.stage.screen_right,
+            (self.cam_x - half).max(st.bound_left - edge) + st.screen_left,
+            (self.cam_x + half).min(st.bound_right + edge) - st.screen_right,
         )
     }
 
@@ -3390,6 +3397,10 @@ impl World {
         } else {
             scale + (target_scale - scale) * 0.1
         };
+        // easing must never leave a player off screen: a launched opponent
+        // pulls the camera back at once
+        let span = rightest - leftest + st.screen_left + st.screen_right;
+        let new_scale = new_scale.min(half * 2.0 / span.max(1.0)).max(st.zoom_out);
         let hw = half / new_scale;
         self.cam_zoom = new_scale;
         self.cam_x = target_x.clamp(min_left + hw, (max_right - hw).max(min_left + hw));
@@ -3949,6 +3960,67 @@ mod tests {
             w.cam_zoom
         );
         assert!(w.cam_y < -20.0, "camera raised, y {}", w.cam_y);
+    }
+
+    #[test]
+    fn zoomed_in_camera_keeps_players_at_the_stage_edge_in_view() {
+        let Some(mut w) = world() else { return };
+        w.stage.zoom_out = 0.3;
+        w.stage.zoom_in = 1.15;
+        w.stage.bound_left = -600.0;
+        w.stage.bound_right = 600.0;
+        w.stage.left_bound = -1400.0;
+        w.stage.right_bound = 1400.0;
+        run(&mut w, 5, Buttons::default());
+        // both walk to the left wall, then one keeps walking while the other
+        // backs off a little: the camera must keep both on screen
+        let left = Buttons {
+            l: true,
+            ..Default::default()
+        };
+        let right = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        for t in 0..900 {
+            let p2 = if t > 700 { right } else { left };
+            w.step(&[left, p2]);
+            let (l, r) = (w.screen_left(), w.screen_right());
+            for p in &w.players[..2] {
+                assert!(
+                    p.pos[0] >= l - 1.0 && p.pos[0] <= r + 1.0,
+                    "tick {t}: player at {} outside view {l}..{r} (zoom {})",
+                    p.pos[0],
+                    w.cam_zoom
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn launched_player_stays_in_view_while_zoomed_in() {
+        let Some(mut w) = world() else { return };
+        w.stage.zoom_out = 0.3;
+        w.stage.zoom_in = 1.15;
+        w.stage.bound_left = -600.0;
+        w.stage.bound_right = 600.0;
+        w.stage.left_bound = -1400.0;
+        w.stage.right_bound = 1400.0;
+        run(&mut w, 60, Buttons::default());
+        for t in 0..60 {
+            // flying away faster than the zoom eases out
+            w.players[1].pos[0] += 14.0;
+            w.step(&[Buttons::default(), Buttons::default()]);
+            let (l, r) = (w.screen_left(), w.screen_right());
+            for p in &w.players[..2] {
+                assert!(
+                    p.pos[0] >= l - 1.0 && p.pos[0] <= r + 1.0,
+                    "tick {t}: player at {} outside view {l}..{r} (zoom {})",
+                    p.pos[0],
+                    w.cam_zoom
+                );
+            }
+        }
     }
 
     #[test]

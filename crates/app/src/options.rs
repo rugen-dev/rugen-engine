@@ -106,7 +106,7 @@ impl OptionsScreen {
             Item::Master => c.audio.master = (c.audio.master + 0.1 * step).clamp(0.0, 1.0),
             Item::Music => c.audio.music = (c.audio.music + 0.1 * step).clamp(0.0, 1.0),
             Item::ZoomOut => c.camera.zoom_out = (c.camera.zoom_out + 0.05 * step).clamp(0.25, 1.0),
-            Item::ZoomIn => c.camera.zoom_in = (c.camera.zoom_in + 0.05 * step).clamp(1.0, 2.0),
+            Item::ZoomIn => c.camera.zoom_in = (c.camera.zoom_in + 0.05 * step).clamp(0.6, 1.6),
             Item::Fullscreen => c.video.fullscreen = !c.video.fullscreen,
             Item::AiLevel => c.game.ai_level = (c.game.ai_level + dir).clamp(1, 8),
             Item::InputDelay => c.net.input_delay = c.net.input_delay.step(dir, false),

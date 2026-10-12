@@ -125,9 +125,9 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
             row(
                 "zoom_in",
                 "CAMERA ZOOM IN",
-                Widget::Slider(c.camera.zoom_in - 1.0),
+                Widget::Slider((c.camera.zoom_in - 0.6) / 1.0),
                 format!("{:.2}", c.camera.zoom_in),
-                "How close the camera moves in when the fighters stand together. 1.00 = never.",
+                "How close the camera gets when the fighters stand together. Lower = wider view.",
             ),
         ],
         "video" => vec![
@@ -417,7 +417,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "master" => c.audio.master = step(c.audio.master, 0.1 * d, 0.0, 1.0),
         "music" => c.audio.music = step(c.audio.music, 0.1 * d, 0.0, 1.0),
         "zoom_out" => c.camera.zoom_out = step(c.camera.zoom_out, 0.05 * d, 0.25, 1.0),
-        "zoom_in" => c.camera.zoom_in = step(c.camera.zoom_in, 0.05 * d, 1.0, 2.0),
+        "zoom_in" => c.camera.zoom_in = step(c.camera.zoom_in, 0.05 * d, 0.6, 1.6),
         "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
         "air_dash" => c.game.air_dash = !c.game.air_dash,
         "fast_fall" => c.game.fast_fall = !c.game.fast_fall,

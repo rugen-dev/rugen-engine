@@ -16,7 +16,7 @@ pub struct MatchSpec<'a> {
     /// Engine `data/` (common states fallback, fightfx, fight.def).
     pub data_dir: &'a Path,
     pub motif: &'a Path,
-    /// Camera limits (`[camera] zoom_out / zoom_in`).
+    /// Camera limits (`[camera] zoom_out / zoom_in`); `zoom_in` replaces the stage's.
     pub zoom: (f32, f32),
     /// Engine movement options; a stage's `[Arena]` overrides them.
     pub movement: Movement,
@@ -32,7 +32,9 @@ pub fn build_world(spec: &MatchSpec) -> crate::Result<World> {
         None => Stage::default(),
     };
     stage.zoom_out = stage.zoom_out.min(spec.zoom.0.clamp(0.2, 1.0));
-    stage.zoom_in = stage.zoom_in.max(spec.zoom.1.clamp(1.0, 3.0));
+    // the player's zoom-in setting caps every stage (below 1 keeps the view
+    // wider than the stage's own screen even when the fighters stand close)
+    stage.zoom_in = spec.zoom.1.clamp(stage.zoom_out, 3.0);
     let d1 = CharData::load_with_data(spec.p1, spec.data_dir)?;
     let d2 = if spec.p2 == spec.p1 {
         d1.clone()
