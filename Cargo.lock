@@ -2261,7 +2261,7 @@ checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
 
 [[package]]
 name = "rugen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kira",
  "libm",
@@ -2298,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-cns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "libm",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-content"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "log",
@@ -2323,7 +2323,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-formats"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "indexmap",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bincode",
  "ggrs",
@@ -2348,14 +2348,14 @@ dependencies = [
 
 [[package]]
 name = "rugen-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rugen-relay"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "env_logger",
  "getrandom 0.2.17",
@@ -2367,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "libm",
@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "libm",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "rugen-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "serde",
