@@ -491,6 +491,19 @@ impl World {
         )
     }
 
+    /// Stage x range players are held inside: the view at the furthest zoom
+    /// out the stage allows, around the camera. A hard hit sends the target
+    /// flying while the camera pulls back instead of bouncing it off the
+    /// current screen edge; stages without zoom keep MUGEN's screen bounds.
+    pub fn play_bounds(&self) -> (f32, f32) {
+        let zoom = self.stage.zoom_out.min(self.cam_zoom).max(0.05);
+        let half = self.stage.width / (2.0 * zoom);
+        (
+            self.cam_x - half + self.stage.screen_left,
+            self.cam_x + half - self.stage.screen_right,
+        )
+    }
+
     // ------------------------------------------------------------ state changes
 
     pub(crate) fn eval(&mut self, i: usize, code: &Code) -> Value {
@@ -2893,7 +2906,7 @@ impl World {
         if p.mhv.cornerpush_veloff == 0.0 {
             return 0.0;
         }
-        let (xmin, xmax) = self.screen_bounds();
+        let (xmin, xmax) = self.play_bounds();
         for o in &self.players {
             if o.move_type != MoveType::H || o.ghv.playerid != p.id {
                 continue;
@@ -3350,7 +3363,7 @@ impl World {
     }
 
     pub(crate) fn screen_bound(&mut self, i: usize) {
-        let (xmin, xmax) = self.screen_bounds();
+        let (xmin, xmax) = self.play_bounds();
         let p = &self.players[i];
         let mut x = p.pos[0];
         if p.screen_bound && p.player_type && self.stage.arena.walls {

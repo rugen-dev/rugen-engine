@@ -107,7 +107,17 @@ impl Context for Ctx<'_> {
             | T::BackEdgeBodyDist
             | T::FrontEdgeDist
             | T::FrontEdgeBodyDist => {
-                let (xmin, xmax) = self.w.screen_bounds();
+                // edges are the visible screen; the *Dist forms measure to where
+                // the player is actually held (the furthest zoom-out view)
+                let dist = matches!(
+                    t,
+                    T::BackEdgeDist | T::BackEdgeBodyDist | T::FrontEdgeDist | T::FrontEdgeBodyDist
+                );
+                let (xmin, xmax) = if dist {
+                    self.w.play_bounds()
+                } else {
+                    self.w.screen_bounds()
+                };
                 let x = p.pos[0];
                 let front = if p.facing > 0.0 { xmax } else { xmin };
                 let back = if p.facing > 0.0 { xmin } else { xmax };
