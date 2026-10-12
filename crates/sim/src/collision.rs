@@ -1005,13 +1005,13 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
     }
 
     if result > 0 {
-        if result == 1 {
-            w.players[c].mhv.power += hd.hit_getpower;
-            w.players[g].ghv.power += hd.hit_givepower;
+        let (gp, gv) = if result == 1 {
+            (hd.hit_getpower, hd.hit_givepower)
         } else {
-            w.players[c].mhv.power += hd.guard_getpower;
-            w.players[g].ghv.power += hd.guard_givepower;
-        }
+            (hd.guard_getpower, hd.guard_givepower)
+        };
+        w.players[c].mhv.power = w.players[c].mhv.power.saturating_add(gp);
+        w.players[g].ghv.power = w.players[g].ghv.power.saturating_add(gv);
     }
     if result == 1 {
         if !is_proj {

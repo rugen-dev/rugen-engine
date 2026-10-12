@@ -206,6 +206,11 @@ pub struct Player {
     pub keyctrl: bool,
     pub children: Vec<i32>,
     pub removed: bool,
+    /// Set by `World::step_checked` when this player's content panicked: it no
+    /// longer runs states and loses the round.
+    pub broken: bool,
+    /// The "state machine stuck" warning was already issued for this player.
+    pub loop_warned: bool,
     // ---- projectiles
     pub pctype: ProjContact,
     pub pctime: i32,
@@ -331,6 +336,8 @@ impl Player {
             keyctrl: true,
             children: Vec::new(),
             removed: false,
+            broken: false,
+            loop_warned: false,
             pctype: ProjContact::None,
             pctime: -1,
             pcid: 0,

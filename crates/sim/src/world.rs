@@ -292,6 +292,28 @@ pub enum Event {
     },
 }
 
+/// Hard caps that keep one character's content from flooding the simulation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limits {
+    /// Helpers alive per root player (MUGEN: 56).
+    pub helpers: usize,
+    pub explods: usize,
+    pub projectiles: usize,
+    /// PlaySnd events accepted per tick.
+    pub sounds_per_tick: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            helpers: 56,
+            explods: 512,
+            projectiles: 128,
+            sounds_per_tick: 32,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct World {
     pub data: Vec<Arc<CharData>>,
@@ -326,6 +348,12 @@ pub struct World {
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
+    pub limits: Limits,
+    /// Player index whose states are being run right now (`step_checked` blames it on panic).
+    pub running: Option<usize>,
+    /// Test hook: panic when this player's states run (simulates a content crash).
+    #[cfg(test)]
+    pub panic_on_run: Option<usize>,
 }
 
 const MAX_STATE_LOOP: usize = 2500;
@@ -358,6 +386,10 @@ impl World {
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
+            limits: Limits::default(),
+            running: None,
+            #[cfg(test)]
+            panic_on_run: None,
         }
     }
 
@@ -401,6 +433,8 @@ impl World {
             pal_no,
         );
         p.cmds = CommandList::compile(&data.cmd);
+        // every root player is its own root (helpers inherit it)
+        p.root = idx;
         self.players.push(p);
         // tests and tools can fight right away; `start_round` does the real intro sequence
         self.change_state(idx, 5900, None, None);
@@ -628,7 +662,7 @@ impl World {
 
     fn power_add(&mut self, i: usize, v: i32) {
         let p = &mut self.players[i];
-        p.power = (p.power + v).clamp(0, p.power_max);
+        p.power = p.power.saturating_add(v).clamp(0, p.power_max);
     }
 
     /// Indices of `i`'s targets, optionally filtered by hit id.
@@ -839,11 +873,14 @@ impl World {
         // 3. run states, physics, landing (helpers spawned mid-loop run this tick too)
         let mut i = 0;
         while i < self.players.len() {
-            if !self.players[i].removed {
+            if !self.players[i].removed && !self.players[i].broken {
+                self.running = Some(i);
                 self.run(i);
+                self.sanitize(i);
             }
             i += 1;
         }
+        self.running = None;
 
         // 4. finish: KO
         for i in 0..self.players.len() {
@@ -1033,6 +1070,10 @@ impl World {
 
     /// Spawn a projectile for player `i`.
     pub fn spawn_projectile(&mut self, i: usize, spec: &ProjectileSpec) {
+        if self.projs.iter().filter(|p| !p.removed).count() >= self.limits.projectiles {
+            self.warn(format!("P{} reached the projectile limit", i + 1));
+            return;
+        }
         let hd = collision::eval_hitdef(self, i, &spec.hitdef);
         let ls = self.local_scale(i);
         let data = self.data[self.players[i].data].clone();
@@ -1092,14 +1133,14 @@ impl World {
             removefacing: facing,
             supermovetime: one(self, &spec.supermovetime).map_or(0, |v| {
                 if v.to_i() >= 0 {
-                    v.to_i() + 1
+                    v.to_i().saturating_add(1)
                 } else {
                     v.to_i()
                 }
             }),
             pausemovetime: one(self, &spec.pausemovetime).map_or(0, |v| {
                 if v.to_i() >= 0 {
-                    v.to_i() + 1
+                    v.to_i().saturating_add(1)
                 } else {
                     v.to_i()
                 }
@@ -1132,12 +1173,13 @@ impl World {
         keyctrl: bool,
         player_type: bool,
     ) -> Option<usize> {
+        let root = self.players[i].root;
         let helpers = self
             .players
             .iter()
-            .filter(|p| !p.removed && p.helper_index > 0)
+            .filter(|p| !p.removed && p.helper_index > 0 && p.root == root)
             .count();
-        if helpers >= 56 {
+        if helpers >= self.limits.helpers {
             self.warn(format!("P{} reached the helper limit", i + 1));
             return None;
         }
@@ -1279,6 +1321,10 @@ impl World {
     /// Spawn an explod for player `i` from a compiled spec. Returns its index.
     pub fn spawn_explod(&mut self, i: usize, spec: &ExplodSpec) -> Option<usize> {
         let (fx, anim_code) = spec.anim.as_ref()?;
+        if self.explods.iter().filter(|e| !e.removed).count() >= self.limits.explods {
+            self.warn(format!("P{} reached the explod limit", i + 1));
+            return None;
+        }
         let anim_no = self.eval(i, anim_code).to_i();
         let src = if *fx {
             AnimSrc::Fx
@@ -1457,7 +1503,7 @@ impl World {
             && !p.asserted(assert::NOKO)
             && (!p.ghv.guarded)
         {
-            self.events.push(Event::Sound {
+            self.push_sound(Event::Sound {
                 player: i,
                 own: false,
                 group: 11,
@@ -1504,8 +1550,8 @@ impl World {
                 p.mctime = 1;
                 let numhits = p.hitdef.as_ref().map_or(1, |h| h.numhits);
                 match p.mctype {
-                    MoveContact::Hit => p.hit_count += numhits,
-                    MoveContact::Guarded => p.guard_count += numhits,
+                    MoveContact::Hit => p.hit_count = p.hit_count.saturating_add(numhits),
+                    MoveContact::Guarded => p.guard_count = p.guard_count.saturating_add(numhits),
                     _ => {}
                 }
             }
@@ -1709,6 +1755,10 @@ impl World {
     }
 
     fn run(&mut self, i: usize) {
+        #[cfg(test)]
+        if self.panic_on_run == Some(i) {
+            panic!("simulated content crash in P{}", i + 1);
+        }
         if self.players[i].pause_bool {
             return;
         }
@@ -1857,10 +1907,13 @@ impl World {
             }
             loops += 1;
             if loops >= MAX_STATE_LOOP {
-                self.warn(format!(
-                    "P{} state machine stuck in a loop at state {no}",
-                    i + 1
-                ));
+                if !self.players[i].loop_warned {
+                    self.players[i].loop_warned = true;
+                    self.warn(format!(
+                        "P{} state machine stuck in a loop at state {no}",
+                        i + 1
+                    ));
+                }
                 break;
             }
         }
@@ -2003,8 +2056,8 @@ impl World {
             Sctrl::HitAdd { value } => {
                 let v = self.eval(i, value).to_i();
                 let p = &mut self.players[i];
-                p.hit_count += v;
-                p.uniq_hit_count += v;
+                p.hit_count = p.hit_count.saturating_add(v);
+                p.uniq_hit_count = p.uniq_hit_count.saturating_add(v);
             }
             Sctrl::MoveHitReset => {
                 let p = &mut self.players[i];
@@ -2051,7 +2104,11 @@ impl World {
                         -collision_damage(self, t, i, -v, kill)
                     };
                     let p = &mut self.players[t];
-                    p.life = (p.life + d).min(p.life_max).max(if kill { 0 } else { 1 });
+                    p.life = p
+                        .life
+                        .saturating_add(d)
+                        .min(p.life_max)
+                        .max(if kill { 0 } else { 1 });
                 }
             }
             Sctrl::TargetPowerAdd { value, id } => {
@@ -2580,7 +2637,7 @@ impl World {
                 {
                     let g = self.eval(i, &codes[0]).to_i();
                     let n = self.eval(i, &codes[1]).to_i();
-                    self.events.push(Event::Sound {
+                    self.push_sound(Event::Sound {
                         player: i,
                         own: !fx,
                         group: g,
@@ -2743,7 +2800,7 @@ impl World {
                 let n = self.eval(i, number).to_i();
                 let ch = channel.as_ref().map_or(-1, |c| self.eval(i, c).to_i());
                 let vol = volume.as_ref().map_or(100, |c| self.eval(i, c).to_i());
-                self.events.push(Event::Sound {
+                self.push_sound(Event::Sound {
                     player: i,
                     own: *own,
                     group: g,
@@ -2809,7 +2866,11 @@ impl World {
                 let v = self.eval(i, value).to_i();
                 let kill = kill.as_ref().is_none_or(|c| self.eval(i, c).to_b());
                 let p = &mut self.players[i];
-                p.life = (p.life + v).min(p.life_max).max(if kill { 0 } else { 1 });
+                p.life = p
+                    .life
+                    .saturating_add(v)
+                    .min(p.life_max)
+                    .max(if kill { 0 } else { 1 });
             }
             Sctrl::LifeSet { value } => {
                 let v = self.eval(i, value).to_i();
@@ -2999,7 +3060,7 @@ impl World {
             self.players[i].old_pos = [cx, cy];
             self.players[i].vel = [0.0, 0.0];
             self.spawn_fx_anim(i, 2, [0.0, 0.0], true);
-            self.events.push(Event::Sound {
+            self.push_sound(Event::Sound {
                 player: i,
                 own: false,
                 group: 5,
@@ -3050,6 +3111,84 @@ impl World {
 
     /// Platforms: land on a surface crossed from above this tick, keep the
     /// surface while standing within its span, fall off when leaving it.
+    /// Queue a sound event unless this tick already hit the PlaySnd cap.
+    pub(crate) fn push_sound(&mut self, ev: Event) {
+        let n = self
+            .events
+            .iter()
+            .filter(|e| matches!(e, Event::Sound { .. }))
+            .count();
+        if n < self.limits.sounds_per_tick {
+            self.events.push(ev);
+        }
+    }
+
+    /// Replace NaN / infinite positions and velocities written by content with
+    /// zero, so one bad expression cannot poison the match.
+    fn sanitize(&mut self, i: usize) {
+        let p = &mut self.players[i];
+        let mut bad = false;
+        for v in p.pos.iter_mut().chain(p.vel.iter_mut()) {
+            if !v.is_finite() {
+                *v = 0.0;
+                bad = true;
+            }
+        }
+        if !p.ground.is_finite() {
+            p.ground = 0.0;
+            bad = true;
+        }
+        if bad {
+            self.warn(format!(
+                "P{} produced a non-finite position or velocity",
+                i + 1
+            ));
+        }
+    }
+
+    /// `step` guarded against content panics: if a player's states panic, the
+    /// world is rolled back to the pre-step snapshot, that player (and its
+    /// helpers) is marked `broken` (never runs again, life 0) and the match
+    /// continues. Returns the blamed root player index when a panic was caught.
+    pub fn step_checked(&mut self, inputs: &[Buttons]) -> Option<usize> {
+        let snapshot = self.clone();
+        let inputs: Vec<Buttons> = inputs.to_vec();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.step(&inputs);
+        }));
+        match result {
+            Ok(()) => None,
+            Err(_) => {
+                let culprit = self
+                    .running
+                    .or_else(|| self.players.iter().position(|p| !p.removed && !p.broken));
+                *self = snapshot;
+                self.running = None;
+                let root = culprit.map(|c| self.players.get(c).map_or(c, |p| p.root));
+                if let Some(root) = root {
+                    let name = self
+                        .players
+                        .get(root)
+                        .and_then(|p| self.data.get(p.data))
+                        .map(|d| d.name.clone())
+                        .unwrap_or_default();
+                    self.warn(format!(
+                        "P{} ({name}) crashed the simulation and was disabled",
+                        root + 1
+                    ));
+                    for p in &mut self.players {
+                        if p.root == root {
+                            p.broken = true;
+                            p.life = 0;
+                            p.ctrl = false;
+                        }
+                    }
+                }
+                root
+            }
+        }
+    }
+
     fn update_ground(&mut self, i: usize) -> bool {
         if self.stage.platforms.is_empty() && self.stage.arena.floor.is_none() {
             return false;
@@ -3948,10 +4087,11 @@ mod tests {
         for p in &w.players {
             assert!(p.pos[0].is_finite() && p.pos[1].is_finite());
         }
+        // missing actions are the content's problem; engine trouble is "stuck" / "crashed"
         let bad: Vec<&String> = w
             .warnings
             .iter()
-            .filter(|m| m.contains("invalid") || m.contains("stuck"))
+            .filter(|m| m.contains("stuck") || m.contains("crashed") || m.contains("non-finite"))
             .collect();
         assert!(bad.is_empty(), "{bad:?}");
     }
