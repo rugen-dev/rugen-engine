@@ -1228,7 +1228,15 @@ impl World {
         };
         self.players[i].children.push(id);
         self.change_state(idx, stateno, Some(0), Some(true));
-        self.run_current(idx);
+        // Ikemen `helperInit`: the statedef applies now, but the state body runs once,
+        // at the helper's turn in this tick's run loop. Running it here as well made
+        // `time = 0` controllers (Turn, VarAdd...) fire twice on the first tick.
+        self.apply_pending(idx);
+        if self.running.is_some_and(|r| idx < r) {
+            // reused a slot the run loop already passed: take this tick's turn now
+            self.run(idx);
+            self.sanitize(idx);
+        }
         Some(idx)
     }
 
@@ -4221,6 +4229,35 @@ mod tests {
         run(&mut w, 15, Buttons::default());
         assert!(w.players[h].removed, "DestroySelf after 10 ticks");
         assert!(w.players.iter().filter(|p| !p.removed).count() == 2);
+    }
+
+    #[test]
+    fn new_helper_runs_its_first_tick_once() {
+        // G6 Naruto's Rendan clones `Turn` at time = 0; running the body twice on the
+        // spawn tick turned them back around and they dashed away from P2
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n[State 1001, h]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 78\npos = 30, 0\n[State 1001, back]\ntype = ChangeState\ntrigger1 = time > 60\nvalue = 0\nctrl = 1\n[Statedef 1002]\ntype = S\nphysics = N\nanim = 0\n[State 1002, t]\ntype = Turn\ntrigger1 = time = 0\n[State 1002, v]\ntype = VarAdd\ntrigger1 = time = 0\nvar(1) = 1\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1001, None, None);
+        run(&mut w, 3, Buttons::default());
+        let h = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.helper_id == 78)
+            .expect("helper exists");
+        assert_eq!(w.players[h].vars[1], 1, "time = 0 controllers fire once");
+        assert_eq!(
+            w.players[h].facing, -w.players[0].facing,
+            "a single Turn on the first tick"
+        );
     }
 
     #[test]
