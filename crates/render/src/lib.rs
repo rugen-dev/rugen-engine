@@ -162,6 +162,9 @@ pub struct Draw {
     /// Horizontal shear: the top edge is shifted right by `skew` logical pixels
     /// relative to the bottom edge (slanted UI panels).
     pub skew: f32,
+    /// Apply `clip` before `angle` (clip in the draw's unrotated frame), so
+    /// rotated UI subtrees keep their clipping.
+    pub clip_local: bool,
 }
 
 impl Draw {
@@ -181,6 +184,7 @@ impl Draw {
             src: None,
             clip: None,
             skew: 0.0,
+            clip_local: false,
         }
     }
 }
@@ -538,7 +542,7 @@ impl Renderer {
         let (mut v0, mut v1) = if d.vflip { (sv1, sv0) } else { (sv0, sv1) };
         let (mut x0, mut x1, mut y0, mut y1) = (x0, x1, y0, y1);
         if let Some(c) = d.clip
-            && d.angle == 0.0
+            && (d.angle == 0.0 || d.clip_local)
         {
             // shrink the quad to the window and trim the UVs by the same fractions
             let (cx0, cx1) = (x0.max(c[0]), x1.min(c[2]));

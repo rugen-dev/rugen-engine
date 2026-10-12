@@ -215,6 +215,24 @@ impl FontGpu {
         clip: Option<[f32; 4]>,
         alpha: f32,
     ) {
+        self.draw_xf(r, text, pos, bank, align, scale, clip, alpha, None);
+    }
+
+    /// [`draw_clipped`](Self::draw_clipped) rotated by `xf = (degrees ccw, pivot)`;
+    /// the clip applies in the unrotated frame.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_xf(
+        &mut self,
+        r: &mut Renderer,
+        text: &str,
+        pos: [f32; 2],
+        bank: i32,
+        align: i32,
+        scale: f32,
+        clip: Option<[f32; 4]>,
+        alpha: f32,
+        xf: Option<(f32, [f32; 2])>,
+    ) {
         self.init(r);
         let bank = self.banks[(bank.max(0) as usize).min(self.banks.len() - 1)];
         let total = self.width(text, scale);
@@ -236,6 +254,12 @@ impl FontGpu {
                 let mut d = Draw::new(tex, Some(bank), [x, y], [0.0, 0.0]);
                 d.scale = [scale, scale];
                 d.clip = clip;
+                if let Some((angle, pivot)) = xf {
+                    d.pos = pivot;
+                    d.axis = [(pivot[0] - x) / scale, (pivot[1] - y) / scale];
+                    d.angle = angle;
+                    d.clip_local = true;
+                }
                 d.color = [1.0, 1.0, 1.0, alpha];
                 r.draw(d);
             }
