@@ -26,7 +26,7 @@ pub enum ProjContact {
     Cancel,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct ProjectileSpec {
     pub hitdef: HitDefSpec,
     pub projid: Option<Code>,

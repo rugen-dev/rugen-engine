@@ -8,7 +8,7 @@ use crate::hit::{HitDefSpec, attr};
 use crate::projectile::ProjectileSpec;
 
 /// Compiled Explod / ModifyExplod parameters.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct ExplodSpec {
     pub anim: Option<(bool, Code)>,
     pub id: Option<Code>,
@@ -55,7 +55,7 @@ pub fn parse_trans(c: &Controller) -> Option<Trans> {
 }
 
 /// PalFX / AllPalFX / BGPalFX parameters.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PalFxSpec {
     pub time: Option<Code>,
     pub add: Option<Vec<Code>>,
@@ -84,7 +84,7 @@ impl PalFxSpec {
 }
 
 /// AfterImage parameters.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct AfterImageSpec {
     pub time: Option<Code>,
     pub length: Option<Code>,
@@ -173,7 +173,7 @@ impl ExplodSpec {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Sctrl {
     Null,
     ChangeState {

@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use rugen_audio::{Audio, SoundKey};
 use rugen_formats::air::Blend as AirBlend;
-use rugen_formats::sff::Pixels;
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::explod::{AnimSrc, Trans};
@@ -67,6 +66,7 @@ type Loaded = (TextureId, Option<usize>);
 
 struct CharGpu {
     textures: HashMap<(u16, u16), Option<Loaded>>,
+    shared: crate::sprites::Shared,
     palettes: Vec<PaletteId>,
 }
 
@@ -328,6 +328,7 @@ impl Match {
             }
             if let Some(cg) = self.chars.get_mut(i) {
                 cg.textures.clear();
+                cg.shared.clear();
                 cg.palettes = palettes;
             }
         }
@@ -391,6 +392,7 @@ impl Match {
                 }
                 CharGpu {
                     textures: HashMap::new(),
+                    shared: Default::default(),
                     palettes,
                 }
             })
@@ -786,13 +788,11 @@ impl Match {
         };
         let cg = self.chars.get_mut(slot)?;
         let spr = sff.get(key.0, key.1)?;
-        let entry = cg.textures.entry(key).or_insert_with(|| {
-            let (w, h) = (spr.width as u32, spr.height as u32);
-            match &spr.pixels {
-                Pixels::Indexed(px) => Some((r.add_indexed(w, h, px), spr.palette)),
-                Pixels::Rgba(px) => Some((r.add_rgba(w, h, px), None)),
-            }
-        });
+        let shared = &mut cg.shared;
+        let entry = cg
+            .textures
+            .entry(key)
+            .or_insert_with(|| Some(crate::sprites::upload_sprite(r, spr, shared)));
         let (tex, pal) = (*entry)?;
         let pal = pal.map(|p| cg.palettes[p.min(cg.palettes.len() - 1)]);
         Some((tex, pal, [spr.offset[0] as f32, spr.offset[1] as f32]))

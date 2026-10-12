@@ -1727,7 +1727,8 @@ impl ApplicationHandler for Shell {
         while self.tick_acc >= TICK {
             self.tick_acc -= TICK;
             self.tick();
-            if self.quit {
+            // a harness screenshot shows exactly frame N, even after a slow frame
+            if self.quit || (self.shot_armed && self.harness.shot.is_some()) {
                 break;
             }
         }

@@ -1354,6 +1354,8 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -1666,6 +1668,12 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "lzma-rust2"
@@ -2611,6 +2619,7 @@ dependencies = [
  "libm",
  "log",
  "rugen-formats",
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -2625,6 +2634,7 @@ dependencies = [
  "rugen-fair",
  "rugen-formats",
  "rugen-proto",
+ "rugen-sim",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2653,7 +2663,9 @@ dependencies = [
  "bytemuck",
  "indexmap",
  "log",
+ "lz4_flex",
  "png",
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -2697,11 +2709,13 @@ dependencies = [
 name = "rugen-sim"
 version = "0.3.0"
 dependencies = [
+ "bincode",
  "indexmap",
  "libm",
  "log",
  "rugen-cns",
  "rugen-formats",
+ "serde",
  "thiserror 2.0.21",
 ]
 

@@ -3,7 +3,7 @@
 use crate::trigger::Trigger;
 use crate::value::Value;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VarKind {
     Var,
     FVar,
@@ -11,7 +11,7 @@ pub enum VarKind {
     SysFVar,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Redirect {
     Parent,
     Root,
@@ -24,7 +24,7 @@ pub enum Redirect {
     P2,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum Op {
     Int(i32),
     Float(f32),
@@ -97,7 +97,7 @@ pub enum Op {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Cmp {
     Eq,
     Ne,
@@ -131,7 +131,7 @@ impl Cmp {
 }
 
 /// A compiled expression.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Code {
     pub ops: Vec<Op>,
 }

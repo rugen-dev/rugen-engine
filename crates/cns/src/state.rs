@@ -12,7 +12,7 @@ use crate::code::Code;
 use crate::parser::{compile, compile_list};
 use crate::{Error, Result};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum StateType {
     #[default]
     S,
@@ -23,7 +23,7 @@ pub enum StateType {
     U,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MoveType {
     #[default]
     I,
@@ -32,7 +32,7 @@ pub enum MoveType {
     U,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Physics {
     S,
     C,
@@ -42,7 +42,7 @@ pub enum Physics {
     U,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct StateDef {
     pub no: i32,
     pub line: usize,
@@ -62,7 +62,7 @@ pub struct StateDef {
     pub controllers: Vec<Controller>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Controller {
     /// Lowercased `type`.
     pub kind: String,

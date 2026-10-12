@@ -113,7 +113,7 @@ pub mod hf {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Reaction {
     #[default]
     Light = 0,
@@ -138,7 +138,7 @@ impl Reaction {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum HitType {
     None = 0,
     #[default]
@@ -159,7 +159,7 @@ impl HitType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Trade {
     #[default]
     Hit,
@@ -168,7 +168,7 @@ pub enum Trade {
 }
 
 /// Compiled HitDef controller: fixed strings parsed, numeric params kept as code.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct HitDefSpec {
     pub attr: u32,
     pub reversal_attr: u32,

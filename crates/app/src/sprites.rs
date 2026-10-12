@@ -5,12 +5,42 @@ use std::collections::HashMap;
 
 use rugen_formats::air::{Air, Blend as AirBlend, Frame};
 use rugen_formats::fnt::Font;
-use rugen_formats::sff::{Pixels, Sff};
+use rugen_formats::sff::{Pixels, Sff, Sprite};
 use rugen_render::{Blend, Draw, PaletteId, Renderer, TextureId};
 use rugen_sim::anim::AnimState;
 
 /// Texture plus the SFF palette slot it was authored with.
 type Uploaded = (TextureId, Option<usize>);
+
+/// Textures already uploaded for shared pixel data ([`Sprite::share_key`]):
+/// linked / duplicate sprites of a sprite pack upload once.
+pub type Shared = HashMap<(usize, usize), TextureId>;
+
+/// Upload a sprite (decompressing it if it comes from a sprite pack).
+/// Returns the texture and, for indexed sprites, the SFF palette slot.
+pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Uploaded {
+    let (w, h) = (spr.width as u32, spr.height as u32);
+    let indexed = match &spr.pixels {
+        Pixels::Indexed(_) => true,
+        Pixels::Rgba(_) => false,
+        Pixels::Packed(p) => !p.is_rgba(),
+    };
+    let pal = if indexed { spr.palette } else { None };
+    if let Some(k) = spr.share_key()
+        && let Some(&tex) = shared.get(&k)
+    {
+        return (tex, pal);
+    }
+    let tex = match spr.decoded().as_ref() {
+        Pixels::Indexed(px) => r.add_indexed(w, h, px),
+        Pixels::Rgba(px) => r.add_rgba(w, h, px),
+        Pixels::Packed(_) => r.white(),
+    };
+    if let Some(k) = spr.share_key() {
+        shared.insert(k, tex);
+    }
+    (tex, pal)
+}
 
 /// Uploaded sprite: texture, palette, axis, size.
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +54,7 @@ pub struct Placed {
 pub struct SpriteSheet {
     pub sff: Sff,
     textures: HashMap<(u16, u16), Option<Uploaded>>,
+    shared: Shared,
     palettes: Vec<PaletteId>,
 }
 
@@ -32,6 +63,7 @@ impl SpriteSheet {
         Self {
             sff,
             textures: HashMap::new(),
+            shared: Shared::new(),
             palettes: Vec::new(),
         }
     }
@@ -50,18 +82,11 @@ impl SpriteSheet {
         self.init_gpu(r);
         let key = (u16::try_from(group).ok()?, u16::try_from(number).ok()?);
         let spr = self.sff.get(key.0, key.1)?;
+        let shared = &mut self.shared;
         let entry = self
             .textures
             .entry(key)
-            .or_insert_with(|| match &spr.pixels {
-                Pixels::Indexed(px) => Some((
-                    r.add_indexed(spr.width as u32, spr.height as u32, px),
-                    spr.palette,
-                )),
-                Pixels::Rgba(px) => {
-                    Some((r.add_rgba(spr.width as u32, spr.height as u32, px), None))
-                }
-            });
+            .or_insert_with(|| Some(upload_sprite(r, spr, shared)));
         let (tex, pal) = (*entry)?;
         let pal = pal.map(|p| self.palettes[p.min(self.palettes.len() - 1)]);
         Some(Placed {

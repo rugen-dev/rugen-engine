@@ -7,8 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sff = Sff::open(&a[1], is_char)?;
     let (g, n): (u16, u16) = (a[2].parse()?, a[3].parse()?);
     let s = sff.get(g, n).ok_or("no such sprite")?;
-    let rgba: Vec<u8> = match &s.pixels {
+    let rgba: Vec<u8> = match s.decoded().as_ref() {
         Pixels::Rgba(v) => v.clone(),
+        Pixels::Packed(_) => unreachable!(),
         Pixels::Indexed(px) => {
             let pal = &sff.palettes[s.palette.unwrap()];
             px.iter()

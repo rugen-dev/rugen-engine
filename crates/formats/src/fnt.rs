@@ -270,7 +270,8 @@ impl Font {
             let Some(c) = char::from_u32(*number as u32) else {
                 continue;
             };
-            let Pixels::Indexed(px) = &spr.pixels else {
+            let decoded = spr.decoded();
+            let Pixels::Indexed(px) = decoded.as_ref() else {
                 continue;
             };
             f.glyphs.insert(
