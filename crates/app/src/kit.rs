@@ -554,10 +554,10 @@ fn caption_on(c: &mut Canvas, g: &Generator, caption: &str) {
 
 // ---------------------------------------------------------------- kit export
 
-/// Recolour every kit tile onto the palette and write `motif/ui/kit/*.webp`
+/// Recolour every kit tile onto the palette and write `<theme>/ui/kit/*.webp`
 /// for modders (plus the role assets built by `ui-gen`).
-pub fn import(motif: &Path) -> anyhow::Result<usize> {
-    let out = motif.join("ui").join("kit");
+pub fn import(motif: &Path, theme: &Path) -> anyhow::Result<usize> {
+    let out = theme.join("ui").join("kit");
     std::fs::create_dir_all(&out)?;
     let mut n = 0;
     let large = [

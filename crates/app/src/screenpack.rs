@@ -465,8 +465,9 @@ fn write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Generate the whole motif into `out` (usually `motif/`).
-pub fn generate(ttf: &[u8], out: &Path) -> anyhow::Result<()> {
+/// Generate the screenpack (system/fight .def + .sff) into `out`
+/// (a theme dir such as `motif/themes/dojo`); fonts go to the shared `motif/font`.
+pub fn generate(ttf: &[u8], motif: &Path, out: &Path) -> anyhow::Result<()> {
     let style = |size, italic, rim| Style {
         size,
         italic,
@@ -475,7 +476,7 @@ pub fn generate(ttf: &[u8], out: &Path) -> anyhow::Result<()> {
         highlight: true,
     };
     // motif fonts: OFL pixel fonts from motif/font/src (the TTF is only a fallback)
-    fontgen::generate_roles(out, Some(ttf))?;
+    fontgen::generate_roles(motif, Some(ttf))?;
 
     // ---- system.sff
     let mut sys = Sff {

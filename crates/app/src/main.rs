@@ -247,8 +247,13 @@ fn main() -> anyhow::Result<()> {
                 .or_else(fontgen::default_ttf)
                 .ok_or_else(|| anyhow::anyhow!("no bold TTF found; pass --font file.ttf"))?;
             let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
-            let out = opt("--out").unwrap_or_else(|| "motif".into());
-            screenpack::generate(&bytes, std::path::Path::new(&out))?;
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            screenpack::generate(
+                &bytes,
+                std::path::Path::new(&motif),
+                std::path::Path::new(&out),
+            )?;
             println!(
                 "wrote the rugen screenpack to {out}/ (font {})",
                 ttf.display()
@@ -261,7 +266,8 @@ fn main() -> anyhow::Result<()> {
                     .position(|a| a == name)
                     .and_then(|i| args.get(i + 1).cloned())
             };
-            let out = opt("--out").unwrap_or_else(|| "motif".into());
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
             let ttf = opt("--font")
                 .map(std::path::PathBuf::from)
                 .or_else(fontgen::default_ttf);
@@ -269,17 +275,23 @@ fn main() -> anyhow::Result<()> {
                 Some(p) => Some(std::fs::read(p).with_context(|| p.display().to_string())?),
                 None => None,
             };
-            uigen::generate(bytes.as_deref(), std::path::Path::new(&out))?;
-            println!("wrote the front end to {out}/ui/ (fonts from {out}/font/src)");
+            uigen::generate(
+                bytes.as_deref(),
+                std::path::Path::new(&motif),
+                std::path::Path::new(&out),
+            )?;
+            println!("wrote the front end to {out}/ui/ (fonts from {motif}/font/src)");
             Ok(())
         }
         Some("kit-import") => {
-            let out = args
-                .iter()
-                .position(|a| a == "--out")
-                .and_then(|i| args.get(i + 1).cloned())
-                .unwrap_or_else(|| "motif".into());
-            let n = kit::import(std::path::Path::new(&out))?;
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            let n = kit::import(std::path::Path::new(&motif), std::path::Path::new(&out))?;
             println!("wrote {n} kit pieces to {out}/ui/kit/");
             Ok(())
         }

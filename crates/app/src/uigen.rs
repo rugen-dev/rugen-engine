@@ -861,10 +861,12 @@ Binds use dotted paths: `{profile.name}`, `{news.0.title}`, `{item.label}`.
 `"!path"` negates.
 "#;
 
-/// Generate `motif/ui/*` (assets, screens, news, README). `fallback_ttf` is
-/// only used when a role font is missing from `motif/font/src/`.
-pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()> {
-    let ui = motif.join("ui");
+/// Generate a theme's `ui/*` (assets, screens, README) into `theme`
+/// (`motif/themes/<name>`); fonts, the CC0 kit, the palette, `news.json` and
+/// `art/` are shared and live in `motif`. `fallback_ttf` is only used when a
+/// role font is missing from `motif/font/src/`.
+pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path, theme: &Path) -> anyhow::Result<()> {
+    let ui = theme.join("ui");
     std::fs::create_dir_all(&ui)?;
     std::fs::write(motif.join("palette.gpl"), pixelize::gpl())?;
     fontgen::generate_roles(motif, fallback_ttf)?;
@@ -881,7 +883,7 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
         },
     )?;
     let caption_gen = Generator::new(&title_ttf, title_role.style)?;
-    kit::import(motif)?;
+    kit::import(motif, theme)?;
     let w = |name: &str, c: &crate::screenpack::Canvas| pixelize::write_webp(&ui.join(name), c);
     w("bg.webp", &kit::bg_composite())?;
     w("bg_sky.webp", &kit::bg_sky())?;
@@ -917,7 +919,7 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
         "news3.webp",
         &kit::news_online(&caption_gen, 114, 60, "ONLINE"),
     )?;
-    pixelize_art(motif)?;
+    pixelize_art(motif, theme)?;
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
     std::fs::write(ui.join("options.toml"), OPTIONS_TOML)?;
     std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
@@ -929,14 +931,14 @@ pub fn generate(fallback_ttf: Option<&[u8]>, motif: &Path) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Hero images dropped into `motif/art/` (png / webp) → `motif/ui/art/<name>.webp`,
+/// Hero images dropped into `motif/art/` (png / webp) → `<theme>/ui/art/<name>.webp`,
 /// downscaled to the 640-px grid and quantised to the palette.
-pub fn pixelize_art(motif: &Path) -> anyhow::Result<usize> {
+pub fn pixelize_art(motif: &Path, theme: &Path) -> anyhow::Result<usize> {
     let src = motif.join("art");
     let Ok(rd) = std::fs::read_dir(&src) else {
         return Ok(0);
     };
-    let out = motif.join("ui").join("art");
+    let out = theme.join("ui").join("art");
     let pal = pixelize::full_palette();
     let mut n = 0;
     for e in rd.flatten() {
