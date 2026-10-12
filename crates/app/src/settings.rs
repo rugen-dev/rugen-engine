@@ -210,7 +210,14 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         Widget::Choice(opts, Some(sel))
                     },
                     c.net.input_delay.to_string(),
-                    "AUTO picks 0-3 frames from the measured ping. More delay = fewer rollbacks.",
+                    "AUTO adds delay only beyond what rollback hides (1 frame up to ~260 ms ping).",
+                ),
+                row(
+                    "direct",
+                    "DIRECT CONNECTION",
+                    on_off(c.net.direct),
+                    String::new(),
+                    "ON: faster, your opponent's PC can see your IP. OFF: always relayed, private.",
                 ),
                 row(
                     "server",
@@ -431,6 +438,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         }
         "delay" => c.net.input_delay = c.net.input_delay.step(dir, wrap),
         "good_conn" => c.net.good_connections_only = !c.net.good_connections_only,
+        "direct" => c.net.direct = !c.net.direct,
         "air_jumps" => c.game.air_jumps = cycle(c.game.air_jumps.clamp(0, 3) as usize, 4) as i32,
         "round_time" => {
             let cur = ROUND_TIMES

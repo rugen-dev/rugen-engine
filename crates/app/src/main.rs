@@ -55,6 +55,7 @@ mod screenpack;
 mod select;
 mod settings;
 mod settings_gen;
+mod smooth;
 mod sprites;
 mod stage;
 mod stagegen;

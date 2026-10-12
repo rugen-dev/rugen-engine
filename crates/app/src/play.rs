@@ -128,6 +128,8 @@ pub struct Match {
     chars: Vec<CharGpu>,
     net: Option<Netplay>,
     net_status: String,
+    /// Eases rollback corrections on screen (display only).
+    smooth: crate::smooth::Smoother,
     paused: bool,
     step: bool,
     zoom: f32,
@@ -271,6 +273,7 @@ impl Match {
             chars: Vec::new(),
             net,
             net_status: String::new(),
+            smooth: Default::default(),
             paused: false,
             step: false,
             zoom: 1.0,
@@ -434,8 +437,13 @@ impl Match {
         let advanced = match self.net.as_mut() {
             Some(net) => {
                 net.poll();
+                let shown = crate::smooth::positions(&self.world);
                 match net.advance(&mut self.world, inputs) {
                     Ok(adv) => {
+                        let corrected = adv.corrected.as_deref().map(crate::smooth::positions);
+                        if adv.new_frames > 0 || corrected.is_some() {
+                            self.smooth.tick(&shown, corrected.as_deref());
+                        }
                         for n in &adv.notices {
                             log::info!("netplay: {n}");
                             self.net_status = n.clone();
@@ -443,8 +451,12 @@ impl Match {
                         let st = net.stats();
                         if st.synchronized && adv.notices.is_empty() {
                             self.net_status = format!(
-                                "ping {} ms  rollbacks {}  ahead {}",
-                                st.ping_ms, st.rollbacks, st.frames_ahead
+                                "{} ping {} ms  delay {}  rollbacks {}  ahead {}",
+                                st.path.label(),
+                                st.ping_ms,
+                                st.input_delay,
+                                st.rollbacks,
+                                st.frames_ahead
                             );
                         }
                         let moved = adv.new_frames > 0;
@@ -599,10 +611,12 @@ impl Match {
             };
             r.rect(hud(x, y1 - h), hud(x + 3.5, y1), c);
         }
+        // connection type, ping and input delay (e.g. "DIRECT 182 MS D1")
+        let label = format!("{} {} MS D{}", st.path.label(), st.ping_ms, st.input_delay);
         draw_text(
             r,
-            &format!("{} MS", st.ping_ms),
-            hud(screen_w - 48.0, 43.0),
+            &label,
+            hud(screen_w - 30.0 - label.len() as f32 * 2.0, 43.0),
             u,
             [0.9, 0.9, 0.9, 0.8],
         );
@@ -837,8 +851,10 @@ impl Match {
                 continue;
             };
             let sprite_data = p.data;
+            // rollback corrections ease in on screen (display only)
+            let off = self.smooth.offset(crate::smooth::Key::Player(p.id));
             let (pos, facing, prio) = (
-                [p.pos[0] * scale, p.pos[1] * scale],
+                [(p.pos[0] + off[0]) * scale, (p.pos[1] + off[1]) * scale],
                 p.facing,
                 p.spr_priority,
             );
@@ -955,14 +971,17 @@ impl Match {
                 tint: tint(owner_pfx.stacked(all_pfx)),
             });
         }
-        let projs: Vec<rugen_sim::projectile::Projectile> = self
+        let keys = crate::smooth::proj_keys(&self.world);
+        let projs: Vec<(rugen_sim::projectile::Projectile, crate::smooth::Key)> = self
             .world
             .projs
             .iter()
-            .filter(|p| !p.removed && p.anim_no >= 0)
-            .cloned()
+            .zip(keys)
+            .filter(|(p, _)| !p.removed && p.anim_no >= 0)
+            .map(|(p, k)| (p.clone(), k))
             .collect();
-        for pr in projs {
+        for (pr, key) in projs {
+            let off = self.smooth.offset(key);
             let d = self.world.players[pr.owner].data;
             let lc = self.world.data[d].localcoord[0];
             let Some(frame) = self.world.data[d]
@@ -979,7 +998,7 @@ impl Match {
             let owner_pfx = self.world.players[pr.owner].palfx.sample();
             items.push(Item {
                 spr,
-                pos: pr.pos,
+                pos: [pr.pos[0] + off[0], pr.pos[1] + off[1]],
                 facing: pr.facing,
                 vfacing: 1.0,
                 scale: [scale * pr.scale[0], scale * pr.scale[1]],

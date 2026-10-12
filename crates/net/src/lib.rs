@@ -167,7 +167,7 @@ impl Stats {
 }
 
 /// What happened during one call to [`Netplay::advance`].
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Advanced {
     /// Frames the authoritative timeline moved forward (0 while stalled / synchronizing).
     pub new_frames: u32,
@@ -176,6 +176,21 @@ pub struct Advanced {
     pub events: Vec<Event>,
     /// Human-readable session notices (sync progress, interruptions).
     pub notices: Vec<String>,
+    /// After a rollback: the world at the frame that was on screen before
+    /// this call, as the corrected timeline has it (for display-side
+    /// correction smoothing; never feed it back into the simulation).
+    pub corrected: Option<Box<World>>,
+}
+
+impl std::fmt::Debug for Advanced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Advanced")
+            .field("new_frames", &self.new_frames)
+            .field("events", &self.events)
+            .field("notices", &self.notices)
+            .field("corrected", &self.corrected.as_ref().map(|w| w.frame))
+            .finish()
+    }
 }
 
 pub struct Netplay {
@@ -527,6 +542,7 @@ impl Netplay {
         };
         let mut resimulated = 0;
         let remote = 1 - self.local_handle.min(1);
+        let shown_frame = self.events.highest();
         for req in requests {
             match req {
                 GgrsRequest::SaveGameState { cell, frame } => {
@@ -567,6 +583,9 @@ impl Netplay {
                         out.new_frames += 1;
                     } else {
                         resimulated += 1;
+                        if world.frame == shown_frame && shown_frame > 0 {
+                            out.corrected = Some(Box::new(world.clone()));
+                        }
                     }
                     out.events
                         .extend(self.events.filter(world.frame, &world.events));

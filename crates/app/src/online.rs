@@ -1050,6 +1050,7 @@ impl OnlineScreen {
             "reasons": reasons,
             "no_reasons": reasons.is_empty(),
             "hint": hint,
+            "net": if spectator { String::new() } else { self.net_line() },
             "can_confirm": can_confirm,
             "confirm_label": if kind == Some(VerdictKind::Unbalanced) { "ACCEPT UNBALANCED" } else { "CONFIRM" },
             "can_change": !spectator && matches!(phase, "pick" | "confirm" | "") && !snap.preparing,
@@ -1148,6 +1149,38 @@ impl OnlineScreen {
         )
     }
 
+    /// The server's estimate of the round trip to the opponent.
+    fn est_ping(&self) -> Option<u32> {
+        self.room.as_ref().and_then(|r| r.est_ping_ms).or_else(|| {
+            self.queue
+                .as_ref()
+                .and_then(|q| q.found.as_ref())
+                .and_then(|m| m.est_ping_ms)
+        })
+    }
+
+    /// Matchup screen: how the match will connect, with the estimated
+    /// ping and the input delay it would get.
+    fn net_line(&self) -> String {
+        let how = if self.config.net.direct {
+            "DIRECT PEER-TO-PEER (YOUR OPPONENT'S GAME SEES YOUR IP)"
+        } else {
+            "RELAYED, PRIVATE (TURN OR THE SERVER)"
+        };
+        match self.est_ping() {
+            Some(ms) => {
+                let d = self
+                    .config
+                    .net
+                    .input_delay
+                    .frames(Some(ms), &self.config.net.delay_policy());
+                let high = if ms > 200 { "  HIGH PING" } else { "" };
+                format!("{how} · ~{ms} MS · DELAY {d}F{high}")
+            }
+            None => how.to_string(),
+        }
+    }
+
     fn refresh(&mut self) {
         let mx = if self.state == State::Matchup {
             self.matchup_json()
@@ -1172,12 +1205,7 @@ impl OnlineScreen {
                     .map(|m| m.opponent.clone())
             })
             .unwrap_or_default();
-        let opp_ping = room.and_then(|r| r.est_ping_ms).or_else(|| {
-            self.queue
-                .as_ref()
-                .and_then(|q| q.found.as_ref())
-                .and_then(|m| m.est_ping_ms)
-        });
+        let opp_ping = self.est_ping();
         let scope = self.scope();
         let ranked_official = scope == "OFFICIAL";
         let scope_short = if ranked_official {
