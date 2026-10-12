@@ -2393,6 +2393,7 @@ dependencies = [
 name = "rugen-ui"
 version = "0.2.0"
 dependencies = [
+ "libm",
  "log",
  "serde",
  "serde_json",
