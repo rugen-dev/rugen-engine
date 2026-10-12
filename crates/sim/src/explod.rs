@@ -238,65 +238,63 @@ impl World {
     pub(crate) fn update_explods(&mut self) {
         let n = self.explods.len();
         for i in 0..n {
+            if self.explods[i].removed {
+                continue;
+            }
             let mut e = self.explods[i].clone();
-            if e.removed {
-                continue;
-            }
-            let Some(air) = e.air(self).cloned() else {
-                e.removed = true;
-                self.explods[i] = e;
-                continue;
-            };
-            let Some(action) = air.get(e.anim.action) else {
-                e.removed = true;
-                self.explods[i] = e;
-                continue;
-            };
-            if (e.removetime >= 0 && e.time >= e.removetime)
-                || (e.removetime <= -2 && e.anim.loop_end)
-            {
-                e.removed = true;
-                self.explods[i] = e;
-                continue;
-            }
-            if e.removeongethit
-                && let Some(p) = self.players.iter().find(|p| p.id == e.owner_id)
-                && p.gethit
-                && !p.in_guard_state()
-            {
-                e.removed = true;
-                self.explods[i] = e;
-                continue;
-            }
-            let paused = self.explod_paused(&e);
-            if !paused {
-                if e.bindtime != 0 && e.space == Space::Stage {
-                    if let Some(b) = self.players.iter().position(|p| p.id == e.bind_id) {
-                        let s = self.local_scale(b);
-                        let p = &self.players[b];
-                        e.pos = [p.pos[0] * s, p.pos[1] * s];
-                    }
-                }
-                e.time += 1;
-                if e.bindtime > 0 {
-                    e.bindtime -= 1;
-                }
-                e.pos[0] += e.velocity[0] * e.facing;
-                e.pos[1] += e.velocity[1];
-                for k in 0..2 {
-                    e.velocity[k] *= e.friction[k];
-                    e.velocity[k] += e.accel[k];
-                    if e.velocity[k].abs() < 0.1 && e.friction[k].abs() < 1.0 {
-                        e.velocity[k] = 0.0;
-                    }
-                }
-                if !e.animfreeze {
-                    e.anim.step(action);
-                }
-            }
+            self.update_explod(&mut e);
             self.explods[i] = e;
         }
         self.explods.retain(|e| !e.removed);
+    }
+
+    /// One explod's tick. Reads the animation in place: the character's AIR
+    /// is shared data and must not be copied per explod and frame.
+    fn update_explod(&self, e: &mut Explod) {
+        let Some(action) = e.air(self).and_then(|air| air.get(e.anim.action)) else {
+            e.removed = true;
+            return;
+        };
+        if (e.removetime >= 0 && e.time >= e.removetime) || (e.removetime <= -2 && e.anim.loop_end)
+        {
+            e.removed = true;
+            return;
+        }
+        if e.removeongethit
+            && let Some(p) = self.players.iter().find(|p| p.id == e.owner_id)
+            && p.gethit
+            && !p.in_guard_state()
+        {
+            e.removed = true;
+            return;
+        }
+        if self.explod_paused(e) {
+            return;
+        }
+        if e.bindtime != 0
+            && e.space == Space::Stage
+            && let Some(b) = self.players.iter().position(|p| p.id == e.bind_id)
+        {
+            let s = self.local_scale(b);
+            let p = &self.players[b];
+            e.pos = [p.pos[0] * s, p.pos[1] * s];
+        }
+        e.time += 1;
+        if e.bindtime > 0 {
+            e.bindtime -= 1;
+        }
+        e.pos[0] += e.velocity[0] * e.facing;
+        e.pos[1] += e.velocity[1];
+        for k in 0..2 {
+            e.velocity[k] *= e.friction[k];
+            e.velocity[k] += e.accel[k];
+            if e.velocity[k].abs() < 0.1 && e.friction[k].abs() < 1.0 {
+                e.velocity[k] = 0.0;
+            }
+        }
+        if !e.animfreeze {
+            e.anim.step(action);
+        }
     }
 
     pub fn remove_explods(&mut self, owner_id: i32, id: i32) {

@@ -62,19 +62,32 @@ impl Step {
     }
 }
 
-/// Compiled command plus its runtime matching state.
+/// A compiled command: the immutable part, shared by every snapshot of the
+/// world (rollback clones only the small runtime state, see [`CommandList`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Command {
+pub struct CommandDef {
     pub name: String,
     pub steps: Vec<Step>,
     pub max_time: i32,
     pub max_buf_time: i32,
+    pub loop_order: Vec<usize>,
+}
+
+/// Runtime matching state of one command (per-step flags and timers live in
+/// [`CommandList`]'s flat arrays).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CmdState {
     pub cur_time: i32,
     pub buffered: i32,
-    pub completed: Vec<bool>,
-    pub step_timers: Vec<i32>,
-    pub loop_order: Vec<usize>,
     pub complete_frame: bool,
+}
+
+/// One command's definition and its runtime state, borrowed for a step.
+struct Run<'a> {
+    def: &'a CommandDef,
+    st: &'a mut CmdState,
+    completed: &'a mut [bool],
+    step_timers: &'a mut [i32],
 }
 
 fn key_of(k: cmdfmt::Key) -> Key {
@@ -97,7 +110,7 @@ fn key_of(k: cmdfmt::Key) -> Key {
     }
 }
 
-impl Command {
+impl CommandDef {
     pub fn compile(c: &cmdfmt::Command) -> Self {
         let mut steps: Vec<Step> = c
             .elems
@@ -168,20 +181,17 @@ impl Command {
             name: c.name.clone(),
             max_time: c.time,
             max_buf_time: c.buffer_time,
-            cur_time: 0,
-            buffered: 0,
-            completed: vec![false; n],
-            step_timers: vec![0; n],
             loop_order,
             steps,
-            complete_frame: false,
         }
     }
+}
 
-    pub fn clear(&mut self, buf_reset: bool) {
-        self.cur_time = 0;
+impl Run<'_> {
+    fn clear(&mut self, buf_reset: bool) {
+        self.st.cur_time = 0;
         if buf_reset {
-            self.buffered = 0;
+            self.st.buffered = 0;
         }
         self.completed.iter_mut().for_each(|c| *c = false);
         self.step_timers.iter_mut().for_each(|t| *t = 0);
@@ -190,10 +200,16 @@ impl Command {
     fn greater_fail(&self, i: usize, ib: &InputBuffer) -> bool {
         let check = |k: Key| -> bool {
             if ib.state(k, false, false) == 1 {
-                return !self.steps[i].keys.iter().any(|sk| sk.key == k && !sk.tilde);
+                return !self.def.steps[i]
+                    .keys
+                    .iter()
+                    .any(|sk| sk.key == k && !sk.tilde);
             }
             if ib.state(k, true, false) == 1 {
-                return !self.steps[i].keys.iter().any(|sk| sk.key == k && sk.tilde);
+                return !self.def.steps[i]
+                    .keys
+                    .iter()
+                    .any(|sk| sk.key == k && sk.tilde);
             }
             false
         };
@@ -218,32 +234,32 @@ impl Command {
         .any(check)
     }
 
-    pub fn step(&mut self, ib: &InputBuffer) {
-        if self.buffered > 0 {
-            self.buffered -= 1;
+    fn step(&mut self, ib: &InputBuffer) {
+        if self.st.buffered > 0 {
+            self.st.buffered -= 1;
         }
-        if self.steps.is_empty() {
+        if self.def.steps.is_empty() {
             return;
         }
         let mut anydone = false;
-        for i in 0..self.steps.len() {
+        for i in 0..self.def.steps.len() {
             if self.completed[i] {
                 self.step_timers[i] += 1;
                 anydone = true;
             }
         }
         if anydone {
-            self.cur_time += 1;
-        } else if self.cur_time > 0 {
+            self.st.cur_time += 1;
+        } else if self.st.cur_time > 0 {
             self.clear(false);
         }
-        for idx in 0..self.loop_order.len() {
-            let i = self.loop_order[idx];
+        for idx in 0..self.def.loop_order.len() {
+            let i = self.def.loop_order[idx];
             if i > 0 && !self.completed[i - 1] {
                 continue;
             }
             let mut matched = true;
-            for k in &self.steps[i].keys {
+            for k in &self.def.steps[i].keys {
                 let t = ib.state(k.key, k.tilde, k.dollar);
                 let mut ok = if k.slash { t > 0 } else { t == 1 };
                 if ok && k.charge > 1 && ib.charge(k.key, k.tilde, k.dollar) < k.charge {
@@ -254,7 +270,7 @@ impl Command {
                     break;
                 }
             }
-            if self.steps[i].greater
+            if self.def.steps[i].greater
                 && i > 0
                 && self.completed[i - 1]
                 && !self.completed[i]
@@ -272,59 +288,154 @@ impl Command {
                     self.step_timers[i - 1] = 0;
                 }
                 if i == 0 {
-                    self.cur_time = 0;
+                    self.st.cur_time = 0;
                 }
             }
         }
-        self.complete_frame = *self.completed.last().unwrap_or(&false);
-        if !self.complete_frame && self.cur_time < self.max_time {
+        self.st.complete_frame = *self.completed.last().unwrap_or(&false);
+        if !self.st.complete_frame && self.st.cur_time < self.def.max_time {
             return;
         }
         self.clear(false);
-        if self.complete_frame {
-            self.buffered = self.buffered.max(self.max_buf_time);
+        if self.st.complete_frame {
+            self.st.buffered = self.st.buffered.max(self.def.max_buf_time);
+        }
+    }
+}
+
+/// Every command of a character, compiled once and shared.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct CommandTable {
+    pub defs: Vec<CommandDef>,
+    /// Start of each command's steps in the flat per-step arrays.
+    offsets: Vec<usize>,
+    /// Command indices per name (a CMD may define one name several times).
+    /// Only looked up, never iterated (iteration order is not deterministic).
+    by_name: std::collections::HashMap<String, Vec<u16>>,
+    steps: usize,
+}
+
+impl CommandTable {
+    pub fn new(defs: Vec<CommandDef>) -> Self {
+        let mut offsets = Vec::with_capacity(defs.len());
+        let mut by_name: std::collections::HashMap<String, Vec<u16>> = Default::default();
+        let mut steps = 0;
+        for (i, d) in defs.iter().enumerate() {
+            offsets.push(steps);
+            steps += d.steps.len();
+            by_name.entry(d.name.clone()).or_default().push(i as u16);
+        }
+        Self {
+            defs,
+            offsets,
+            by_name,
+            steps,
         }
     }
 }
 
 /// All of a player's commands. `active(name)` answers the `Command` trigger.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// The compiled commands sit behind an `Arc`; only the runtime state (three
+/// flat arrays of plain values) is copied when the world is snapshotted for
+/// rollback or a helper copies its root's commands.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct CommandList {
-    pub commands: Vec<Command>,
+    pub table: std::sync::Arc<CommandTable>,
+    pub state: Vec<CmdState>,
+    completed: Vec<bool>,
+    step_timers: Vec<i32>,
+}
+
+impl Clone for CommandList {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+            state: self.state.clone(),
+            completed: self.completed.clone(),
+            step_timers: self.step_timers.clone(),
+        }
+    }
+
+    // reuses the buffers (keyctrl helpers copy their root's commands every frame)
+    fn clone_from(&mut self, src: &Self) {
+        if !std::sync::Arc::ptr_eq(&self.table, &src.table) {
+            self.table = src.table.clone();
+        }
+        self.state.clone_from(&src.state);
+        self.completed.clone_from(&src.completed);
+        self.step_timers.clone_from(&src.step_timers);
+    }
 }
 
 impl CommandList {
     pub fn compile(cmd: &cmdfmt::Cmd) -> Self {
+        Self::from_defs(cmd.commands.iter().map(CommandDef::compile).collect())
+    }
+
+    pub fn from_defs(defs: Vec<CommandDef>) -> Self {
+        let table = CommandTable::new(defs);
         Self {
-            commands: cmd.commands.iter().map(Command::compile).collect(),
+            state: vec![CmdState::default(); table.defs.len()],
+            completed: vec![false; table.steps],
+            step_timers: vec![0; table.steps],
+            table: std::sync::Arc::new(table),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.state.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state.is_empty()
+    }
+
+    fn run(&mut self, i: usize) -> Run<'_> {
+        let def = &self.table.defs[i];
+        let o = self.table.offsets[i];
+        let n = def.steps.len();
+        Run {
+            def,
+            st: &mut self.state[i],
+            completed: &mut self.completed[o..o + n],
+            step_timers: &mut self.step_timers[o..o + n],
         }
     }
 
     pub fn step(&mut self, ib: &InputBuffer) {
-        let mut done: Vec<String> = Vec::new();
-        for c in &mut self.commands {
+        let mut done: Vec<usize> = Vec::new();
+        for i in 0..self.state.len() {
+            let mut c = self.run(i);
             c.step(ib);
-            if c.complete_frame {
+            if c.st.complete_frame {
                 c.clear(false);
-                done.push(c.name.clone());
-                c.complete_frame = false;
+                done.push(i);
+                c.st.complete_frame = false;
             }
         }
-        for name in done {
-            for c in self.commands.iter_mut().filter(|c| c.name == name) {
-                c.clear(false);
+        if done.is_empty() {
+            return;
+        }
+        let table = self.table.clone();
+        for d in done {
+            for &j in &table.by_name[&table.defs[d].name] {
+                self.run(j as usize).clear(false);
             }
         }
     }
 
     pub fn reset(&mut self) {
-        self.commands.iter_mut().for_each(|c| c.clear(true));
+        for i in 0..self.state.len() {
+            self.run(i).clear(true);
+        }
     }
 
     pub fn active(&self, name: &str) -> bool {
-        self.commands
-            .iter()
-            .any(|c| c.name == name && c.buffered > 0)
+        self.table
+            .by_name
+            .get(name)
+            .is_some_and(|ix| ix.iter().any(|&i| self.state[i as usize].buffered > 0))
     }
 }
 
@@ -332,16 +443,16 @@ impl CommandList {
 mod tests {
     use super::*;
 
-    fn cmd(name: &str, s: &str, time: i32, buf: i32) -> Command {
-        Command::compile(&cmdfmt::Command {
+    fn cmd(name: &str, s: &str, time: i32, buf: i32) -> CommandList {
+        CommandList::from_defs(vec![CommandDef::compile(&cmdfmt::Command {
             name: name.into(),
             elems: cmdfmt::parse_command(s).unwrap(),
             time,
             buffer_time: buf,
-        })
+        })])
     }
 
-    fn tick(c: &mut Command, ib: &mut InputBuffer, d: &str, b: &str) -> bool {
+    fn tick(c: &mut CommandList, ib: &mut InputBuffer, d: &str, b: &str) -> bool {
         ib.update(
             d.contains('U'),
             d.contains('D'),
@@ -356,7 +467,7 @@ mod tests {
             b.contains('s'),
         );
         c.step(ib);
-        c.buffered > 0
+        c.state[0].buffered > 0
     }
 
     #[test]
@@ -378,7 +489,7 @@ mod tests {
         assert!(!tick(&mut c, &mut ib, "F", ""));
         assert!(tick(&mut c, &mut ib, "F", "x"), "QCF+x fires");
         // too slow: 20 idle frames between D and the rest
-        c.clear(true);
+        c.reset();
         assert!(!tick(&mut c, &mut ib, "", ""));
         assert!(!tick(&mut c, &mut ib, "D", ""));
         for _ in 0..20 {
