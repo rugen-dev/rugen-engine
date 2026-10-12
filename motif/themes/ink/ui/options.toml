@@ -1,0 +1,115 @@
+# rugen options screen — rows come from the engine (`rows`), layout is yours.
+background = [0.95, 0.94, 0.89, 1.0]
+
+[[node]]
+kind = "image"
+image = "ui/paper.webp"
+w = 1280
+h = 720
+
+[[node]]
+kind = "text"
+text = "OPTIONS"
+anchor = "top"
+y = 44
+font = 3
+bank = 10
+scale = 2
+enter = "down"
+
+[[node]]
+kind = "panel"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+x = 220
+y = 130
+w = 840
+h = 540
+pad = 24
+enter = "up"
+enter_time = 18
+
+  [[node.children]]
+  kind = "list"
+  id = "rows"
+  w = 792
+  h = 420
+  gap = 6
+  items = "rows"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "{item.id}"
+    h = 40
+    image = "ui/row.webp"
+    image_focus = "ui/row_lit.webp"
+    on_press = "{item.press}"
+    on_left = "{item.left}"
+    on_right = "{item.right}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      anchor = "left"
+      x = 24
+      font = 2
+      bank = 9
+      scale = 2
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.value}"
+      anchor = "right"
+      x = 28
+      font = 2
+      bank = 10
+      scale = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "back"
+  anchor = "bl"
+  w = 220
+  h = 54
+  image = "ui/slab.webp"
+  image_focus = "ui/slab_lit.webp"
+  text = "BACK"
+  font = 2
+  bank = 11
+  bank_focus = 11
+  scale = 2
+  on_press = "back"
+
+  [[node.children]]
+  kind = "text"
+  text = "< >  CHANGE     ENTER  SELECT     SAVED ON EXIT"
+  anchor = "br"
+  x = 8
+  y = 60
+  font = 1
+  bank = 8
+  scale = 2
+
+# key capture overlay
+[[node]]
+kind = "panel"
+color = [0.95, 0.94, 0.89, 0.85]
+visible = "capture.active"
+
+  [[node.children]]
+  kind = "text"
+  text = "{capture.prompt}"
+  anchor = "center"
+  y = -20
+  font = 2
+  bank = 10
+  scale = 3
+
+  [[node.children]]
+  kind = "text"
+  text = "{capture.progress}     ESC  CANCEL"
+  anchor = "center"
+  y = 36
+  font = 1
+  bank = 9
+  scale = 2

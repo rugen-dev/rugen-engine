@@ -1,0 +1,203 @@
+# rugen VS screen — two diagonal halves, big art, stage, countdown. Coordinates are 1280x720.
+# Data: p1{name art has_art}, p2{...}, stage{name thumb has_thumb}, countdown.
+background = [0.95, 0.94, 0.89, 1.0]
+exit_time = 10
+
+[[node]]
+kind = "image"
+image = "ui/paper.webp"
+w = 1280
+h = 720
+
+# red half (P1)
+[[node]]
+kind = "panel"
+color = [0.88, 0.13, 0.13, 0.92]
+x = -120
+y = 0
+w = 760
+h = 720
+skew = -140
+enter = "left"
+enter_time = 16
+
+# blue half (P2)
+[[node]]
+kind = "panel"
+color = [0.07, 0.07, 0.07, 0.92]
+x = 640
+y = 0
+w = 760
+h = 720
+skew = -140
+enter = "right"
+enter_time = 16
+
+[[node]]
+kind = "particles"
+w = 1280
+h = 720
+count = 60
+speed = 0.6
+size = 3
+color = [0.07, 0.07, 0.07, 0.5]
+color2 = [0.88, 0.13, 0.13, 0.6]
+
+# P1 art plate
+[[node]]
+kind = "panel"
+image = "ui/art9.webp"
+nine = [12, 12, 28, 28]
+x = 70
+y = 90
+w = 420
+h = 470
+enter = "left"
+enter_time = 20
+enter_delay = 4
+ease = "back"
+
+  [[node.children]]
+  kind = "image"
+  image = "{p1.art}"
+  anchor = "top"
+  y = 14
+  h = 430
+  visible = "p1.has_art"
+
+[[node]]
+kind = "panel"
+image = "ui/slab_lit.webp"
+x = 70
+y = 572
+w = 440
+h = 48
+enter = "left"
+enter_time = 22
+enter_delay = 8
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.name}"
+  anchor = "left"
+  x = 20
+  font = 2
+  bank = 9
+  scale = 2
+
+# P2 art plate
+[[node]]
+kind = "panel"
+image = "ui/art9.webp"
+nine = [12, 12, 28, 28]
+anchor = "tr"
+x = 70
+y = 90
+w = 420
+h = 470
+enter = "right"
+enter_time = 20
+enter_delay = 4
+ease = "back"
+
+  [[node.children]]
+  kind = "image"
+  image = "{p2.art}"
+  anchor = "top"
+  y = 14
+  h = 430
+  visible = "p2.has_art"
+
+[[node]]
+kind = "panel"
+image = "ui/slab_lit.webp"
+anchor = "tr"
+x = 70
+y = 572
+w = 440
+h = 48
+enter = "right"
+enter_time = 22
+enter_delay = 8
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.name}"
+  anchor = "right"
+  x = 20
+  font = 2
+  bank = 9
+  scale = 2
+
+# VS
+[[node]]
+kind = "text"
+text = "VS"
+anchor = "center"
+y = -40
+font = 3
+bank = 10
+scale = 6
+enter = "fade"
+enter_time = 30
+enter_delay = 12
+ease = "bounce"
+
+# stage + countdown
+[[node]]
+kind = "panel"
+image = "ui/panel9.webp"
+nine = [12, 12, 24, 24]
+anchor = "bottom"
+y = 20
+w = 520
+h = 60
+enter = "up"
+enter_time = 20
+enter_delay = 10
+
+  [[node.children]]
+  kind = "hbox"
+  pad = 10
+  gap = 16
+  align = "center"
+  justify = "center"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{stage.thumb}"
+    w = 70
+    h = 40
+    visible = "stage.has_thumb"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{stage.name}"
+    font = 2
+    bank = 9
+    scale = 2
+
+    [[node.children.children]]
+    kind = "text"
+    text = "FIGHT IN {countdown}"
+    font = 1
+    bank = 10
+    scale = 2
+
+[[node]]
+kind = "button"
+id = "fight"
+anchor = "br"
+x = 40
+y = 22
+w = 220
+h = 54
+image = "ui/slab_lit.webp"
+image_focus = "ui/slab_lit.webp"
+text = "FIGHT"
+font = 2
+bank = 11
+bank_focus = 11
+scale = 2
+on_press = "fight"
+hover_scale = 1.04
