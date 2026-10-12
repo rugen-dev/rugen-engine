@@ -1,186 +1,227 @@
-# rugen result screen — winner art, headline, rounds, next actions. Coordinates are 1280x720.
-# Data: headline, winner, winner_art, has_art, p1, p2, rounds, rating, has_rating,
-# quick, arcade, can_select, can_rematch, can_title.
+# rugen RESULT — Shonen Ink theme (UI book P.06). Coordinates are 1280x720.
+# Data: winner, winner_art, has_art, draw, quote, stats[] {label value},
+# loser {name art has_art}, menu[] {id label action}, rounds, rating.
 background = [0.95, 0.94, 0.89, 1.0]
-exit_time = 10
+exit_time = 8
 
 [[node]]
 kind = "image"
-image = "ui/paper.webp"
+image = "ui/result_bg.webp"
 w = 1280
 h = 720
 
 [[node]]
-kind = "particles"
-w = 1280
-h = 720
-count = 80
-speed = 0.5
-size = 3
-color = [0.88, 0.13, 0.13, 0.7]
-color2 = [0.07, 0.07, 0.07, 0.5]
-
-# winner art plate
-[[node]]
-kind = "panel"
-image = "ui/art9.webp"
-nine = [12, 12, 28, 28]
-x = 90
-y = 80
-w = 420
-h = 470
+kind = "image"
+image = "{winner_art}"
+x = 60
+y = 118
+w = 516
+h = 602
+fit = "contain"
+fit_y = 1
+visible = "has_art"
 enter = "left"
-enter_time = 22
+enter_time = 16
+
+[[node]]
+kind = "image"
+image = "ui/win.webp"
+x = 40
+y = 34
+angle = -5
+visible = "!draw"
+enter = "down"
+enter_time = 14
 ease = "back"
 
-  [[node.children]]
-  kind = "image"
-  image = "{winner_art}"
-  anchor = "top"
-  y = 14
-  h = 430
-  visible = "has_art"
+[[node]]
+kind = "text"
+text = "DRAW"
+x = 40
+y = 40
+font = 1
+scale = 8
+bank = 11
+angle = -5
+visible = "draw"
 
 [[node]]
 kind = "panel"
-image = "ui/slab_lit.webp"
-x = 90
-y = 562
-w = 440
-h = 48
-enter = "left"
-enter_time = 24
-enter_delay = 6
-
-  [[node.children]]
-  kind = "text"
-  text = "{winner}"
-  anchor = "left"
-  x = 20
-  font = 2
-  bank = 9
-  scale = 2
-
-# headline + rounds
-[[node]]
-kind = "vbox"
-x = 580
-y = 90
-w = 620
-gap = 12
-stagger = 4
-enter = "right"
-enter_time = 20
-
-  [[node.children]]
-  kind = "text"
-  text = "{headline}"
-  font = 3
-  bank = 10
-  scale = 5
-  enter = "right"
-
-  [[node.children]]
-  kind = "text"
-  text = "{p1}   {rounds}   {p2}"
-  font = 2
-  bank = 9
-  scale = 2
-  enter = "right"
-
-  [[node.children]]
-  kind = "text"
-  text = "RATING {rating}"
-  font = 1
-  bank = 10
-  scale = 2
-  visible = "has_rating"
-  enter = "right"
-
-# actions
-[[node]]
-kind = "vbox"
-id = "actions"
-x = 580
-y = 330
-w = 360
-gap = 10
-stagger = 3
-enter = "up"
-enter_time = 18
+x = 470
+y = 150
+w = 300
+h = 160
+visible = "!draw"
+enter = "fade"
 enter_delay = 10
 
   [[node.children]]
-  kind = "button"
-  id = "rematch"
-  h = 54
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
-  text = "REMATCH"
+  kind = "image"
+  image = "ui/bubble_quote.webp"
+  w = 300
+  h = 160
+
+  [[node.children]]
+  kind = "text"
+  text = "{quote}"
+  x = 34
+  y = 18
+  w = 232
+  h = 92
+  wrap = true
+  line_h = 22
+  align = "center"
   font = 2
-  bank = 11
-  bank_focus = 11
+  bank = 9
+
+[[node]]
+kind = "text"
+text = "{winner_up}"
+x = 40
+y = 620
+h = 64
+pad = 26
+color = [0.07, 0.07, 0.07, 1.0]
+outline = [1.0, 1.0, 1.0, 1.0]
+outline_w = 4
+font = 1
+scale = 4
+bank = 11
+angle = -3
+visible = "!draw"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+# match report
+[[node]]
+kind = "panel"
+x = 800
+y = 60
+w = 438
+h = 408
+enter = "right"
+enter_time = 16
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/report_panel.webp"
+  w = 438
+  h = 408
+
+  [[node.children]]
+  kind = "text"
+  text = "MATCH REPORT"
+  x = 24
+  y = 22
+  font = 1
   scale = 2
-  on_press = "rematch"
-  visible = "can_rematch"
-  hover_scale = 1.03
+  bank = 10
+
+  [[node.children]]
+  kind = "vbox"
+  x = 24
+  y = 60
+  w = 382
+  gap = 12
+  items = "stats"
+  stagger = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 382
+    h = 34
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      h = 28
+      font = 1
+      scale = 2
+      bank = 9
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.value}"
+      w = 382
+      h = 28
+      align = "right"
+      font = 1
+      scale = 2
+      bank = 9
+
+      [[node.children.children.children]]
+      kind = "image"
+      image = "ui/dots.webp"
+      y = 30
+      w = 382
+      h = 4
+
+  [[node.children]]
+  kind = "image"
+  image = "{loser.art}"
+  x = 258
+  y = 316
+  w = 64
+  h = 64
+  fit = "cover"
+  fit_y = 0.1
+  grey = true
+  outline = [0.07, 0.07, 0.07, 1.0]
+  visible = "loser.has_art"
+
+  [[node.children]]
+  kind = "text"
+  text = "LOSE"
+  x = 334
+  y = 330
+  h = 34
+  pad = 10
+  image = "ui/stamp9.webp"
+  nine = [6, 6, 6, 6]
+  font = 1
+  scale = 2
+  bank = 10
+  angle = -8
+  visible = "!draw"
+
+# buttons
+[[node]]
+kind = "vbox"
+id = "menu"
+x = 800
+y = 496
+w = 440
+gap = 12
+items = "menu"
+stagger = 2
+enter = "up"
+enter_time = 14
 
   [[node.children]]
   kind = "button"
-  id = "continue"
-  h = 54
-  image = "ui/slab_lit.webp"
-  image_focus = "ui/slab_lit.webp"
-  text = "CONTINUE"
-  font = 2
+  id = "slab"
+  w = 390
+  h = 44
+  w_focus = 430
+  h_focus = 52
+  image = "ui/slab_result.webp"
+  image_focus = "ui/slab_result_lit.webp"
+  text = "{item.label}"
+  font = 1
+  scale = 2
   bank = 11
   bank_focus = 11
-  scale = 2
-  on_press = "continue"
-  visible = "arcade"
-  hover_scale = 1.03
+  align = "left"
+  pad = 40
+  on_press = "{item.action}"
 
   [[node.children]]
-  kind = "button"
-  id = "select"
-  h = 54
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
-  text = "CHARACTER SELECT"
-  font = 2
-  bank = 11
-  bank_focus = 11
+  kind = "text"
+  text = "▶"
+  x = 14
+  h = 52
+  font = 1
   scale = 2
-  on_press = "select"
-  visible = "can_select"
-  hover_scale = 1.03
-
-  [[node.children]]
-  kind = "button"
-  id = "title"
-  h = 54
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
-  text = "MAIN MENU"
-  font = 2
   bank = 11
-  bank_focus = 11
-  scale = 2
-  on_press = "title"
-  visible = "can_title"
-  hover_scale = 1.03
-
-  [[node.children]]
-  kind = "button"
-  id = "quit"
-  h = 54
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
-  text = "QUIT"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  on_press = "quit"
-  visible = "quick"
-  hover_scale = 1.03
+  when = "focus"
