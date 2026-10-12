@@ -17,6 +17,7 @@ use winit::window::WindowId;
 use crate::config::Config;
 use crate::gpu::Gpu;
 use crate::input::InputState;
+use crate::online::{OnlineMatch, OnlineScreen};
 use crate::options::OptionsScreen;
 use crate::play::{FightSetup, Match};
 use crate::select::SelectScreen;
@@ -46,6 +47,8 @@ pub enum Transition {
     Select(Mode),
     /// Online match from the `[net]` section of rugen.toml.
     Netplay,
+    /// ONLINE menu: rooms, ranked, leaderboard (needs `[net] server`).
+    Online,
     Options,
     /// Show the VS screen, then fight.
     Versus(FightSetup, [Portrait; 2]),
@@ -59,6 +62,7 @@ enum Screen {
     Options(Box<OptionsScreen>),
     /// TOML-driven screen from `motif/ui/`.
     Ui(Box<UiScreen>),
+    Online(Box<OnlineScreen>),
     Select(SelectScreen),
     Versus(VersusScreen),
     Match(Box<Match>),
@@ -78,6 +82,13 @@ pub struct Shell {
     config: Config,
     lib: Library,
     data_dir: PathBuf,
+    /// The online match the current fight belongs to.
+    online_match: Option<OnlineMatch>,
+    /// Result reports in flight: (request, we won).
+    reports: Vec<(
+        rugen_net::online::Pending<rugen_net::online::ResultAck>,
+        bool,
+    )>,
     motif_dir: PathBuf,
     gpu: Option<Gpu>,
     input: InputState,
@@ -155,6 +166,8 @@ impl Shell {
             replay,
             arcade: None,
             fullscreen: config_fullscreen,
+            online_match: None,
+            reports: Vec::new(),
             fade: 1.0,
         }
     }
@@ -403,6 +416,18 @@ impl Shell {
                     tutorial: false,
                 }));
             }
+            Transition::Online => {
+                let r =
+                    OnlineScreen::load(&self.motif_dir, &self.lib.root, &self.lib, &self.config);
+                self.screen = match r {
+                    Ok(o) => Screen::Online(Box::new(o)),
+                    Err(e) => {
+                        log::error!("online: {e:#}");
+                        self.transition(Transition::Title);
+                        return;
+                    }
+                };
+            }
             Transition::Title => {
                 self.save_replay();
                 self.arcade = None;
@@ -583,6 +608,16 @@ impl Shell {
                     self.apply_options();
                 }
             }
+            Screen::Online(o) => {
+                if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
+                    next = o.tick(pressed, sys, &mut g.renderer, &mut |snd| {
+                        sfx_queue.push(snd)
+                    });
+                }
+                if matches!(next, Some(Transition::Fight(_))) {
+                    self.online_match = o.started.take();
+                }
+            }
             Screen::Select(s) => {
                 if let Some(sys) = self.system.as_ref() {
                     next = s.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
@@ -597,14 +632,44 @@ impl Shell {
             Screen::Match(m) => {
                 advanced = m.tick(now, &mut self.audio);
                 if m.leave {
-                    next = Some(if self.quick {
-                        Transition::Quit
+                    if let Some(om) = self.online_match.take() {
+                        let wins = m.world.round.wins;
+                        let winner = if m.world.round.match_over && wins[0] != wins[1] {
+                            Some(usize::from(wins[1] > wins[0]))
+                        } else {
+                            None
+                        };
+                        let won = winner == Some(om.my_side);
+                        if let Some(p) =
+                            crate::online::report_result(&self.config, &self.lib.root, &om, winner)
+                        {
+                            self.reports.push((p, won));
+                        }
+                        // back to the online screen after an online match
+                        next = Some(if self.quick {
+                            Transition::Quit
+                        } else {
+                            Transition::Online
+                        });
                     } else {
-                        Transition::Title
-                    });
+                        next = Some(if self.quick {
+                            Transition::Quit
+                        } else {
+                            Transition::Title
+                        });
+                    }
                 }
             }
         }
+        // finished result reports
+        let root = self.lib.root.clone();
+        self.reports.retain_mut(|(p, won)| match p.take() {
+            Some(ack) => {
+                crate::online::apply_result(&root, &ack, *won);
+                false
+            }
+            None => true,
+        });
         if matches!(next, Some(Transition::Title))
             && let Some(t) = self.arcade_next()
         {
@@ -647,6 +712,7 @@ impl Shell {
             (Screen::Select(s), Some(sys)) => s.render(r, sys),
             (Screen::Options(o), Some(sys)) => o.render(r, sys),
             (Screen::Ui(u), Some(sys)) => u.render(r, sys),
+            (Screen::Online(o), Some(sys)) => o.render(r, sys),
             (Screen::Versus(v), Some(sys)) => v.render(r, sys),
             (Screen::Match(m), _) => m.render(r),
             _ => (
@@ -709,6 +775,14 @@ impl Shell {
             }
             return;
         }
+        if let Screen::Online(o) = &mut self.screen
+            && o.capturing()
+        {
+            if pressed {
+                o.raw_key(key);
+            }
+            return;
+        }
         let lower = match key {
             Key::Character(c) => Key::Character(c.to_lowercase().into()),
             k => k.clone(),
@@ -738,6 +812,11 @@ impl Shell {
                 Screen::Ui(_) => {
                     self.apply_options();
                     self.transition(Transition::Title);
+                }
+                Screen::Online(ref mut o) => {
+                    if o.back() {
+                        self.transition(Transition::Title);
+                    }
                 }
                 Screen::Select(_) => {
                     let snd = self.system.as_ref().and_then(|s| s.select.cancel_snd);
@@ -804,32 +883,41 @@ impl ApplicationHandler for Shell {
                 let key = event.logical_key.clone();
                 self.key(&key, event.state == ElementState::Pressed, event_loop);
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                if let Screen::Ui(u) = &mut self.screen {
-                    u.mouse(MouseEvent::Move(position.x as f32, position.y as f32));
+            // a scripted run is driven by the script alone; a stray cursor would steal focus
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+                if self.harness.script.is_some() => {}
+            WindowEvent::CursorMoved { position, .. } => match &mut self.screen {
+                Screen::Ui(u) => u.mouse(MouseEvent::Move(position.x as f32, position.y as f32)),
+                Screen::Online(o) => {
+                    o.mouse(MouseEvent::Move(position.x as f32, position.y as f32))
                 }
-            }
-            WindowEvent::CursorLeft { .. } => {
-                if let Screen::Ui(u) = &mut self.screen {
-                    u.mouse(MouseEvent::Left);
-                }
-            }
+                _ => {}
+            },
+            WindowEvent::CursorLeft { .. } => match &mut self.screen {
+                Screen::Ui(u) => u.mouse(MouseEvent::Left),
+                Screen::Online(o) => o.mouse(MouseEvent::Left),
+                _ => {}
+            },
             WindowEvent::MouseInput {
                 state,
                 button: winit::event::MouseButton::Left,
                 ..
-            } => {
-                if let Screen::Ui(u) = &mut self.screen {
-                    u.mouse(MouseEvent::Button(state == ElementState::Pressed));
-                }
-            }
+            } => match &mut self.screen {
+                Screen::Ui(u) => u.mouse(MouseEvent::Button(state == ElementState::Pressed)),
+                Screen::Online(o) => o.mouse(MouseEvent::Button(state == ElementState::Pressed)),
+                _ => {}
+            },
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                if let Screen::Ui(u) = &mut self.screen {
-                    u.mouse(MouseEvent::Wheel(lines));
+                match &mut self.screen {
+                    Screen::Ui(u) => u.mouse(MouseEvent::Wheel(lines)),
+                    Screen::Online(o) => o.mouse(MouseEvent::Wheel(lines)),
+                    _ => {}
                 }
             }
             _ => {}

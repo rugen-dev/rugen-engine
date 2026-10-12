@@ -36,6 +36,11 @@ pub struct Profile {
     pub losses: u32,
     pub shards: u32,
     pub avatar: String,
+    /// `rugen-server` anonymous account (empty until first online use).
+    pub online_key: String,
+    pub online_id: u64,
+    /// Character brought into online matches (empty = `[net] p1`).
+    pub main_char: String,
 }
 
 impl Default for Profile {
@@ -48,6 +53,9 @@ impl Default for Profile {
             losses: 0,
             shards: 0,
             avatar: "ui/avatar.webp".into(),
+            online_key: String::new(),
+            online_id: 0,
+            main_char: String::new(),
         }
     }
 }
@@ -59,17 +67,21 @@ impl Profile {
             Ok(b) => serde_json::from_slice(&b).unwrap_or_default(),
             Err(_) => {
                 let p = Self::default();
-                if let Ok(text) = serde_json::to_string_pretty(&p) {
-                    let _ = std::fs::write(&path, text);
-                }
+                p.save(root);
                 p
             }
+        }
+    }
+
+    pub fn save(&self, root: &Path) {
+        if let Ok(text) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(root.join("profile.json"), text);
         }
     }
 }
 
 /// Decoded image cache entry: texture, size and (for SFF sprites) palette.
-type Cached = Option<(TextureId, u32, u32, Option<PaletteId>)>;
+pub(crate) type Cached = Option<(TextureId, u32, u32, Option<PaletteId>)>;
 
 /// Mouse events in window pixels.
 #[derive(Clone, Copy, Debug)]
@@ -102,7 +114,7 @@ const BUTTON_NAMES: [&str; 11] = [
 ];
 
 /// Virtual viewport for a window: 1280 wide on 16:9, letterboxed otherwise.
-fn viewport(window: (u32, u32)) -> (f32, f32) {
+pub(crate) fn viewport(window: (u32, u32)) -> (f32, f32) {
     let aspect = window.0.max(1) as f32 / window.1.max(1) as f32;
     if aspect >= VIRTUAL_W / VIRTUAL_H {
         (VIRTUAL_H * aspect, VIRTUAL_H)
@@ -196,6 +208,16 @@ impl UiScreen {
                     menu.insert(
                         at,
                         json!({ "id": "options", "label": "OPTIONS", "action": "mode:options" }),
+                    );
+                }
+                if !self.config.net.server.trim().is_empty() {
+                    let at = menu
+                        .iter()
+                        .position(|m| m["id"] == "options")
+                        .unwrap_or(menu.len());
+                    menu.insert(
+                        at,
+                        json!({ "id": "online", "label": "ONLINE", "action": "online" }),
                     );
                 }
                 if self.netplay {
@@ -352,6 +374,7 @@ impl UiScreen {
         match head {
             "quit" => Some(Transition::Quit),
             "netplay" => Some(Transition::Netplay),
+            "online" => Some(Transition::Online),
             "back" | "title" => Some(Transition::Title),
             "mode" => Some(match arg {
                 "arcade" => Transition::Select(Mode::Arcade),
@@ -522,12 +545,12 @@ pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
 }
 
 /// Painter over the renderer, motif fonts and the system sprite sheet.
-struct Host<'a> {
-    r: &'a mut Renderer,
-    fonts: &'a mut HashMap<i32, FontGpu>,
-    sheet: &'a mut SpriteSheet,
-    textures: &'a mut HashMap<String, Cached>,
-    motif: &'a Path,
+pub(crate) struct Host<'a> {
+    pub(crate) r: &'a mut Renderer,
+    pub(crate) fonts: &'a mut HashMap<i32, FontGpu>,
+    pub(crate) sheet: &'a mut SpriteSheet,
+    pub(crate) textures: &'a mut HashMap<String, Cached>,
+    pub(crate) motif: &'a Path,
 }
 
 impl Host<'_> {
