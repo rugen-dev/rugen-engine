@@ -241,6 +241,8 @@ pub struct Shell {
     save_due: Option<u32>,
     /// Menu base keys held (arrows, Enter) that no player mapping claims.
     menu_keys: Buttons,
+    /// Menu base keys pressed since the last tick (a quick tap still counts).
+    menu_taps: Buttons,
     /// Mouse cursor visibility last applied to the window.
     cursor_shown: Option<bool>,
 }
@@ -310,6 +312,7 @@ impl Shell {
             match_stats: Default::default(),
             save_due: None,
             menu_keys: Buttons::default(),
+            menu_taps: Buttons::default(),
             cursor_shown: None,
         }
     }
@@ -1031,6 +1034,8 @@ impl Shell {
             self.key(&key, false);
         }
         let mut now = self.input.buttons();
+        self.input.end_tick();
+        let menu_taps = std::mem::take(&mut self.menu_taps);
         let pad_pause = self.input.take_pause();
         if let Some(script) = self.harness.script.as_mut() {
             if script.is_empty() {
@@ -1055,7 +1060,7 @@ impl Shell {
         if self.in_menu() {
             // menu base keys (arrows / Enter no player claims) and pads with no
             // player slot drive the menu focus as player 1
-            let extra = self.menu_keys.bits() | self.input.spare_pads().bits();
+            let extra = self.menu_keys.bits() | menu_taps.bits() | self.input.spare_pads().bits();
             now[0] = Buttons::from_bits(now[0].bits() | extra);
         }
         let pressed = [
@@ -1358,6 +1363,16 @@ impl Shell {
     }
 
     fn key(&mut self, key: &Key, pressed: bool) {
+        // a release always reaches the held-key state, whatever screen (text
+        // capture, key listening, a page that owns the key) takes the press:
+        // a lost release would leave the key held and eat its next press
+        if !pressed {
+            let lower = lowercase(key);
+            self.input.key(&lower, false);
+            if let Some(bit) = menu_bit(&lower) {
+                self.menu_keys = set_menu_bit(self.menu_keys, bit, false);
+            }
+        }
         // controls page: held keys light the test pad, page keys act
         let mut page = None;
         if let Screen::Ui(u) = &mut self.screen
@@ -1390,23 +1405,22 @@ impl Shell {
         if let Screen::Ui(u) = &mut self.screen
             && u.capturing()
         {
-            if pressed && let Some(sys) = self.system.as_ref() {
-                u.raw_key(key, sys);
+            // keys the capture hands back (arrows leave the roster search) go on
+            let consumed = match self.system.as_ref() {
+                Some(sys) if pressed => u.raw_key(key, sys),
+                _ => true,
+            };
+            if consumed {
+                return;
             }
-            return;
         }
         if let Screen::Online(o) = &mut self.screen
             && o.capturing()
+            && (!pressed || o.raw_key(key))
         {
-            if pressed {
-                o.raw_key(key);
-            }
             return;
         }
-        let lower = match key {
-            Key::Character(c) => Key::Character(c.to_lowercase().into()),
-            k => k.clone(),
-        };
+        let lower = lowercase(key);
         // Esc backs out of every screen whatever the bindings say
         if key == &Key::Named(NamedKey::Escape) {
             if pressed {
@@ -1420,15 +1434,10 @@ impl Shell {
         if let Some(bit) = menu_bit(&lower)
             && !self.input.bound(&lower)
         {
-            let mut b = self.menu_keys;
-            match bit {
-                0 => b.u = pressed,
-                1 => b.d = pressed,
-                2 => b.l = pressed,
-                3 => b.r = pressed,
-                _ => b.a = pressed,
+            self.menu_keys = set_menu_bit(self.menu_keys, bit, pressed);
+            if pressed {
+                self.menu_taps = set_menu_bit(self.menu_taps, bit, true);
             }
-            self.menu_keys = b;
         }
         if self.input.key(&lower, pressed) {
             return;
@@ -1567,6 +1576,13 @@ impl ApplicationHandler for Shell {
                     event_loop.exit();
                 }
             }
+            // keys released while another window has the focus never send their
+            // release here: forget them all instead of leaving them held
+            WindowEvent::Focused(false) => {
+                self.input.release_all();
+                self.menu_keys = Buttons::default();
+                self.menu_taps = Buttons::default();
+            }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 let key = event.logical_key.clone();
                 self.key(&key, event.state == ElementState::Pressed);
@@ -1659,6 +1675,26 @@ fn menu_bit(key: &Key) -> Option<u8> {
         Key::Named(NamedKey::ArrowRight) => Some(3),
         Key::Named(NamedKey::Enter) => Some(4),
         _ => None,
+    }
+}
+
+/// Set one menu base key bit (see [`menu_bit`]).
+fn set_menu_bit(mut b: Buttons, bit: u8, on: bool) -> Buttons {
+    match bit {
+        0 => b.u = on,
+        1 => b.d = on,
+        2 => b.l = on,
+        3 => b.r = on,
+        _ => b.a = on,
+    }
+    b
+}
+
+/// Character keys compare lower-case (Shift or Caps Lock must not unbind them).
+fn lowercase(key: &Key) -> Key {
+    match key {
+        Key::Character(c) => Key::Character(c.to_lowercase().into()),
+        k => k.clone(),
     }
 }
 

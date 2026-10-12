@@ -63,6 +63,8 @@ pub fn key_name(key: &Key) -> Option<String> {
 struct Pad {
     id: gilrs::GamepadId,
     held: Buttons,
+    /// Buttons pressed since the last tick (kept even if already released).
+    taps: Buttons,
     stick: [f32; 2],
 }
 
@@ -70,6 +72,9 @@ pub struct InputState {
     /// Per player: 11 keys in Buttons order.
     keys: [[Key; 11]; 2],
     keyboard: [Buttons; 2],
+    /// Keys pressed since the last tick: a tap shorter than a tick (or one that
+    /// lands while a slow frame blocks the loop) still reaches the game once.
+    taps: [Buttons; 2],
     gilrs: Option<gilrs::Gilrs>,
     pads: Vec<Pad>,
     pad_slot: [i32; 2],
@@ -94,6 +99,7 @@ impl InputState {
         let mut s = Self {
             keys: [map(&cfg.p1), map(&cfg.p2)],
             keyboard: [Buttons::default(); 2],
+            taps: [Buttons::default(); 2],
             gilrs,
             pads: Vec::new(),
             pad_slot: [cfg.gamepad_p1, cfg.gamepad_p2],
@@ -106,6 +112,7 @@ impl InputState {
                 s.pads.push(Pad {
                     id,
                     held: Buttons::default(),
+                    taps: Buttons::default(),
                     stick: [0.0; 2],
                 });
             }
@@ -121,7 +128,7 @@ impl InputState {
             std::array::from_fn(|i| parse_key(n[i]))
         };
         self.keys = [map(&cfg.p1), map(&cfg.p2)];
-        self.keyboard = [Buttons::default(); 2];
+        self.release_all();
         self.pad_slot = [cfg.gamepad_p1, cfg.gamepad_p2];
     }
 
@@ -132,11 +139,28 @@ impl InputState {
             for (i, k) in self.keys[p].iter().enumerate() {
                 if k == key {
                     set(&mut self.keyboard[p], i, pressed);
+                    if pressed {
+                        set(&mut self.taps[p], i, true);
+                    }
                     used = true;
                 }
             }
         }
         used
+    }
+
+    /// Forget every held key (the window lost focus: its releases will not come).
+    pub fn release_all(&mut self) {
+        self.keyboard = [Buttons::default(); 2];
+        self.taps = [Buttons::default(); 2];
+    }
+
+    /// The tick consumed this tick's taps.
+    pub fn end_tick(&mut self) {
+        self.taps = [Buttons::default(); 2];
+        for pad in &mut self.pads {
+            pad.taps = Buttons::default();
+        }
     }
 
     /// True when a player mapping uses this key.
@@ -151,13 +175,7 @@ impl InputState {
             if self.pad_slot.contains(&(i as i32)) {
                 continue;
             }
-            let mut b = pad.held;
-            let dz = self.deadzone;
-            b.l |= pad.stick[0] < -dz;
-            b.r |= pad.stick[0] > dz;
-            b.u |= pad.stick[1] > dz;
-            b.d |= pad.stick[1] < -dz;
-            out = Buttons::from_bits(out.bits() | b.bits());
+            out = Buttons::from_bits(out.bits() | self.pad_buttons(pad).bits());
         }
         out
     }
@@ -172,6 +190,7 @@ impl InputState {
                     self.pads.push(Pad {
                         id: ev.id,
                         held: Buttons::default(),
+                        taps: Buttons::default(),
                         stick: [0.0; 2],
                     });
                     self.pads.len() - 1
@@ -198,6 +217,9 @@ impl InputState {
                     };
                     if let Some(s) = slot {
                         set(&mut pad.held, s, pressed);
+                        if pressed {
+                            set(&mut pad.taps, s, true);
+                        }
                     }
                     if pressed && matches!(b, Button::Select | Button::Mode) {
                         let pi = idx as i32;
@@ -211,6 +233,7 @@ impl InputState {
                 },
                 EventType::Disconnected => {
                     pad.held = Buttons::default();
+                    pad.taps = Buttons::default();
                     pad.stick = [0.0; 2];
                 }
                 _ => {}
@@ -243,9 +266,22 @@ impl InputState {
             .collect()
     }
 
-    /// Current buttons for both players (keyboard OR gamepad).
+    /// A pad's held buttons, its stick past the deadzone and this tick's taps.
+    fn pad_buttons(&self, pad: &Pad) -> Buttons {
+        let mut b = Buttons::from_bits(pad.held.bits() | pad.taps.bits());
+        let dz = self.deadzone;
+        b.l |= pad.stick[0] < -dz;
+        b.r |= pad.stick[0] > dz;
+        b.u |= pad.stick[1] > dz;
+        b.d |= pad.stick[1] < -dz;
+        b
+    }
+
+    /// Current buttons for both players (keyboard OR gamepad), including keys
+    /// tapped and released since the last tick.
     pub fn buttons(&self) -> [Buttons; 2] {
-        let mut out = self.keyboard;
+        let mut out =
+            [0, 1].map(|p| Buttons::from_bits(self.keyboard[p].bits() | self.taps[p].bits()));
         for (p, o) in out.iter_mut().enumerate() {
             let slot = self.pad_slot[p];
             if slot < 0 {
@@ -254,13 +290,7 @@ impl InputState {
             let Some(pad) = self.pads.get(slot as usize) else {
                 continue;
             };
-            let mut b = pad.held;
-            let dz = self.deadzone;
-            b.l |= pad.stick[0] < -dz;
-            b.r |= pad.stick[0] > dz;
-            b.u |= pad.stick[1] > dz;
-            b.d |= pad.stick[1] < -dz;
-            *o = Buttons::from_bits(o.bits() | b.bits());
+            *o = Buttons::from_bits(o.bits() | self.pad_buttons(pad).bits());
         }
         out
     }
@@ -281,4 +311,30 @@ fn set(b: &mut Buttons, i: usize, v: bool) {
         _ => &mut b.s,
     };
     *slot = v;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tap_between_two_ticks_still_counts_once() {
+        // default bindings: P2 moves with the arrows
+        let mut s = InputState::new(&config::Input::default());
+        let right = Key::Named(NamedKey::ArrowRight);
+        assert!(s.bound(&right));
+        // pressed and released before the tick samples the state
+        s.key(&right, true);
+        s.key(&right, false);
+        assert!(s.buttons()[1].r, "the tap is seen");
+        s.end_tick();
+        assert!(!s.buttons()[1].r, "and only once");
+        // a held key stays held across ticks
+        s.key(&right, true);
+        s.end_tick();
+        assert!(s.buttons()[1].r);
+        // focus loss forgets it (its release never comes)
+        s.release_all();
+        assert!(!s.buttons()[1].r);
+    }
 }

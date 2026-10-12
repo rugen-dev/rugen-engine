@@ -618,7 +618,7 @@ pub trait Painter {
 }
 
 /// Navigation input for one tick.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Nav {
     pub up: bool,
     pub down: bool,
@@ -698,6 +698,9 @@ pub struct Ui {
     inputs: HashMap<String, String>,
     /// Input currently taking keys.
     editing: Option<String>,
+    /// Focus before `edit()` moved it onto an input; it comes back when the
+    /// edit ends if the input itself is not focusable.
+    edit_from: Option<String>,
     time: f32,
     /// Ticks since `leave()` was called.
     leaving: Option<f32>,
@@ -914,6 +917,7 @@ impl Ui {
             scroll: HashMap::new(),
             inputs: HashMap::new(),
             editing: None,
+            edit_from: None,
             time: 0.0,
             leaving: None,
             mouse: None,
@@ -1055,8 +1059,25 @@ impl Ui {
 
     /// Start editing the input with this id (as if the user pressed accept on it).
     pub fn edit(&mut self, id: &str) {
+        if self.focus.as_deref() != Some(id) {
+            self.edit_from = self.focus.clone();
+        }
         self.editing = Some(id.to_string());
         self.focus = Some(id.to_string());
+    }
+
+    /// Stop taking characters (the text stays). A focus `edit()` moved onto an
+    /// input that is not focusable goes back where it was.
+    pub fn stop_edit(&mut self) {
+        let Some(id) = self.editing.take() else {
+            return;
+        };
+        let from = self.edit_from.take();
+        let focusable = self.find(&id).is_some_and(|i| i.focusable);
+        if self.focus.as_deref() == Some(id.as_str()) && !focusable {
+            self.focus = from;
+            self.focus_age = 0.0;
+        }
     }
 
     /// Feed a key to the input being edited. Returns true when consumed.
@@ -1088,7 +1109,7 @@ impl Ui {
             }
             TextKey::Backspace => text.pop().is_some(),
             TextKey::Enter => {
-                self.editing = None;
+                self.stop_edit();
                 if let Some(a) = on_press {
                     let a = interpolate(&a, &self.data);
                     if !a.is_empty() {
@@ -1098,7 +1119,7 @@ impl Ui {
                 false
             }
             TextKey::Escape => {
-                self.editing = None;
+                self.stop_edit();
                 false
             }
         };
@@ -3144,6 +3165,81 @@ on_press = "join"
         let ev = ui.tick(Nav::default(), &mut p);
         assert!(ev.contains(&Event::Action("join".into())));
         assert!(!ui.text_focused());
+    }
+
+    #[test]
+    fn search_box_gives_the_focus_back() {
+        // a hidden (focus = false) search input opened by a hotkey: ending the
+        // edit puts the cursor back on the cell it left, arrows work again
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "button"
+id = "a"
+x = 0
+y = 0
+w = 50
+h = 50
+on_press = "a"
+
+[[node]]
+kind = "button"
+id = "b"
+x = 100
+y = 0
+w = 50
+h = 50
+on_press = "b"
+
+[[node]]
+kind = "input"
+id = "search"
+x = 0
+y = 100
+w = 200
+h = 20
+focus = false
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        let right = Nav {
+            right: true,
+            ..Nav::default()
+        };
+        ui.tick(right, &mut p);
+        assert_eq!(ui.focused(), Some("b"));
+        ui.edit("search");
+        assert!(ui.text_focused());
+        assert!(
+            ui.tick(
+                Nav {
+                    left: true,
+                    ..Nav::default()
+                },
+                &mut p
+            )
+            .is_empty()
+        );
+        ui.text_key(TextKey::Escape);
+        assert!(!ui.text_focused());
+        assert_eq!(ui.focused(), Some("b"), "the focus returns to the cell");
+        ui.tick(
+            Nav {
+                left: true,
+                ..Nav::default()
+            },
+            &mut p,
+        );
+        assert_eq!(ui.focused(), Some("a"), "arrows move again");
+        // stop_edit (arrows leave the box) keeps the text
+        ui.edit("search");
+        ui.text_key(TextKey::Char('k'));
+        ui.stop_edit();
+        assert_eq!(ui.focused(), Some("a"));
+        assert_eq!(ui.input_text("search"), "k");
     }
 
     #[test]

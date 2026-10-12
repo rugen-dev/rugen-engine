@@ -558,6 +558,7 @@ impl UiScreen {
                 Some(r) => {
                     let mut d = r.data(&self.profile, &self.room);
                     d["keys"] = self.keys_json();
+                    d["searching"] = json!(self.ui.text_focused());
                     d
                 }
                 None => Value::Null,
@@ -944,8 +945,37 @@ impl UiScreen {
     /// Raw key while rebinding or editing a text input. Returns true when consumed.
     pub fn raw_key(&mut self, key: &Key, sys: &SystemData) -> bool {
         if self.ui.text_focused() {
+            if self.roster.is_some() {
+                match key {
+                    // arrows (and Tab again) close the roster search and navigate:
+                    // the filter stays, the cursor never gets stuck in the box
+                    Key::Named(
+                        NamedKey::ArrowUp
+                        | NamedKey::ArrowDown
+                        | NamedKey::ArrowLeft
+                        | NamedKey::ArrowRight
+                        | NamedKey::Tab,
+                    ) => {
+                        self.ui.stop_edit();
+                        self.refresh_data(sys);
+                        return matches!(key, Key::Named(NamedKey::Tab));
+                    }
+                    // Esc drops the filter as well
+                    Key::Named(NamedKey::Escape) => {
+                        self.ui.set_input("search", "");
+                        self.ui.stop_edit();
+                        self.action("query:", sys);
+                        self.refresh_data(sys);
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
             if let Some(k) = text_key(key) {
                 self.ui.text_key(k);
+            }
+            if !self.ui.text_focused() {
+                self.refresh_data(sys);
             }
             return true;
         }
@@ -987,6 +1017,7 @@ impl UiScreen {
         if let Some(r) = self.roster.as_mut() {
             if a == "search" {
                 self.ui.edit("search");
+                self.refresh_data(sys);
                 return None;
             }
             return match r.action(a) {
