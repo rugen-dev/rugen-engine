@@ -196,6 +196,9 @@ impl<'a> Generator<'a> {
 
     /// Thresholded, sheared, condensed mask of `c` at face resolution.
     fn mask(&self, c: char) -> Option<(u32, u32, Vec<bool>)> {
+        if let Some(m) = self.symbol_mask(c) {
+            return Some(m);
+        }
         let id = self.font.glyph_id(c);
         let scale = PxScale {
             x: self.style.size as f32 * self.style.condense,
@@ -226,6 +229,48 @@ impl<'a> Generator<'a> {
             }
         }
         Some((w, h, out))
+    }
+
+    /// Hand-drawn 8x8 symbols (arrows, triangles, check, warning, dot) the
+    /// pixel TTFs lack, scaled to the font size and sat on the baseline.
+    fn symbol_mask(&self, c: char) -> Option<(u32, u32, Vec<bool>)> {
+        let rows = symbol_rows(c)?;
+        // the 7 inked rows span the capital height, bottom on the baseline
+        let (cap_top, cap_h) = self.cap_rows();
+        let h = self.cell_h;
+        let w = libm::roundf(8.0 * cap_h as f32 / 7.0).max(1.0) as u32;
+        let mut out = vec![false; (w * h) as usize];
+        for y in 0..cap_h {
+            let ry = (y * 7 / cap_h.max(1)) as usize;
+            let row: Vec<char> = rows[ry].chars().collect();
+            for x in 0..w {
+                let rx = ((x * 8) / w).min(7) as usize;
+                let yy = cap_top + y;
+                if row[rx] == 'X' && yy < h {
+                    out[(yy * w + x) as usize] = true;
+                }
+            }
+        }
+        Some((w, h, out))
+    }
+
+    /// First row and height of the capital `H` in the face mask.
+    fn cap_rows(&self) -> (u32, u32) {
+        let fallback = {
+            let k = (self.style.size / 8).max(1);
+            let top = (libm::roundf(self.ascent) as i32 - 7 * k as i32).max(0) as u32;
+            (top, 7 * k)
+        };
+        let id = self.font.glyph_id('H');
+        let scale = PxScale::from(self.style.size as f32);
+        let glyph = id.with_scale_and_position(scale, ab_glyph::point(0.0, self.ascent));
+        let Some(outline) = self.font.outline_glyph(glyph) else {
+            return fallback;
+        };
+        let b = outline.px_bounds();
+        let top = libm::roundf(b.min.y.max(0.0)) as u32;
+        let h = libm::roundf(b.height()) as u32;
+        if h == 0 { fallback } else { (top, h) }
     }
 
     /// Render one glyph: shadow, rim, outline, face, highlight.
@@ -287,7 +332,8 @@ impl<'a> Generator<'a> {
         for b in 0..BANKS.len() {
             sff.push_palette((0, b as u16), bank_palette(b));
         }
-        for code in 33u16..=126 {
+        let codes = (33u16..=126).chain(SYMBOLS.chars().map(|c| c as u16));
+        for code in codes {
             let c = char::from_u32(code as u32).unwrap_or(' ');
             if let Some(g) = self.glyph(c) {
                 sff.push_indexed((0, code), g.w as u16, g.h as u16, [0, 0], 0, g.px);
@@ -355,6 +401,78 @@ impl<'a> Generator<'a> {
         }
         (w, h, out)
     }
+}
+
+/// Symbols every generated font carries beyond ASCII (see [`symbol_rows`]).
+pub const SYMBOLS: &str = "▶◀·⚠✓●←→↑↓↖↗↘↙";
+
+/// 8x8 bitmap of a symbol, top row first (`X` = ink).
+fn symbol_rows(c: char) -> Option<[String; 8]> {
+    const RIGHT: [&str; 8] = [
+        "...X....", "...XX...", "XXXXXX..", "XXXXXXX.", "XXXXXX..", "...XX...", "...X....",
+        "........",
+    ];
+    const DOWN_RIGHT: [&str; 8] = [
+        "XX......", "XXX.....", ".XXX..XX", "..XXX.XX", "...XXXXX", "..XXXXXX", ".XXXXXXX",
+        "........",
+    ];
+    let own = |r: [&str; 8]| r.map(str::to_string);
+    let mirror_h = |r: [&str; 8]| r.map(|row| row.chars().rev().collect::<String>());
+    // the 8th row is spacing: mirror the seven inked rows only
+    let mirror_v = |r: [String; 8]| {
+        let mut out = r.clone();
+        out[..7].reverse();
+        out
+    };
+    // rotate RIGHT 90 degrees clockwise: column x of the result is row 7 - x
+    let down = || {
+        let src: Vec<Vec<char>> = RIGHT.iter().map(|r| r.chars().collect()).collect();
+        let mut out: [String; 8] = Default::default();
+        for (y, row) in out.iter_mut().enumerate() {
+            *row = (0..8).map(|x| src[7 - x][y]).collect();
+        }
+        out
+    };
+    Some(match c {
+        '▶' => own([
+            "X.......", "XXX.....", "XXXXX...", "XXXXXXX.", "XXXXX...", "XXX.....", "X.......",
+            "........",
+        ]),
+        '◀' => mirror_h([
+            "X.......", "XXX.....", "XXXXX...", "XXXXXXX.", "XXXXX...", "XXX.....", "X.......",
+            "........",
+        ]),
+        '·' => own([
+            "........", "........", "........", "...XX...", "...XX...", "........", "........",
+            "........",
+        ]),
+        '⚠' => own([
+            "...XX...", "..X..X..", "..X..X..", ".XX..XX.", ".XXXXXX.", "XXX..XXX", "XXXXXXXX",
+            "........",
+        ]),
+        '✓' => own([
+            "........", ".......X", "......XX", "X....XX.", "XX..XX..", ".XXXX...", "..XX....",
+            "........",
+        ]),
+        '●' => own([
+            "........", "..XXXX..", ".XXXXXX.", ".XXXXXX.", ".XXXXXX.", ".XXXXXX.", "..XXXX..",
+            "........",
+        ]),
+        // Silkscreen's own `%` closes up at 16 px
+        '%' => own([
+            "XX....X.", "XX...X..", "....X...", "...X....", "..X.....", ".X...XX.", "X....XX.",
+            "........",
+        ]),
+        '→' => own(RIGHT),
+        '←' => mirror_h(RIGHT),
+        '↓' => down(),
+        '↑' => mirror_v(down()),
+        '↘' => own(DOWN_RIGHT),
+        '↙' => mirror_h(DOWN_RIGHT),
+        '↗' => mirror_v(own(DOWN_RIGHT)),
+        '↖' => mirror_v(mirror_h(DOWN_RIGHT)),
+        _ => return None,
+    })
 }
 
 /// Write `<out>.def` and `<out>.sff` next to each other.
@@ -480,7 +598,8 @@ pub fn preview(generator: &Generator, bank: usize) -> (u32, u32, Vec<u8>) {
         "NOPQRSTUVWXYZ",
         "abcdefghijklm",
         "nopqrstuvwxyz",
-        "0123456789 !?.,:",
+        "0123456789 !?.,:%",
+        SYMBOLS,
     ];
     let rendered: Vec<(u32, u32, Vec<u8>)> = lines
         .iter()

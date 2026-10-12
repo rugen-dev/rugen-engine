@@ -27,6 +27,14 @@
 //! `widgets.rs`). Two players can navigate at once
 //! (`set_dual`): P2's focus uses the `*_focus2` visuals and fires
 //! [`Event::Action2`].
+//!
+//! Decoration and big-roster keys: `angle` rotates a subtree, `cut` clips it
+//! to a slanted quad, `fit`/`flip`/`grey` place portraits, `outline` frames a
+//! node, text with `pad` sizes itself to its text and `wrap` breaks lines,
+//! `when = "focus"|"blur"|"focus2"` and `w_focus`/`h_focus`/`scale_focus`
+//! react to the focus of the node's scope, `top` draws over everything, and a
+//! `paged` grid scrolls whole pages (publishing `pages.<id>`), with `bleed`
+//! letting cursor frames draw outside its clip.
 
 #![forbid(unsafe_code)]
 
@@ -204,18 +212,57 @@ pub struct NodeDef {
     pub track_color: Option<[f32; 4]>,
     /// Image: repeat at its own size (times `scale`) instead of stretching.
     pub tile: bool,
-    /// `focus` / `idle`: draw only while the node or an ancestor is (not) focused or selected.
-    pub when: Option<String>,
     /// Use the focus visuals while an ancestor is focused.
     pub inherit_focus: bool,
     /// Blink with this period in ticks.
     pub blink: Option<f32>,
     /// Navigation group (inherited by children): up/down stay inside the group when they can.
     pub group: Option<String>,
-    /// Text: break into lines at spaces to fit `w`, centred vertically in `h`.
-    pub wrap: bool,
     /// Extra space between wrapped lines (default 40% of the line height).
     pub line_gap: Option<f32>,
+    // ---- transforms, image fitting, slanted clips, focus scopes, paging
+    /// Rotation in degrees (clockwise, like CSS) of the node and its subtree
+    /// around the node's centre. Hit-testing ignores it.
+    pub angle: Option<f32>,
+    /// Image: mirror horizontally.
+    pub flip: bool,
+    /// Image: draw in greyscale.
+    pub grey: bool,
+    /// Image: `stretch` (default), `contain` (letterbox) or `cover` (crop); keeps the aspect.
+    pub fit: Option<String>,
+    /// Image fit alignment 0..1 per axis (default 0.5; `fit_y = 1` sits on the bottom edge).
+    pub fit_x: Option<f32>,
+    pub fit_y: Option<f32>,
+    /// Slanted clip of the node and its subtree: horizontal insets
+    /// `[top-left, bottom-left, top-right, bottom-right]` in virtual pixels.
+    pub cut: Option<[f32; 4]>,
+    /// `focus` / `blur` (alias `idle`) / `focus2`: only laid out while the
+    /// node's focus scope is (not) focused. The scope is the node itself, its
+    /// descendants, its focused ancestors, a `selected` node and, inside an
+    /// `items` instance, every sibling of that instance.
+    pub when: Option<String>,
+    /// Size / text scale used while the focus scope is focused.
+    pub w_focus: Option<Dim>,
+    pub h_focus: Option<Dim>,
+    pub scale_focus: Option<f32>,
+    /// Grid: scroll a whole page of rows at a time. A paged grid with an `id`
+    /// publishes `{pages.<id>.page}` and `{pages.<id>.count}` (1-based).
+    pub paged: bool,
+    /// Lists / grids: let children draw this many pixels outside the clip
+    /// (cursor frames, tabs).
+    pub bleed: Option<f32>,
+    /// Frame drawn around the node's rectangle, `outline_w` pixels thick (default 3).
+    pub outline: Option<[f32; 4]>,
+    pub outline_w: Option<f32>,
+    /// Text: wrap words to the node's `w`. With `line_h` lines are that far
+    /// apart from the top; otherwise they are `line_gap` apart (default 40% of
+    /// the line height) and centred vertically in `h`.
+    pub wrap: bool,
+    pub line_h: Option<f32>,
+    /// Draw the node and its subtree after everything else (cursor overlays).
+    pub top: bool,
+    /// Vertical nudge of the node's text in virtual pixels (negative = up).
+    pub text_dy: Option<f32>,
     pub children: Vec<NodeDef>,
 }
 
@@ -274,8 +321,185 @@ impl Rect {
     }
 }
 
+/// Rotation of a subtree: clockwise degrees around `(cx, cy)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rot {
+    pub deg: f32,
+    pub cx: f32,
+    pub cy: f32,
+}
+
+/// Image drawing options beyond position and size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageFx {
+    pub skew: f32,
+    pub alpha: f32,
+    /// Mirror horizontally.
+    pub flip: bool,
+    /// Greyscale.
+    pub grey: bool,
+}
+
+/// A slanted clip region: left and right edges are straight lines from `y0` to `y1`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Quad {
+    y0: f32,
+    y1: f32,
+    /// Left edge x at `y0` and `y1`.
+    l0: f32,
+    l1: f32,
+    /// Right edge x at `y0` and `y1`.
+    r0: f32,
+    r1: f32,
+}
+
+impl Quad {
+    fn of(r: Rect, cut: [f32; 4]) -> Self {
+        Self {
+            y0: r.y,
+            y1: r.y + r.h,
+            l0: r.x + cut[0],
+            l1: r.x + cut[1],
+            r0: r.x + r.w - cut[2],
+            r1: r.x + r.w - cut[3],
+        }
+    }
+    fn span(&self, y: f32) -> (f32, f32) {
+        let t = if self.y1 > self.y0 {
+            ((y - self.y0) / (self.y1 - self.y0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (
+            self.l0 + (self.l1 - self.l0) * t,
+            self.r0 + (self.r1 - self.r0) * t,
+        )
+    }
+    fn bounds(&self) -> Rect {
+        let x0 = self.l0.min(self.l1);
+        let x1 = self.r0.max(self.r1);
+        Rect {
+            x: x0,
+            y: self.y0,
+            w: (x1 - x0).max(0.0),
+            h: (self.y1 - self.y0).max(0.0),
+        }
+    }
+}
+
+/// Forwards to another painter, clipping images and rectangles to a [`Quad`]
+/// by drawing them in thin horizontal strips.
+struct CutPainter<'a> {
+    inner: &'a mut dyn Painter,
+    quad: Quad,
+}
+
+impl CutPainter<'_> {
+    const STRIP: f32 = 2.0;
+
+    fn strips(&self, dst: Rect, clip: Option<Rect>) -> Vec<Rect> {
+        let mut out = Vec::new();
+        let y_end = (dst.y + dst.h).min(self.quad.y1);
+        let mut y = dst.y.max(self.quad.y0);
+        while y < y_end {
+            let h = Self::STRIP.min(y_end - y);
+            let (l, r) = self.quad.span(y + h / 2.0);
+            let mut c = Rect {
+                x: l,
+                y,
+                w: (r - l).max(0.0),
+                h,
+            };
+            if let Some(cl) = clip {
+                c = c.intersect(&cl);
+            }
+            if c.w > 0.0 && c.h > 0.0 {
+                out.push(c);
+            }
+            y += h;
+        }
+        out
+    }
+}
+
+impl Painter for CutPainter<'_> {
+    fn image_size(&mut self, key: &str) -> Option<(u32, u32)> {
+        self.inner.image_size(key)
+    }
+    fn draw_image(
+        &mut self,
+        key: &str,
+        src: Option<[u32; 4]>,
+        dst: Rect,
+        skew: f32,
+        alpha: f32,
+        clip: Option<Rect>,
+    ) {
+        for c in self.strips(dst, clip) {
+            self.inner.draw_image(key, src, dst, skew, alpha, Some(c));
+        }
+    }
+    fn draw_image_fx(
+        &mut self,
+        key: &str,
+        src: Option<[u32; 4]>,
+        dst: Rect,
+        fx: &ImageFx,
+        clip: Option<Rect>,
+    ) {
+        for c in self.strips(dst, clip) {
+            self.inner.draw_image_fx(key, src, dst, fx, Some(c));
+        }
+    }
+    fn draw_rect(&mut self, dst: Rect, color: [f32; 4], skew: f32, clip: Option<Rect>) {
+        for c in self.strips(dst, clip) {
+            self.inner.draw_rect(dst, color, skew, Some(c));
+        }
+    }
+    fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32 {
+        self.inner.text_width(font, text, scale)
+    }
+    fn text_height(&mut self, font: i32, scale: f32) -> f32 {
+        self.inner.text_height(font, scale)
+    }
+    fn draw_text(
+        &mut self,
+        font: i32,
+        text: &str,
+        x: f32,
+        y: f32,
+        bank: i32,
+        align: i32,
+        scale: f32,
+        alpha: f32,
+        clip: Option<Rect>,
+    ) {
+        let b = self.quad.bounds();
+        let c = Some(clip.map_or(b, |c| c.intersect(&b)));
+        self.inner
+            .draw_text(font, text, x, y, bank, align, scale, alpha, c);
+    }
+    fn set_transform(&mut self, rot: Option<Rot>) {
+        self.inner.set_transform(rot);
+    }
+}
+
 /// What the host draws for the engine. Coordinates are virtual pixels.
 pub trait Painter {
+    /// Rotate everything drawn until the next call (None = no rotation).
+    fn set_transform(&mut self, _rot: Option<Rot>) {}
+    /// [`draw_image`](Self::draw_image) with flip / greyscale; hosts without
+    /// support fall back to the plain draw.
+    fn draw_image_fx(
+        &mut self,
+        key: &str,
+        src: Option<[u32; 4]>,
+        dst: Rect,
+        fx: &ImageFx,
+        clip: Option<Rect>,
+    ) {
+        self.draw_image(key, src, dst, fx.skew, fx.alpha, clip);
+    }
     fn image_size(&mut self, key: &str) -> Option<(u32, u32)>;
     /// Draw `src` texels (None = whole image) of `key` into `dst`, sheared by `skew`.
     fn draw_image(
@@ -361,6 +585,16 @@ struct Instance {
     delay: f32,
     /// Context the instance was built with (for `{bind}` images at draw time).
     ctx: Value,
+    /// Slanted clip inherited from the nearest `cut` ancestor (or itself).
+    quad: Option<Quad>,
+    /// Rotation inherited from the nearest `angle` ancestor (or itself).
+    rot: Option<Rot>,
+    /// Its focus scope was focused at layout time (`*_focus` sizes, `scale_focus`).
+    scope_lit: bool,
+    /// Laid out next to the visible page of a paged grid: navigable, not drawn.
+    offpage: bool,
+    /// Drawn in the overlay pass (`top` on itself or an ancestor).
+    top: bool,
 }
 
 pub struct Ui {
@@ -386,6 +620,14 @@ pub struct Ui {
     mouse_was_down: bool,
     wheel: f32,
     pending: Vec<Event>,
+    /// Slanted clip / rotation of the subtree being laid out.
+    cur_quad: Option<Quad>,
+    cur_rot: Option<Rot>,
+    cur_top: bool,
+    /// Paged grids by id: (page, pages), 1-based, from the last layout.
+    pages: HashMap<String, (usize, usize)>,
+    /// Scrollers follow the second player's focus (it moved last).
+    follow2: bool,
 }
 
 fn truthy(v: Option<&Value>) -> bool {
@@ -503,6 +745,29 @@ pub fn ease(kind: &str, t: f32) -> f32 {
     }
 }
 
+/// Greedy word wrap of `text` into lines no wider than `width`.
+fn wrap_text(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let cand = if cur.is_empty() {
+            word.to_string()
+        } else {
+            format!("{cur} {word}")
+        };
+        if !cur.is_empty() && p.text_width(font, &cand, scale) > width {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_string();
+        } else {
+            cur = cand;
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
 fn count(n: &NodeDef) -> usize {
     n.children.iter().map(|c| 1 + count(c)).sum()
 }
@@ -561,6 +826,11 @@ impl Ui {
             mouse_was_down: false,
             wheel: 0.0,
             pending: Vec::new(),
+            cur_quad: None,
+            cur_rot: None,
+            cur_top: false,
+            pages: HashMap::new(),
+            follow2: false,
         }
     }
 
@@ -748,6 +1018,19 @@ impl Ui {
             h: VIRTUAL_H,
         };
         let nodes = self.def.node.clone();
+        // paged grids publish their page for `{pages.<id>.page}` / `.count`
+        if !self.pages.is_empty()
+            && let Value::Object(m) = &mut self.data
+        {
+            let pages: serde_json::Map<String, Value> = self
+                .pages
+                .iter()
+                .map(|(k, (p, n))| (k.clone(), serde_json::json!({ "page": p, "count": n })))
+                .collect();
+            m.insert("pages".into(), Value::Object(pages));
+        }
+        self.cur_quad = None;
+        self.cur_rot = None;
         let ctx = self.data.clone();
         let mut cursor = 0usize;
         self.layout_children(&mut cursor, &nodes, root, &ctx, "", None, 0.0, p);
@@ -782,9 +1065,70 @@ impl Ui {
                 Some(id) => id.clone(),
                 None => format!("{key_prefix}#{def_idx}"),
             };
+            // focus scopes: `when` and the `*_focus` sizes
+            let scoped = n.when.is_some()
+                || n.w_focus.is_some()
+                || n.h_focus.is_some()
+                || n.scale_focus.is_some();
+            let lit = scoped
+                && (self.scope_focused(self.focus.as_deref(), &key, key_prefix)
+                    || self.ancestor_focused(&key)
+                    || n.selected.as_ref().is_some_and(|v| visible(ctx, v)));
+            let shown = match n.when.as_deref() {
+                None => true,
+                Some("focus") => lit,
+                Some("focus2") => {
+                    self.dual && self.scope_focused(self.focus2.as_deref(), &key, key_prefix)
+                }
+                Some(_) => !lit,
+            };
+            if !shown {
+                *cursor += subtree;
+                continue;
+            }
+            let sized;
+            let n =
+                if lit && (n.w_focus.is_some() || n.h_focus.is_some() || n.scale_focus.is_some()) {
+                    let mut c = n.clone();
+                    c.w = n.w_focus.clone().or(c.w);
+                    c.h = n.h_focus.clone().or(c.h);
+                    c.scale = n.scale_focus.or(c.scale);
+                    sized = c;
+                    &sized
+                } else {
+                    n
+                };
             let rect = Self::node_rect(n, parent, ctx, p);
+            let before = self.instances.len();
             self.place(n, def_idx, key, rect, ctx, clip, delay, cursor, subtree, p);
+            if lit && let Some(inst) = self.instances.get_mut(before) {
+                inst.scope_lit = true;
+            }
         }
+    }
+
+    /// The focus is on `key`, inside it, or (within an `items` instance) on a sibling.
+    fn scope_focused(&self, focus: Option<&str>, key: &str, prefix: &str) -> bool {
+        let Some(f) = focus else {
+            return false;
+        };
+        if f == key || (f.starts_with(key) && f[key.len()..].starts_with('.')) {
+            return true;
+        }
+        match prefix.rfind("].") {
+            Some(end) => f.starts_with(&prefix[..end + 2]),
+            None => false,
+        }
+    }
+
+    /// Height of one page of a paged grid (whole rows that fit), virtual pixels.
+    fn grid_page(n: &NodeDef, rect: Rect) -> f32 {
+        let pad = n.pad.unwrap_or(0.0);
+        let gap = n.gap.unwrap_or(0.0);
+        let inner_h = rect.h - 2.0 * pad;
+        let ch = n.cell_h.unwrap_or(inner_h).max(1.0);
+        let rows = libm::floorf((inner_h + gap) / (ch + gap)).max(1.0);
+        rows * (ch + gap)
     }
 
     fn node_rect(n: &NodeDef, parent: Rect, ctx: &Value, p: &mut dyn Painter) -> Rect {
@@ -801,11 +1145,17 @@ impl Ui {
                 .unwrap_or_default();
             let font = n.font.unwrap_or(1);
             let scale = n.scale.unwrap_or(1.0);
+            let pad = n.pad.unwrap_or(0.0);
             if w.is_none() {
-                w = Some(p.text_width(font, &text, scale));
+                w = Some(p.text_width(font, &text, scale) + 2.0 * pad);
             }
             if h.is_none() {
-                h = Some(p.text_height(font, scale));
+                let lh = n.line_h.unwrap_or_else(|| p.text_height(font, scale));
+                let lines = match (n.wrap, w) {
+                    (true, Some(ww)) => wrap_text(p, font, scale, &text, ww - 2.0 * pad).len(),
+                    _ => 1,
+                };
+                h = Some(lh * lines.max(1) as f32);
             }
         } else if matches!(
             n.kind,
@@ -922,13 +1272,51 @@ impl Ui {
             y: rect.y + oy,
             ..rect
         };
+        let (saved_quad, saved_rot, saved_top) = (self.cur_quad, self.cur_rot, self.cur_top);
+        self.cur_top |= n.top;
+        if let Some(c) = n.cut {
+            self.cur_quad = Some(Quad::of(rect, c));
+        }
+        if let Some(a) = n.angle
+            && a != 0.0
+        {
+            let (cx, cy) = rect.center();
+            self.cur_rot = Some(Rot { deg: a, cx, cy });
+        }
+        self.place_inner(n, def_idx, key, rect, ctx, clip, delay, cursor, subtree, p);
+        self.cur_quad = saved_quad;
+        self.cur_rot = saved_rot;
+        self.cur_top = saved_top;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_inner(
+        &mut self,
+        n: &NodeDef,
+        def_idx: usize,
+        key: String,
+        rect: Rect,
+        ctx: &Value,
+        clip: Option<Rect>,
+        delay: f32,
+        cursor: &mut usize,
+        subtree: usize,
+        p: &mut dyn Painter,
+    ) {
         let default_focus = matches!(
             n.kind,
             Kind::Button | Kind::Input | Kind::Slider | Kind::Toggle
         );
         let scroller = matches!(n.kind, Kind::List | Kind::Grid);
         let child_clip = if scroller {
-            Some(clip.map_or(rect, |c| c.intersect(&rect)))
+            let b = n.bleed.unwrap_or(0.0);
+            let grown = Rect {
+                x: rect.x - b,
+                y: rect.y - b,
+                w: rect.w + 2.0 * b,
+                h: rect.h + 2.0 * b,
+            };
+            Some(clip.map_or(grown, |c| c.intersect(&grown)))
         } else {
             clip
         };
@@ -961,6 +1349,11 @@ impl Ui {
             scroll_owner: None,
             delay,
             ctx: ctx.clone(),
+            quad: self.cur_quad,
+            rot: self.cur_rot,
+            scope_lit: false,
+            offpage: false,
+            top: self.cur_top,
         });
         let me = self.instances.len() - 1;
         if n.children.is_empty() {
@@ -1103,23 +1496,27 @@ impl Ui {
         }
 
         // items: instance the children once per element (children overlap in the slot)
-        let item_ctxs: Vec<(String, Value)> = match &n.items {
-            Some(path) => match lookup(ctx, bind_path(path)) {
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let mut c = ctx.clone();
-                        if let Value::Object(m) = &mut c {
-                            m.insert("item".into(), v.clone());
-                            m.insert("index".into(), Value::from(i));
-                        }
-                        (format!("{key}[{i}]."), c)
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            },
-            None => vec![(format!("{key}."), ctx.clone())],
+        // item contexts are built lazily: paged grids skip most of them
+        let items: Option<Vec<Value>> =
+            n.items
+                .as_ref()
+                .map(|path| match lookup(ctx, bind_path(path)) {
+                    Some(Value::Array(a)) => a.clone(),
+                    _ => Vec::new(),
+                });
+        let item_count = items.as_ref().map_or(1, Vec::len);
+        let item_ctx = |i: usize| -> (String, Value) {
+            match &items {
+                Some(a) => {
+                    let mut c = ctx.clone();
+                    if let Value::Object(m) = &mut c {
+                        m.insert("item".into(), a[i].clone());
+                        m.insert("index".into(), Value::from(i));
+                    }
+                    (format!("{key}[{i}]."), c)
+                }
+                None => (format!("{key}."), ctx.clone()),
+            }
         };
         let mut pen_x = inner.x;
         let mut pen_y = inner.y - scroll;
@@ -1127,7 +1524,34 @@ impl Ui {
         let cols = n.columns.unwrap_or(1).max(1) as usize;
         let cw = n.cell_w.unwrap_or(inner.w / cols as f32);
         let ch = n.cell_h.unwrap_or(inner.h);
-        for (i, (prefix, c)) in item_ctxs.iter().enumerate() {
+        // paged grids lay out the visible page plus one row on each side
+        // (navigable, not drawn); the rest is skipped
+        let page_rows = (n.kind == Kind::Grid && n.paged).then(|| {
+            let per = libm::roundf(Self::grid_page(n, rect) / (ch + gap)).max(1.0) as usize;
+            let first = libm::roundf(scroll / (ch + gap)).max(0.0) as usize;
+            (first, per)
+        });
+        for i in 0..item_count {
+            let offpage = match page_rows {
+                Some((first, per)) => {
+                    let row = i / cols;
+                    let prefix = format!("{key}[{i}].");
+                    let held = [self.focus.as_deref(), self.focus2.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|f| f.starts_with(prefix.as_str()));
+                    if !held && (row + 1 < first || row > first + per) {
+                        if n.kind == Kind::Grid {
+                            content_h = ((i / cols) as f32 + 1.0) * (ch + gap) - gap;
+                        }
+                        continue;
+                    }
+                    row < first || row >= first + per
+                }
+                None => false,
+            };
+            let (prefix, c) = item_ctx(i);
+            let (prefix, c) = (&prefix, &c);
             *cursor = start_cursor;
             let slot = match n.kind {
                 Kind::Vbox | Kind::List => Rect {
@@ -1163,6 +1587,7 @@ impl Ui {
             );
             let mut extent = 0.0f32;
             for inst in &mut self.instances[before..] {
+                inst.offpage |= offpage;
                 if inst.scroll_owner.is_none() {
                     inst.scroll_owner = owner.clone();
                 }
@@ -1185,7 +1610,20 @@ impl Ui {
             }
         }
         *cursor = start_cursor + subtree;
-        if scroller {
+        if n.kind == Kind::Grid && n.paged {
+            let page = Self::grid_page(n, rect);
+            let rows = item_count.div_ceil(cols);
+            let per_page = (libm::roundf(page / (ch + gap)).max(1.0)) as usize;
+            let pages = rows.div_ceil(per_page).max(1);
+            let max = (pages - 1) as f32 * page;
+            let cur = self.scroll.get(&key).copied().unwrap_or(0.0);
+            let cur = cur.clamp(0.0, max);
+            if let Some(id) = &n.id {
+                let at = libm::roundf(cur / page) as usize + 1;
+                self.pages.insert(id.clone(), (at.min(pages), pages));
+            }
+            self.scroll.insert(key, cur);
+        } else if scroller {
             let max = (content_h - inner.h).max(0.0);
             let cur = self.scroll.get(&key).copied().unwrap_or(0.0);
             self.scroll.insert(key, cur.clamp(0.0, max));
@@ -1216,6 +1654,7 @@ impl Ui {
             *t += 1.0;
         }
         self.layout(p);
+        let laid_out_for = (self.focus.clone(), self.focus2.clone());
         let mut events = std::mem::take(&mut self.pending);
         // a leaving screen ignores input
         if self.leaving.is_some() {
@@ -1243,7 +1682,16 @@ impl Ui {
                     });
                 if let Some(k) = owner {
                     let cur = self.scroll.get(&k).copied().unwrap_or(0.0);
-                    self.scroll.insert(k, (cur - self.wheel * 48.0).max(0.0));
+                    let paged = self
+                        .find(&k)
+                        .map(|o| (&self.defs[o.def], o.rect))
+                        .filter(|(d, _)| d.kind == Kind::Grid && d.paged)
+                        .map(|(d, r)| Self::grid_page(d, r));
+                    let next = match paged {
+                        Some(page) => cur - self.wheel.signum() * page,
+                        None => cur - self.wheel * 48.0,
+                    };
+                    self.scroll.insert(k, next.max(0.0));
                 }
             }
             let hovered = self
@@ -1252,6 +1700,7 @@ impl Ui {
                 .rev()
                 .find(|i| {
                     i.focusable
+                        && !i.offpage
                         && self.hit_rect(i).contains(mx, my)
                         && i.clip.is_none_or(|c| c.contains(mx, my))
                 })
@@ -1290,7 +1739,7 @@ impl Ui {
             self.focus = self
                 .instances
                 .iter()
-                .find(|i| i.focusable)
+                .find(|i| i.focusable && !i.offpage)
                 .map(|i| i.key.clone());
             self.focus_age = 0.0;
         }
@@ -1313,6 +1762,7 @@ impl Ui {
         }
         if self.focus != before {
             self.focus_age = 0.0;
+            self.follow2 = false;
         } else {
             self.focus_age += 1.0;
         }
@@ -1325,31 +1775,51 @@ impl Ui {
                 self.focus2 = self
                     .instances
                     .iter()
-                    .filter(|i| i.focusable)
+                    .filter(|i| i.focusable && !i.offpage)
                     .nth(1)
                     .or_else(|| self.instances.iter().find(|i| i.focusable))
                     .map(|i| i.key.clone());
             }
+            let before2 = self.focus2.clone();
             if let Some(mut ev) = self.navigate(nav2, true) {
                 events.append(&mut ev);
+            }
+            if self.focus2 != before2 && before2.is_some() {
+                self.follow2 = true;
             }
         }
         if nav.back {
             events.push(Event::Back);
         }
-        // keep the focused item visible inside its scroller
-        if let Some(i) = self.focus.clone().and_then(|f| self.find(&f).cloned())
+        // keep the focused item (of whoever moved last) visible inside its scroller
+        let follow = if self.follow2 {
+            self.focus2.clone()
+        } else {
+            self.focus.clone()
+        };
+        if let Some(i) = follow.and_then(|f| self.find(&f).cloned())
             && let Some(owner) = i.scroll_owner.clone()
             && let Some(o) = self.find(&owner).cloned()
         {
             let s = self.scroll.get(&owner).copied().unwrap_or(0.0);
             let top = i.rect.y - o.rect.y;
             let bottom = top + i.rect.h;
-            if top < 0.0 {
+            let od = &self.defs[o.def];
+            if od.kind == Kind::Grid && od.paged {
+                // snap to the page holding the focused cell
+                let page = Self::grid_page(od, o.rect);
+                let content_top = i.rect.y - (o.rect.y + od.pad.unwrap_or(0.0)) + s;
+                let want = libm::floorf((content_top + 0.5) / page) * page;
+                self.scroll.insert(owner, want.max(0.0));
+            } else if top < 0.0 {
                 self.scroll.insert(owner, (s + top).max(0.0));
             } else if bottom > o.rect.h {
                 self.scroll.insert(owner, s + bottom - o.rect.h);
             }
+        }
+        // focus-scoped nodes (`when`, `*_focus` sizes) follow the new focus this frame
+        if (self.focus.clone(), self.focus2.clone()) != laid_out_for {
+            self.layout(p);
         }
         events
     }
@@ -1542,7 +2012,14 @@ impl Ui {
         }
         let instances = std::mem::take(&mut self.instances);
         let mut tip: Option<(String, Rect)> = None;
-        for inst in &instances {
+        let order = instances
+            .iter()
+            .filter(|i| !i.top)
+            .chain(instances.iter().filter(|i| i.top));
+        for inst in order {
+            if inst.offpage {
+                continue;
+            }
             // fully outside the scroller: skip (also keeps off-screen thumbnails unloaded)
             if let Some(c) = inst.clip
                 && (inst.rect.x + inst.rect.w <= c.x
@@ -1552,282 +2029,16 @@ impl Ui {
             {
                 continue;
             }
-            let n = &self.defs[inst.def];
-            let focused = self.focus.as_deref() == Some(&inst.key);
-            let focused2 = self.dual && self.focus2.as_deref() == Some(&inst.key);
-            let selected = n.selected.as_ref().is_some_and(|s| visible(&inst.ctx, s));
-            let lit = focused || selected;
-            let mut rect = inst.rect;
-            let (_, t) = self.anim(n, inst.delay);
-            let alpha = n.alpha.unwrap_or(1.0) * t;
-            if focused && let Some(hs) = n.hover_scale {
-                rect = rect.scaled(hs);
-            }
-            let skew = n.skew.unwrap_or(0.0);
-            let clip = inst.clip;
-            if n.kind == Kind::Particles {
-                self.particles(p, n, rect, alpha, clip);
-                continue;
-            }
-            let inside = self.ancestor_focused(&inst.key);
-            match n.when.as_deref() {
-                Some("focus") if !(lit || inside) => continue,
-                Some("idle") if lit || inside => continue,
-                _ => {}
-            }
-            if let Some(period) = n.blink
-                && period > 0.0
-                && self.time % period >= period / 2.0
-            {
-                continue;
-            }
-            let lit = lit || (n.inherit_focus && inside);
-            match n.kind {
-                Kind::Pips => {
-                    widgets::draw_pips(p, n, &inst.ctx, rect, alpha, clip);
-                    continue;
+            p.set_transform(inst.rot);
+            match inst.quad {
+                Some(quad) => {
+                    let mut cut = CutPainter { inner: p, quad };
+                    self.draw_one(&mut cut, inst, &mut tip);
                 }
-                Kind::Choice => {
-                    widgets::draw_choice(p, n, &inst.ctx, rect, lit, alpha, clip);
-                    continue;
-                }
-                Kind::Keycap => {
-                    widgets::draw_keycap(
-                        p,
-                        n,
-                        &inst.ctx,
-                        inst.text.as_deref(),
-                        rect,
-                        lit,
-                        alpha,
-                        clip,
-                    );
-                    continue;
-                }
-                Kind::Icon => {
-                    widgets::draw_icon(p, n, &inst.ctx, rect, lit, alpha, clip);
-                    continue;
-                }
-                Kind::Slider
-                    if n.knob.is_some() || n.knob_color.is_some() || n.track_color.is_some() =>
-                {
-                    let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
-                    let v = self.slider_value(inst);
-                    let frac = if max > min {
-                        ((v - min) / (max - min)).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    widgets::draw_slider(p, n, frac, rect, lit, alpha, clip);
-                    continue;
-                }
-                _ => {}
-            }
-            let color = if lit {
-                n.color_focus.or(n.color)
-            } else {
-                n.color
-            };
-            if let Some(c) = color {
-                p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
-            }
-            let on = n
-                .value
-                .as_ref()
-                .is_some_and(|v| truthy(lookup(&inst.ctx, bind_path(v))));
-            let image = if n.kind == Kind::Toggle && on && n.image_on.is_some() {
-                n.image_on.as_ref()
-            } else if focused2 && n.image_focus2.is_some() {
-                n.image_focus2.as_ref()
-            } else if lit {
-                n.image_focus.as_ref().or(n.image.as_ref())
-            } else {
-                n.image.as_ref()
-            };
-            if let Some(img) = image {
-                let key = interpolate(img, &inst.ctx);
-                match n.nine {
-                    Some(b) => Self::nine_slice(p, &key, b, rect, alpha, clip),
-                    None if n.tile => {
-                        widgets::draw_tiled(p, &key, rect, n.scale.unwrap_or(1.0), alpha, clip)
-                    }
-                    None => p.draw_image(&key, None, rect, skew, alpha, clip),
-                }
-            }
-            if let Some(b) = n.border {
-                let edge = if lit {
-                    n.border_color_focus.or(n.border_color)
-                } else {
-                    n.border_color
-                }
-                .unwrap_or(widgets::INK);
-                widgets::draw_border(p, rect, b, n.depth.unwrap_or(0.0), edge, alpha, clip);
-            }
-            // the second player's focus tints over the image
-            if focused2 && let Some(c) = n.color_focus2 {
-                p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
-            }
-            if n.kind == Kind::Slider {
-                let frac = {
-                    let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
-                    let v = self.slider_value(inst);
-                    if max > min {
-                        ((v - min) / (max - min)).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    }
-                };
-                let fill = n.color2.unwrap_or([0.85, 0.2, 0.25, 1.0]);
-                let track_h = (rect.h * 0.3).max(2.0);
-                let track = Rect {
-                    x: rect.x,
-                    y: rect.y + (rect.h - track_h) / 2.0,
-                    w: rect.w,
-                    h: track_h,
-                };
-                p.draw_rect(track, [0.0, 0.0, 0.0, 0.5 * alpha], 0.0, clip);
-                p.draw_rect(
-                    Rect {
-                        w: track.w * frac,
-                        ..track
-                    },
-                    [fill[0], fill[1], fill[2], fill[3] * alpha],
-                    0.0,
-                    clip,
-                );
-                let knob = (rect.h * 0.6).max(4.0);
-                p.draw_rect(
-                    Rect {
-                        x: rect.x + track.w * frac - knob / 2.0,
-                        y: rect.y + (rect.h - knob) / 2.0,
-                        w: knob,
-                        h: knob,
-                    },
-                    if lit {
-                        [1.0, 1.0, 1.0, alpha]
-                    } else {
-                        [0.85, 0.85, 0.9, alpha]
-                    },
-                    0.0,
-                    clip,
-                );
-            }
-            if n.kind == Kind::Toggle && n.image.is_none() && n.image_on.is_none() {
-                let fill = if on {
-                    n.color2.unwrap_or([0.3, 0.8, 0.4, 1.0])
-                } else {
-                    [0.25, 0.25, 0.3, 1.0]
-                };
-                let knob = rect.h.max(4.0);
-                p.draw_rect(
-                    rect,
-                    [fill[0], fill[1], fill[2], fill[3] * alpha],
-                    0.0,
-                    clip,
-                );
-                p.draw_rect(
-                    Rect {
-                        x: if on { rect.x + rect.w - knob } else { rect.x },
-                        y: rect.y,
-                        w: knob,
-                        h: knob,
-                    },
-                    [1.0, 1.0, 1.0, alpha],
-                    0.0,
-                    clip,
-                );
-            }
-            let text = match n.kind {
-                Kind::Input => {
-                    let id = n.id.clone().unwrap_or_else(|| inst.key.clone());
-                    let mut t = self.input_text(&id);
-                    let editing = self.editing.as_deref() == Some(&inst.key);
-                    if editing && (self.time as i64 / 20) % 2 == 0 {
-                        t.push('_');
-                    }
-                    if t.is_empty() && !editing {
-                        n.placeholder.clone()
-                    } else {
-                        Some(t)
-                    }
-                }
-                Kind::Text | Kind::Button | Kind::Toggle | Kind::Slider => inst.text.clone(),
-                _ => None,
-            };
-            if let Some(text) = text
-                && !text.is_empty()
-            {
-                let font = n.font.unwrap_or(1);
-                let scale = n.scale.unwrap_or(1.0);
-                let bank = if focused2 && n.bank_focus2.is_some() {
-                    n.bank_focus2
-                } else if lit {
-                    n.bank_focus.or(n.bank)
-                } else {
-                    n.bank
-                }
-                .unwrap_or(0);
-                let default_align = match n.kind {
-                    Kind::Button => "center",
-                    _ => "left",
-                };
-                let inset = n.pad.unwrap_or(0.0);
-                let (align, x) = match n.align.as_deref().unwrap_or(default_align) {
-                    "right" => (-1, rect.x + rect.w - inset),
-                    "center" => (0, rect.x + rect.w / 2.0),
-                    _ => (1, rect.x + inset),
-                };
-                let th = p.text_height(font, scale);
-                let y = rect.y + (rect.h + th) / 2.0;
-                let text_clip = if (n.w.is_some() && n.kind == Kind::Text) || n.kind == Kind::Input
-                {
-                    Some(clip.map_or(rect, |c| c.intersect(&rect)))
-                } else {
-                    clip
-                };
-                if n.wrap && n.kind == Kind::Text {
-                    let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
-                    let step = th + n.line_gap.unwrap_or(th * 0.4);
-                    let total = step * lines.len() as f32 - (step - th);
-                    let top = rect.y + ((rect.h - total) / 2.0).max(0.0);
-                    for (i, line) in lines.iter().enumerate() {
-                        p.draw_text(
-                            font,
-                            line,
-                            x,
-                            top + th + step * i as f32,
-                            bank,
-                            align,
-                            scale,
-                            alpha,
-                            clip,
-                        );
-                    }
-                    continue;
-                }
-                p.draw_text(
-                    font,
-                    &text,
-                    x + skew / 2.0,
-                    y,
-                    bank,
-                    align,
-                    scale,
-                    alpha,
-                    text_clip,
-                );
-            }
-            if focused
-                && self.focus_age > 30.0
-                && self.leaving.is_none()
-                && let Some(t) = &n.tip
-            {
-                let t = interpolate(t, &inst.ctx);
-                if !t.is_empty() {
-                    tip = Some((t, rect));
-                }
+                None => self.draw_one(p, inst, &mut tip),
             }
         }
+        p.set_transform(None);
         if let Some((text, r)) = tip {
             let (font, scale) = (1, 2.0);
             let w = p.text_width(font, &text, scale) + 16.0;
@@ -1866,6 +2077,383 @@ impl Ui {
             );
         }
         self.instances = instances;
+    }
+
+    /// `src` texels and destination of an image drawn with the node's `fit`.
+    fn fit_image(
+        p: &mut dyn Painter,
+        key: &str,
+        n: &NodeDef,
+        rect: Rect,
+    ) -> (Option<[u32; 4]>, Rect) {
+        let mode = n.fit.as_deref().unwrap_or("stretch");
+        if mode == "stretch" {
+            return (None, rect);
+        }
+        let Some((iw, ih)) = p.image_size(key) else {
+            return (None, rect);
+        };
+        if iw == 0 || ih == 0 || rect.w <= 0.0 || rect.h <= 0.0 {
+            return (None, rect);
+        }
+        let (fx, fy) = (n.fit_x.unwrap_or(0.5), n.fit_y.unwrap_or(0.5));
+        let (iwf, ihf) = (iw as f32, ih as f32);
+        if mode == "cover" {
+            let s = (rect.w / iwf).max(rect.h / ihf);
+            let (sw, sh) = ((rect.w / s).min(iwf), (rect.h / s).min(ihf));
+            let mut sx = (iwf - sw) * fx;
+            if n.flip {
+                // flipped images crop from the mirrored side
+                sx = iwf - sw - sx;
+            }
+            let sy = (ihf - sh) * fy;
+            let src = [
+                sx.max(0.0) as u32,
+                sy.max(0.0) as u32,
+                (sw as u32).max(1),
+                (sh as u32).max(1),
+            ];
+            (Some(src), rect)
+        } else {
+            let s = (rect.w / iwf).min(rect.h / ihf);
+            let (w, h) = (iwf * s, ihf * s);
+            (
+                None,
+                Rect {
+                    x: rect.x + (rect.w - w) * fx,
+                    y: rect.y + (rect.h - h) * fy,
+                    w,
+                    h,
+                },
+            )
+        }
+    }
+
+    /// Draw one laid-out instance.
+    fn draw_one(&self, p: &mut dyn Painter, inst: &Instance, tip: &mut Option<(String, Rect)>) {
+        let n = &self.defs[inst.def];
+        let focused = self.focus.as_deref() == Some(&inst.key);
+        let focused2 = self.dual && self.focus2.as_deref() == Some(&inst.key);
+        let selected = n.selected.as_ref().is_some_and(|s| visible(&inst.ctx, s));
+        let lit = focused || selected;
+        let mut rect = inst.rect;
+        let (_, t) = self.anim(n, inst.delay);
+        let alpha = n.alpha.unwrap_or(1.0) * t;
+        if focused && let Some(hs) = n.hover_scale {
+            rect = rect.scaled(hs);
+        }
+        let skew = n.skew.unwrap_or(0.0);
+        let clip = inst.clip;
+        if n.kind == Kind::Particles {
+            self.particles(p, n, rect, alpha, clip);
+            return;
+        }
+        let inside = self.ancestor_focused(&inst.key);
+        if let Some(period) = n.blink
+            && period > 0.0
+            && self.time % period >= period / 2.0
+        {
+            return;
+        }
+        let lit = lit || (n.inherit_focus && inside);
+        match n.kind {
+            Kind::Pips => {
+                widgets::draw_pips(p, n, &inst.ctx, rect, alpha, clip);
+                return;
+            }
+            Kind::Choice => {
+                widgets::draw_choice(p, n, &inst.ctx, rect, lit, alpha, clip);
+                return;
+            }
+            Kind::Keycap => {
+                widgets::draw_keycap(
+                    p,
+                    n,
+                    &inst.ctx,
+                    inst.text.as_deref(),
+                    rect,
+                    lit,
+                    alpha,
+                    clip,
+                );
+                return;
+            }
+            Kind::Icon => {
+                widgets::draw_icon(p, n, &inst.ctx, rect, lit, alpha, clip);
+                return;
+            }
+            Kind::Slider
+                if n.knob.is_some() || n.knob_color.is_some() || n.track_color.is_some() =>
+            {
+                let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
+                let v = self.slider_value(inst);
+                let frac = if max > min {
+                    ((v - min) / (max - min)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                widgets::draw_slider(p, n, frac, rect, lit, alpha, clip);
+                return;
+            }
+            _ => {}
+        }
+        let color = if lit {
+            n.color_focus.or(n.color)
+        } else {
+            n.color
+        };
+        if let Some(c) = color {
+            p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
+        }
+        let on = n
+            .value
+            .as_ref()
+            .is_some_and(|v| truthy(lookup(&inst.ctx, bind_path(v))));
+        let image = if n.kind == Kind::Toggle && on && n.image_on.is_some() {
+            n.image_on.as_ref()
+        } else if focused2 && n.image_focus2.is_some() {
+            n.image_focus2.as_ref()
+        } else if lit {
+            n.image_focus.as_ref().or(n.image.as_ref())
+        } else {
+            n.image.as_ref()
+        };
+        if let Some(img) = image {
+            let key = interpolate(img, &inst.ctx);
+            match n.nine {
+                Some(b) => Self::nine_slice(p, &key, b, rect, alpha, clip),
+                None if n.tile => {
+                    widgets::draw_tiled(p, &key, rect, n.scale.unwrap_or(1.0), alpha, clip)
+                }
+                None => {
+                    let fx = ImageFx {
+                        skew,
+                        alpha,
+                        flip: n.flip,
+                        grey: n.grey,
+                    };
+                    let (src, dst) = Self::fit_image(p, &key, n, rect);
+                    p.draw_image_fx(&key, src, dst, &fx, clip);
+                }
+            }
+        }
+        if let Some(b) = n.border {
+            let edge = if lit {
+                n.border_color_focus.or(n.border_color)
+            } else {
+                n.border_color
+            }
+            .unwrap_or(widgets::INK);
+            widgets::draw_border(p, rect, b, n.depth.unwrap_or(0.0), edge, alpha, clip);
+        }
+        if let Some(c) = n.outline {
+            let t = n.outline_w.unwrap_or(3.0);
+            let c = [c[0], c[1], c[2], c[3] * alpha];
+            for r in [
+                Rect { h: t, ..rect },
+                Rect {
+                    y: rect.y + rect.h - t,
+                    h: t,
+                    ..rect
+                },
+                Rect { w: t, ..rect },
+                Rect {
+                    x: rect.x + rect.w - t,
+                    w: t,
+                    ..rect
+                },
+            ] {
+                p.draw_rect(r, c, 0.0, clip);
+            }
+        }
+        // the second player's focus tints over the image
+        if focused2 && let Some(c) = n.color_focus2 {
+            p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
+        }
+        if n.kind == Kind::Slider {
+            let frac = {
+                let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
+                let v = self.slider_value(inst);
+                if max > min {
+                    ((v - min) / (max - min)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            };
+            let fill = n.color2.unwrap_or([0.85, 0.2, 0.25, 1.0]);
+            let track_h = (rect.h * 0.3).max(2.0);
+            let track = Rect {
+                x: rect.x,
+                y: rect.y + (rect.h - track_h) / 2.0,
+                w: rect.w,
+                h: track_h,
+            };
+            p.draw_rect(track, [0.0, 0.0, 0.0, 0.5 * alpha], 0.0, clip);
+            p.draw_rect(
+                Rect {
+                    w: track.w * frac,
+                    ..track
+                },
+                [fill[0], fill[1], fill[2], fill[3] * alpha],
+                0.0,
+                clip,
+            );
+            let knob = (rect.h * 0.6).max(4.0);
+            p.draw_rect(
+                Rect {
+                    x: rect.x + track.w * frac - knob / 2.0,
+                    y: rect.y + (rect.h - knob) / 2.0,
+                    w: knob,
+                    h: knob,
+                },
+                if lit {
+                    [1.0, 1.0, 1.0, alpha]
+                } else {
+                    [0.85, 0.85, 0.9, alpha]
+                },
+                0.0,
+                clip,
+            );
+        }
+        if n.kind == Kind::Toggle && n.image.is_none() && n.image_on.is_none() {
+            let fill = if on {
+                n.color2.unwrap_or([0.3, 0.8, 0.4, 1.0])
+            } else {
+                [0.25, 0.25, 0.3, 1.0]
+            };
+            let knob = rect.h.max(4.0);
+            p.draw_rect(
+                rect,
+                [fill[0], fill[1], fill[2], fill[3] * alpha],
+                0.0,
+                clip,
+            );
+            p.draw_rect(
+                Rect {
+                    x: if on { rect.x + rect.w - knob } else { rect.x },
+                    y: rect.y,
+                    w: knob,
+                    h: knob,
+                },
+                [1.0, 1.0, 1.0, alpha],
+                0.0,
+                clip,
+            );
+        }
+        let text = match n.kind {
+            Kind::Input => {
+                let id = n.id.clone().unwrap_or_else(|| inst.key.clone());
+                let mut t = self.input_text(&id);
+                let editing = self.editing.as_deref() == Some(&inst.key);
+                if editing && (self.time as i64 / 20) % 2 == 0 {
+                    t.push('_');
+                }
+                if t.is_empty() && !editing {
+                    n.placeholder.clone()
+                } else {
+                    Some(t)
+                }
+            }
+            Kind::Text | Kind::Button | Kind::Toggle | Kind::Slider => inst.text.clone(),
+            _ => None,
+        };
+        if let Some(text) = text
+            && !text.is_empty()
+        {
+            let font = n.font.unwrap_or(1);
+            let scale = if lit || inst.scope_lit {
+                n.scale_focus.or(n.scale)
+            } else {
+                n.scale
+            }
+            .unwrap_or(1.0);
+            let bank = if focused2 && n.bank_focus2.is_some() {
+                n.bank_focus2
+            } else if lit {
+                n.bank_focus.or(n.bank)
+            } else {
+                n.bank
+            }
+            .unwrap_or(0);
+            let default_align = match n.kind {
+                Kind::Button => "center",
+                _ => "left",
+            };
+            let inset = n.pad.unwrap_or(0.0);
+            let (align, x) = match n.align.as_deref().unwrap_or(default_align) {
+                "right" => (-1, rect.x + rect.w - inset),
+                "center" => (0, rect.x + rect.w / 2.0),
+                _ => (1, rect.x + inset),
+            };
+            let th = p.text_height(font, scale);
+            let y = rect.y + (rect.h + th) / 2.0 + n.text_dy.unwrap_or(0.0);
+            let text_clip = if (n.w.is_some() && n.kind == Kind::Text) || n.kind == Kind::Input {
+                Some(clip.map_or(rect, |c| c.intersect(&rect)))
+            } else {
+                clip
+            };
+            if n.wrap && n.kind == Kind::Text && n.line_h.is_none() {
+                let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
+                let step = th + n.line_gap.unwrap_or(th * 0.4);
+                let total = step * lines.len() as f32 - (step - th);
+                let top = rect.y + ((rect.h - total) / 2.0).max(0.0);
+                for (i, line) in lines.iter().enumerate() {
+                    p.draw_text(
+                        font,
+                        line,
+                        x,
+                        top + th + step * i as f32,
+                        bank,
+                        align,
+                        scale,
+                        alpha,
+                        clip,
+                    );
+                }
+                return;
+            }
+            if n.wrap && n.kind == Kind::Text {
+                let lines = wrap_text(p, font, scale, &text, rect.w - 2.0 * inset);
+                let lh = n.line_h.unwrap_or(th);
+                let top = rect.y + (rect.h - lh * lines.len() as f32) / 2.0;
+                for (i, line) in lines.iter().enumerate() {
+                    let ly = top + lh * i as f32 + (lh + th) / 2.0;
+                    p.draw_text(
+                        font,
+                        line,
+                        x + skew / 2.0,
+                        ly,
+                        bank,
+                        align,
+                        scale,
+                        alpha,
+                        clip,
+                    );
+                }
+                return;
+            }
+            p.draw_text(
+                font,
+                &text,
+                x + skew / 2.0,
+                y,
+                bank,
+                align,
+                scale,
+                alpha,
+                text_clip,
+            );
+        }
+        if focused
+            && self.focus_age > 30.0
+            && self.leaving.is_none()
+            && let Some(t) = &n.tip
+        {
+            let t = interpolate(t, &inst.ctx);
+            if !t.is_empty() {
+                *tip = Some((t, rect));
+            }
+        }
     }
 
     /// Deterministic drifting sparks: each particle's path is a function of its index and time.
@@ -2530,5 +3118,214 @@ on_press = "row:{index}"
         };
         ui.tick(up, &mut p);
         assert_eq!(ui.focused(), Some("head"));
+    }
+}
+
+#[cfg(test)]
+mod ink_tests {
+    use super::*;
+
+    struct Rec {
+        clips: Vec<Option<Rect>>,
+        dsts: Vec<Rect>,
+        rot: Option<Rot>,
+        rots: Vec<Option<Rot>>,
+    }
+    impl Painter for Rec {
+        fn set_transform(&mut self, rot: Option<Rot>) {
+            self.rot = rot;
+        }
+        fn image_size(&mut self, _: &str) -> Option<(u32, u32)> {
+            Some((100, 200))
+        }
+        fn draw_image(
+            &mut self,
+            _: &str,
+            _: Option<[u32; 4]>,
+            d: Rect,
+            _: f32,
+            _: f32,
+            c: Option<Rect>,
+        ) {
+            self.dsts.push(d);
+            self.clips.push(c);
+            self.rots.push(self.rot);
+        }
+        fn draw_rect(&mut self, d: Rect, _: [f32; 4], _: f32, c: Option<Rect>) {
+            self.dsts.push(d);
+            self.clips.push(c);
+            self.rots.push(self.rot);
+        }
+        fn text_width(&mut self, _: i32, t: &str, s: f32) -> f32 {
+            t.len() as f32 * 8.0 * s
+        }
+        fn text_height(&mut self, _: i32, s: f32) -> f32 {
+            12.0 * s
+        }
+        #[allow(clippy::too_many_arguments)]
+        fn draw_text(
+            &mut self,
+            _: i32,
+            _: &str,
+            _: f32,
+            _: f32,
+            _: i32,
+            _: i32,
+            _: f32,
+            _: f32,
+            _: Option<Rect>,
+        ) {
+        }
+    }
+    fn rec() -> Rec {
+        Rec {
+            clips: vec![],
+            dsts: vec![],
+            rot: None,
+            rots: vec![],
+        }
+    }
+    fn down() -> Nav {
+        Nav {
+            down: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn paged_grid_snaps_to_pages_and_publishes_them() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "grid"
+id = "cells"
+w = 400
+h = 200
+columns = 4
+cell_w = 100
+cell_h = 100
+paged = true
+items = "cells"
+[[node.children]]
+kind = "button"
+w = 90
+h = 90
+on_press = "pick:{index}"
+"#,
+        )
+        .unwrap();
+        let cells: Vec<Value> = (0..20).map(|i| serde_json::json!({ "i": i })).collect();
+        let mut ui = Ui::new(def, serde_json::json!({ "cells": cells }));
+        let mut p = rec();
+        ui.tick(Nav::default(), &mut p);
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.data()["pages"]["cells"]["count"], 3);
+        assert_eq!(ui.data()["pages"]["cells"]["page"], 1);
+        ui.tick(down(), &mut p);
+        assert_eq!(ui.scroll["cells"], 0.0, "row 2 is still on page 1");
+        ui.tick(down(), &mut p);
+        assert_eq!(ui.scroll["cells"], 200.0, "row 3 opens page 2");
+        ui.tick(down(), &mut p);
+        ui.tick(down(), &mut p);
+        ui.tick(Nav::default(), &mut p);
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.scroll["cells"], 400.0, "last page holds a single row");
+        assert_eq!(ui.data()["pages"]["cells"]["page"], 3);
+    }
+
+    #[test]
+    fn focus_scope_grows_the_item_and_shows_its_description() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "vbox"
+id = "menu"
+w = 400
+gap = 10
+items = "menu"
+[[node.children]]
+kind = "button"
+id = "b"
+w = 300
+h = 40
+w_focus = 360
+h_focus = 60
+text = "{item.label}"
+on_press = "{item.action}"
+[[node.children]]
+kind = "text"
+id = "desc"
+y = 64
+text = "{item.desc}"
+when = "focus"
+"#,
+        )
+        .unwrap();
+        let data = serde_json::json!({ "menu": [
+            {"label": "A", "action": "a", "desc": "first"},
+            {"label": "B", "action": "b", "desc": "second"},
+        ]});
+        let mut ui = Ui::new(def, data);
+        let mut p = rec();
+        ui.tick(Nav::default(), &mut p);
+        ui.tick(Nav::default(), &mut p);
+        let a = ui.rect_of("menu[0].b").unwrap();
+        let b = ui.rect_of("menu[1].b").unwrap();
+        assert_eq!((a.w, a.h), (360.0, 60.0));
+        assert_eq!((b.w, b.h), (300.0, 40.0));
+        assert!(ui.rect_of("menu[0].desc").is_some());
+        assert!(ui.rect_of("menu[1].desc").is_none());
+        // description (y 64 + 12) pushes the next item down
+        assert_eq!(b.y, 64.0 + 12.0 + 10.0);
+    }
+
+    #[test]
+    fn cut_clips_in_slanted_strips_and_angle_rotates_the_subtree() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "panel"
+x = 100
+y = 100
+w = 200
+h = 100
+angle = -3
+cut = [0, 0, 0, 50]
+color = [1, 1, 1, 1]
+[[node.children]]
+kind = "image"
+image = "x"
+w = 200
+h = 100
+fit = "contain"
+fit_y = 1
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, Value::Null);
+        let mut p = rec();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert_eq!(p.clips.len(), 100, "50 strips per draw");
+        let first = p.clips[0].unwrap();
+        let last = p.clips[49].unwrap();
+        assert!((first.x + first.w - 299.5).abs() < 0.6, "{first:?}");
+        assert!((last.x + last.w - 250.5).abs() < 0.6, "{last:?}");
+        // contain: 100x200 image in 200x100 -> 50x100, centred, on the bottom
+        assert_eq!(
+            p.dsts[50],
+            Rect {
+                x: 175.0,
+                y: 100.0,
+                w: 50.0,
+                h: 100.0
+            }
+        );
+        assert!(
+            p.rots
+                .iter()
+                .all(|r| r.is_some_and(|r| r.deg == -3.0 && r.cx == 200.0))
+        );
+        assert_eq!(p.rot, None, "transform reset after drawing");
     }
 }

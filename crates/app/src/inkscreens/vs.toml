@@ -1,0 +1,121 @@
+# rugen VERSUS — Shonen Ink theme (UI book P.03). Coordinates are 1280x720.
+# Data: p1/p2 {name art has_art}, stage {name thumb has_thumb}, countdown.
+background = [0.07, 0.07, 0.07, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+image = "ui/vs_bg.webp"
+w = 1280
+h = 720
+
+[[node]]
+kind = "image"
+image = "{p1.art}"
+x = 30
+y = 118
+w = 516
+h = 602
+fit = "contain"
+fit_y = 1
+visible = "p1.has_art"
+enter = "left"
+enter_time = 16
+
+[[node]]
+kind = "image"
+image = "{p2.art}"
+x = 734
+y = 118
+w = 516
+h = 602
+fit = "contain"
+fit_y = 1
+flip = true
+visible = "p2.has_art"
+enter = "right"
+enter_time = 16
+
+[[node]]
+kind = "image"
+image = "ui/vs_line.webp"
+w = 1280
+h = 720
+
+[[node]]
+kind = "image"
+image = "ui/vs_burst.webp"
+x = 500
+y = 250
+w = 280
+h = 220
+enter = "fade"
+enter_time = 10
+enter_delay = 8
+ease = "back"
+
+[[node]]
+kind = "text"
+text = "{p1.name_up}"
+x = 40
+y = 40
+h = 72
+pad = 28
+color = [0.07, 0.07, 0.07, 1.0]
+outline = [1.0, 1.0, 1.0, 1.0]
+outline_w = 4
+font = 1
+scale = 4
+bank = 11
+angle = -3
+enter = "left"
+enter_time = 14
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "{p2.name_up}"
+anchor = "tr"
+x = 40
+y = 600
+h = 72
+pad = 28
+color = [1.0, 1.0, 1.0, 1.0]
+outline = [0.07, 0.07, 0.07, 1.0]
+outline_w = 4
+font = 1
+scale = 4
+bank = 9
+angle = -3
+enter = "right"
+enter_time = 14
+enter_delay = 4
+
+[[node]]
+kind = "image"
+image = "ui/sfx_dododo.webp"
+x = 430
+y = 90
+angle = -12
+enter = "fade"
+enter_delay = 14
+
+[[node]]
+kind = "image"
+image = "ui/sfx_gogogo.webp"
+x = 740
+y = 520
+angle = -12
+enter = "fade"
+enter_delay = 18
+
+[[node]]
+kind = "text"
+text = "ROUND 1 · {stage.name}"
+x = 40
+y = 650
+font = 1
+scale = 2
+bank = 11
+enter = "fade"
+enter_delay = 10

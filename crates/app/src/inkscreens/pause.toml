@@ -1,0 +1,331 @@
+# rugen PAUSE — Shonen Ink theme (UI book P.05). Coordinates are 1280x720.
+# Data: scene/has_scene (the frozen fight), menu[] {id label action paper},
+# side, name, art/has_art, moves[] {name notation super}, source, page,
+# has_moves, keys {start}.
+background = [0.07, 0.07, 0.07, 1.0]
+exit_time = 6
+
+[[node]]
+kind = "image"
+image = "{scene}"
+w = 1280
+h = 720
+visible = "has_scene"
+
+[[node]]
+kind = "panel"
+w = 1280
+h = 720
+color = [0.07, 0.07, 0.07, 0.66]
+
+[[node]]
+kind = "image"
+image = "ui/tone_dark.webp"
+w = 1280
+h = 720
+
+# the tilted paper card with the menu
+[[node]]
+kind = "panel"
+x = 60
+y = 70
+w = 448
+h = 568
+angle = -2
+enter = "left"
+enter_time = 12
+ease = "back"
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/pause_card.webp"
+  w = 448
+  h = 568
+
+  [[node.children]]
+  kind = "panel"
+  w = 440
+  h = 76
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "PAUSE"
+  x = 28
+  y = 16
+  font = 1
+  scale = 4
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "{side}"
+  anchor = "tr"
+  x = 30
+  y = 18
+  h = 30
+  pad = 8
+  image = "ui/stamp9.webp"
+  nine = [6, 6, 6, 6]
+  font = 1
+  scale = 2
+  bank = 10
+  angle = 6
+
+  [[node.children]]
+  kind = "vbox"
+  id = "menu"
+  x = 20
+  y = 100
+  w = 400
+  gap = 12
+  items = "menu"
+  stagger = 2
+
+    [[node.children.children]]
+    kind = "button"
+    id = "slab"
+    w = 360
+    h = 44
+    w_focus = 400
+    h_focus = 52
+    image = "ui/slab_pause.webp"
+    image_focus = "ui/slab_pause_lit.webp"
+    text = "{item.label}"
+    font = 1
+    scale = 2
+    bank = 11
+    bank_focus = 11
+    align = "left"
+    pad = 40
+    on_press = "{item.action}"
+    visible = "!item.paper"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "paper"
+    w = 360
+    h = 44
+    w_focus = 400
+    h_focus = 52
+    image = "ui/slab_pause_paper.webp"
+    image_focus = "ui/slab_pause_lit.webp"
+    text = "{item.label}"
+    font = 1
+    scale = 2
+    bank = 9
+    bank_focus = 11
+    align = "left"
+    pad = 40
+    on_press = "{item.action}"
+    visible = "item.paper"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "▶"
+    x = 14
+    h = 52
+    font = 1
+    scale = 2
+    bank = 11
+    when = "focus"
+
+  [[node.children]]
+  kind = "text"
+  text = "{keys.start} OR ESC TO RESUME"
+  x = 24
+  y = 520
+  font = 2
+  bank = 8
+
+# move list of the fighter who paused
+[[node]]
+kind = "panel"
+x = 560
+y = 80
+w = 668
+h = 548
+enter = "right"
+enter_time = 14
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/moves_panel.webp"
+  w = 668
+  h = 548
+
+  [[node.children]]
+  kind = "image"
+  image = "{art}"
+  x = 415
+  y = 255
+  w = 240
+  h = 280
+  fit = "contain"
+  fit_y = 1
+  alpha = 0.9
+  visible = "has_art"
+
+  [[node.children]]
+  kind = "text"
+  text = "{name}"
+  x = 24
+  y = 18
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{source}"
+  x = 24
+  y = 50
+  font = 2
+  bank = 8
+
+  [[node.children]]
+  kind = "text"
+  text = "{page}"
+  anchor = "tr"
+  x = 24
+  y = 22
+  font = 2
+  bank = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "NO SPECIAL MOVES FOUND IN THE COMMAND FILE"
+  x = 24
+  y = 96
+  font = 2
+  bank = 9
+  visible = "no_moves"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 24
+  y = 88
+  w = 520
+  gap = 8
+  items = "moves"
+  stagger = 1
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 520
+    h = 40
+    color = [1.0, 1.0, 1.0, 1.0]
+    outline = [0.07, 0.07, 0.07, 1.0]
+    visible = "!item.super"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 12
+      w = 300
+      h = 40
+      font = 2
+      bank = 9
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.notation}"
+      x = 12
+      w = 496
+      h = 40
+      align = "right"
+      font = 1
+      scale = 2
+      bank = 9
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 520
+    h = 40
+    color = [0.07, 0.07, 0.07, 1.0]
+    visible = "item.super"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "SUPER"
+      x = 10
+      h = 40
+      font = 1
+      bank = 10
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 66
+      w = 250
+      h = 40
+      font = 2
+      bank = 11
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.notation}"
+      x = 12
+      w = 496
+      h = 40
+      align = "right"
+      font = 1
+      scale = 2
+      bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "MOVE LIST: NEXT PAGE"
+  anchor = "bl"
+  x = 24
+  y = 18
+  font = 2
+  bank = 8
+  visible = "page"
+
+# key hints
+[[node]]
+kind = "hbox"
+x = 760
+y = 674
+w = 480
+h = 36
+gap = 8
+justify = "end"
+align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "{keys.start}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  text_dy = -5
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "RESUME  "
+  font = 2
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "ESC"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  text_dy = -5
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "BACK"
+  font = 2
+  bank = 11

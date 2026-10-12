@@ -12,6 +12,9 @@ use crate::play::FightSetup;
 use crate::uiscreen::Profile;
 use crate::versus::Portrait;
 
+/// Cells per page of the select grid (12 x 5).
+pub const GRID_PAGE: usize = 60;
+
 pub struct RosterCell {
     pub dir: PathBuf,
     pub manifest: Manifest,
@@ -54,6 +57,8 @@ pub struct Roster {
     sort: Sort,
     /// Cell under the cursor / focus (index into `cells`).
     hover: Option<usize>,
+    /// Cell under the second player's cursor (dual select).
+    hover2: Option<usize>,
     ai_level: i32,
     seed: u32,
 }
@@ -116,6 +121,7 @@ impl Roster {
             query: String::new(),
             sort: Sort::Name,
             hover: None,
+            hover2: None,
             ai_level,
             seed: 0x2545_f491,
         };
@@ -195,6 +201,16 @@ impl Roster {
         let new = self.order.get(i).copied();
         if new.is_some() && new != self.hover {
             self.hover = new;
+            return true;
+        }
+        false
+    }
+
+    /// The second player's focus moved onto `cells[i]` of the filtered list.
+    pub fn hover2_order(&mut self, i: usize) -> bool {
+        let new = self.order.get(i).copied();
+        if new.is_some() && new != self.hover2 {
+            self.hover2 = new;
             return true;
         }
         false
@@ -298,6 +314,22 @@ impl Roster {
                 } else {
                     Outcome::None
                 }
+            }
+            "random2" => {
+                if self.human[1] && self.picks[1].is_none() {
+                    self.picks[1] = self.random_ok();
+                    self.hover2 = self.picks[1];
+                    self.picking = self.next_picking();
+                }
+                Outcome::Refresh
+            }
+            "random" if self.dual() => {
+                if self.picks[0].is_none() {
+                    self.picks[0] = self.random_ok();
+                    self.hover = self.picks[0];
+                    self.picking = self.next_picking();
+                }
+                Outcome::Refresh
             }
             "random" => {
                 if self.picking < 2 {
@@ -427,6 +459,92 @@ impl Roster {
         })
     }
 
+    /// The select grid: one cell per filtered character, a random cell, then
+    /// empty fillers up to a whole page of `GRID_PAGE` cells.
+    fn grid_json(&self) -> Vec<Value> {
+        let mut grid: Vec<Value> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| {
+                let mut v = self.cell_json(i, c);
+                let m = &self.cells[c].manifest;
+                let face = m
+                    .portrait_big
+                    .as_ref()
+                    .or(m.portrait_small.as_ref())
+                    .map(|p| self.cells[c].dir.join(&p.file).display().to_string())
+                    .unwrap_or_default();
+                v["face"] = Value::from(face.clone());
+                v["has_face"] = Value::from(!face.is_empty());
+                v["face_ok"] = Value::from(!face.is_empty() && !is_broken(m));
+                v["face_grey"] = Value::from(!face.is_empty() && is_broken(m));
+                v["warn"] = Value::from(m.verify.as_ref().is_some_and(|v| v.verdict == "warn"));
+                v["press"] = Value::from(format!("pick:{i}"));
+                v["kind"] = Value::from(if is_broken(m) { "broken" } else { "char" });
+                v
+            })
+            .collect();
+        let n = grid.len();
+        grid.push(json!({
+            "index": n, "kind": "random", "press": "random", "name": "RANDOM",
+            "face": "", "has_face": false, "warn": false, "broken": false,
+        }));
+        let total = grid.len().div_ceil(GRID_PAGE).max(1) * GRID_PAGE;
+        while grid.len() < total {
+            let i = grid.len();
+            grid.push(json!({
+                "index": i, "kind": "empty", "press": "", "name": "",
+                "face": "", "has_face": false, "warn": false, "broken": false,
+            }));
+        }
+        grid
+    }
+
+    /// A player's card: their pick, else what their cursor is on.
+    fn card_json(&self, side: usize, profile: &Profile) -> Value {
+        let hover = if side == 0 { self.hover } else { self.hover2 };
+        let cell = self.picks[side].or(if self.human[side] { hover } else { None });
+        let mut v = self.char_json(cell, profile);
+        let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
+            v["status"] = Value::from(if self.human[side] { "" } else { "CPU" });
+            v["cpu"] = Value::from(!self.human[side]);
+            v["portrait"] = Value::from("");
+            return v;
+        };
+        let m = &c.manifest;
+        let portrait = m
+            .art
+            .as_deref()
+            .or(m.portrait_big.as_ref().map(|p| p.file.as_str()))
+            .map(|f| c.dir.join(f).display().to_string())
+            .unwrap_or_default();
+        let (status, ok) = match m.verify.as_ref() {
+            Some(v) if v.verdict == "verified" => ("✓ VERIFIED".to_string(), true),
+            Some(v) if v.verdict == "warn" => (
+                format!(
+                    "⚠ RUNS WITH {} ISSUE{}",
+                    v.issues.len(),
+                    if v.issues.len() == 1 { "" } else { "S" }
+                ),
+                false,
+            ),
+            Some(v) if v.verdict == "broken" => ("⚠ BROKEN".to_string(), false),
+            _ => ("NOT CHECKED".to_string(), true),
+        };
+        let st = profile.chars.get(&m.id);
+        let (plays, wins) = st.map_or((0, 0), |s| (s.plays, s.wins));
+        v["portrait"] = Value::from(portrait);
+        v["name_up"] = Value::from(m.display_name.to_uppercase());
+        v["status"] = Value::from(status);
+        v["ok"] = Value::from(ok);
+        v["bad"] = Value::from(!ok);
+        v["record"] = Value::from(format!("{plays} PLAYS · {wins} WINS"));
+        v["picked"] = Value::from(self.picks[side].is_some());
+        v["cpu"] = Value::from(!self.human[side]);
+        v
+    }
+
     fn char_json(&self, cell: Option<usize>, profile: &Profile) -> Value {
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
             return json!({
@@ -508,12 +626,34 @@ impl Roster {
             "READY  -  CONFIRM TO FIGHT".to_string()
         };
         let shown = self.char_json(self.hover.or(self.picks[0]).or(self.picks[1]), profile);
+        let warns = self
+            .cells
+            .iter()
+            .filter(|c| {
+                c.manifest
+                    .verify
+                    .as_ref()
+                    .is_some_and(|v| v.verdict == "warn")
+            })
+            .count();
+        let broken = self.cells.iter().filter(|c| is_broken(&c.manifest)).count();
         json!({
             "title": title,
             "prompt": prompt,
             "room": room,
             "cells": cells,
             "count": format!("{} / {} FIGHTERS", self.order.len(), self.cells.len()),
+            "grid": self.grid_json(),
+            "roster_line": format!(
+                "{} FIGHTER{} · {} WITH WARNINGS · {} BROKEN",
+                self.cells.len(),
+                if self.cells.len() == 1 { "" } else { "S" },
+                warns,
+                broken
+            ),
+            "filter": if self.query.is_empty() { String::new() } else { format!("SEARCH: {}", self.query.to_uppercase()) },
+            "card1": self.card_json(0, profile),
+            "card2": self.card_json(1, profile),
             "shown": shown,
             "p1": self.char_json(self.picks[0], profile),
             "p2": self.char_json(self.picks[1], profile),

@@ -215,7 +215,7 @@ impl FontGpu {
         clip: Option<[f32; 4]>,
         alpha: f32,
     ) {
-        self.draw_full(r, text, pos, bank, align, scale, clip, alpha, None);
+        self.draw_xf(r, text, pos, bank, align, scale, clip, alpha, None);
     }
 
     /// [`draw`](Self::draw) rotated by `angle` degrees (counter-clockwise on
@@ -232,12 +232,14 @@ impl FontGpu {
         angle: f32,
         pivot: [f32; 2],
     ) {
-        let rot = (angle != 0.0).then_some((angle, pivot));
-        self.draw_full(r, text, pos, bank, align, scale, None, 1.0, rot);
+        let xf = (angle != 0.0).then_some((angle, pivot));
+        self.draw_xf(r, text, pos, bank, align, scale, None, 1.0, xf);
     }
 
+    /// [`draw_clipped`](Self::draw_clipped) rotated by `xf = (degrees ccw, pivot)`;
+    /// the clip applies in the unrotated frame.
     #[allow(clippy::too_many_arguments)]
-    fn draw_full(
+    pub fn draw_xf(
         &mut self,
         r: &mut Renderer,
         text: &str,
@@ -247,7 +249,7 @@ impl FontGpu {
         scale: f32,
         clip: Option<[f32; 4]>,
         alpha: f32,
-        rot: Option<(f32, [f32; 2])>,
+        xf: Option<(f32, [f32; 2])>,
     ) {
         self.init(r);
         let bank = self.banks[(bank.max(0) as usize).min(self.banks.len() - 1)];
@@ -268,17 +270,14 @@ impl FontGpu {
                     .entry(c)
                     .or_insert_with(|| r.add_indexed(g.width as u32, g.height as u32, &g.pixels));
                 let mut d = Draw::new(tex, Some(bank), [x, y], [0.0, 0.0]);
-                if let Some((angle, pv)) = rot {
-                    // same rotation as the renderer's: each glyph's corner turns
-                    // around the pivot, then the glyph turns around its corner
-                    let rad = angle * (std::f32::consts::PI / 180.0);
-                    let (sn, cs) = (libm::sinf(rad), libm::cosf(rad));
-                    let (dx, dy) = (x - pv[0], y - pv[1]);
-                    d.pos = [pv[0] + dx * cs + dy * sn, pv[1] - dx * sn + dy * cs];
-                    d.angle = angle;
-                }
                 d.scale = [scale, scale];
                 d.clip = clip;
+                if let Some((angle, pivot)) = xf {
+                    d.pos = pivot;
+                    d.axis = [(pivot[0] - x) / scale, (pivot[1] - y) / scale];
+                    d.angle = angle;
+                    d.clip_local = true;
+                }
                 d.color = [1.0, 1.0, 1.0, alpha];
                 r.draw(d);
             }

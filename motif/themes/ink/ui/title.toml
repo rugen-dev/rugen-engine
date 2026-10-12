@@ -1,211 +1,406 @@
-# rugen title — Shonen Ink theme. Coordinates are 1280x720. See ../README.md.
+# rugen HOME — Shonen Ink theme (UI book P.01). Coordinates are 1280x720.
+# Data: menu[] {id label action desc exit right}, featured {name art source present},
+# arenas {name line counts}, vol, ranked {rating line}, profile, keys.
 background = [0.95, 0.94, 0.89, 1.0]
 exit_time = 8
 
 [[node]]
 kind = "image"
-image = "ui/paper.webp"
+image = "ui/home_bg.webp"
 w = 1280
 h = 720
 
+# logo: ink word, red offset shadow, brush underline, katakana accent
 [[node]]
 kind = "image"
-image = "ui/lines.webp"
-w = 1280
-h = 720
-enter = "fade"
-enter_time = 24
-
-# logo + chapter stamp
-[[node]]
-kind = "image"
-id = "logo"
-image = "ui/logo.webp"
-x = 44
-y = 26
-scale = 2
+image = "ui/logo_home.webp"
+x = 52
+y = 10
+angle = -3
 enter = "down"
 enter_time = 18
 ease = "back"
 
 [[node]]
-kind = "image"
-image = "ui/stamp_chapter.webp"
-x = 70
-y = 158
+kind = "text"
+text = "{vol}"
+x = 64
+y = 166
+h = 34
+pad = 12
+image = "ui/stamp9.webp"
+nine = [6, 6, 6, 6]
+font = 1
 scale = 2
+bank = 10
+angle = -3
 enter = "fade"
-enter_time = 30
 enter_delay = 10
 
-# menu: black slabs, the lit one turns red with a "!!"
+[[node]]
+kind = "text"
+text = "{arenas.counts}"
+x = 236
+y = 174
+font = 2
+bank = 8
+enter = "fade"
+enter_delay = 14
+
+# menu: the focused slab grows, turns red, gets a "!!" and its description
 [[node]]
 kind = "vbox"
 id = "menu"
-x = 56
-y = 222
-w = 420
+x = 48
+y = 226
+w = 540
 gap = 8
 items = "menu"
 stagger = 2
 enter = "left"
 enter_time = 16
-ease = "out"
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/slab_home_shadow.webp"
+  x = 8
+  y = 8
+  w = 500
+  h = 58
+  when = "focus"
+  visible = "!item.exit"
 
   [[node.children]]
   kind = "button"
-  id = "{item.id}"
-  h = 50
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
+  id = "slab"
+  w = 440
+  h = 44
+  w_focus = 500
+  h_focus = 58
+  image = "ui/slab_home.webp"
+  image_focus = "ui/slab_home_lit.webp"
   text = "{item.label}"
-  font = 2
+  font = 1
+  scale = 2
+  scale_focus = 3
   bank = 11
   bank_focus = 11
-  scale = 2
   align = "left"
-  pad = 30
-  hover_scale = 1.02
+  pad = 42
   on_press = "{item.action}"
-
-# manga panels on the right: one big feature, two small
-[[node]]
-kind = "panel"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-x = 520
-y = 70
-w = 700
-h = 390
-enter = "right"
-enter_time = 18
-ease = "out"
-
-  [[node.children]]
-  kind = "image"
-  image = "{news.0.image}"
-  x = 12
-  y = 12
-  w = 664
-  h = 300
+  on_right = "{item.right}"
+  visible = "!item.exit"
 
   [[node.children]]
   kind = "text"
-  text = "{news.0.title}"
-  x = 24
-  y = 320
+  text = "▶"
+  x = 12
+  h = 58
+  font = 1
+  scale = 3
+  bank = 11
+  when = "focus"
+  visible = "!item.exit"
+
+  [[node.children]]
+  kind = "text"
+  text = "{item.desc}"
+  x = 40
+  y = 68
   font = 2
   bank = 9
-  scale = 2
+  when = "focus"
 
   [[node.children]]
-  kind = "text"
-  text = "{news.0.subtitle}"
-  x = 24
-  y = 350
-  w = 640
+  kind = "button"
+  id = "exit"
+  w = 200
+  h = 36
+  w_focus = 240
+  h_focus = 42
+  image = "ui/slab_exit.webp"
+  image_focus = "ui/slab_exit_lit.webp"
+  text = "{item.label}"
   font = 1
-  bank = 8
-  scale = 1.5
+  scale = 2
+  bank = 9
+  bank_focus = 11
+  align = "left"
+  pad = 30
+  on_press = "{item.action}"
+  visible = "item.exit"
+
+# featured fighter: big slanted manga panel
+[[node]]
+kind = "panel"
+x = 600
+y = 40
+w = 648
+h = 408
+enter = "right"
+enter_time = 18
 
   [[node.children]]
   kind = "image"
-  image = "ui/bang.webp"
-  anchor = "tr"
-  x = 18
-  y = 10
-  scale = 2
+  image = "ui/feat_back.webp"
+  w = 648
+  h = 408
 
+  [[node.children]]
+  kind = "image"
+  image = "{featured.art}"
+  x = 286
+  y = 8
+  w = 336
+  h = 392
+  fit = "contain"
+  fit_y = 1
+  visible = "featured.present"
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/feat_frame.webp"
+  w = 648
+  h = 408
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/bubble_new.webp"
+  x = 42
+  y = 24
+  visible = "featured.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{featured.name}"
+  x = 40
+  y = 282
+  h = 64
+  pad = 26
+  color = [0.07, 0.07, 0.07, 1.0]
+  font = 1
+  scale = 4
+  bank = 11
+  angle = -4
+  visible = "featured.present"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 70
+  y = 352
+  w = 560
+  h = 20
+  gap = 10
+  align = "center"
+  visible = "featured.present"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{featured.source} ·"
+    font = 2
+    bank = 9
+
+    [[node.children.children]]
+    kind = "text"
+    text = "PRESS ▶ TO TRY"
+    font = 2
+    bank = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "DROP .ZIP OR .RAR FIGHTERS INTO CHARS/"
+  x = 70
+  y = 190
+  font = 2
+  bank = 9
+  visible = "!featured.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "P.01"
+  anchor = "tr"
+  x = 22
+  y = 12
+  font = 1
+  bank = 8
+
+# arenas
 [[node]]
 kind = "panel"
-image = "ui/panel9_red.webp"
-nine = [12, 12, 24, 24]
-x = 520
-y = 486
-w = 330
-h = 170
+x = 640
+y = 470
+w = 298
+h = 158
 enter = "up"
 enter_time = 18
 enter_delay = 6
-ease = "out"
 
   [[node.children]]
   kind = "image"
-  image = "{news.1.image}"
-  x = 12
-  y = 12
-  w = 294
-  h = 96
+  image = "ui/card_arenas.webp"
+  w = 298
+  h = 158
 
   [[node.children]]
   kind = "text"
-  text = "{news.1.title}"
-  x = 20
-  y = 118
+  text = "{arenas.name}"
+  x = 16
+  y = 72
+  w = 190
+  h = 62
+  wrap = true
+  line_h = 26
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{arenas.line}"
+  x = 196
+  y = 112
+  w = 80
+  align = "right"
   font = 2
   bank = 9
-  scale = 2
 
+# ranked
 [[node]]
 kind = "panel"
-image = "ui/panel9_black.webp"
-nine = [12, 12, 24, 24]
-x = 890
-y = 486
-w = 330
-h = 170
+x = 950
+y = 470
+w = 298
+h = 158
 enter = "up"
 enter_time = 18
 enter_delay = 10
-ease = "out"
 
   [[node.children]]
   kind = "image"
-  image = "{news.2.image}"
-  x = 12
-  y = 12
-  w = 294
-  h = 96
+  image = "ui/card_ranked.webp"
+  w = 298
+  h = 158
 
   [[node.children]]
   kind = "text"
-  text = "{news.2.title}"
-  x = 20
-  y = 118
+  text = "RANKED · LOCAL"
+  x = 16
+  y = 14
+  font = 2
+  bank = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "{ranked.rating}"
+  x = 16
+  y = 46
+  font = 1
+  scale = 4
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "{ranked.line}"
+  x = 16
+  y = 96
   font = 2
   bank = 11
-  scale = 2
 
-# profile line, bottom-left, like a manga credit
+# footer
 [[node]]
-kind = "hbox"
-anchor = "bl"
-x = 60
-y = 32
-h = 40
-gap = 14
-align = "center"
+kind = "panel"
+x = 0
+y = 660
+w = 1280
+h = 60
+color = [0.07, 0.07, 0.07, 1.0]
 
   [[node.children]]
   kind = "image"
   image = "{profile.avatar}"
+  x = 24
+  y = 10
   w = 40
   h = 40
+  outline = [0.88, 0.13, 0.13, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "{profile.name}   LV {profile.level}   {profile.wins} W   {profile.shards} SHARDS   VOL.{version}"
+  text = "{profile.name}"
+  x = 78
+  y = 8
   font = 1
-  bank = 9
   scale = 2
+  bank = 11
 
-# footer
-[[node]]
-kind = "text"
-text = "ENTER  SELECT    ESC  BACK    F11  FULLSCREEN"
-anchor = "br"
-x = 24
-y = 12
-font = 1
-bank = 8
-scale = 2
+  [[node.children]]
+  kind = "text"
+  text = "LV {profile.level} · {profile.wins} WINS"
+  x = 78
+  y = 32
+  font = 2
+  bank = 6
+
+  [[node.children]]
+  kind = "hbox"
+  x = 560
+  y = 12
+  w = 696
+  h = 36
+  gap = 10
+  justify = "end"
+  align = "center"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "ENTER"
+    h = 36
+    pad = 10
+    image = "ui/key9.webp"
+    text_dy = -5
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 9
+
+    [[node.children.children]]
+    kind = "text"
+    text = "SELECT  "
+    font = 2
+    bank = 11
+
+    [[node.children.children]]
+    kind = "text"
+    text = "ESC"
+    h = 36
+    pad = 10
+    image = "ui/key9.webp"
+    text_dy = -5
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 9
+
+    [[node.children.children]]
+    kind = "text"
+    text = "BACK  "
+    font = 2
+    bank = 11
+
+    [[node.children.children]]
+    kind = "text"
+    text = "F11"
+    h = 36
+    pad = 10
+    image = "ui/key9.webp"
+    text_dy = -5
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 9
+
+    [[node.children.children]]
+    kind = "text"
+    text = "FULLSCREEN"
+    font = 2
+    bank = 11

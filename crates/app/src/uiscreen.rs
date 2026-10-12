@@ -191,6 +191,82 @@ pub struct UiScreen {
     mem: HashMap<String, MemImage>,
     /// Options / controls pages (see `settings.rs`).
     settings: SettingsPage,
+    /// Pause menu: who paused, their move list, what the menu offers.
+    pause: Option<PauseInfo>,
+    /// Move list page shown by the pause menu.
+    moves_page: usize,
+    /// Title: installed fighters the feature panel cycles through (newest first).
+    featured: Vec<Featured>,
+    feature_at: usize,
+    /// Title: arena facts, computed once.
+    arenas: Value,
+    /// Title: stage for the featured fighter's training run.
+    try_stage: Option<PathBuf>,
+    ticks: u64,
+}
+
+/// What the pause menu shows.
+pub struct PauseInfo {
+    /// Side that paused (0 = 1P).
+    pub side: usize,
+    pub name: String,
+    pub art: Option<MemImage>,
+    /// Command file the move list came from.
+    pub cmd: String,
+    pub moves: Vec<crate::screeninfo::Move>,
+    /// The frozen fight under the menu.
+    pub scene: Option<MemImage>,
+    /// Mode to go back to for CHARACTER SELECT (None: no select screen).
+    pub mode: Option<Mode>,
+}
+
+/// A fighter for the title's feature panel.
+struct Featured {
+    name: String,
+    art: String,
+    source: String,
+    def: PathBuf,
+}
+
+/// Rows of the pause move list shown per page.
+const MOVES_PER_PAGE: usize = 9;
+/// Ticks each featured fighter stays on the title.
+const FEATURE_TICKS: u64 = 300;
+
+/// Short key label for a bound key name (`ArrowUp` → `↑`, `j` → `J`).
+fn key_label(k: &str) -> String {
+    match k {
+        "ArrowUp" => "↑".into(),
+        "ArrowDown" => "↓".into(),
+        "ArrowLeft" => "←".into(),
+        "ArrowRight" => "→".into(),
+        "Enter" => "ENTER".into(),
+        "Space" => "SPACE".into(),
+        "Escape" => "ESC".into(),
+        "Shift" => "SHIFT".into(),
+        "Control" => "CTRL".into(),
+        other => other.to_uppercase(),
+    }
+}
+
+/// One-line description of a title menu entry.
+fn menu_desc(id: &str) -> &'static str {
+    match id {
+        "arcade" => "Climb the ladder vs the CPU",
+        "versus" => "Two players, one keyboard",
+        "training" => "Free practice, no clock",
+        "tutorial" => "Learn the basics step by step",
+        "watch" => "Sit back: CPU vs CPU",
+        "online" => "Rooms, ranked and rollback",
+        "netplay" => "Direct match over the network",
+        "options" => "Video, audio and controls",
+        "exit" => "See you next chapter",
+        _ => "",
+    }
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// State of the options tabs and the controls page.
@@ -289,15 +365,125 @@ impl UiScreen {
         Ok(s)
     }
 
-    /// Pause menu.
+    /// Pause menu over a frozen match.
     pub fn load_pause(
         motif: &Path,
         root: &Path,
         sys: &SystemData,
         config: &Config,
         lib: &rugen_content::Library,
+        mut info: PauseInfo,
     ) -> anyhow::Result<Self> {
-        Self::load(UiKind::Pause, motif, root, sys, config, false, lib)
+        let mut s = Self::load(UiKind::Pause, motif, root, sys, config, false, lib)?;
+        if let Some(img) = info.scene.take() {
+            s.mem.insert("scene".into(), img);
+        }
+        if let Some(img) = info.art.take() {
+            s.mem.insert("pauser".into(), img);
+        }
+        s.pause = Some(info);
+        s.refresh_data(sys);
+        Ok(s)
+    }
+
+    /// Title facts: featured fighters (newest archive first) and the arenas.
+    fn load_title_facts(&mut self, lib: &rugen_content::Library) {
+        let mut feats: Vec<(std::time::SystemTime, Featured)> = Vec::new();
+        for e in lib.chars() {
+            let Ok((dir, m)) = lib.prepare_char(&e) else {
+                continue;
+            };
+            let file = m
+                .art
+                .clone()
+                .or_else(|| m.portrait_big.as_ref().map(|p| p.file.clone()));
+            let Some(file) = file else { continue };
+            let when = std::fs::metadata(&e.source)
+                .and_then(|md| md.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            let source = e
+                .source
+                .strip_prefix(&lib.root)
+                .unwrap_or(&e.source)
+                .display()
+                .to_string();
+            feats.push((
+                when,
+                Featured {
+                    name: m.display_name.to_uppercase(),
+                    art: dir.join(file).display().to_string(),
+                    source,
+                    def: dir.join(&m.def),
+                },
+            ));
+        }
+        feats.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
+        self.featured = feats.into_iter().map(|(_, f)| f).collect();
+        let stages = lib.stages();
+        let first = stages.first().and_then(|e| lib.prepare_stage(e).ok());
+        let builtin = lib
+            .root
+            .join("reference/mugen-1.1b1/stages/stage0.def")
+            .exists();
+        self.try_stage = first.as_ref().map(|(d, m)| d.join(&m.def)).or_else(|| {
+            let p = lib.root.join("reference/mugen-1.1b1/stages/stage0.def");
+            p.exists().then_some(p)
+        });
+        let (count, name) = match first {
+            Some((_, m)) => (stages.len(), m.display_name.to_uppercase()),
+            None if builtin => (1, "STAGE 0".to_string()),
+            None => (0, "NO ARENAS YET".to_string()),
+        };
+        self.arenas = json!({
+            "count": count,
+            "name": name,
+            "line": format!("1 / {}", count.max(1)),
+        });
+        let fighters = lib.chars().len();
+        self.arenas["counts"] = Value::from(format!(
+            "{} · {}",
+            plural(fighters, "FIGHTER", "FIGHTERS"),
+            plural(count, "ARENA", "ARENAS")
+        ));
+    }
+
+    /// Fighter on the title's feature panel.
+    fn featured_json(&self) -> Value {
+        match self.featured.get(self.feature_at) {
+            Some(f) => json!({
+                "name": f.name,
+                "art": f.art,
+                "source": f.source,
+                "present": true,
+            }),
+            None => json!({ "name": "", "art": "", "source": "", "present": false }),
+        }
+    }
+
+    /// Key labels of P1's bindings for hint keycaps.
+    fn keys_json(&self) -> Value {
+        let k = &self.config.input.p1;
+        json!({
+            "a": key_label(&k.a),
+            "b": key_label(&k.b),
+            "c": key_label(&k.c),
+            "x": key_label(&k.x),
+            "start": key_label(&k.start),
+        })
+    }
+
+    /// Function keys a screen handles itself (TAB search / F1 sort on the roster).
+    pub fn hotkey(&mut self, key: &Key, sys: &SystemData) -> bool {
+        if self.roster.is_none() {
+            return false;
+        }
+        let action = match key {
+            Key::Named(NamedKey::Tab) => "search",
+            Key::Named(NamedKey::F1) => "sort",
+            _ => return false,
+        };
+        self.action(action, sys);
+        true
     }
 
     /// The game mode a select screen was opened for.
@@ -352,7 +538,17 @@ impl UiScreen {
                 controls: (kind == UiKind::Controls).then(|| crate::settings::Controls::new(0)),
                 ..Default::default()
             },
+            pause: None,
+            moves_page: 0,
+            featured: Vec::new(),
+            feature_at: 0,
+            arenas: Value::Null,
+            try_stage: None,
+            ticks: 0,
         };
+        if kind == UiKind::Title {
+            s.load_title_facts(lib);
+        }
         if let Some(r) = &s.roster
             && r.dual()
         {
@@ -372,7 +568,11 @@ impl UiScreen {
     fn refresh_data(&mut self, sys: &SystemData) {
         let data = match self.kind {
             UiKind::Select(_) => match &self.roster {
-                Some(r) => r.data(&self.profile, &self.room),
+                Some(r) => {
+                    let mut d = r.data(&self.profile, &self.room);
+                    d["keys"] = self.keys_json();
+                    d
+                }
                 None => Value::Null,
             },
             UiKind::Versus => {
@@ -388,7 +588,7 @@ impl UiScreen {
                 };
                 let side = |i: usize| {
                     let has = self.mem.contains_key(&format!("p{i}"));
-                    json!({ "name": name(i), "art": format!("mem:p{i}"), "has_art": has })
+                    json!({ "name": name(i), "name_up": name(i).to_uppercase(), "art": format!("mem:p{i}"), "has_art": has })
                 };
                 let (stage_name, stage_thumb) = setup
                     .and_then(|s| s.stage.as_ref())
@@ -413,6 +613,7 @@ impl UiScreen {
                     };
                     json!({
                         "headline": headline,
+                        "winner_up": winner_name.to_uppercase(),
                         "winner": winner_name,
                         "winner_art": w.map(|i| format!("mem:p{}", i + 1)).unwrap_or_default(),
                         "has_art": has_art,
@@ -427,14 +628,62 @@ impl UiScreen {
                         "can_rematch": !r.arcade,
                         "can_title": !r.quick,
                         "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                        "quote": r.quote,
+                        "stats": r.stats.iter().map(|(k, v)| json!({ "label": k, "value": v })).collect::<Vec<_>>(),
+                        "loser": match w {
+                            Some(i) => json!({
+                                "name": r.names[1 - i],
+                                "art": format!("mem:p{}", 2 - i),
+                                "has_art": r.arts[1 - i].is_some(),
+                            }),
+                            None => json!({ "name": "", "art": "", "has_art": false }),
+                        },
+                        "draw": w.is_none(),
+                        "menu": result_menu(r),
                     })
                 }
                 None => Value::Null,
             },
-            UiKind::Pause => json!({
-                "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
-                "version": env!("CARGO_PKG_VERSION"),
-            }),
+            UiKind::Pause => {
+                let info = self.pause.as_ref();
+                let moves = info.map(|p| p.moves.as_slice()).unwrap_or(&[]);
+                let pages = moves.len().div_ceil(MOVES_PER_PAGE).max(1);
+                let page = self.moves_page % pages;
+                let shown: Vec<Value> = moves
+                    .iter()
+                    .skip(page * MOVES_PER_PAGE)
+                    .take(MOVES_PER_PAGE)
+                    .map(|m| json!({ "name": m.name, "notation": m.notation, "super": m.super_move }))
+                    .collect();
+                let mut menu = vec![
+                    json!({ "id": "resume", "label": "RESUME", "action": "resume", "style": "main" }),
+                    json!({ "id": "moves", "label": "MOVE LIST", "action": "moves", "style": "main" }),
+                    json!({ "id": "restart", "label": "RESTART ROUND", "action": "restart", "style": "main" }),
+                    json!({ "id": "options", "label": "OPTIONS", "action": "options", "style": "main" }),
+                ];
+                if info.is_some_and(|p| p.mode.is_some()) {
+                    menu.push(json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select", "style": "main" }));
+                }
+                menu.push(json!({ "id": "quit", "label": "QUIT TO MENU", "action": "quit", "style": "paper", "paper": true }));
+                let cmd = info.map(|p| p.cmd.clone()).unwrap_or_default();
+                json!({
+                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "menu": menu,
+                    "side": format!("{}P", info.map_or(1, |p| p.side + 1)),
+                    "name": info.map(|p| p.name.to_uppercase()).unwrap_or_default(),
+                    "art": "mem:pauser",
+                    "has_art": self.mem.contains_key("pauser"),
+                    "scene": "mem:scene",
+                    "has_scene": self.mem.contains_key("scene"),
+                    "moves": shown,
+                    "has_moves": !moves.is_empty(),
+                    "no_moves": moves.is_empty(),
+                    "source": if cmd.is_empty() { "NO COMMAND FILE".to_string() } else { format!("MOVE LIST · FROM {cmd}") },
+                    "page": if pages > 1 { format!("PAGE {} / {}", page + 1, pages) } else { String::new() },
+                    "keys": self.keys_json(),
+                })
+            }
             UiKind::Title => {
                 let mut menu: Vec<Value> = sys
                     .title
@@ -492,7 +741,28 @@ impl UiScreen {
                         json!({ "id": "netplay", "label": "NETPLAY", "action": "netplay" }),
                     );
                 }
+                let can_try = !self.featured.is_empty();
+                for m in &mut menu {
+                    let id = m["id"].as_str().unwrap_or("").to_string();
+                    m["desc"] = Value::from(menu_desc(&id));
+                    m["style"] = Value::from(if id == "exit" { "exit" } else { "main" });
+                    m["exit"] = Value::from(id == "exit");
+                    if can_try {
+                        m["right"] = Value::from("try");
+                    }
+                }
+                let version = env!("CARGO_PKG_VERSION");
+                let short: Vec<&str> = version.split('.').take(2).collect();
+                let p = &self.profile;
                 json!({
+                    "featured": self.featured_json(),
+                    "arenas": self.arenas,
+                    "vol": format!("VOL. {}", short.join(".")),
+                    "ranked": {
+                        "rating": if p.wins + p.losses == 0 { "1500".to_string() } else { p.rating_text() },
+                        "line": format!("{} · {}W {}L", if p.wins + p.losses == 0 { "UNRANKED" } else { "LOCAL" }, p.wins, p.losses),
+                    },
+                    "keys": self.keys_json(),
                     "menu": menu,
                     "news": self.news,
                     "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
@@ -718,9 +988,23 @@ impl UiScreen {
             return match a {
                 "resume" | "back" => Some(Transition::Resume),
                 "options" => Some(Transition::Options),
+                "restart" => Some(Transition::Restart),
+                "moves" => {
+                    self.moves_page += 1;
+                    self.refresh_data(sys);
+                    None
+                }
+                "select" => self
+                    .pause
+                    .as_ref()
+                    .and_then(|p| p.mode)
+                    .map(Transition::Select),
                 "title" | "quit" => Some(Transition::Title),
                 _ => None,
             };
+        }
+        if self.kind == UiKind::Title && a == "try" {
+            return self.try_featured();
         }
         let mut parts = a.splitn(3, ':');
         let head = parts.next().unwrap_or("");
@@ -786,6 +1070,29 @@ impl UiScreen {
         }
     }
 
+    /// Title: jump into training with the featured fighter.
+    fn try_featured(&self) -> Option<Transition> {
+        let f = self.featured.get(self.feature_at)?;
+        let stage = self.try_stage.clone();
+        let id = f
+            .def
+            .parent()
+            .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
+            .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok())
+            .map(|m| m.id)
+            .unwrap_or_default();
+        Some(Transition::Fight(FightSetup {
+            p1: f.def.clone(),
+            p2: f.def.clone(),
+            stage,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [id.clone(), id],
+            mode: Some(Mode::Training),
+        }))
+    }
+
     /// One tick: navigation from both players, mouse, actions → transition.
     pub fn tick(
         &mut self,
@@ -796,6 +1103,12 @@ impl UiScreen {
     ) -> Option<Transition> {
         if let Some(t) = self.pending.take() {
             return Some(t);
+        }
+        self.ticks += 1;
+        if self.kind == UiKind::Title && self.featured.len() > 1 && self.ticks % FEATURE_TICKS == 0
+        {
+            self.feature_at = (self.feature_at + 1) % self.featured.len();
+            self.refresh_data(sys);
         }
         self.window = r.size();
         if let Some((px, py)) = self.mouse_px {
@@ -883,6 +1196,7 @@ impl UiScreen {
                 textures: &mut self.textures,
                 motif: &self.motif,
                 mem: Some(&self.mem),
+                rot: None,
             };
             self.ui.tick2(nav, nav2, &mut host)
         };
@@ -904,6 +1218,11 @@ impl UiScreen {
                     if let Some(rest) = a.strip_prefix("pick:") {
                         sfx(sys.title.done_snd);
                         if let Some(t) = self.action(&format!("pick2:{rest}"), sys) {
+                            out = Some(t);
+                        }
+                    } else if a == "random" {
+                        sfx(sys.title.done_snd);
+                        if let Some(t) = self.action("random2", sys) {
                             out = Some(t);
                         }
                     }
@@ -934,10 +1253,19 @@ impl UiScreen {
         // roster: the focused cell is the character on display
         if let Some(r) = self.roster.as_mut()
             && let Some(f) = self.ui.focused()
-            && let Some(rest) = f.strip_prefix("cells[")
+            && let Some(rest) = f.strip_prefix("cells[").or_else(|| f.strip_prefix("grid["))
             && let Some(end) = rest.find(']')
             && let Ok(i) = rest[..end].parse::<usize>()
             && r.hover_order(i)
+        {
+            self.refresh_data(sys);
+        }
+        if let Some(r) = self.roster.as_mut()
+            && let Some(f) = self.ui.focused2()
+            && let Some(rest) = f.strip_prefix("grid[")
+            && let Some(end) = rest.find(']')
+            && let Ok(i) = rest[..end].parse::<usize>()
+            && r.hover2_order(i)
         {
             self.refresh_data(sys);
         }
@@ -954,6 +1282,7 @@ impl UiScreen {
                 textures: &mut self.textures,
                 motif: &self.motif,
                 mem: Some(&self.mem),
+                rot: None,
             };
             self.ui.draw(&mut host);
         }
@@ -968,6 +1297,30 @@ impl UiScreen {
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],
         )
     }
+}
+
+/// Buttons under the result screen.
+fn result_menu(r: &ResultInfo) -> Vec<Value> {
+    let mut menu = Vec::new();
+    let mut add = |id: &str, label: &str| {
+        menu.push(json!({ "id": id, "label": label, "action": id, "style": "main" }));
+    };
+    if r.arcade {
+        add("continue", "CONTINUE");
+    }
+    if !r.arcade {
+        add("rematch", "REMATCH");
+    }
+    if !r.quick && !r.arcade && r.setup.mode.is_some() {
+        add("select", "CHARACTER SELECT");
+    }
+    if !r.quick {
+        add("title", "MAIN MENU");
+    }
+    if r.quick {
+        add("quit", "QUIT");
+    }
+    menu
 }
 
 /// Decode a WebP or PNG file to straight RGBA.
@@ -1044,6 +1397,8 @@ pub(crate) struct Host<'a> {
     pub(crate) motif: &'a Path,
     /// `mem:<name>` images owned by the screen.
     pub(crate) mem: Option<&'a HashMap<String, MemImage>>,
+    /// Rotation of the subtree being drawn (`angle` nodes).
+    pub(crate) rot: Option<rugen_ui::Rot>,
 }
 
 impl Host<'_> {
@@ -1081,6 +1436,31 @@ impl Host<'_> {
     fn clip_of(c: Option<Rect>) -> Option<[f32; 4]> {
         c.map(|c| [c.x, c.y, c.x + c.w, c.y + c.h])
     }
+
+    /// Rotate `d` around the current subtree pivot, keeping its unrotated placement.
+    fn apply_rot(&self, d: &mut Draw) {
+        let Some(rot) = self.rot else {
+            return;
+        };
+        let (ax, ay) = (d.axis[0] * d.scale[0], d.axis[1] * d.scale[1]);
+        let nax = if d.hflip {
+            d.pos[0] + ax - rot.cx
+        } else {
+            rot.cx - d.pos[0] + ax
+        };
+        let nay = if d.vflip {
+            d.pos[1] + ay - rot.cy
+        } else {
+            rot.cy - d.pos[1] + ay
+        };
+        d.axis = [
+            nax / d.scale[0].max(f32::EPSILON),
+            nay / d.scale[1].max(f32::EPSILON),
+        ];
+        d.pos = [rot.cx, rot.cy];
+        d.angle = -rot.deg;
+        d.clip_local = true;
+    }
 }
 
 impl Painter for Host<'_> {
@@ -1097,6 +1477,23 @@ impl Painter for Host<'_> {
         alpha: f32,
         clip: Option<Rect>,
     ) {
+        let fx = rugen_ui::ImageFx {
+            skew,
+            alpha,
+            flip: false,
+            grey: false,
+        };
+        self.draw_image_fx(key, src, dst, &fx, clip);
+    }
+
+    fn draw_image_fx(
+        &mut self,
+        key: &str,
+        src: Option<[u32; 4]>,
+        dst: Rect,
+        fx: &rugen_ui::ImageFx,
+        clip: Option<Rect>,
+    ) {
         let Some((tex, w, h, pal)) = self.texture(key) else {
             return;
         };
@@ -1107,10 +1504,22 @@ impl Painter for Host<'_> {
         let mut d = Draw::new(tex, pal, [dst.x, dst.y], [0.0, 0.0]);
         d.src = src;
         d.scale = [dst.w / sw as f32, dst.h / sh as f32];
-        d.color = [1.0, 1.0, 1.0, alpha];
-        d.skew = skew;
+        d.color = [1.0, 1.0, 1.0, fx.alpha];
+        d.skew = fx.skew;
         d.clip = Self::clip_of(clip);
+        if fx.flip {
+            d.hflip = true;
+            d.pos[0] = dst.x + dst.w;
+        }
+        if fx.grey {
+            d.tint.color = 0.0;
+        }
+        self.apply_rot(&mut d);
         self.r.draw(d);
+    }
+
+    fn set_transform(&mut self, rot: Option<rugen_ui::Rot>) {
+        self.rot = rot;
     }
 
     fn draw_rect(&mut self, dst: Rect, color: [f32; 4], skew: f32, clip: Option<Rect>) {
@@ -1120,6 +1529,7 @@ impl Painter for Host<'_> {
         d.color = color;
         d.skew = skew;
         d.clip = Self::clip_of(clip);
+        self.apply_rot(&mut d);
         self.r.draw(d);
     }
 
@@ -1149,7 +1559,7 @@ impl Painter for Host<'_> {
         clip: Option<Rect>,
     ) {
         if let Some(f) = self.fonts.get_mut(&font) {
-            f.draw_clipped(
+            f.draw_xf(
                 self.r,
                 text,
                 [x, y],
@@ -1158,6 +1568,7 @@ impl Painter for Host<'_> {
                 scale,
                 Self::clip_of(clip),
                 alpha,
+                self.rot.map(|r| (-r.deg, [r.cx, r.cy])),
             );
         }
     }
