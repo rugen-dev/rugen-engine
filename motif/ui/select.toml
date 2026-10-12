@@ -147,6 +147,7 @@ enter_time = 20
   h = 76
   image = "ui/cell.webp"
   image_focus = "ui/cell_lit.webp"
+  color_focus2 = [0.35, 0.55, 1.0, 0.45]
   on_press = "pick:{item.index}"
 
     [[node.children.children]]
@@ -202,7 +203,7 @@ bank = 6
 scale = 2
 
 [[node]]
-kind = "button"
+kind = "input"
 id = "search"
 x = 696
 y = 462
@@ -210,11 +211,15 @@ w = 170
 h = 32
 image = "ui/plate.webp"
 image_focus = "ui/plate_lit.webp"
-text = "SEARCH"
+placeholder = "SEARCH"
+value = "query"
+max_len = 24
 font = 1
 bank = 7
 scale = 2
-on_press = "search"
+pad = 10
+on_change = "query:{value}"
+tip = "TYPE TO FILTER THE ROSTER"
 
 [[node]]
 kind = "button"

@@ -191,6 +191,7 @@ impl SelectScreen {
             net: None,
             tutorial,
             ids: [String::new(), String::new()],
+            mode: Some(self.mode),
         };
         if tutorial {
             return Some(Transition::Fight(setup));

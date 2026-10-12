@@ -9,6 +9,7 @@
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
+//!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
@@ -86,6 +87,7 @@ fn main() -> anyhow::Result<()> {
             let shot = opt("--shot");
             let root = opt("--root");
             let script = opt("--script");
+            let script2 = opt("--script2");
             let net = opt("--net");
             let port = opt("--port");
             let relay = opt("--relay");
@@ -98,6 +100,7 @@ fn main() -> anyhow::Result<()> {
                 shot.clone(),
                 root.clone(),
                 script.clone(),
+                script2.clone(),
                 net.clone(),
                 port.clone(),
                 relay.clone(),
@@ -117,7 +120,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
                 )
             })?;
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
@@ -210,6 +213,7 @@ fn main() -> anyhow::Result<()> {
                 net: net_mode,
                 tutorial: false,
                 ids: [String::new(), String::new()],
+                mode: None,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),
@@ -217,6 +221,7 @@ fn main() -> anyhow::Result<()> {
                     .map(|f| f.parse::<u32>().context("--frames expects a number"))
                     .transpose()?,
                 script: script.as_deref().map(play::parse_script),
+                script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
             };
             game::Shell::new(
@@ -332,6 +337,7 @@ fn main() -> anyhow::Result<()> {
                     .map(|f| f.parse::<u32>().context("--frames expects a number"))
                     .transpose()?,
                 script: None,
+                script2: None,
                 record: None,
             };
             let setup = r.setup();
@@ -469,6 +475,7 @@ fn main() -> anyhow::Result<()> {
                     .map(|f| f.parse::<u32>().context("--frames expects a number"))
                     .transpose()?,
                 script: opt("--script").as_deref().map(play::parse_script),
+                script2: opt("--script2").as_deref().map(play::parse_script),
                 record: None,
             };
             game::Shell::new(config, lib, game::Transition::Title, false, harness, None).run()

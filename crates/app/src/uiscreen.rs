@@ -9,15 +9,17 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use rugen_render::{Camera, Draw, PaletteId, Renderer, TextureId};
 use rugen_sim::Buttons;
-use rugen_ui::{Event, Nav, Painter, Rect, ScreenDef, Ui, VIRTUAL_H, VIRTUAL_W};
+use rugen_ui::{Event, Nav, Painter, Rect, ScreenDef, TextKey, Ui, VIRTUAL_H, VIRTUAL_W};
 use serde_json::{Value, json};
-use winit::keyboard::Key;
+use winit::keyboard::{Key, NamedKey};
 
 use crate::config::Config;
-use crate::game::{Mode, Transition};
+use crate::game::{Mode, ResultInfo, Transition};
+use crate::play::FightSetup;
 use crate::roster::{Outcome, Roster};
 use crate::sprites::{FontGpu, SpriteSheet};
 use crate::system::SystemData;
+use crate::versus::Portrait;
 
 /// Which hardcoded behaviour backs the screen's actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +28,27 @@ pub enum UiKind {
     Options,
     /// Character / stage select for a game mode.
     Select(Mode),
+    /// VS screen before a fight (`ui/vs.toml`).
+    Versus,
+    /// Post-match result (`ui/result.toml`).
+    Result,
+    /// In-match pause menu (`ui/pause.toml`).
+    Pause,
+}
+
+/// A decoded RGBA image kept in memory and drawn through a `mem:<name>` asset key.
+pub type MemImage = (u32, u32, Vec<u8>);
+
+/// Map a winit key to a text-input key.
+pub fn text_key(key: &Key) -> Option<TextKey> {
+    Some(match key {
+        Key::Named(NamedKey::Backspace) => TextKey::Backspace,
+        Key::Named(NamedKey::Enter) => TextKey::Enter,
+        Key::Named(NamedKey::Escape) => TextKey::Escape,
+        Key::Named(NamedKey::Space) => TextKey::Char(' '),
+        Key::Character(c) => TextKey::Char(c.chars().next()?),
+        _ => return None,
+    })
 }
 
 /// Per-character record in the profile.
@@ -157,6 +180,12 @@ pub struct UiScreen {
     /// Select screens only.
     roster: Option<Roster>,
     room: String,
+    /// VS screen: the fight to start and the ticks left.
+    versus: Option<(FightSetup, i32)>,
+    /// Result screen.
+    result: Option<ResultInfo>,
+    /// In-memory images (`mem:p1`...) for portraits that are not files.
+    mem: HashMap<String, MemImage>,
 }
 
 const BUTTON_NAMES: [&str; 11] = [
@@ -184,7 +213,77 @@ impl UiScreen {
             UiKind::Title => "title.toml",
             UiKind::Options => "options.toml",
             UiKind::Select(_) => "select.toml",
+            UiKind::Versus => "vs.toml",
+            UiKind::Result => "result.toml",
+            UiKind::Pause => "pause.toml",
         }
+    }
+
+    /// Start the leave animation; the shell waits for [`left`](Self::left).
+    pub fn leave(&mut self) {
+        self.ui.leave();
+    }
+    pub fn leaving(&self) -> bool {
+        self.ui.leaving()
+    }
+    pub fn left(&self) -> bool {
+        self.ui.left()
+    }
+
+    /// VS screen for `setup` with both sides' portraits.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_versus(
+        motif: &Path,
+        root: &Path,
+        sys: &SystemData,
+        config: &Config,
+        lib: &rugen_content::Library,
+        setup: FightSetup,
+        sides: [Portrait; 2],
+    ) -> anyhow::Result<Self> {
+        let mut s = Self::load(UiKind::Versus, motif, root, sys, config, false, lib)?;
+        let [a, b] = sides;
+        for (i, p) in [a, b].into_iter().enumerate() {
+            if let Some((w, h, rgba, _)) = p.image {
+                s.mem.insert(format!("p{}", i + 1), (w, h, rgba));
+            }
+            s.mem
+                .insert(format!("name{}", i + 1), (0, 0, p.name.into_bytes()));
+        }
+        s.versus = Some((setup, sys.versus.time.max(60)));
+        s.refresh_data(sys);
+        Ok(s)
+    }
+
+    /// Result screen after a match.
+    pub fn load_result(
+        motif: &Path,
+        root: &Path,
+        sys: &SystemData,
+        config: &Config,
+        lib: &rugen_content::Library,
+        info: ResultInfo,
+    ) -> anyhow::Result<Self> {
+        let mut s = Self::load(UiKind::Result, motif, root, sys, config, false, lib)?;
+        for (i, art) in info.arts.iter().enumerate() {
+            if let Some(img) = art {
+                s.mem.insert(format!("p{}", i + 1), img.clone());
+            }
+        }
+        s.result = Some(info);
+        s.refresh_data(sys);
+        Ok(s)
+    }
+
+    /// Pause menu.
+    pub fn load_pause(
+        motif: &Path,
+        root: &Path,
+        sys: &SystemData,
+        config: &Config,
+        lib: &rugen_content::Library,
+    ) -> anyhow::Result<Self> {
+        Self::load(UiKind::Pause, motif, root, sys, config, false, lib)
     }
 
     /// The game mode a select screen was opened for.
@@ -230,7 +329,15 @@ impl UiScreen {
                 _ => None,
             },
             room: "LOCAL".into(),
+            versus: None,
+            result: None,
+            mem: HashMap::new(),
         };
+        if let Some(r) = &s.roster
+            && r.dual()
+        {
+            s.ui.set_dual(true);
+        }
         if let Some(r) = &s.roster
             && r.is_empty()
         {
@@ -248,6 +355,66 @@ impl UiScreen {
                 Some(r) => r.data(&self.profile, &self.room),
                 None => Value::Null,
             },
+            UiKind::Versus => {
+                let (setup, left) = match &self.versus {
+                    Some(v) => (Some(&v.0), v.1),
+                    None => (None, 0),
+                };
+                let name = |i: usize| {
+                    self.mem
+                        .get(&format!("name{i}"))
+                        .map(|(_, _, b)| String::from_utf8_lossy(b).to_string())
+                        .unwrap_or_default()
+                };
+                let side = |i: usize| {
+                    let has = self.mem.contains_key(&format!("p{i}"));
+                    json!({ "name": name(i), "art": format!("mem:p{i}"), "has_art": has })
+                };
+                let (stage_name, stage_thumb) = setup
+                    .and_then(|s| s.stage.as_ref())
+                    .map(|p| stage_card(p))
+                    .unwrap_or_default();
+                json!({
+                    "p1": side(1),
+                    "p2": side(2),
+                    "stage": { "name": stage_name, "thumb": stage_thumb, "has_thumb": !stage_thumb.is_empty() },
+                    "countdown": (left + 59) / 60,
+                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                })
+            }
+            UiKind::Result => match &self.result {
+                Some(r) => {
+                    let w = r.winner;
+                    let winner_name = w.map(|i| r.names[i].clone()).unwrap_or_default();
+                    let has_art = w.is_some_and(|i| r.arts[i].is_some());
+                    let headline = match w {
+                        Some(_) => "WINNER",
+                        None => "DRAW",
+                    };
+                    json!({
+                        "headline": headline,
+                        "winner": winner_name,
+                        "winner_art": w.map(|i| format!("mem:p{}", i + 1)).unwrap_or_default(),
+                        "has_art": has_art,
+                        "p1": r.names[0],
+                        "p2": r.names[1],
+                        "rounds": format!("{} - {}", r.wins[0], r.wins[1]),
+                        "rating": r.rating,
+                        "has_rating": !r.rating.is_empty(),
+                        "quick": r.quick,
+                        "arcade": r.arcade,
+                        "can_select": !r.quick && !r.arcade && r.setup.mode.is_some(),
+                        "can_rematch": !r.arcade,
+                        "can_title": !r.quick,
+                        "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    })
+                }
+                None => Value::Null,
+            },
+            UiKind::Pause => json!({
+                "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                "version": env!("CARGO_PKG_VERSION"),
+            }),
             UiKind::Title => {
                 let mut menu: Vec<Value> = sys
                     .title
@@ -385,15 +552,15 @@ impl UiScreen {
     }
 
     pub fn capturing(&self) -> bool {
-        self.capture.is_some() || self.roster.as_ref().is_some_and(|r| r.searching)
+        self.capture.is_some() || self.ui.text_focused()
     }
 
-    /// Raw key while rebinding or typing a search. Returns true when consumed.
+    /// Raw key while rebinding or editing a text input. Returns true when consumed.
     pub fn raw_key(&mut self, key: &Key, sys: &SystemData) -> bool {
-        if let Some(r) = self.roster.as_mut()
-            && r.type_key(key)
-        {
-            self.refresh_data(sys);
+        if self.ui.text_focused() {
+            if let Some(k) = text_key(key) {
+                self.ui.text_key(k);
+            }
             return true;
         }
         let Some((player, idx)) = self.capture else {
@@ -449,6 +616,10 @@ impl UiScreen {
 
     fn action(&mut self, a: &str, sys: &SystemData) -> Option<Transition> {
         if let Some(r) = self.roster.as_mut() {
+            if a == "search" {
+                self.ui.edit("search");
+                return None;
+            }
             return match r.action(a) {
                 Outcome::None => None,
                 Outcome::Refresh => {
@@ -456,6 +627,34 @@ impl UiScreen {
                     None
                 }
                 Outcome::Go(t) => Some(*t),
+            };
+        }
+        if let Some((setup, _)) = &self.versus {
+            return match a {
+                "fight" | "skip" => Some(Transition::Fight(setup.clone())),
+                "back" | "title" => Some(Transition::Title),
+                _ => None,
+            };
+        }
+        if let Some(r) = &self.result {
+            return match a {
+                "rematch" => Some(Transition::Fight(r.setup.clone())),
+                "select" => Some(match r.setup.mode {
+                    Some(m) => Transition::Select(m),
+                    None => Transition::Title,
+                }),
+                "continue" => Some(Transition::Continue),
+                "title" | "back" => Some(Transition::Title),
+                "quit" => Some(Transition::Quit),
+                _ => None,
+            };
+        }
+        if self.kind == UiKind::Pause {
+            return match a {
+                "resume" | "back" => Some(Transition::Resume),
+                "options" => Some(Transition::Options),
+                "title" | "quit" => Some(Transition::Title),
+                _ => None,
             };
         }
         let mut parts = a.splitn(3, ':');
@@ -517,19 +716,39 @@ impl UiScreen {
                 VIRTUAL_H / 2.0 + (py - self.window.1 as f32 / 2.0) * vh / self.window.1 as f32;
             self.ui.mouse_move(Some((vx, vy)));
         }
-        let nav = if self.capture.is_some() {
-            Nav::default()
-        } else {
-            let any = |f: fn(&Buttons) -> bool| pressed.iter().any(f);
-            Nav {
-                up: any(|b| b.u),
-                down: any(|b| b.d),
-                left: any(|b| b.l),
-                right: any(|b| b.r),
-                accept: any(|b| b.a || b.b || b.c || b.x || b.y || b.z || b.s),
-                back: false,
-            }
+        let of = |b: &Buttons| Nav {
+            up: b.u,
+            down: b.d,
+            left: b.l,
+            right: b.r,
+            accept: b.a || b.b || b.c || b.x || b.y || b.z || b.s,
+            back: false,
         };
+        let dual = self.roster.as_ref().is_some_and(|r| r.dual());
+        let (nav, nav2) = if self.capture.is_some() {
+            (Nav::default(), Nav::default())
+        } else if dual {
+            (of(&pressed[0]), of(&pressed[1]))
+        } else {
+            let merged = Buttons::from_bits(pressed[0].bits() | pressed[1].bits());
+            (of(&merged), Nav::default())
+        };
+        // VS screen: count down, any button skips
+        let mut vs_done = None;
+        let mut vs_refresh = false;
+        if let Some((setup, left)) = self.versus.as_mut() {
+            *left -= 1;
+            if *left <= 0 || nav.accept || nav2.accept {
+                vs_done = Some(setup.clone());
+            }
+            vs_refresh = *left % 60 == 0;
+        }
+        if let Some(s) = vs_done {
+            return Some(Transition::Fight(s));
+        }
+        if vs_refresh {
+            self.refresh_data(sys);
+        }
         let events = {
             let mut host = Host {
                 r,
@@ -537,18 +756,35 @@ impl UiScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
+                mem: Some(&self.mem),
             };
-            self.ui.tick(nav, &mut host)
+            self.ui.tick2(nav, nav2, &mut host)
         };
         let mut out = None;
         for e in events {
             match e {
-                Event::Moved => sfx(sys.title.move_snd),
+                Event::Moved | Event::Moved2 => sfx(sys.title.move_snd),
                 Event::Back => out = Some(Transition::Title),
                 Event::Action(a) => {
-                    sfx(sys.title.done_snd);
+                    if !a.starts_with("query:") {
+                        sfx(sys.title.done_snd);
+                    }
                     if let Some(t) = self.action(&a, sys) {
                         out = Some(t);
+                    }
+                }
+                Event::Action2(a) => {
+                    // the second cursor only picks (and unpicks) on the roster
+                    if let Some(rest) = a.strip_prefix("pick:") {
+                        sfx(sys.title.done_snd);
+                        if let Some(t) = self.action(&format!("pick2:{rest}"), sys) {
+                            out = Some(t);
+                        }
+                    }
+                }
+                Event::Input(id, text) => {
+                    if id == "search" {
+                        self.action(&format!("query:{text}"), sys);
                     }
                 }
             }
@@ -575,6 +811,7 @@ impl UiScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
+                mem: Some(&self.mem),
             };
             self.ui.draw(&mut host);
         }
@@ -645,6 +882,26 @@ pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     }
 }
 
+/// Stage display name and thumbnail path for a prepared stage .def.
+fn stage_card(def: &Path) -> (String, String) {
+    let dir = def.parent();
+    let man = dir
+        .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
+        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok());
+    let name = man
+        .as_ref()
+        .map(|m| m.display_name.clone())
+        .or_else(|| def.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_default()
+        .to_uppercase();
+    let thumb = man
+        .as_ref()
+        .and_then(|m| m.thumb.as_ref())
+        .and_then(|t| dir.map(|d| d.join(&t.file).display().to_string()))
+        .unwrap_or_default();
+    (name, thumb)
+}
+
 /// Painter over the renderer, motif fonts and the system sprite sheet.
 pub(crate) struct Host<'a> {
     pub(crate) r: &'a mut Renderer,
@@ -652,6 +909,8 @@ pub(crate) struct Host<'a> {
     pub(crate) sheet: &'a mut SpriteSheet,
     pub(crate) textures: &'a mut HashMap<String, Cached>,
     pub(crate) motif: &'a Path,
+    /// `mem:<name>` images owned by the screen.
+    pub(crate) mem: Option<&'a HashMap<String, MemImage>>,
 }
 
 impl Host<'_> {
@@ -659,7 +918,12 @@ impl Host<'_> {
         if let Some(c) = self.textures.get(key) {
             return *c;
         }
-        let loaded: Cached = if let Some(spec) = key.strip_prefix("sff:") {
+        let loaded: Cached = if let Some(name) = key.strip_prefix("mem:") {
+            self.mem
+                .and_then(|m| m.get(name))
+                .filter(|(w, h, _)| *w > 0 && *h > 0)
+                .map(|(w, h, rgba)| (self.r.add_rgba(*w, *h, rgba), *w, *h, None))
+        } else if let Some(spec) = key.strip_prefix("sff:") {
             let mut it = spec
                 .split(',')
                 .map(|s| s.trim().parse::<i32>().unwrap_or(0));

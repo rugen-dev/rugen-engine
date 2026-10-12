@@ -16,7 +16,7 @@ use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
 use rugen_ui::{Event, Nav, ScreenDef, Ui, VIRTUAL_H, VIRTUAL_W};
 use serde_json::{Value, json};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::Key;
 
 use crate::config::Config;
 use crate::game::Transition;
@@ -256,40 +256,22 @@ impl OnlineScreen {
         self.ui.set_data(data);
     }
 
-    /// Typing a room code captures raw keys.
+    /// The room-code input takes raw keys while it is being edited.
     pub fn capturing(&self) -> bool {
-        self.state == State::Join
+        self.ui.text_focused()
     }
 
     pub fn raw_key(&mut self, key: &Key) -> bool {
-        if self.state != State::Join {
-            return false;
+        let Some(k) = crate::uiscreen::text_key(key) else {
+            return self.ui.text_focused();
+        };
+        if k == rugen_ui::TextKey::Escape && self.state == State::Join {
+            self.ui.text_key(k);
+            self.cancel();
+            self.refresh();
+            return true;
         }
-        match key {
-            Key::Named(NamedKey::Escape) => {
-                self.state = State::Menu;
-                self.typed.clear();
-            }
-            Key::Named(NamedKey::Backspace) => {
-                self.typed.pop();
-            }
-            Key::Named(NamedKey::Enter) => {
-                if self.typed.len() == 5 {
-                    self.join();
-                }
-            }
-            Key::Character(c) => {
-                for ch in c.chars() {
-                    let ch = ch.to_ascii_uppercase();
-                    if (ch.is_ascii_alphanumeric()) && self.typed.len() < 5 {
-                        self.typed.push(ch);
-                    }
-                }
-            }
-            _ => {}
-        }
-        self.refresh();
-        true
+        self.ui.text_key(k)
     }
 
     pub fn mouse(&mut self, ev: MouseEvent) {
@@ -335,11 +317,30 @@ impl OnlineScreen {
                 self.jobs
                     .push(Job::Room(Pending::spawn(move || c.create_room(&ch, &st))));
             }
+            ("typed", v) => {
+                self.typed = v
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .map(|c| c.to_ascii_uppercase())
+                    .take(5)
+                    .collect();
+                self.ui.set_input("code", &self.typed);
+            }
+            ("join", _) => {
+                if self.typed.len() == 5 {
+                    self.join();
+                } else {
+                    self.status = "THE CODE HAS 5 LETTERS".into();
+                }
+            }
             ("online", "join") => {
                 self.typed.clear();
                 self.error.clear();
                 self.status = "TYPE THE 5-LETTER ROOM CODE".into();
                 self.state = State::Join;
+                self.ui.set_input("code", "");
+                self.refresh();
+                self.ui.edit("code");
                 // `[net] room` in rugen.toml pre-fills and joins straight away
                 let preset = self.config.net.room.trim().to_ascii_uppercase();
                 if preset.len() == 5 {
@@ -463,6 +464,7 @@ impl OnlineScreen {
             }),
             tutorial: false,
             ids: [String::new(), String::new()],
+            mode: None,
         });
         self.started = Some(m);
     }
@@ -692,6 +694,7 @@ impl OnlineScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
+                mem: None,
             };
             self.ui.tick(nav, &mut host)
         };
@@ -707,11 +710,14 @@ impl OnlineScreen {
                     }
                 }
                 Event::Action(a) => {
-                    sfx(sys.title.done_snd);
+                    if !a.starts_with("typed:") {
+                        sfx(sys.title.done_snd);
+                    }
                     if let Some(t) = self.action(&a) {
                         out = Some(t);
                     }
                 }
+                Event::Action2(_) | Event::Moved2 | Event::Input(..) => {}
             }
         }
         self.refresh();
@@ -736,6 +742,7 @@ impl OnlineScreen {
                 sheet: &mut sys.sheet,
                 textures: &mut self.textures,
                 motif: &self.motif,
+                mem: None,
             };
             self.ui.draw(&mut host);
         }
