@@ -8,11 +8,19 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # official server baked into the game (BUILDING.md#official-server): set the
+  # repository variables before releasing; the public key is required
+  RUGEN_OFFICIAL_SERVER: ${{ vars.RUGEN_OFFICIAL_SERVER || 'https://play.rugen.dev' }}
+  RUGEN_OFFICIAL_KEY: ${{ vars.RUGEN_OFFICIAL_KEY }}
 
 jobs:
   windows:
     runs-on: windows-latest
     steps:
+      - name: Official server key is set
+        if: env.RUGEN_OFFICIAL_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,6 +48,10 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
+      - name: Official server key is set
+        if: env.RUGEN_OFFICIAL_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -71,6 +83,10 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
+      - name: Official server key is set
+        if: env.RUGEN_OFFICIAL_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
