@@ -1055,9 +1055,12 @@ impl Match {
         let (w, h) = r.size();
         let aspect = w as f32 / h as f32;
         let screen_w = stage.height * aspect;
-        // zoom is anchored on the ground line; HUD coordinates are "screen" units
-        // mapped back into the zoomed world so bars never scale with the camera
-        let center_y = ground - (ground - stage.height / 2.0) / zoom;
+        // zooming in keeps the ground line where it is; zooming out lifts it
+        // toward two thirds of the screen so the wider view shows floor as well
+        // as sky. HUD coordinates are "screen" units mapped back into the
+        // zoomed world so bars never scale with the camera
+        let ground_frac = ground_screen_frac(ground / stage.height, zoom);
+        let center_y = ground - (ground_frac - 0.5) * stage.height / zoom;
         let u = 1.0 / zoom;
         let hud_left = cam_x - screen_w * u / 2.0;
         let hud_w = screen_w * u;
@@ -1423,4 +1426,13 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()>
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()?.write_image_data(rgba)?;
     Ok(())
+}
+
+/// Where the ground line sits on screen (0 = top, 1 = bottom) at `zoom`:
+/// the stage's own `zoffset` fraction at zoom 1 and above, easing to 0.66 as
+/// the camera pulls back to 0.3.
+fn ground_screen_frac(at_rest: f32, zoom: f32) -> f32 {
+    let target = 0.66f32.min(at_rest);
+    let t = ((1.0 - zoom) / 0.7).clamp(0.0, 1.0);
+    at_rest + (target - at_rest) * t
 }
