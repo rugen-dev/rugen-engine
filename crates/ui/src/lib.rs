@@ -388,6 +388,19 @@ impl Ui {
     pub fn set_focus(&mut self, key: Option<&str>) {
         self.focus = key.map(str::to_string);
     }
+
+    /// Rectangle of a laid-out instance (after the last tick), virtual pixels.
+    pub fn rect_of(&self, key: &str) -> Option<Rect> {
+        self.find(key).map(|i| i.rect)
+    }
+
+    /// `on_press` action of the focused node, if any.
+    pub fn focused_action(&self) -> Option<String> {
+        self.focus
+            .as_deref()
+            .and_then(|f| self.find(f))
+            .and_then(|i| i.on_press.clone())
+    }
     pub fn focused(&self) -> Option<&str> {
         self.focus.as_deref()
     }
@@ -830,6 +843,15 @@ impl Ui {
         }
         let instances = std::mem::take(&mut self.instances);
         for inst in &instances {
+            // fully outside the scroller: skip (also keeps off-screen thumbnails unloaded)
+            if let Some(c) = inst.clip
+                && (inst.rect.x + inst.rect.w <= c.x
+                    || inst.rect.y + inst.rect.h <= c.y
+                    || inst.rect.x >= c.x + c.w
+                    || inst.rect.y >= c.y + c.h)
+            {
+                continue;
+            }
             let n = &self.defs[inst.def];
             let focused = self.focus.as_deref() == Some(&inst.key);
             let mut rect = inst.rect;

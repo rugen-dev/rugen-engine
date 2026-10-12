@@ -157,6 +157,520 @@ fn avatar() -> Canvas {
     c
 }
 
+/// Roster cell frame (38x38, shown at 2x): dark glossy square, optional lit rim.
+fn cell(kind: &str) -> Canvas {
+    let n = 38;
+    let mut c = Canvas::new(n as u32, n as u32);
+    match kind {
+        "lit" => {
+            c.vgrad(0, 0, n, n, [48, 52, 78, 255], [24, 26, 40, 255]);
+            c.outline([255, 200, 120, 255]);
+            c.rect(1, 1, n - 2, 1, [255, 240, 200, 255]);
+        }
+        "p1" => {
+            // overlay: transparent inside, red frame
+            c.rect(0, 0, n, 2, MAROON_LIT);
+            c.rect(0, n - 2, n, 2, MAROON_LIT);
+            c.rect(0, 0, 2, n, MAROON_LIT);
+            c.rect(n - 2, 0, 2, n, MAROON_LIT);
+            c.rect(0, 0, 9, 9, MAROON_LIT);
+        }
+        "p2" => {
+            let blue: Rgba = [60, 130, 230, 255];
+            c.rect(0, 0, n, 2, blue);
+            c.rect(0, n - 2, n, 2, blue);
+            c.rect(0, 0, 2, n, blue);
+            c.rect(n - 2, 0, 2, n, blue);
+            c.rect(n - 9, 0, 9, 9, blue);
+        }
+        _ => {
+            c.vgrad(0, 0, n, n, [30, 32, 48, 255], [14, 15, 24, 255]);
+            c.outline(RIM);
+        }
+    }
+    c
+}
+
+/// Verification badge (7x7 diamond, shown at 2x).
+fn badge(color: Rgba) -> Canvas {
+    let mut c = Canvas::new(7, 7);
+    for y in 0..7 {
+        let half = 3 - (y - 3i32).abs();
+        c.rect(3 - half, y, half * 2 + 1, 1, color);
+    }
+    c.outline(BLACK);
+    c
+}
+
+/// Big portrait plate (9-slice 32x32, borders 10): dark with a red top band.
+fn art_frame() -> Canvas {
+    let mut c = Canvas::new(32, 32);
+    c.vgrad(0, 0, 32, 32, [26, 28, 44, 240], [10, 11, 18, 240]);
+    c.outline(RIM);
+    c.rect(1, 1, 30, 3, MAROON_LIT);
+    c.rect(1, 4, 30, 1, [255, 190, 150, 255]);
+    c
+}
+
+/// Player card (9-slice 32x32, borders 10): navy with an orange bottom rule.
+fn card() -> Canvas {
+    let mut c = Canvas::new(32, 32);
+    c.vgrad(0, 0, 32, 32, [24, 36, 70, 240], [12, 16, 32, 240]);
+    c.outline([80, 110, 170, 255]);
+    c.rect(1, 29, 30, 2, ORANGE);
+    c
+}
+
+/// Slanted name plate (220x22, shown at 2x).
+fn plate(lit: bool) -> Canvas {
+    let (w, h, skew) = (214, 22, 6);
+    let mut c = Canvas::new((w + skew + 1) as u32, h as u32);
+    if lit {
+        c.para_grad(0, 0, w, h, skew, MAROON_LIT, MAROON_DARK);
+        c.para_edge(0, 0, w, h, skew, [255, 190, 150, 255]);
+    } else {
+        c.para_grad(0, 0, w, h, skew, [36, 40, 62, 235], [16, 17, 28, 235]);
+        c.para_edge(0, 0, w, h, skew, [90, 100, 140, 255]);
+    }
+    c
+}
+
+const SELECT_TOML: &str = r##"# rugen character select — Brawlhalla-style roster. Coordinates are 1280x720.
+# Data: title, prompt, room, cells[] (name thumb badge broken p1 p2 hover index),
+# shown{name author art verdict badge stats present}, p1/p2 (same shape), versus,
+# ready, searching, query, sort, count, stage{name thumb has_thumb}, profile, rating.
+background = [0.03, 0.04, 0.08, 1.0]
+
+[[node]]
+kind = "image"
+image = "ui/bg.webp"
+w = 1280
+h = 720
+
+# header
+[[node]]
+kind = "text"
+text = "{title}"
+x = 40
+y = 18
+font = 3
+bank = 0
+scale = 2
+enter = "down"
+
+[[node]]
+kind = "text"
+text = "{prompt}"
+anchor = "top"
+y = 30
+font = 2
+bank = 4
+scale = 2
+
+[[node]]
+kind = "text"
+text = "ROOM {room}"
+anchor = "tr"
+x = 40
+y = 30
+font = 1
+bank = 6
+scale = 2
+
+# big art plate (left)
+[[node]]
+kind = "panel"
+id = "art"
+image = "ui/art_frame.webp"
+nine = [10, 10, 10, 10]
+x = 40
+y = 70
+w = 400
+h = 440
+enter = "left"
+enter_time = 20
+
+  [[node.children]]
+  kind = "image"
+  image = "{shown.art}"
+  anchor = "top"
+  y = 14
+  h = 400
+  visible = "shown.present"
+
+[[node]]
+kind = "panel"
+image = "ui/plate_lit.webp"
+x = 40
+y = 516
+w = 442
+h = 44
+enter = "left"
+enter_time = 22
+
+  [[node.children]]
+  kind = "text"
+  text = "{shown.name}"
+  anchor = "left"
+  x = 20
+  font = 2
+  bank = 7
+  scale = 2
+
+[[node]]
+kind = "text"
+text = "BY {shown.author}"
+x = 48
+y = 568
+font = 1
+bank = 6
+scale = 2
+
+[[node]]
+kind = "image"
+image = "{shown.badge}"
+x = 48
+y = 594
+w = 16
+h = 16
+visible = "shown.badge"
+
+[[node]]
+kind = "text"
+text = "{shown.verdict}"
+x = 72
+y = 592
+font = 1
+bank = 4
+scale = 2
+
+[[node]]
+kind = "text"
+text = "{shown.stats}"
+x = 48
+y = 616
+font = 1
+bank = 7
+scale = 2
+
+[[node]]
+kind = "text"
+text = "P1  {p1.name}     P2  {p2.name}"
+x = 48
+y = 644
+font = 1
+bank = 6
+scale = 2
+visible = "versus"
+
+# roster grid
+[[node]]
+kind = "grid"
+id = "cells"
+x = 470
+y = 70
+w = 772
+h = 386
+columns = 10
+cell_w = 77
+cell_h = 77
+items = "cells"
+enter = "right"
+enter_time = 20
+
+  [[node.children]]
+  kind = "button"
+  w = 76
+  h = 76
+  image = "ui/cell.webp"
+  image_focus = "ui/cell_lit.webp"
+  on_press = "pick:{item.index}"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{item.thumb}"
+    x = 6
+    y = 6
+    w = 64
+    h = 64
+    visible = "item.thumb"
+
+    [[node.children.children]]
+    kind = "panel"
+    color = [0.0, 0.0, 0.0, 0.65]
+    x = 6
+    y = 6
+    w = 64
+    h = 64
+    visible = "item.broken"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "ui/cell_p1.webp"
+    w = 76
+    h = 76
+    visible = "item.p1"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "ui/cell_p2.webp"
+    w = 76
+    h = 76
+    visible = "item.p2"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{item.badge}"
+    anchor = "tr"
+    x = 5
+    y = 5
+    w = 14
+    h = 14
+    visible = "item.badge"
+
+# grid toolbar
+[[node]]
+kind = "text"
+text = "{count}"
+x = 474
+y = 466
+font = 1
+bank = 6
+scale = 2
+
+[[node]]
+kind = "button"
+id = "search"
+x = 696
+y = 462
+w = 170
+h = 32
+image = "ui/plate.webp"
+image_focus = "ui/plate_lit.webp"
+text = "SEARCH"
+font = 1
+bank = 7
+scale = 2
+on_press = "search"
+
+[[node]]
+kind = "button"
+id = "sort"
+x = 874
+y = 462
+w = 190
+h = 32
+image = "ui/plate.webp"
+image_focus = "ui/plate_lit.webp"
+text = "SORT: {sort}"
+font = 1
+bank = 7
+scale = 2
+on_press = "sort"
+
+[[node]]
+kind = "button"
+id = "random"
+x = 1072
+y = 462
+w = 170
+h = 32
+image = "ui/plate.webp"
+image_focus = "ui/plate_lit.webp"
+text = "RANDOM"
+font = 1
+bank = 7
+scale = 2
+on_press = "random"
+
+# stage strip
+[[node]]
+kind = "panel"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+x = 470
+y = 508
+w = 430
+h = 130
+enter = "up"
+enter_time = 20
+
+  [[node.children]]
+  kind = "text"
+  text = "STAGE"
+  x = 14
+  y = 10
+  font = 1
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "image"
+  image = "{stage.thumb}"
+  x = 14
+  y = 34
+  w = 150
+  h = 84
+  visible = "stage.has_thumb"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.08, 0.1, 0.18, 1.0]
+  x = 14
+  y = 34
+  w = 150
+  h = 84
+  visible = "!stage.has_thumb"
+
+  [[node.children]]
+  kind = "text"
+  text = "{stage.name}"
+  x = 178
+  y = 48
+  w = 236
+  font = 2
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "stage_prev"
+  x = 178
+  y = 84
+  w = 60
+  h = 32
+  image = "ui/plate.webp"
+  image_focus = "ui/plate_lit.webp"
+  text = "<"
+  font = 2
+  bank = 7
+  scale = 2
+  on_press = "stage:prev"
+
+  [[node.children]]
+  kind = "button"
+  id = "stage_next"
+  x = 246
+  y = 84
+  w = 60
+  h = 32
+  image = "ui/plate.webp"
+  image_focus = "ui/plate_lit.webp"
+  text = ">"
+  font = 2
+  bank = 7
+  scale = 2
+  on_press = "stage:next"
+
+  [[node.children]]
+  kind = "button"
+  id = "stage_random"
+  x = 314
+  y = 84
+  w = 100
+  h = 32
+  image = "ui/plate.webp"
+  image_focus = "ui/plate_lit.webp"
+  text = "RANDOM"
+  font = 1
+  bank = 7
+  scale = 2
+  on_press = "stage:random"
+
+# player card
+[[node]]
+kind = "panel"
+image = "ui/card.webp"
+nine = [10, 10, 10, 10]
+x = 920
+y = 508
+w = 322
+h = 130
+enter = "up"
+enter_time = 20
+enter_delay = 4
+
+  [[node.children]]
+  kind = "image"
+  image = "{profile.avatar}"
+  x = 12
+  y = 12
+  w = 56
+  h = 56
+
+  [[node.children]]
+  kind = "text"
+  text = "{profile.name}"
+  x = 80
+  y = 12
+  font = 2
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "LEVEL {profile.level}"
+  x = 80
+  y = 44
+  font = 1
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{profile.wins} W / {profile.losses} L"
+  x = 80
+  y = 68
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "RATING {rating}"
+  x = 12
+  y = 98
+  font = 1
+  bank = 7
+  scale = 2
+
+# confirm / back
+[[node]]
+kind = "button"
+id = "confirm"
+x = 470
+y = 652
+w = 300
+h = 54
+image = "ui/button_lit.webp"
+image_focus = "ui/button_lit.webp"
+text = "CONFIRM"
+font = 2
+bank = 7
+bank_focus = 4
+scale = 2
+on_press = "confirm"
+visible = "ready"
+hover_scale = 1.03
+
+[[node]]
+kind = "button"
+id = "back"
+anchor = "br"
+x = 40
+y = 14
+w = 200
+h = 54
+image = "ui/button.webp"
+image_focus = "ui/button_lit.webp"
+text = "BACK"
+font = 2
+bank = 7
+bank_focus = 4
+scale = 2
+on_press = "back"
+"##;
+
 const TITLE_TOML: &str = r##"# rugen title screen — edit freely, see README.md. Coordinates are 1280x720.
 background = [0.03, 0.04, 0.08, 1.0]
 
@@ -513,6 +1027,7 @@ re-skin or re-arrange them. `rugen ui-gen` regenerates these defaults.
 |---|---|
 | `title.toml` | main menu (data: `menu[]`, `news[]`, `profile`, `version`) |
 | `options.toml` | settings (data: `rows[]` with `label`/`value`/`press`/`left`/`right`, `capture`) |
+| `select.toml` | roster / character select (data: `cells[]`, `shown`, `p1`, `p2`, `stage`, `profile`, `rating`, `prompt`, `count`, `sort`, `ready`); actions `pick:<i>`, `confirm`, `random`, `search`, `sort`, `stage:prev|next|random`, `back` |
 | `news.json` | the three feature panels: `title`, `subtitle`, `image` |
 | `*.webp` | art. **Prefer WebP** (lossless or lossy) — a quarter the size of PNG. PNG also works. |
 
@@ -571,6 +1086,17 @@ pub fn generate(ttf: &[u8], motif: &Path) -> anyhow::Result<()> {
     write_webp(&ui.join("row.webp"), &row(false))?;
     write_webp(&ui.join("row_lit.webp"), &row(true))?;
     write_webp(&ui.join("avatar.webp"), &avatar())?;
+    write_webp(&ui.join("cell.webp"), &cell("normal"))?;
+    write_webp(&ui.join("cell_lit.webp"), &cell("lit"))?;
+    write_webp(&ui.join("cell_p1.webp"), &cell("p1"))?;
+    write_webp(&ui.join("cell_p2.webp"), &cell("p2"))?;
+    write_webp(&ui.join("badge_ok.webp"), &badge([90, 220, 110, 255]))?;
+    write_webp(&ui.join("badge_warn.webp"), &badge([250, 200, 70, 255]))?;
+    write_webp(&ui.join("badge_bad.webp"), &badge([230, 60, 60, 255]))?;
+    write_webp(&ui.join("art_frame.webp"), &art_frame())?;
+    write_webp(&ui.join("card.webp"), &card())?;
+    write_webp(&ui.join("plate.webp"), &plate(false))?;
+    write_webp(&ui.join("plate_lit.webp"), &plate(true))?;
     write_webp(
         &ui.join("news1.webp"),
         &news_art(
@@ -606,6 +1132,7 @@ pub fn generate(ttf: &[u8], motif: &Path) -> anyhow::Result<()> {
     )?;
     std::fs::write(ui.join("title.toml"), TITLE_TOML)?;
     std::fs::write(ui.join("options.toml"), OPTIONS_TOML)?;
+    std::fs::write(ui.join("select.toml"), SELECT_TOML)?;
     std::fs::write(ui.join("README.md"), README)?;
     let news = motif.join("news.json");
     if !news.exists() {

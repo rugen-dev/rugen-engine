@@ -55,6 +55,8 @@ pub struct FightSetup {
     pub net: Option<NetMode>,
     /// Guided tutorial for P1 (P2 stands still, no clock).
     pub tutorial: bool,
+    /// Cache manifest ids of both characters (for per-character stats); may be empty.
+    pub ids: [String; 2],
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -154,6 +156,8 @@ pub struct Match {
     pub bgm: Option<PathBuf>,
     pub tutorial: Option<crate::tutorial::Tutorial>,
     prev_start: bool,
+    /// Profile stats already written for this match.
+    pub stats_recorded: bool,
 }
 
 impl Match {
@@ -320,7 +324,16 @@ impl Match {
             bgm,
             tutorial: None,
             prev_start: false,
+            stats_recorded: false,
         })
+    }
+
+    pub fn is_tutorial(&self) -> bool {
+        self.tutorial.is_some()
+    }
+
+    pub fn setup_ids(&self) -> [String; 2] {
+        self.setup.ids.clone()
     }
 
     /// Re-upload palettes/textures for data slots touched by a hot reload.

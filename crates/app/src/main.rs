@@ -32,6 +32,7 @@ mod lifebar;
 mod options;
 mod play;
 mod replay;
+mod roster;
 mod screenpack;
 mod select;
 mod sprites;
@@ -207,6 +208,7 @@ fn main() -> anyhow::Result<()> {
                 ai: [if watch { ai } else { 0 }, ai],
                 net: net_mode,
                 tutorial: false,
+                ids: [String::new(), String::new()],
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

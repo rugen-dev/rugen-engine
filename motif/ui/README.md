@@ -9,6 +9,7 @@ re-skin or re-arrange them. `rugen ui-gen` regenerates these defaults.
 |---|---|
 | `title.toml` | main menu (data: `menu[]`, `news[]`, `profile`, `version`) |
 | `options.toml` | settings (data: `rows[]` with `label`/`value`/`press`/`left`/`right`, `capture`) |
+| `select.toml` | roster / character select (data: `cells[]`, `shown`, `p1`, `p2`, `stage`, `profile`, `rating`, `prompt`, `count`, `sort`, `ready`); actions `pick:<i>`, `confirm`, `random`, `search`, `sort`, `stage:prev|next|random`, `back` |
 | `news.json` | the three feature panels: `title`, `subtitle`, `image` |
 | `*.webp` | art. **Prefer WebP** (lossless or lossy) — a quarter the size of PNG. PNG also works. |
 
