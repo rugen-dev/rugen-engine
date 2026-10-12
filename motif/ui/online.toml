@@ -199,13 +199,20 @@ h = 300
   scale = 2
 
   [[node.children]]
-  kind = "text"
-  text = "{typed}"
+  kind = "input"
+  id = "code"
   x = 30
   y = 60
+  w = 400
+  h = 80
   font = 2
   bank = 7
   scale = 5
+  max_len = 5
+  placeholder = "_____"
+  value = "typed"
+  on_change = "typed:{value}"
+  on_press = "join"
 
   [[node.children]]
   kind = "text"

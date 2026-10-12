@@ -57,6 +57,8 @@ pub struct FightSetup {
     pub tutorial: bool,
     /// Cache manifest ids of both characters (for per-character stats); may be empty.
     pub ids: [String; 2],
+    /// Game mode the match was started from (for "character select" after the result).
+    pub mode: Option<crate::game::Mode>,
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -508,9 +510,18 @@ impl Match {
         if self.banner.as_ref().is_some_and(|(_, t)| *t <= 0) {
             self.banner = None;
         }
+        // harness: `RUGEN_HARNESS_LOWLIFE=1` makes P2 drop in one hit so matches end fast
+        if std::env::var_os("RUGEN_HARNESS_LOWLIFE").is_some()
+            && self.world.round.round_state() == 2
+            && self.world.players.len() > 1
+            && self.world.players[1].life > 1
+        {
+            self.world.players[1].life = 1;
+        }
         if self.world.round.match_over {
             self.over_ticks += 1;
-            if self.over_ticks > 30 && (inputs[0].s || inputs[1].s) {
+            // linger on the win pose, then hand over to the result screen
+            if self.over_ticks > 150 || (self.over_ticks > 30 && (inputs[0].s || inputs[1].s)) {
                 self.leave = true;
             }
         }
@@ -534,6 +545,24 @@ impl Match {
             }
         }
         true
+    }
+
+    pub fn setup(&self) -> &FightSetup {
+        &self.setup
+    }
+
+    pub fn is_net(&self) -> bool {
+        self.net.is_some()
+    }
+
+    /// Winning side (0/1) once the match is over, None for a draw or unfinished match.
+    pub fn winner(&self) -> Option<usize> {
+        let w = self.world.round.wins;
+        if !self.world.round.match_over || w[0] == w[1] {
+            None
+        } else {
+            Some(usize::from(w[1] > w[0]))
+        }
     }
 
     /// Debug keys. Returns true when consumed.

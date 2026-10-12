@@ -53,7 +53,83 @@ pub enum Transition {
     /// Show the VS screen, then fight.
     Versus(FightSetup, [Portrait; 2]),
     Fight(FightSetup),
+    /// Post-match screen.
+    Result(Box<ResultInfo>),
+    /// Result screen "continue": next arcade opponent or the title.
+    Continue,
+    /// Pause menu: back to the match.
+    Resume,
     Quit,
+}
+
+/// What the result screen shows after a match.
+#[derive(Debug)]
+pub struct ResultInfo {
+    pub setup: FightSetup,
+    pub winner: Option<usize>,
+    pub wins: [u8; 2],
+    pub names: [String; 2],
+    pub arts: [Option<crate::uiscreen::MemImage>; 2],
+    /// Launched with `rugen play`: offer Rematch / Quit only.
+    pub quick: bool,
+    pub arcade: bool,
+    pub rating: String,
+}
+
+/// Raw result data pulled out of a finished match: setup, winner, wins, names, arts, quick, arcade.
+type ResultCard = (
+    FightSetup,
+    Option<usize>,
+    [u8; 2],
+    [String; 2],
+    [Option<crate::uiscreen::MemImage>; 2],
+    bool,
+    bool,
+);
+
+trait ResultSource {
+    fn result_card(&self, quick: bool, arcade: bool) -> ResultCard;
+}
+
+impl ResultSource for Match {
+    fn result_card(&self, quick: bool, arcade: bool) -> ResultCard {
+        let setup = self.setup().clone();
+        let (n1, a1) = char_card(&setup.p1);
+        let (n2, a2) = char_card(&setup.p2);
+        (
+            setup,
+            self.winner(),
+            self.world.round.wins,
+            [n1, n2],
+            [a1, a2],
+            quick,
+            arcade,
+        )
+    }
+}
+
+/// Display name and big art for a prepared character .def (from its cache manifest).
+fn char_card(def: &std::path::Path) -> (String, Option<crate::uiscreen::MemImage>) {
+    let Some(dir) = def.parent() else {
+        return (String::new(), None);
+    };
+    let man = std::fs::read_to_string(dir.join("rugen.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok());
+    let Some(man) = man else {
+        return (
+            def.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            None,
+        );
+    };
+    let file = man
+        .art
+        .clone()
+        .or_else(|| man.portrait_big.as_ref().map(|p| p.file.clone()));
+    let img = file.and_then(|f| crate::uiscreen::load_image(&dir.join(f)).ok());
+    (man.display_name, img)
 }
 
 enum Screen {
@@ -74,6 +150,8 @@ pub struct Harness {
     pub shot: Option<PathBuf>,
     pub frames: Option<u32>,
     pub script: Option<Vec<Buttons>>,
+    /// Second player's scripted inputs.
+    pub script2: Option<Vec<Buttons>>,
     /// Write a replay of every match here (quick play) or into `replays/`.
     pub record: Option<PathBuf>,
 }
@@ -112,6 +190,14 @@ pub struct Shell {
     fullscreen: bool,
     /// Black overlay alpha for screen fades (1 = black).
     fade: f32,
+    /// Pause menu shown over a local match.
+    pause: Option<Box<UiScreen>>,
+    /// Match parked while its pause menu opened the options.
+    parked: Option<Box<Match>>,
+    /// Transition waiting for a TOML screen's leave animation.
+    deferred: Option<Transition>,
+    /// P1 won the arcade match that just ended.
+    arcade_won: bool,
 }
 
 impl Shell {
@@ -169,6 +255,33 @@ impl Shell {
             online_match: None,
             reports: Vec::new(),
             fade: 1.0,
+            pause: None,
+            parked: None,
+            deferred: None,
+            arcade_won: false,
+        }
+    }
+
+    /// Open the pause menu over the current match (local matches only).
+    fn open_pause(&mut self) {
+        let Screen::Match(m) = &self.screen else {
+            return;
+        };
+        if m.is_net() || !UiScreen::available(&self.motif_dir, UiKind::Pause) {
+            return;
+        }
+        let Some(sys) = self.system.as_ref() else {
+            return;
+        };
+        match UiScreen::load_pause(
+            &self.motif_dir,
+            &self.lib.root,
+            sys,
+            &self.config,
+            &self.lib,
+        ) {
+            Ok(u) => self.pause = Some(Box::new(u)),
+            Err(e) => log::warn!("ui/pause.toml: {e:#}"),
         }
     }
 
@@ -244,12 +357,8 @@ impl Shell {
     }
 
     /// Arcade: after a win, line up the next random opponent; after a loss, the title.
-    fn arcade_next(&mut self) -> Option<Transition> {
+    fn arcade_next(&mut self, won: bool) -> Option<Transition> {
         let (p1, wins) = self.arcade.clone()?;
-        let Screen::Match(m) = &self.screen else {
-            return None;
-        };
-        let won = m.world.round.wins[0] > m.world.round.wins[1];
         if !won || wins + 1 >= 6 {
             return None;
         }
@@ -272,17 +381,9 @@ impl Shell {
                     .join("reference/mugen-1.1b1/stages/stage0.def");
                 p.exists().then_some(p)
             });
-        let portrait = |def: &PathBuf| {
-            let dir = def.parent()?;
-            let text = std::fs::read_to_string(dir.join("rugen.json")).ok()?;
-            let man: rugen_content::Manifest = serde_json::from_str(&text).ok()?;
-            let pb = man.portrait_big.as_ref()?;
-            let (w, h, rgba) = rugen_content::read_png(&dir.join(&pb.file)).ok()?;
-            Some((man.display_name.clone(), (w, h, rgba, pb.axis)))
-        };
-        let side = |def: &PathBuf| match portrait(def) {
-            Some((name, img)) => Portrait::new(name, Some(img)),
-            None => Portrait::new(String::new(), None),
+        let side = |def: &PathBuf| {
+            let (name, img) = char_card(def);
+            Portrait::new(name, img.map(|(w, h, rgba)| (w, h, rgba, [0, 0])))
         };
         Some(Transition::Versus(
             FightSetup {
@@ -293,6 +394,7 @@ impl Shell {
                 net: None,
                 tutorial: false,
                 ids: [manifest_id(&p1), man.id.clone()],
+                mode: Some(Mode::Arcade),
             },
             [side(&p1), side(&p2)],
         ))
@@ -361,7 +463,10 @@ impl Shell {
         // every new screen fades in from black
         self.fade = 1.0;
         match t {
-            Transition::Quit => self.quit = true,
+            Transition::Quit => {
+                log::info!("quit requested");
+                self.quit = true;
+            }
             Transition::Netplay => {
                 let n = self.config.net.clone();
                 let resolve = |me: &Self, id: &str| -> Option<PathBuf> {
@@ -431,7 +536,53 @@ impl Shell {
                     net: Some(net),
                     tutorial: false,
                     ids: [String::new(), String::new()],
+                    mode: None,
                 }));
+            }
+            Transition::Resume => {
+                self.pause = None;
+                self.fade = 0.0;
+            }
+            Transition::Continue => {
+                let won = self.arcade_won;
+                match self.arcade_next(won) {
+                    Some(t) => self.transition(t),
+                    None => self.transition(Transition::Title),
+                }
+            }
+            Transition::Result(info) => {
+                log::info!(
+                    "match over: winner {:?} rounds {:?}",
+                    info.winner,
+                    info.wins
+                );
+                self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Result) => {
+                        match UiScreen::load_result(
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            &self.lib,
+                            *info,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/result.toml: {e:#}");
+                                self.transition(Transition::Continue);
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.transition(if self.quick {
+                            Transition::Quit
+                        } else {
+                            Transition::Continue
+                        });
+                        return;
+                    }
+                };
             }
             Transition::Online => {
                 let r =
@@ -445,8 +596,16 @@ impl Shell {
                     }
                 };
             }
+            Transition::Title if self.parked.is_some() => {
+                // the options were opened from the pause menu: back to the match
+                if let Some(m) = self.parked.take() {
+                    self.screen = Screen::Match(m);
+                    self.open_pause();
+                }
+            }
             Transition::Title => {
                 self.save_replay();
+                self.pause = None;
                 self.arcade = None;
                 self.play_system_music("title");
                 let netplay = !self.config.net.remote.trim().is_empty()
@@ -542,6 +701,24 @@ impl Shell {
             Transition::Versus(setup, sides) => {
                 self.play_system_music("vs");
                 self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Versus) => {
+                        match UiScreen::load_versus(
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            &self.lib,
+                            setup.clone(),
+                            sides,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/vs.toml: {e:#}");
+                                self.transition(Transition::Fight(setup));
+                                return;
+                            }
+                        }
+                    }
                     Some(sys) => Screen::Versus(Box::new(VersusScreen::new(setup, sides, sys))),
                     None => {
                         self.transition(Transition::Fight(setup));
@@ -550,6 +727,8 @@ impl Shell {
                 };
             }
             Transition::Fight(setup) => {
+                self.pause = None;
+                self.parked = None;
                 match Match::load(&setup, &self.motif_dir, &self.data_dir, &self.config) {
                     Ok(mut m) => {
                         if setup.tutorial {
@@ -616,6 +795,13 @@ impl Shell {
                 now[0] = script.remove(0);
             }
         }
+        if let Some(script) = self.harness.script2.as_mut() {
+            if script.is_empty() {
+                self.harness.script2 = None;
+            } else {
+                now[1] = script.remove(0);
+            }
+        }
         let pressed = [
             Buttons::from_bits(now[0].bits() & !self.prev[0].bits()),
             Buttons::from_bits(now[1].bits() & !self.prev[1].bits()),
@@ -624,6 +810,9 @@ impl Shell {
         let mut sfx_queue: Vec<Option<(i32, i32)>> = Vec::new();
         let mut next: Option<Transition> = None;
         let mut advanced = true;
+        let mut open_pause = false;
+        let mut arcade_won: Option<bool> = None;
+        let mut result: Option<ResultCard> = None;
         match &mut self.screen {
             Screen::Blank => {}
             Screen::Title(t) => {
@@ -644,6 +833,18 @@ impl Shell {
                     next = u.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
+                }
+                // play the leave animation before switching screens
+                if let Some(t) = next.take() {
+                    if u.leaving() {
+                        next = Some(t);
+                    } else {
+                        u.leave();
+                        self.deferred = Some(t);
+                    }
+                }
+                if self.deferred.is_some() && u.left() {
+                    next = self.deferred.take();
                 }
                 let is_options = u.kind == UiKind::Options;
                 let arcade_pick = match (&next, u.mode()) {
@@ -680,7 +881,42 @@ impl Shell {
                 }
             }
             Screen::Versus(v) => next = v.tick(pressed),
+            Screen::Match(_) if self.pause.is_some() => {
+                // the pause menu runs instead of the simulation
+                let mut resume = None;
+                if let (Some(p), Some(sys), Some(g)) =
+                    (self.pause.as_mut(), self.system.as_mut(), self.gpu.as_mut())
+                {
+                    resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
+                        sfx_queue.push(snd)
+                    });
+                    if resume.is_none() && (pressed[0].s || pressed[1].s) {
+                        resume = Some(Transition::Resume);
+                    }
+                }
+                advanced = false;
+                match resume {
+                    Some(Transition::Options) => {
+                        if let Screen::Match(m) = std::mem::replace(&mut self.screen, Screen::Blank)
+                        {
+                            self.parked = Some(m);
+                        }
+                        self.pause = None;
+                        next = Some(Transition::Options);
+                    }
+                    other => next = other,
+                }
+            }
             Screen::Match(m) => {
+                // Start opens the pause menu in local matches
+                if (pressed[0].s || pressed[1].s)
+                    && !m.is_net()
+                    && !m.is_tutorial()
+                    && !m.world.round.match_over
+                    && m.world.round.round_state() == 2
+                {
+                    open_pause = true;
+                }
                 advanced = m.tick(now, &mut self.audio);
                 if m.leave {
                     if let Some(om) = self.online_match.take() {
@@ -702,15 +938,42 @@ impl Shell {
                         } else {
                             Transition::Online
                         });
-                    } else {
+                    } else if m.is_tutorial() {
                         next = Some(if self.quick {
                             Transition::Quit
                         } else {
                             Transition::Title
                         });
+                    } else {
+                        arcade_won = Some(m.winner() == Some(0));
+                        result = Some(m.result_card(self.quick, self.arcade.is_some()));
                     }
                 }
             }
+        }
+        if open_pause {
+            self.open_pause();
+        }
+        if let Some(w) = arcade_won {
+            self.arcade_won = w;
+        }
+        if let Some((setup, winner, wins, names, arts, quick, arcade)) = result {
+            let profile = crate::uiscreen::Profile::load(&self.lib.root);
+            let rating = if setup.net.is_some() {
+                String::new()
+            } else {
+                profile.rating_text()
+            };
+            next = Some(Transition::Result(Box::new(ResultInfo {
+                setup,
+                winner,
+                wins,
+                names,
+                arts,
+                quick,
+                arcade,
+                rating,
+            })));
         }
         if next.is_some() {
             self.record_result();
@@ -724,13 +987,7 @@ impl Shell {
             }
             None => true,
         });
-        if matches!(next, Some(Transition::Title))
-            && let Some(t) = self.arcade_next()
-        {
-            self.save_replay();
-            next = Some(t);
-        }
-        if matches!(next, Some(Transition::Quit)) {
+        if matches!(next, Some(Transition::Result(_)) | Some(Transition::Quit)) {
             self.save_replay();
         }
         for s in sfx_queue {
@@ -762,6 +1019,10 @@ impl Shell {
         let r = &mut gpu.renderer;
         r.begin();
         let (cam, clear) = match (&mut self.screen, self.system.as_mut()) {
+            (Screen::Match(_), Some(sys)) if self.pause.is_some() => match self.pause.as_mut() {
+                Some(p) => p.render(r, sys),
+                None => unreachable!(),
+            },
             (Screen::Title(t), Some(sys)) => t.render(r, sys),
             (Screen::Select(s), Some(sys)) => s.render(r, sys),
             (Screen::Options(o), Some(sys)) => o.render(r, sys),
@@ -845,6 +1106,7 @@ impl Shell {
             return;
         }
         if let Screen::Match(m) = &mut self.screen
+            && self.pause.is_none()
             && m.key(key, pressed)
         {
             return;
@@ -880,6 +1142,18 @@ impl Shell {
                 Screen::Options(_) => {
                     self.apply_options();
                     self.transition(Transition::Title);
+                }
+                Screen::Match(ref m) if self.pause.is_some() => {
+                    let _ = m;
+                    self.pause = None;
+                }
+                Screen::Match(ref m)
+                    if !m.is_net()
+                        && !m.is_tutorial()
+                        && !m.world.round.match_over
+                        && UiScreen::available(&self.motif_dir, UiKind::Pause) =>
+                {
+                    self.open_pause();
                 }
                 Screen::Versus(_) | Screen::Match(_) => {
                     if self.quick {
@@ -943,6 +1217,11 @@ impl ApplicationHandler for Shell {
             | WindowEvent::MouseWheel { .. }
                 if self.harness.script.is_some() => {}
             WindowEvent::CursorMoved { position, .. } => match &mut self.screen {
+                Screen::Match(_) if self.pause.is_some() => {
+                    if let Some(p) = self.pause.as_mut() {
+                        p.mouse(MouseEvent::Move(position.x as f32, position.y as f32));
+                    }
+                }
                 Screen::Ui(u) => u.mouse(MouseEvent::Move(position.x as f32, position.y as f32)),
                 Screen::Online(o) => {
                     o.mouse(MouseEvent::Move(position.x as f32, position.y as f32))
@@ -959,6 +1238,11 @@ impl ApplicationHandler for Shell {
                 button: winit::event::MouseButton::Left,
                 ..
             } => match &mut self.screen {
+                Screen::Match(_) if self.pause.is_some() => {
+                    if let Some(p) = self.pause.as_mut() {
+                        p.mouse(MouseEvent::Button(state == ElementState::Pressed));
+                    }
+                }
                 Screen::Ui(u) => u.mouse(MouseEvent::Button(state == ElementState::Pressed)),
                 Screen::Online(o) => o.mouse(MouseEvent::Button(state == ElementState::Pressed)),
                 _ => {}

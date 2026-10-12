@@ -41,6 +41,7 @@ impl Replay {
             net: None,
             tutorial: false,
             ids: [String::new(), String::new()],
+            mode: None,
         }
     }
 

@@ -19,6 +19,13 @@
 //! text = "{item.label}"
 //! on_press = "{item.action}"
 //! ```
+//!
+//! Boxes without `items` stack their children as siblings (`gap`, `justify`,
+//! `align`, child `grow`); boxes with `items` give every element one slot in
+//! which the children overlap. Widgets: `panel image text button vbox hbox
+//! list grid input slider toggle particles`. Two players can navigate at once
+//! (`set_dual`): P2's focus uses the `*_focus2` visuals and fires
+//! [`Event::Action2`].
 
 #![forbid(unsafe_code)]
 
@@ -65,6 +72,14 @@ pub enum Kind {
     List,
     /// Scrolling grid of fixed-size cells (use with `items`, `columns`, `cell_w`, `cell_h`).
     Grid,
+    /// One-line text field: focus it, press accept to edit, Enter/Esc to stop.
+    Input,
+    /// Horizontal slider over `value` between `min` and `max`.
+    Slider,
+    /// On/off switch showing `image_on` when `value` is truthy.
+    Toggle,
+    /// Drifting pixel sparks inside the node's rectangle.
+    Particles,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -81,9 +96,15 @@ pub struct NodeDef {
     /// Solid fill `[r, g, b, a]` 0..1.
     pub color: Option<[f32; 4]>,
     pub color_focus: Option<[f32; 4]>,
+    pub color_focus2: Option<[f32; 4]>,
+    /// Second colour: slider fill / particle tint variation / toggle "on" fill.
+    pub color2: Option<[f32; 4]>,
     /// Asset key: `ui/x.webp`, `ui/x.png` or `sff:group,number`.
     pub image: Option<String>,
     pub image_focus: Option<String>,
+    pub image_focus2: Option<String>,
+    /// Toggle: image shown when `value` is truthy.
+    pub image_on: Option<String>,
     /// 9-slice borders `[left, top, right, bottom]` in texels.
     pub nine: Option<[u32; 4]>,
     /// Horizontal shear in virtual pixels (slanted panels).
@@ -92,16 +113,32 @@ pub struct NodeDef {
     pub font: Option<i32>,
     pub bank: Option<i32>,
     pub bank_focus: Option<i32>,
-    /// `left`, `center`, `right`.
+    pub bank_focus2: Option<i32>,
+    /// Text: `left`, `center`, `right`. Boxes: cross-axis `start`, `center`, `end`, `stretch`.
     pub align: Option<String>,
+    /// Boxes: main-axis `start`, `center`, `end`, `between`.
+    pub justify: Option<String>,
+    /// Box child: take the remaining space along the main axis.
+    pub grow: bool,
     pub scale: Option<f32>,
     pub on_press: Option<String>,
     pub on_left: Option<String>,
     pub on_right: Option<String>,
-    /// Buttons are focusable by default; set `focus = false` to disable.
+    /// Input / slider: action fired with `{value}` replaced when the value changes.
+    pub on_change: Option<String>,
+    /// Buttons/inputs/sliders/toggles are focusable by default; `focus = false` disables.
     pub focus: Option<bool>,
     /// Bind path; the node is skipped when the value is false/empty/0.
     pub visible: Option<String>,
+    /// Bind path (truthy → drawn with the focus visuals; tabs, toggles).
+    pub selected: Option<String>,
+    /// Bind path of the widget value (input text, slider number, toggle flag).
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub max_len: Option<usize>,
+    pub min: Option<f32>,
+    pub max: Option<f32>,
+    pub step: Option<f32>,
     /// Bind path to an array: children are instanced once per element (`item`, `index`).
     pub items: Option<String>,
     pub gap: Option<f32>,
@@ -113,8 +150,21 @@ pub struct NodeDef {
     pub enter: Option<String>,
     pub enter_time: Option<f32>,
     pub enter_delay: Option<f32>,
+    /// Extra enter delay per child / item index (staggered reveals).
+    pub stagger: Option<f32>,
+    /// `out` (default), `linear`, `back`, `bounce`.
+    pub ease: Option<String>,
+    /// How the node leaves (defaults to the reverse of `enter`); `exit_time` ticks.
+    pub exit: Option<String>,
+    pub exit_time: Option<f32>,
     pub hover_scale: Option<f32>,
     pub alpha: Option<f32>,
+    /// Tooltip shown after the node has been focused for a moment.
+    pub tip: Option<String>,
+    /// Particles: how many, drift speed (px/tick), pixel size.
+    pub count: Option<u32>,
+    pub speed: Option<f32>,
+    pub size: Option<f32>,
     pub children: Vec<NodeDef>,
 }
 
@@ -123,6 +173,8 @@ pub struct NodeDef {
 pub struct ScreenDef {
     /// Clear colour.
     pub background: Option<[f32; 4]>,
+    /// Ticks the leave animation takes (default 12).
+    pub exit_time: Option<f32>,
     pub node: Vec<NodeDef>,
 }
 
@@ -158,6 +210,15 @@ impl Rect {
             y: y0,
             w: (x1 - x0).max(0.0),
             h: (y1 - y0).max(0.0),
+        }
+    }
+    fn scaled(&self, s: f32) -> Rect {
+        let (cx, cy) = self.center();
+        Rect {
+            x: cx - self.w * s / 2.0,
+            y: cy - self.h * s / 2.0,
+            w: self.w * s,
+            h: self.h * s,
         }
     }
 }
@@ -206,12 +267,26 @@ pub struct Nav {
     pub back: bool,
 }
 
+/// A key while a text input is being edited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextKey {
+    Char(char),
+    Backspace,
+    Enter,
+    Escape,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// A node fired its `on_press` / `on_left` / `on_right` action.
+    /// A node fired its `on_press` / `on_left` / `on_right` / `on_change` action.
     Action(String),
+    /// Same, fired by the second player's focus.
+    Action2(String),
     /// Focus moved (host may play a sound).
     Moved,
+    Moved2,
+    /// An input's text changed: (node id, new text).
+    Input(String, String),
     Back,
 }
 
@@ -227,9 +302,12 @@ struct Instance {
     on_press: Option<String>,
     on_left: Option<String>,
     on_right: Option<String>,
+    on_change: Option<String>,
     focusable: bool,
     /// Key of the enclosing list/grid, for wheel scrolling and keep-visible.
     scroll_owner: Option<String>,
+    /// Extra enter delay from `stagger`.
+    delay: f32,
     /// Context the instance was built with (for `{bind}` images at draw time).
     ctx: Value,
 }
@@ -241,8 +319,17 @@ pub struct Ui {
     data: Value,
     instances: Vec<Instance>,
     focus: Option<String>,
+    focus2: Option<String>,
+    dual: bool,
+    focus_age: f32,
     scroll: HashMap<String, f32>,
+    /// Edit buffers of inputs the user touched, by node id.
+    inputs: HashMap<String, String>,
+    /// Input currently taking keys.
+    editing: Option<String>,
     time: f32,
+    /// Ticks since `leave()` was called.
+    leaving: Option<f32>,
     mouse: Option<(f32, f32)>,
     mouse_down: bool,
     mouse_was_down: bool,
@@ -278,8 +365,12 @@ pub fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
+fn bind_path(expr: &str) -> &str {
+    expr.trim().trim_matches(['{', '}'])
+}
+
 fn visible(ctx: &Value, expr: &str) -> bool {
-    let e = expr.trim().trim_matches(['{', '}']);
+    let e = bind_path(expr);
     match e.strip_prefix('!') {
         Some(rest) => !truthy(lookup(ctx, rest)),
         None => truthy(lookup(ctx, e)),
@@ -293,6 +384,15 @@ fn value_text(v: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         other => other.to_string(),
+    }
+}
+
+fn value_num(v: Option<&Value>) -> f32 {
+    match v {
+        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0) as f32,
+        Some(Value::String(s)) => s.trim().parse().unwrap_or(0.0),
+        Some(Value::Bool(b)) => f32::from(*b),
+        _ => 0.0,
     }
 }
 
@@ -322,13 +422,51 @@ pub fn interpolate(s: &str, ctx: &Value) -> String {
     out
 }
 
-fn ease_out(t: f32) -> f32 {
+/// Easing curves over 0..=1.
+pub fn ease(kind: &str, t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
-    1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
+    match kind {
+        "linear" => t,
+        "in" => t * t * t,
+        "back" => {
+            let c1 = 1.70158;
+            let c3 = c1 + 1.0;
+            1.0 + c3 * (t - 1.0) * (t - 1.0) * (t - 1.0) + c1 * (t - 1.0) * (t - 1.0)
+        }
+        "bounce" => {
+            let (n1, d1) = (7.5625, 2.75);
+            if t < 1.0 / d1 {
+                n1 * t * t
+            } else if t < 2.0 / d1 {
+                let t = t - 1.5 / d1;
+                n1 * t * t + 0.75
+            } else if t < 2.5 / d1 {
+                let t = t - 2.25 / d1;
+                n1 * t * t + 0.9375
+            } else {
+                let t = t - 2.625 / d1;
+                n1 * t * t + 0.984375
+            }
+        }
+        _ => 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t),
+    }
 }
 
 fn count(n: &NodeDef) -> usize {
     n.children.iter().map(|c| 1 + count(c)).sum()
+}
+
+/// Small deterministic hash → 0..1.
+fn hash01(seed: u32) -> f32 {
+    let mut x = seed.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    (x & 0xFFFF) as f32 / 65535.0
+}
+
+fn is_box(k: Kind) -> bool {
+    matches!(k, Kind::Vbox | Kind::Hbox | Kind::List)
 }
 
 impl Ui {
@@ -349,8 +487,14 @@ impl Ui {
             data,
             instances: Vec::new(),
             focus: None,
+            focus2: None,
+            dual: false,
+            focus_age: 0.0,
             scroll: HashMap::new(),
+            inputs: HashMap::new(),
+            editing: None,
             time: 0.0,
+            leaving: None,
             mouse: None,
             mouse_down: false,
             mouse_was_down: false,
@@ -373,6 +517,14 @@ impl Ui {
         &mut self.data
     }
 
+    /// Enable a second, independent focus for player 2.
+    pub fn set_dual(&mut self, dual: bool) {
+        self.dual = dual;
+        if !dual {
+            self.focus2 = None;
+        }
+    }
+
     /// Mouse position in virtual pixels (None when outside the window).
     pub fn mouse_move(&mut self, pos: Option<(f32, f32)>) {
         self.mouse = pos;
@@ -387,6 +539,9 @@ impl Ui {
     /// Focus the node with this key (ids of instanced children are `<list>[i].<id>`).
     pub fn set_focus(&mut self, key: Option<&str>) {
         self.focus = key.map(str::to_string);
+    }
+    pub fn set_focus2(&mut self, key: Option<&str>) {
+        self.focus2 = key.map(str::to_string);
     }
 
     /// Rectangle of a laid-out instance (after the last tick), virtual pixels.
@@ -404,15 +559,121 @@ impl Ui {
     pub fn focused(&self) -> Option<&str> {
         self.focus.as_deref()
     }
+    pub fn focused2(&self) -> Option<&str> {
+        self.focus2.as_deref()
+    }
 
     /// Restart enter animations.
     pub fn reset_time(&mut self) {
         self.time = 0.0;
+        self.leaving = None;
+    }
+
+    /// Start the leave animation; [`left`](Self::left) turns true when it ends.
+    pub fn leave(&mut self) {
+        if self.leaving.is_none() {
+            self.leaving = Some(0.0);
+        }
+    }
+    pub fn leaving(&self) -> bool {
+        self.leaving.is_some()
+    }
+    pub fn left(&self) -> bool {
+        self.leaving
+            .is_some_and(|t| t >= self.def.exit_time.unwrap_or(12.0))
     }
 
     /// Queue an event from the host (e.g. a key-capture result).
     pub fn push_event(&mut self, e: Event) {
         self.pending.push(e);
+    }
+
+    // ---------------------------------------------------------------- text input
+
+    /// True while an input node takes keyboard characters.
+    pub fn text_focused(&self) -> bool {
+        self.editing.is_some()
+    }
+
+    /// Current text of an input (edit buffer, else its bound value).
+    pub fn input_text(&self, id: &str) -> String {
+        if let Some(t) = self.inputs.get(id) {
+            return t.clone();
+        }
+        self.defs
+            .iter()
+            .find(|d| d.id.as_deref() == Some(id))
+            .and_then(|d| d.value.as_ref())
+            .and_then(|v| lookup(&self.data, bind_path(v)))
+            .map(value_text)
+            .unwrap_or_default()
+    }
+
+    /// Replace an input's text from the host.
+    pub fn set_input(&mut self, id: &str, text: &str) {
+        self.inputs.insert(id.to_string(), text.to_string());
+    }
+
+    /// Start editing the input with this id (as if the user pressed accept on it).
+    pub fn edit(&mut self, id: &str) {
+        self.editing = Some(id.to_string());
+        self.focus = Some(id.to_string());
+    }
+
+    /// Feed a key to the input being edited. Returns true when consumed.
+    pub fn text_key(&mut self, key: TextKey) -> bool {
+        let Some(id) = self.editing.clone() else {
+            return false;
+        };
+        let (max_len, on_press, on_change) = self
+            .defs
+            .iter()
+            .find(|d| d.id.as_deref() == Some(&id))
+            .map(|d| {
+                (
+                    d.max_len.unwrap_or(32),
+                    d.on_press.clone(),
+                    d.on_change.clone(),
+                )
+            })
+            .unwrap_or((32, None, None));
+        let mut text = self.input_text(&id);
+        let changed = match key {
+            TextKey::Char(c) => {
+                if !c.is_control() && text.chars().count() < max_len {
+                    text.push(c);
+                    true
+                } else {
+                    false
+                }
+            }
+            TextKey::Backspace => text.pop().is_some(),
+            TextKey::Enter => {
+                self.editing = None;
+                if let Some(a) = on_press {
+                    let a = interpolate(&a, &self.data);
+                    if !a.is_empty() {
+                        self.pending.push(Event::Action(a));
+                    }
+                }
+                false
+            }
+            TextKey::Escape => {
+                self.editing = None;
+                false
+            }
+        };
+        if changed {
+            self.inputs.insert(id.clone(), text.clone());
+            self.pending.push(Event::Input(id, text.clone()));
+            if let Some(a) = on_change {
+                let a = interpolate(&a.replace("{value}", &text), &self.data);
+                if !a.is_empty() {
+                    self.pending.push(Event::Action(a));
+                }
+            }
+        }
+        true
     }
 
     // ---------------------------------------------------------------- layout
@@ -428,7 +689,7 @@ impl Ui {
         let nodes = self.def.node.clone();
         let ctx = self.data.clone();
         let mut cursor = 0usize;
-        self.layout_children(&mut cursor, &nodes, root, &ctx, "", None, p);
+        self.layout_children(&mut cursor, &nodes, root, &ctx, "", None, 0.0, p);
     }
 
     /// Lay out `nodes` (siblings) inside `parent`; `cursor` walks the flattened defs in preorder.
@@ -441,6 +702,7 @@ impl Ui {
         ctx: &Value,
         key_prefix: &str,
         clip: Option<Rect>,
+        delay: f32,
         p: &mut dyn Painter,
     ) {
         for n in nodes {
@@ -453,12 +715,14 @@ impl Ui {
                 *cursor += subtree;
                 continue;
             }
+            // ids are global unless the node sits inside an `items` instance
             let key = match &n.id {
-                Some(id) => format!("{key_prefix}{id}"),
+                Some(id) if key_prefix.contains('[') => format!("{key_prefix}{id}"),
+                Some(id) => id.clone(),
                 None => format!("{key_prefix}#{def_idx}"),
             };
             let rect = Self::node_rect(n, parent, ctx, p);
-            self.place(n, def_idx, key, rect, ctx, clip, cursor, subtree, p);
+            self.place(n, def_idx, key, rect, ctx, clip, delay, cursor, subtree, p);
         }
     }
 
@@ -482,7 +746,11 @@ impl Ui {
             if h.is_none() {
                 h = Some(p.text_height(font, scale));
             }
-        } else if n.kind == Kind::Button && h.is_none() {
+        } else if matches!(
+            n.kind,
+            Kind::Button | Kind::Input | Kind::Slider | Kind::Toggle
+        ) && h.is_none()
+        {
             let font = n.font.unwrap_or(1);
             h = Some(p.text_height(font, n.scale.unwrap_or(1.0)) * 2.0);
         }
@@ -525,21 +793,39 @@ impl Ui {
         }
     }
 
-    fn enter_offset(&self, n: &NodeDef) -> ((f32, f32), f32) {
-        let Some(e) = &n.enter else {
-            return ((0.0, 0.0), 1.0);
+    /// Animation offset and alpha for a node: enter tween, or the exit tween while leaving.
+    fn anim(&self, n: &NodeDef, delay: f32) -> ((f32, f32), f32) {
+        let kind = n.ease.as_deref().unwrap_or("out");
+        let (dir, t) = match self.leaving {
+            Some(lt) => {
+                let dur = n.exit_time.or(self.def.exit_time).unwrap_or(12.0).max(1.0);
+                let dir = n.exit.clone().or_else(|| n.enter.clone());
+                if dir.is_none() {
+                    return ((0.0, 0.0), 1.0);
+                }
+                (dir, 1.0 - ease("in", lt / dur))
+            }
+            None => {
+                let Some(e) = &n.enter else {
+                    return ((0.0, 0.0), 1.0);
+                };
+                let dur = n.enter_time.unwrap_or(18.0).max(1.0);
+                let t = ease(
+                    kind,
+                    (self.time - n.enter_delay.unwrap_or(0.0) - delay) / dur,
+                );
+                (Some(e.clone()), t)
+            }
         };
-        let dur = n.enter_time.unwrap_or(18.0).max(1.0);
-        let t = ease_out((self.time - n.enter_delay.unwrap_or(0.0)) / dur);
         let d = 1.0 - t;
-        let off = match e.as_str() {
+        let off = match dir.as_deref().unwrap_or("fade") {
             "left" => (-220.0 * d, 0.0),
             "right" => (220.0 * d, 0.0),
             "up" => (0.0, -160.0 * d),
             "down" => (0.0, 160.0 * d),
             _ => (0.0, 0.0),
         };
-        (off, t)
+        (off, t.clamp(0.0, 1.0))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -551,18 +837,21 @@ impl Ui {
         rect: Rect,
         ctx: &Value,
         clip: Option<Rect>,
+        delay: f32,
         cursor: &mut usize,
         subtree: usize,
         p: &mut dyn Painter,
     ) {
-        let ((ox, oy), _) = self.enter_offset(n);
+        let ((ox, oy), _) = self.anim(n, delay);
         let rect = Rect {
             x: rect.x + ox,
             y: rect.y + oy,
             ..rect
         };
-        let focusable = n.focus.unwrap_or(n.kind == Kind::Button)
-            && (n.on_press.is_some() || n.on_left.is_some() || n.on_right.is_some());
+        let default_focus = matches!(
+            n.kind,
+            Kind::Button | Kind::Input | Kind::Slider | Kind::Toggle
+        );
         let scroller = matches!(n.kind, Kind::List | Kind::Grid);
         let child_clip = if scroller {
             Some(clip.map_or(rect, |c| c.intersect(&rect)))
@@ -576,8 +865,14 @@ impl Ui {
         };
         let (on_press, on_left, on_right) =
             (action(&n.on_press), action(&n.on_left), action(&n.on_right));
-        let focusable =
-            focusable && (on_press.is_some() || on_left.is_some() || on_right.is_some());
+        // on_change keeps `{value}` for later substitution
+        let on_change = n.on_change.clone().filter(|a| !a.is_empty());
+        let has_action = on_press.is_some()
+            || on_left.is_some()
+            || on_right.is_some()
+            || on_change.is_some()
+            || matches!(n.kind, Kind::Input | Kind::Slider);
+        let focusable = n.focus.unwrap_or(default_focus) && has_action;
         self.instances.push(Instance {
             def: def_idx,
             key: key.clone(),
@@ -587,8 +882,10 @@ impl Ui {
             on_press,
             on_left,
             on_right,
+            on_change,
             focusable,
             scroll_owner: None,
+            delay,
             ctx: ctx.clone(),
         });
         let me = self.instances.len() - 1;
@@ -604,14 +901,136 @@ impl Ui {
             h: rect.h - 2.0 * pad,
         };
         let gap = n.gap.unwrap_or(0.0);
+        let stagger = n.stagger.unwrap_or(0.0);
         let scroll = if scroller {
             self.scroll.get(&key).copied().unwrap_or(0.0)
         } else {
             0.0
         };
-        // items: instance the children once per element
+        let start_cursor = *cursor;
+        let owner = if scroller {
+            Some(key.clone())
+        } else {
+            self.instances[me].scroll_owner.clone()
+        };
+
+        // boxes without items: one slot per child, laid out along the main axis
+        if is_box(n.kind) && n.items.is_none() {
+            let vertical = matches!(n.kind, Kind::Vbox | Kind::List);
+            let probe = Rect {
+                x: inner.x,
+                y: inner.y,
+                w: inner.w,
+                h: inner.h,
+            };
+            // measure fixed children first
+            let mut sizes: Vec<f32> = Vec::new();
+            let mut fixed = 0.0f32;
+            let mut grows = 0usize;
+            let mut shown = 0usize;
+            for c in &n.children {
+                if let Some(v) = &c.visible
+                    && !visible(ctx, v)
+                {
+                    sizes.push(-1.0);
+                    continue;
+                }
+                shown += 1;
+                if c.grow {
+                    grows += 1;
+                    sizes.push(0.0);
+                    continue;
+                }
+                let r = Self::node_rect(c, probe, ctx, p);
+                let s = if vertical { r.h } else { r.w };
+                sizes.push(s);
+                fixed += s;
+            }
+            let main = if vertical { inner.h } else { inner.w };
+            let total_gap = gap * shown.saturating_sub(1) as f32;
+            let free = (main - fixed - total_gap).max(0.0);
+            let grow_each = if grows > 0 { free / grows as f32 } else { 0.0 };
+            let used = fixed + total_gap + grow_each * grows as f32;
+            let (mut pen, between) = match n.justify.as_deref().unwrap_or("start") {
+                "center" => ((main - used) / 2.0, 0.0),
+                "end" => (main - used, 0.0),
+                "between" if shown > 1 => (0.0, (main - used) / (shown - 1) as f32),
+                _ => (0.0, 0.0),
+            };
+            let align = n.align.as_deref().unwrap_or("stretch");
+            for (i, c) in n.children.iter().enumerate() {
+                let child_delay = delay + stagger * i as f32;
+                if sizes[i] < 0.0 {
+                    // hidden: layout_children skips it but must advance the cursor
+                    self.layout_children(
+                        cursor,
+                        std::slice::from_ref(c),
+                        probe,
+                        ctx,
+                        &format!("{key}."),
+                        child_clip,
+                        child_delay,
+                        p,
+                    );
+                    continue;
+                }
+                let extent = if c.grow { grow_each } else { sizes[i] };
+                // cross-axis size: stretch fills, others keep the child's own size
+                let cross_rect = Self::node_rect(c, probe, ctx, p);
+                let cross_size = if vertical { cross_rect.w } else { cross_rect.h };
+                let cross_full = if vertical { inner.w } else { inner.h };
+                let (cross_off, cross_len) = match align {
+                    "start" => (0.0, cross_size.min(cross_full)),
+                    "center" => (((cross_full - cross_size) / 2.0).max(0.0), cross_size),
+                    "end" => ((cross_full - cross_size).max(0.0), cross_size),
+                    _ => (0.0, cross_full),
+                };
+                let slot = if vertical {
+                    Rect {
+                        x: inner.x + cross_off,
+                        y: inner.y + pen - scroll,
+                        w: cross_len,
+                        h: extent,
+                    }
+                } else {
+                    Rect {
+                        x: inner.x + pen,
+                        y: inner.y + cross_off,
+                        w: extent,
+                        h: cross_len,
+                    }
+                };
+                let before = self.instances.len();
+                self.layout_children(
+                    cursor,
+                    std::slice::from_ref(c),
+                    slot,
+                    ctx,
+                    &format!("{key}."),
+                    child_clip,
+                    child_delay,
+                    p,
+                );
+                for inst in &mut self.instances[before..] {
+                    if inst.scroll_owner.is_none() {
+                        inst.scroll_owner = owner.clone();
+                    }
+                }
+                pen += extent + gap + between;
+            }
+            *cursor = start_cursor + subtree;
+            if scroller {
+                let content = pen - gap - between;
+                let max = (content - inner.h).max(0.0);
+                let cur = self.scroll.get(&key).copied().unwrap_or(0.0);
+                self.scroll.insert(key, cur.clamp(0.0, max));
+            }
+            return;
+        }
+
+        // items: instance the children once per element (children overlap in the slot)
         let item_ctxs: Vec<(String, Value)> = match &n.items {
-            Some(path) => match lookup(ctx, path.trim().trim_matches(['{', '}'])) {
+            Some(path) => match lookup(ctx, bind_path(path)) {
                 Some(Value::Array(a)) => a
                     .iter()
                     .enumerate()
@@ -628,7 +1047,6 @@ impl Ui {
             },
             None => vec![(format!("{key}."), ctx.clone())],
         };
-        let start_cursor = *cursor;
         let mut pen_x = inner.x;
         let mut pen_y = inner.y - scroll;
         let mut content_h = 0.0f32;
@@ -659,13 +1077,17 @@ impl Ui {
                 _ => inner,
             };
             let before = self.instances.len();
-            self.layout_children(cursor, &n.children, slot, c, prefix, child_clip, p);
+            self.layout_children(
+                cursor,
+                &n.children,
+                slot,
+                c,
+                prefix,
+                child_clip,
+                delay + stagger * i as f32,
+                p,
+            );
             let mut extent = 0.0f32;
-            let owner = if scroller {
-                Some(key.clone())
-            } else {
-                self.instances[me].scroll_owner.clone()
-            };
             for inst in &mut self.instances[before..] {
                 if inst.scroll_owner.is_none() {
                     inst.scroll_owner = owner.clone();
@@ -698,11 +1120,35 @@ impl Ui {
 
     // ---------------------------------------------------------------- input
 
-    /// Advance one tick, apply navigation and mouse, return events.
+    /// Advance one tick with the first player's navigation.
     pub fn tick(&mut self, nav: Nav, p: &mut dyn Painter) -> Vec<Event> {
+        self.tick2(nav, Nav::default(), p)
+    }
+
+    /// Hit rectangle of an instance (the focused one grows by `hover_scale`).
+    fn hit_rect(&self, i: &Instance) -> Rect {
+        let n = &self.defs[i.def];
+        let focused = self.focus.as_deref() == Some(&i.key);
+        match (focused, n.hover_scale) {
+            (true, Some(hs)) => i.rect.scaled(hs),
+            _ => i.rect,
+        }
+    }
+
+    /// Advance one tick, apply both players' navigation and the mouse, return events.
+    pub fn tick2(&mut self, nav: Nav, nav2: Nav, p: &mut dyn Painter) -> Vec<Event> {
         self.time += 1.0;
+        if let Some(t) = self.leaving.as_mut() {
+            *t += 1.0;
+        }
         self.layout(p);
         let mut events = std::mem::take(&mut self.pending);
+        // a leaving screen ignores input
+        if self.leaving.is_some() {
+            self.wheel = 0.0;
+            self.mouse_was_down = self.mouse_down;
+            return events;
+        }
         if let Some((mx, my)) = self.mouse {
             if self.wheel != 0.0 {
                 let owner = self
@@ -732,20 +1178,34 @@ impl Ui {
                 .rev()
                 .find(|i| {
                     i.focusable
-                        && i.rect.contains(mx, my)
+                        && self.hit_rect(i).contains(mx, my)
                         && i.clip.is_none_or(|c| c.contains(mx, my))
                 })
-                .map(|i| i.key.clone());
+                .cloned();
             if let Some(h) = hovered {
-                if self.focus.as_deref() != Some(&h) {
-                    self.focus = Some(h.clone());
+                if self.focus.as_deref() != Some(&h.key) {
+                    self.focus = Some(h.key.clone());
+                    self.focus_age = 0.0;
                     events.push(Event::Moved);
                 }
-                if self.mouse_down
-                    && !self.mouse_was_down
-                    && let Some(a) = self.find(&h).and_then(|i| i.on_press.clone())
-                {
-                    events.push(Event::Action(a));
+                let kind = self.defs[h.def].kind;
+                let click = self.mouse_down && !self.mouse_was_down;
+                match kind {
+                    Kind::Slider if self.mouse_down => {
+                        let frac = ((mx - h.rect.x) / h.rect.w.max(1.0)).clamp(0.0, 1.0);
+                        if let Some(a) = self.slider_change(&h, frac) {
+                            events.push(Event::Action(a));
+                        }
+                    }
+                    Kind::Input if click => {
+                        self.editing = Some(h.key.clone());
+                    }
+                    _ if click => {
+                        if let Some(a) = h.on_press.clone() {
+                            events.push(Event::Action(a));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -758,33 +1218,46 @@ impl Ui {
                 .iter()
                 .find(|i| i.focusable)
                 .map(|i| i.key.clone());
+            self.focus_age = 0.0;
         }
-        let dir = if nav.up {
-            Some((0.0, -1.0))
-        } else if nav.down {
-            Some((0.0, 1.0))
-        } else if nav.left {
-            Some((-1.0, 0.0))
-        } else if nav.right {
-            Some((1.0, 0.0))
+        if self
+            .editing
+            .as_deref()
+            .is_some_and(|e| self.find(e).is_none())
+        {
+            self.editing = None;
+        }
+        // keyboard navigation is frozen while an input takes characters
+        let nav = if self.editing.is_some() {
+            Nav::default()
         } else {
-            None
+            nav
         };
-        if let Some(ci) = self.focus.clone().and_then(|f| self.find(&f).cloned()) {
-            if nav.left && ci.on_left.is_some() {
-                events.push(Event::Action(ci.on_left.clone().unwrap_or_default()));
-            } else if nav.right && ci.on_right.is_some() {
-                events.push(Event::Action(ci.on_right.clone().unwrap_or_default()));
-            } else if let Some((dx, dy)) = dir
-                && let Some(next) = self.nearest(&ci, dx, dy)
+        let before = self.focus.clone();
+        if let Some(mut ev) = self.navigate(nav, false) {
+            events.append(&mut ev);
+        }
+        if self.focus != before {
+            self.focus_age = 0.0;
+        } else {
+            self.focus_age += 1.0;
+        }
+        if self.dual {
+            if self
+                .focus2
+                .as_deref()
+                .is_none_or(|f| self.find(f).is_none())
             {
-                self.focus = Some(next);
-                events.push(Event::Moved);
+                self.focus2 = self
+                    .instances
+                    .iter()
+                    .filter(|i| i.focusable)
+                    .nth(1)
+                    .or_else(|| self.instances.iter().find(|i| i.focusable))
+                    .map(|i| i.key.clone());
             }
-            if nav.accept
-                && let Some(a) = ci.on_press.clone()
-            {
-                events.push(Event::Action(a));
+            if let Some(mut ev) = self.navigate(nav2, true) {
+                events.append(&mut ev);
             }
         }
         if nav.back {
@@ -805,6 +1278,110 @@ impl Ui {
             }
         }
         events
+    }
+
+    /// Apply one player's navigation to its focus.
+    fn navigate(&mut self, nav: Nav, second: bool) -> Option<Vec<Event>> {
+        let focus = if second {
+            self.focus2.clone()
+        } else {
+            self.focus.clone()
+        };
+        let ci = focus.and_then(|f| self.find(&f).cloned())?;
+        let mut events = Vec::new();
+        let wrap = |a: String| {
+            if second {
+                Event::Action2(a)
+            } else {
+                Event::Action(a)
+            }
+        };
+        let moved = if second { Event::Moved2 } else { Event::Moved };
+        let dir = if nav.up {
+            Some((0.0, -1.0))
+        } else if nav.down {
+            Some((0.0, 1.0))
+        } else if nav.left {
+            Some((-1.0, 0.0))
+        } else if nav.right {
+            Some((1.0, 0.0))
+        } else {
+            None
+        };
+        let kind = self.defs[ci.def].kind;
+        if nav.left && ci.on_left.is_some() {
+            events.push(wrap(ci.on_left.clone().unwrap_or_default()));
+        } else if nav.right && ci.on_right.is_some() {
+            events.push(wrap(ci.on_right.clone().unwrap_or_default()));
+        } else if kind == Kind::Slider && (nav.left || nav.right) {
+            let n = &self.defs[ci.def];
+            let (min, max, step) = (
+                n.min.unwrap_or(0.0),
+                n.max.unwrap_or(1.0),
+                n.step.unwrap_or(0.1),
+            );
+            let cur = self.slider_value(&ci);
+            let next = (cur + if nav.left { -step } else { step }).clamp(min, max);
+            let frac = if max > min {
+                (next - min) / (max - min)
+            } else {
+                0.0
+            };
+            if let Some(a) = self.slider_change(&ci, frac) {
+                events.push(wrap(a));
+            }
+        } else if let Some((dx, dy)) = dir
+            && let Some(next) = self.nearest(&ci, dx, dy)
+        {
+            if second {
+                self.focus2 = Some(next);
+            } else {
+                self.focus = Some(next);
+            }
+            events.push(moved);
+        }
+        if nav.accept {
+            if kind == Kind::Input && !second {
+                self.editing = Some(ci.key.clone());
+            } else if let Some(a) = ci.on_press.clone() {
+                events.push(wrap(a));
+            }
+        }
+        Some(events)
+    }
+
+    fn slider_value(&self, i: &Instance) -> f32 {
+        let n = &self.defs[i.def];
+        n.value
+            .as_ref()
+            .map(|v| value_num(lookup(&i.ctx, bind_path(v))))
+            .unwrap_or(0.0)
+    }
+
+    /// `on_change` action for a slider set to `frac` of its range, snapped to `step`.
+    fn slider_change(&self, i: &Instance, frac: f32) -> Option<String> {
+        let n = &self.defs[i.def];
+        let (min, max, step) = (
+            n.min.unwrap_or(0.0),
+            n.max.unwrap_or(1.0),
+            n.step.unwrap_or(0.0),
+        );
+        let mut v = min + frac * (max - min);
+        if step > 0.0 {
+            v = min + libm::floorf((v - min) / step + 0.5) * step;
+        }
+        let v = v.clamp(min.min(max), max.max(min));
+        let text = if step > 0.0 && step.fract() == 0.0 && min.fract() == 0.0 {
+            format!("{}", v as i64)
+        } else {
+            format!("{v:.3}")
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string()
+        };
+        let a = i.on_change.as_deref()?;
+        let a = interpolate(&a.replace("{value}", &text), &i.ctx);
+        (!a.is_empty()).then_some(a)
     }
 
     fn find(&self, key: &str) -> Option<&Instance> {
@@ -842,6 +1419,7 @@ impl Ui {
             self.layout(p);
         }
         let instances = std::mem::take(&mut self.instances);
+        let mut tip: Option<(String, Rect)> = None;
         for inst in &instances {
             // fully outside the scroller: skip (also keeps off-screen thumbnails unloaded)
             if let Some(c) = inst.clip
@@ -854,21 +1432,22 @@ impl Ui {
             }
             let n = &self.defs[inst.def];
             let focused = self.focus.as_deref() == Some(&inst.key);
+            let focused2 = self.dual && self.focus2.as_deref() == Some(&inst.key);
+            let selected = n.selected.as_ref().is_some_and(|s| visible(&inst.ctx, s));
+            let lit = focused || selected;
             let mut rect = inst.rect;
-            let (_, t) = self.enter_offset(n);
+            let (_, t) = self.anim(n, inst.delay);
             let alpha = n.alpha.unwrap_or(1.0) * t;
             if focused && let Some(hs) = n.hover_scale {
-                let (cx, cy) = rect.center();
-                rect = Rect {
-                    x: cx - rect.w * hs / 2.0,
-                    y: cy - rect.h * hs / 2.0,
-                    w: rect.w * hs,
-                    h: rect.h * hs,
-                };
+                rect = rect.scaled(hs);
             }
             let skew = n.skew.unwrap_or(0.0);
             let clip = inst.clip;
-            let color = if focused {
+            if n.kind == Kind::Particles {
+                self.particles(p, n, rect, alpha, clip);
+                continue;
+            }
+            let color = if lit {
                 n.color_focus.or(n.color)
             } else {
                 n.color
@@ -876,7 +1455,15 @@ impl Ui {
             if let Some(c) = color {
                 p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
             }
-            let image = if focused {
+            let on = n
+                .value
+                .as_ref()
+                .is_some_and(|v| truthy(lookup(&inst.ctx, bind_path(v))));
+            let image = if n.kind == Kind::Toggle && on && n.image_on.is_some() {
+                n.image_on.as_ref()
+            } else if focused2 && n.image_focus2.is_some() {
+                n.image_focus2.as_ref()
+            } else if lit {
                 n.image_focus.as_ref().or(n.image.as_ref())
             } else {
                 n.image.as_ref()
@@ -888,22 +1475,113 @@ impl Ui {
                     None => p.draw_image(&key, None, rect, skew, alpha, clip),
                 }
             }
-            if let Some(text) = &inst.text
-                && matches!(n.kind, Kind::Text | Kind::Button)
+            // the second player's focus tints over the image
+            if focused2 && let Some(c) = n.color_focus2 {
+                p.draw_rect(rect, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
+            }
+            if n.kind == Kind::Slider {
+                let frac = {
+                    let (min, max) = (n.min.unwrap_or(0.0), n.max.unwrap_or(1.0));
+                    let v = self.slider_value(inst);
+                    if max > min {
+                        ((v - min) / (max - min)).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                };
+                let fill = n.color2.unwrap_or([0.85, 0.2, 0.25, 1.0]);
+                let track_h = (rect.h * 0.3).max(2.0);
+                let track = Rect {
+                    x: rect.x,
+                    y: rect.y + (rect.h - track_h) / 2.0,
+                    w: rect.w,
+                    h: track_h,
+                };
+                p.draw_rect(track, [0.0, 0.0, 0.0, 0.5 * alpha], 0.0, clip);
+                p.draw_rect(
+                    Rect {
+                        w: track.w * frac,
+                        ..track
+                    },
+                    [fill[0], fill[1], fill[2], fill[3] * alpha],
+                    0.0,
+                    clip,
+                );
+                let knob = (rect.h * 0.6).max(4.0);
+                p.draw_rect(
+                    Rect {
+                        x: rect.x + track.w * frac - knob / 2.0,
+                        y: rect.y + (rect.h - knob) / 2.0,
+                        w: knob,
+                        h: knob,
+                    },
+                    if lit {
+                        [1.0, 1.0, 1.0, alpha]
+                    } else {
+                        [0.85, 0.85, 0.9, alpha]
+                    },
+                    0.0,
+                    clip,
+                );
+            }
+            if n.kind == Kind::Toggle && n.image.is_none() && n.image_on.is_none() {
+                let fill = if on {
+                    n.color2.unwrap_or([0.3, 0.8, 0.4, 1.0])
+                } else {
+                    [0.25, 0.25, 0.3, 1.0]
+                };
+                let knob = rect.h.max(4.0);
+                p.draw_rect(
+                    rect,
+                    [fill[0], fill[1], fill[2], fill[3] * alpha],
+                    0.0,
+                    clip,
+                );
+                p.draw_rect(
+                    Rect {
+                        x: if on { rect.x + rect.w - knob } else { rect.x },
+                        y: rect.y,
+                        w: knob,
+                        h: knob,
+                    },
+                    [1.0, 1.0, 1.0, alpha],
+                    0.0,
+                    clip,
+                );
+            }
+            let text = match n.kind {
+                Kind::Input => {
+                    let id = n.id.clone().unwrap_or_else(|| inst.key.clone());
+                    let mut t = self.input_text(&id);
+                    let editing = self.editing.as_deref() == Some(&inst.key);
+                    if editing && (self.time as i64 / 20) % 2 == 0 {
+                        t.push('_');
+                    }
+                    if t.is_empty() && !editing {
+                        n.placeholder.clone()
+                    } else {
+                        Some(t)
+                    }
+                }
+                Kind::Text | Kind::Button | Kind::Toggle | Kind::Slider => inst.text.clone(),
+                _ => None,
+            };
+            if let Some(text) = text
                 && !text.is_empty()
             {
                 let font = n.font.unwrap_or(1);
                 let scale = n.scale.unwrap_or(1.0);
-                let bank = if focused {
+                let bank = if focused2 && n.bank_focus2.is_some() {
+                    n.bank_focus2
+                } else if lit {
                     n.bank_focus.or(n.bank)
                 } else {
                     n.bank
                 }
                 .unwrap_or(0);
-                let default_align = if n.kind == Kind::Button {
-                    "center"
-                } else {
-                    "left"
+                let default_align = match n.kind {
+                    Kind::Button => "center",
+                    _ => "left",
                 };
                 let inset = n.pad.unwrap_or(0.0);
                 let (align, x) = match n.align.as_deref().unwrap_or(default_align) {
@@ -913,14 +1591,15 @@ impl Ui {
                 };
                 let th = p.text_height(font, scale);
                 let y = rect.y + (rect.h + th) / 2.0;
-                let text_clip = if n.w.is_some() && n.kind == Kind::Text {
+                let text_clip = if (n.w.is_some() && n.kind == Kind::Text) || n.kind == Kind::Input
+                {
                     Some(clip.map_or(rect, |c| c.intersect(&rect)))
                 } else {
                     clip
                 };
                 p.draw_text(
                     font,
-                    text,
+                    &text,
                     x + skew / 2.0,
                     y,
                     bank,
@@ -930,8 +1609,103 @@ impl Ui {
                     text_clip,
                 );
             }
+            if focused
+                && self.focus_age > 30.0
+                && self.leaving.is_none()
+                && let Some(t) = &n.tip
+            {
+                let t = interpolate(t, &inst.ctx);
+                if !t.is_empty() {
+                    tip = Some((t, rect));
+                }
+            }
+        }
+        if let Some((text, r)) = tip {
+            let (font, scale) = (1, 2.0);
+            let w = p.text_width(font, &text, scale) + 16.0;
+            let h = p.text_height(font, scale) + 10.0;
+            let mut x = r.x + r.w / 2.0 - w / 2.0;
+            x = x.clamp(0.0, VIRTUAL_W - w);
+            let y = if r.y + r.h + h + 6.0 > VIRTUAL_H {
+                r.y - h - 6.0
+            } else {
+                r.y + r.h + 6.0
+            };
+            let bg = Rect { x, y, w, h };
+            p.draw_rect(bg, [0.0, 0.0, 0.0, 0.85], 0.0, None);
+            p.draw_rect(
+                Rect {
+                    x: bg.x,
+                    y: bg.y + bg.h - 1.0,
+                    w: bg.w,
+                    h: 1.0,
+                },
+                [0.9, 0.2, 0.25, 1.0],
+                0.0,
+                None,
+            );
+            let th = p.text_height(font, scale);
+            p.draw_text(
+                font,
+                &text,
+                bg.x + bg.w / 2.0,
+                bg.y + (bg.h + th) / 2.0,
+                0,
+                0,
+                scale,
+                1.0,
+                None,
+            );
         }
         self.instances = instances;
+    }
+
+    /// Deterministic drifting sparks: each particle's path is a function of its index and time.
+    fn particles(
+        &self,
+        p: &mut dyn Painter,
+        n: &NodeDef,
+        rect: Rect,
+        alpha: f32,
+        clip: Option<Rect>,
+    ) {
+        let count = n.count.unwrap_or(40);
+        let speed = n.speed.unwrap_or(0.4);
+        let size = n.size.unwrap_or(2.0);
+        let c1 = n.color.unwrap_or([1.0, 0.6, 0.2, 0.8]);
+        let c2 = n.color2.unwrap_or(c1);
+        for i in 0..count {
+            let (h1, h2, h3, h4) = (
+                hash01(i),
+                hash01(i + 1000),
+                hash01(i + 2000),
+                hash01(i + 3000),
+            );
+            let period = rect.h + size;
+            let rise = self.time * speed * (0.5 + h3);
+            let y = rect.y + rect.h - ((h2 * period + rise) % period);
+            let wobble = libm::sinf(self.time * 0.03 + h4 * std::f32::consts::TAU) * 8.0;
+            let x = rect.x + h1 * rect.w + wobble;
+            let flicker = 0.6 + 0.4 * libm::sinf(self.time * 0.1 + h1 * std::f32::consts::TAU);
+            let mix = h4;
+            let col = [
+                c1[0] + (c2[0] - c1[0]) * mix,
+                c1[1] + (c2[1] - c1[1]) * mix,
+                c1[2] + (c2[2] - c1[2]) * mix,
+                (c1[3] + (c2[3] - c1[3]) * mix) * alpha * flicker,
+            ];
+            let s = size * (0.5 + h3);
+            let r = Rect {
+                x: libm::floorf(x / s) * s,
+                y: libm::floorf(y / s) * s,
+                w: s,
+                h: s,
+            };
+            if r.y < rect.y || r.y + r.h > rect.y + rect.h {
+                continue;
+            }
+            p.draw_rect(r, col, 0.0, clip);
+        }
     }
 
     fn nine_slice(
@@ -988,6 +1762,15 @@ mod tests {
 
     struct TestPainter {
         drawn: Vec<String>,
+        rects: Vec<Rect>,
+    }
+    impl TestPainter {
+        fn new() -> Self {
+            Self {
+                drawn: Vec::new(),
+                rects: Vec::new(),
+            }
+        }
     }
     impl Painter for TestPainter {
         fn image_size(&mut self, _: &str) -> Option<(u32, u32)> {
@@ -997,15 +1780,17 @@ mod tests {
             &mut self,
             key: &str,
             _: Option<[u32; 4]>,
-            _: Rect,
+            dst: Rect,
             _: f32,
             _: f32,
             _: Option<Rect>,
         ) {
             self.drawn.push(format!("img:{key}"));
+            self.rects.push(dst);
         }
-        fn draw_rect(&mut self, _: Rect, _: [f32; 4], _: f32, _: Option<Rect>) {
+        fn draw_rect(&mut self, dst: Rect, _: [f32; 4], _: f32, _: Option<Rect>) {
             self.drawn.push("rect".into());
+            self.rects.push(dst);
         }
         fn text_width(&mut self, _: i32, text: &str, scale: f32) -> f32 {
             text.len() as f32 * 8.0 * scale
@@ -1060,35 +1845,36 @@ y = 20
                 {"label": "VS MODE", "action": "mode:versus"},
                 {"label": "EXIT", "action": "quit"}
             ],
-            "profile": {"name": "Axel"}
+            "profile": {"name": "Axel", "volume": 0.5, "sound": true}
         })
+    }
+
+    fn nav_down() -> Nav {
+        Nav {
+            down: true,
+            ..Default::default()
+        }
+    }
+    fn nav_accept() -> Nav {
+        Nav {
+            accept: true,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn items_instance_children_and_binds() {
         let def = ScreenDef::parse(MENU).unwrap();
         let mut ui = Ui::new(def, data());
-        let mut p = TestPainter { drawn: Vec::new() };
+        let mut p = TestPainter::new();
         let ev = ui.tick(Nav::default(), &mut p);
         assert!(ev.is_empty());
         ui.draw(&mut p);
         assert!(p.drawn.contains(&"text:ARCADE".to_string()));
         assert!(p.drawn.contains(&"text:Hello Axel".to_string()));
-        let ev = ui.tick(
-            Nav {
-                down: true,
-                ..Default::default()
-            },
-            &mut p,
-        );
+        let ev = ui.tick(nav_down(), &mut p);
         assert_eq!(ev, vec![Event::Moved]);
-        let ev = ui.tick(
-            Nav {
-                accept: true,
-                ..Default::default()
-            },
-            &mut p,
-        );
+        let ev = ui.tick(nav_accept(), &mut p);
         assert_eq!(ev, vec![Event::Action("mode:versus".into())]);
     }
 
@@ -1096,7 +1882,7 @@ y = 20
     fn mouse_hover_and_click() {
         let def = ScreenDef::parse(MENU).unwrap();
         let mut ui = Ui::new(def, data());
-        let mut p = TestPainter { drawn: Vec::new() };
+        let mut p = TestPainter::new();
         ui.tick(Nav::default(), &mut p);
         // third button spans y = 180 + 2 * (52 + 8) .. + 52
         ui.mouse_move(Some((100.0, 180.0 + 120.0 + 10.0)));
@@ -1132,7 +1918,7 @@ visible = "!profile.missing"
         )
         .unwrap();
         let mut ui = Ui::new(def, data());
-        let mut p = TestPainter { drawn: Vec::new() };
+        let mut p = TestPainter::new();
         ui.tick(Nav::default(), &mut p);
         assert_eq!(ui.instances.len(), 2);
         assert_eq!(ui.instances[0].rect.w, 640.0);
@@ -1163,25 +1949,247 @@ on_press = "pick:{index}"
         .unwrap();
         let cells: Vec<Value> = (0..16).map(|i| serde_json::json!({ "i": i })).collect();
         let mut ui = Ui::new(def, serde_json::json!({ "cells": cells }));
-        let mut p = TestPainter { drawn: Vec::new() };
+        let mut p = TestPainter::new();
         ui.tick(Nav::default(), &mut p);
         for _ in 0..3 {
-            ui.tick(
-                Nav {
-                    down: true,
-                    ..Default::default()
-                },
-                &mut p,
-            );
+            ui.tick(nav_down(), &mut p);
         }
+        let ev = ui.tick(nav_accept(), &mut p);
+        assert_eq!(ev, vec![Event::Action("pick:12".into())]);
+        assert!(ui.scroll["roster"] > 0.0, "grid scrolled: {:?}", ui.scroll);
+    }
+
+    #[test]
+    fn boxes_stack_siblings_with_gap_grow_and_justify() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "vbox"
+id = "col"
+x = 0
+y = 0
+w = 200
+h = 300
+gap = 10
+[[node.children]]
+kind = "panel"
+id = "a"
+h = 40
+[[node.children]]
+kind = "panel"
+id = "b"
+grow = true
+[[node.children]]
+kind = "panel"
+id = "c"
+h = 50
+
+[[node]]
+kind = "hbox"
+id = "row"
+x = 0
+y = 400
+w = 400
+h = 50
+justify = "between"
+align = "center"
+[[node.children]]
+kind = "panel"
+id = "l"
+w = 100
+h = 20
+[[node.children]]
+kind = "panel"
+id = "r"
+w = 100
+h = 20
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        let a = ui.rect_of("a").unwrap();
+        let b = ui.rect_of("b").unwrap();
+        let c = ui.rect_of("c").unwrap();
+        assert_eq!((a.y, a.h), (0.0, 40.0));
+        assert_eq!(b.y, 50.0);
+        assert_eq!(b.h, 300.0 - 40.0 - 50.0 - 20.0);
+        assert_eq!(c.y, 250.0);
+        assert_eq!(a.w, 200.0, "stretch fills the cross axis");
+        let l = ui.rect_of("l").unwrap();
+        let r = ui.rect_of("r").unwrap();
+        assert_eq!(l.x, 0.0);
+        assert_eq!(r.x, 300.0);
+        assert_eq!(l.y, 400.0 + 15.0, "centred on the cross axis");
+    }
+
+    #[test]
+    fn input_edits_and_emits() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "input"
+id = "code"
+x = 0
+y = 0
+w = 200
+h = 40
+max_len = 5
+placeholder = "CODE"
+on_change = "typed:{value}"
+on_press = "join"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        assert!(!ui.text_focused());
+        ui.tick(nav_accept(), &mut p);
+        assert!(ui.text_focused(), "accept starts editing");
+        // navigation keys are ignored while editing
+        assert!(ui.tick(nav_down(), &mut p).is_empty());
+        for c in "ab".chars() {
+            ui.text_key(TextKey::Char(c));
+        }
+        ui.text_key(TextKey::Backspace);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(
+            ev,
+            vec![
+                Event::Input("code".into(), "a".into()),
+                Event::Action("typed:a".into()),
+                Event::Input("code".into(), "ab".into()),
+                Event::Action("typed:ab".into()),
+                Event::Input("code".into(), "a".into()),
+                Event::Action("typed:a".into()),
+            ]
+        );
+        for c in "bcdefg".chars() {
+            ui.text_key(TextKey::Char(c));
+        }
+        assert_eq!(ui.input_text("code"), "abcde", "max_len caps the text");
+        ui.text_key(TextKey::Enter);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert!(ev.contains(&Event::Action("join".into())));
+        assert!(!ui.text_focused());
+    }
+
+    #[test]
+    fn slider_toggle_and_selected() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "slider"
+id = "vol"
+x = 0
+y = 0
+w = 200
+h = 20
+min = 0
+max = 1
+step = 0.1
+value = "profile.volume"
+on_change = "set:volume:{value}"
+[[node]]
+kind = "toggle"
+id = "snd"
+x = 0
+y = 100
+w = 60
+h = 20
+value = "profile.sound"
+on_press = "toggle:sound"
+[[node]]
+kind = "button"
+id = "tab"
+x = 0
+y = 200
+w = 60
+h = 20
+text = "TAB"
+color = [0,0,0,1]
+color_focus = [1,1,1,1]
+selected = "profile.sound"
+on_press = "tab"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
         let ev = ui.tick(
             Nav {
-                accept: true,
+                right: true,
                 ..Default::default()
             },
             &mut p,
         );
-        assert_eq!(ev, vec![Event::Action("pick:12".into())]);
-        assert!(ui.scroll["roster"] > 0.0, "grid scrolled: {:?}", ui.scroll);
+        assert_eq!(ev, vec![Event::Action("set:volume:0.6".into())]);
+        // mouse drag to the start of the track
+        ui.mouse_move(Some((1.0, 10.0)));
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert!(ev.contains(&Event::Action("set:volume:0".into())), "{ev:?}");
+        ui.mouse_button(false);
+        ui.mouse_move(None);
+        ui.draw(&mut p);
+        assert!(p.drawn.contains(&"text:TAB".to_string()));
+    }
+
+    #[test]
+    fn dual_focus_fires_second_player_actions() {
+        let def = ScreenDef::parse(MENU).unwrap();
+        let mut ui = Ui::new(def, data());
+        ui.set_dual(true);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        assert_ne!(ui.focused(), ui.focused2(), "P2 starts on a different item");
+        let ev = ui.tick2(Nav::default(), nav_down(), &mut p);
+        assert_eq!(ev, vec![Event::Moved2]);
+        let ev = ui.tick2(Nav::default(), nav_accept(), &mut p);
+        assert_eq!(ev, vec![Event::Action2("quit".into())]);
+        let ev = ui.tick2(nav_accept(), Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("mode:arcade".into())]);
+    }
+
+    #[test]
+    fn leave_animation_finishes() {
+        let def = ScreenDef::parse(MENU).unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.leave();
+        assert!(!ui.left());
+        for _ in 0..12 {
+            let ev = ui.tick(nav_accept(), &mut p);
+            assert!(ev.is_empty(), "input ignored while leaving");
+        }
+        assert!(ui.left());
+    }
+
+    #[test]
+    fn particles_draw_inside_their_rect() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "particles"
+x = 100
+y = 100
+w = 200
+h = 100
+count = 30
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert!(!p.rects.is_empty());
+        for r in &p.rects {
+            assert!(r.x >= 80.0 && r.x <= 320.0 && r.y >= 100.0 && r.y + r.h <= 200.0);
+        }
     }
 }

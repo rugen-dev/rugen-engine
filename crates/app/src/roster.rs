@@ -51,7 +51,6 @@ pub struct Roster {
     /// 0 = random, else `stages[i - 1]`.
     stage_idx: usize,
     pub query: String,
-    pub searching: bool,
     sort: Sort,
     /// Cell under the cursor / focus (index into `cells`).
     hover: Option<usize>,
@@ -115,7 +114,6 @@ impl Roster {
             picking: if human[0] { 0 } else { 1 },
             stage_idx: 0,
             query: String::new(),
-            searching: false,
             sort: Sort::Name,
             hover: None,
             ai_level,
@@ -212,56 +210,67 @@ impl Roster {
             .unwrap_or(2)
     }
 
-    /// Typed characters while searching. Returns true when consumed.
-    pub fn type_key(&mut self, key: &winit::keyboard::Key) -> bool {
-        use winit::keyboard::{Key, NamedKey};
-        if !self.searching {
-            return false;
-        }
-        match key {
-            Key::Named(NamedKey::Backspace) => {
-                self.query.pop();
-            }
-            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Escape) => {
-                self.searching = false;
-            }
-            Key::Named(NamedKey::Space) => self.query.push(' '),
-            Key::Character(c) if self.query.len() < 24 => {
-                self.query.push_str(&c.to_lowercase());
-            }
-            _ => {}
-        }
+    /// Both humans pick at the same time (each with their own cursor).
+    pub fn dual(&self) -> bool {
+        self.human[0] && self.human[1]
+    }
+
+    /// Search text from the input widget.
+    pub fn set_query(&mut self, q: &str) {
+        self.query = q.to_ascii_lowercase();
         self.reorder();
-        true
+    }
+
+    /// `side` picks the `i`th cell of the filtered list (None: whoever is next).
+    fn pick(&mut self, i: usize, side: Option<usize>) -> Outcome {
+        let Some(&cell) = self.order.get(i) else {
+            return Outcome::None;
+        };
+        if is_broken(&self.cells[cell].manifest) {
+            return Outcome::None;
+        }
+        if side.is_none_or(|s| s == 0) {
+            self.hover = Some(cell);
+        }
+        let target = match side {
+            Some(s) if self.human[s] => {
+                if self.picks[s].is_some() {
+                    // pressing again on a picked side = unpick
+                    self.picks[s] = None;
+                    self.picking = self.next_picking();
+                    return Outcome::Refresh;
+                }
+                Some(s)
+            }
+            Some(_) => None,
+            None if self.picking < 2 => Some(self.picking),
+            None => None,
+        };
+        match target {
+            Some(s) => {
+                self.picks[s] = Some(cell);
+                self.picking = self.next_picking();
+                Outcome::Refresh
+            }
+            None if self.all_picked() => match self.setup() {
+                Some(t) => Outcome::Go(Box::new(t)),
+                None => Outcome::Refresh,
+            },
+            None => Outcome::Refresh,
+        }
     }
 
     pub fn action(&mut self, a: &str) -> Outcome {
         let (head, arg) = a.split_once(':').unwrap_or((a, ""));
         match head {
-            "pick" => {
-                let Ok(i) = arg.parse::<usize>() else {
-                    return Outcome::None;
-                };
-                let Some(&cell) = self.order.get(i) else {
-                    return Outcome::None;
-                };
-                if is_broken(&self.cells[cell].manifest) {
-                    return Outcome::None;
-                }
-                self.hover = Some(cell);
-                if self.picking < 2 {
-                    self.picks[self.picking] = Some(cell);
-                    self.picking = self.next_picking();
-                    Outcome::Refresh
-                } else if self.all_picked() {
-                    match self.setup() {
-                        Some(t) => Outcome::Go(Box::new(t)),
-                        None => Outcome::Refresh,
-                    }
-                } else {
-                    Outcome::Refresh
-                }
-            }
+            "pick" => match arg.parse::<usize>() {
+                Ok(i) => self.pick(i, if self.dual() { Some(0) } else { None }),
+                Err(_) => Outcome::None,
+            },
+            "pick2" => match arg.parse::<usize>() {
+                Ok(i) if self.human[1] => self.pick(i, Some(1)),
+                _ => Outcome::None,
+            },
             "unpick" => {
                 if let Some(s) = (0..2)
                     .rev()
@@ -272,6 +281,10 @@ impl Roster {
                     return Outcome::Refresh;
                 }
                 Outcome::None
+            }
+            "query" => {
+                self.set_query(arg);
+                Outcome::Refresh
             }
             "confirm" => {
                 if self.all_picked() {
@@ -308,14 +321,7 @@ impl Roster {
                 }
                 Outcome::Refresh
             }
-            "search" => {
-                self.searching = !self.searching;
-                if !self.searching {
-                    self.query.clear();
-                    self.reorder();
-                }
-                Outcome::Refresh
-            }
+            "search" => Outcome::None,
             "sort" => {
                 self.sort = match self.sort {
                     Sort::Name => Sort::Author,
@@ -388,6 +394,7 @@ impl Roster {
             net: None,
             tutorial,
             ids: [id1.clone(), if tutorial { id1 } else { id2 }],
+            mode: Some(self.mode),
         };
         if tutorial {
             return Some(Transition::Fight(setup));
@@ -487,8 +494,14 @@ impl Roster {
             Mode::Watch => "WATCH",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
-        let prompt = if self.searching {
-            format!("SEARCH: {}_", self.query)
+        let prompt = if self.all_picked() {
+            "READY  -  CONFIRM TO FIGHT".to_string()
+        } else if self.dual() {
+            match (self.picks[0].is_some(), self.picks[1].is_some()) {
+                (false, false) => "P1 AND P2 : CHOOSE YOUR FIGHTERS".to_string(),
+                (true, false) => "P2 : CHOOSE YOUR FIGHTER".to_string(),
+                _ => "P1 : CHOOSE YOUR FIGHTER".to_string(),
+            }
         } else if self.picking < 2 {
             format!("P{} : CHOOSE YOUR FIGHTER", self.picking + 1)
         } else {
@@ -506,7 +519,7 @@ impl Roster {
             "p2": self.char_json(self.picks[1], profile),
             "versus": self.human[1] || self.picks[1].is_some(),
             "ready": self.all_picked(),
-            "searching": self.searching,
+            "dual": self.dual(),
             "query": self.query,
             "sort": match self.sort {
                 Sort::Name => "NAME",
