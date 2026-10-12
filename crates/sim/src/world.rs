@@ -3244,9 +3244,17 @@ impl World {
         if on_floor_span && vy >= 0.0 && old_y <= 0.01 && new_y >= 0.0 && ground >= NO_GROUND {
             landed = Some(0.0);
         }
+        // the surface already stood on, kept while inside its span even when the
+        // feet sink below it (as on the floor, where Pos Y may go positive: the
+        // common fall states wait for `Pos Y >= 25` before bouncing)
+        let mut keep: Option<f32> = None;
         for pl in &self.stage.platforms {
             let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
             if x < x1 || x > x2 {
+                continue;
+            }
+            if ground == y {
+                keep = Some(y);
                 continue;
             }
             // crossed the surface from above while falling
@@ -3258,15 +3266,17 @@ impl World {
                 below = y;
             }
         }
-        if let Some(y) = landed {
+        if let Some(y) = landed.filter(|&l| keep.is_none_or(|k| l < k)) {
             let p = &mut self.players[i];
             p.pos[1] = y;
             p.ground = y;
             return false;
         }
         let p = &mut self.players[i];
-        p.ground = below;
-        let _ = ground;
+        p.ground = match keep {
+            Some(k) if new_y >= k - 0.01 || k <= below => k,
+            _ => below,
+        };
         // standing on nothing: the caller drops the player into the air-fall state
         if p.physics != Physics::A
             && p.state_type != StateType::A
@@ -3633,6 +3643,52 @@ mod tests {
             }
         }
         assert!(fell, "should fall off the edge, pos {:?}", w.players[0].pos);
+    }
+
+    /// A fall that waits for `Pos Y >= 25` (common1's 5050 without a 5060
+    /// anim) must still bounce on a platform: the feet sink below the surface
+    /// as they do below the floor, instead of being clamped onto it every tick.
+    #[test]
+    fn platform_fall_reaches_bounce_threshold() {
+        let Some(mut w) = world() else { return };
+        w.stage.platforms.push(Platform {
+            x1: -200.0,
+            x2: 0.0,
+            y: -80.0,
+        });
+        let text = "[Statedef 777]\ntype = A\nmovetype = H\nphysics = N\nctrl = 0\n\n\
+                    [State 777, g]\ntype = VelAdd\ntrigger1 = 1\ny = 0.44\n\n\
+                    [State 777, land]\ntype = ChangeState\n\
+                    trigger1 = Vel Y > 0 && Pos Y >= 25\nvalue = 778\n\n\
+                    [Statedef 778]\ntype = L\nmovetype = H\nphysics = N\nvelset = 0,0\nctrl = 0\n\n\
+                    [State 778, set]\ntype = PosSet\ntrigger1 = 1\ny = 0\n";
+        let d = w.data[0].with_states("test", text).expect("states compile");
+        w.data[0] = d;
+        run(&mut w, 5, Buttons::default());
+        w.players[0].pos = [-70.0, -80.0];
+        w.players[0].old_pos = w.players[0].pos;
+        w.players[0].ground = -80.0;
+        run(&mut w, 2, Buttons::default());
+        w.players[0].vel = [0.0, -4.0];
+        w.change_state(0, 777, None, Some(false));
+        let mut bounced = false;
+        for _ in 0..120 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+            if w.players[0].state_no == 778 {
+                bounced = true;
+                break;
+            }
+        }
+        let p = &w.players[0];
+        assert!(
+            bounced,
+            "stuck falling: state {} pos {:?} vel {:?} ground {}",
+            p.state_no, p.pos, p.vel, p.ground
+        );
+        w.step(&[Buttons::default(), Buttons::default()]);
+        let p = &w.players[0];
+        assert_eq!(p.ground, -80.0, "still on the platform");
+        assert_eq!(p.pos[1], -80.0, "PosSet y = 0 is relative to the platform");
     }
 
     fn arena_world() -> Option<World> {
