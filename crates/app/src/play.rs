@@ -18,8 +18,7 @@ use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::explod::{AnimSrc, Trans};
 use rugen_sim::fx::PalFxOut;
 use rugen_sim::world::Event;
-use rugen_sim::world::Stage;
-use rugen_sim::{Buttons, CharData, FxData, World};
+use rugen_sim::{Buttons, CharData, World};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::config::Config;
@@ -171,67 +170,43 @@ impl Match {
         data_dir: &Path,
         cfg: &Config,
     ) -> anyhow::Result<Self> {
-        let (stage, visual) = match &setup.stage {
-            Some(p) => {
-                let def =
-                    rugen_formats::def::Def::open(p).with_context(|| p.display().to_string())?;
-                let visual = match crate::stage::StageVisual::load(p) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        log::warn!("stage background not loaded: {e:#}");
-                        None
-                    }
-                };
-                (Stage::from_def(&def), visual)
-            }
-            None => (Stage::default(), None),
+        let visual = setup
+            .stage
+            .as_ref()
+            .and_then(|p| match crate::stage::StageVisual::load(p) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("stage background not loaded: {e:#}");
+                    None
+                }
+            });
+        let spec = rugen_sim::headless::MatchSpec {
+            p1: &setup.p1,
+            p2: &setup.p2,
+            stage: setup.stage.as_deref(),
+            data_dir,
+            motif,
+            zoom: (cfg.camera.zoom_out, cfg.camera.zoom_in),
+            movement: rugen_sim::world::Movement {
+                air_jumps: cfg.game.air_jumps,
+                air_dash: cfg.game.air_dash,
+                fast_fall: cfg.game.fast_fall,
+            },
+            // the options' round time; online peers keep the motif's so both sides agree
+            round_time: setup.net.is_none().then_some(cfg.game.round_time),
+            ai: if setup.net.is_none() {
+                setup.ai
+            } else {
+                [0, 0]
+            },
         };
-        let mut stage = stage;
-        stage.zoom_out = stage.zoom_out.min(cfg.camera.zoom_out.clamp(0.2, 1.0));
-        stage.zoom_in = stage.zoom_in.max(cfg.camera.zoom_in.clamp(1.0, 3.0));
-        let d1 = CharData::load_with_data(&setup.p1, data_dir)
-            .with_context(|| setup.p1.display().to_string())?;
-        let d2 = if setup.p2 == setup.p1 {
-            d1.clone()
-        } else {
-            CharData::load_with_data(&setup.p2, data_dir)
-                .with_context(|| setup.p2.display().to_string())?
-        };
-        for d in [&d1, &d2] {
+        let mut world = rugen_sim::headless::build_world(&spec)
+            .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        for d in &world.data {
             for w in &d.warnings {
                 log::warn!("{}: {w}", d.name);
             }
         }
-        let mut world = World::new(stage, 1);
-        match FxData::load_with_motif(motif, data_dir) {
-            Ok(fx) => {
-                let mut round = fx.round.clone();
-                // the options' round time; online peers keep the motif's so both sides agree
-                if setup.net.is_none() {
-                    round.round_time = cfg.game.round_time;
-                }
-                world.round = rugen_sim::RoundState::new(round);
-                world.fx = Some(fx);
-            }
-            Err(e) => log::warn!("fightfx not loaded from {}: {e}", data_dir.display()),
-        }
-        world.add_player(d1, 0, 1);
-        world.add_player(d2, 1, 2);
-        world.movement = rugen_sim::world::Movement {
-            air_jumps: world
-                .stage
-                .arena
-                .air_jumps
-                .unwrap_or(cfg.game.air_jumps)
-                .clamp(0, 8),
-            air_dash: world.stage.arena.air_dash.unwrap_or(cfg.game.air_dash),
-            fast_fall: world.stage.arena.fast_fall.unwrap_or(cfg.game.fast_fall),
-        };
-        if setup.net.is_none() {
-            world.players[0].ai_level = setup.ai[0].clamp(0, 8);
-            world.players[1].ai_level = setup.ai[1].clamp(0, 8);
-        }
-        world.start_round();
         if setup.tutorial {
             world.round.time_left = -1;
         }

@@ -18,6 +18,7 @@ pub mod command;
 pub mod context;
 pub mod explod;
 pub mod fx;
+pub mod headless;
 pub mod hit;
 pub mod input;
 pub mod player;
