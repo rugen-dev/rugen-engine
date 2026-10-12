@@ -4,6 +4,9 @@
 # create.* (name password public rounds time mode chars spect), direct.* (title addr mine fighters),
 # status, error, me.*, room.* (code name rules ready waiting rematch role members[] (name role ping
 # kick can_kick)), typed, password, opponent.* (.. ping), queue.* (title ..), board[], season, my_rank.
+# Official / community: menu[] items carry badge has_badge official community (server list),
+# scope (OFFICIAL | COMMUNITY · NAME), ranked_official, me.scope, opponent.scope, last_result,
+# has_last_result, mx.stamp stamp_official stamp_other, mx.left/right.official_block.
 background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
@@ -52,15 +55,25 @@ anchor = "tr"
 x = 40
 y = 150
 w = 400
-h = 150
+h = 196
 enter = "right"
 enter_time = 18
 
   [[node.children]]
   kind = "text"
+  text = "{me.scope}"
+  x = 18
+  y = 154
+  w = 370
+  font = 2
+  bank = 4
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
   text = "{me.name}"
   x = 18
-  y = 14
+  y = 12
   font = 2
   bank = 7
   scale = 2
@@ -69,16 +82,16 @@ enter_time = 18
   kind = "text"
   text = "{me.rank}   {me.rating}"
   x = 18
-  y = 48
+  y = 46
   font = 2
   bank = 4
   scale = 2
 
   [[node.children]]
   kind = "text"
-  text = "BEST {me.best}   {me.wins} W / {me.losses} L"
+  text = "BEST {me.best}   {me.wins}W {me.losses}L"
   x = 18
-  y = 82
+  y = 94
   font = 1
   bank = 6
   scale = 2
@@ -87,10 +100,26 @@ enter_time = 18
   kind = "text"
   text = "FIGHTER: {me.char}"
   x = 18
-  y = 112
+  y = 124
   font = 1
   bank = 7
   scale = 2
+
+# last online result with its signature stamp (OFFICIAL / COMMUNITY key)
+[[node]]
+kind = "text"
+dock = "right"
+visible = "has_last_result"
+text = "{last_result}"
+anchor = "tr"
+x = 40
+y = 362
+w = 400
+font = 2
+bank = 7
+scale = 1
+wrap = true
+line_gap = 4
 
 # ---- menu: one slanted button per entry of `menu`
 [[node]]
@@ -98,9 +127,9 @@ kind = "vbox"
 dock = "left"
 visible = "is_menu"
 x = 60
-y = 190
+y = 176
 w = 400
-gap = 10
+gap = 12
 items = "menu"
 enter = "left"
 enter_time = 18
@@ -108,7 +137,7 @@ enter_time = 18
   [[node.children]]
   kind = "button"
   id = "{item.id}"
-  h = 54
+  h = 48
   image = "ui/button.webp"
   image_focus = "ui/button_lit.webp"
   text = "{item.label}"
@@ -120,6 +149,55 @@ enter_time = 18
   pad = 26
   hover_scale = 1.03
   on_press = "{item.action}"
+
+  # server list: OFFICIAL (pinned) / COMMUNITY badge in the slab's corner
+  [[node.children]]
+  kind = "panel"
+  visible = "item.official"
+  color = [0.82, 0.12, 0.16, 1.0]
+  border = 2
+  border_color = [0.07, 0.07, 0.07, 1.0]
+  x = 246
+  y = -9
+  w = 136
+  h = 20
+  angle = -3
+
+  [[node.children]]
+  kind = "text"
+  visible = "item.official"
+  text = "{item.badge}"
+  x = 246
+  y = -6
+  w = 136
+  font = 2
+  bank = 0
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "item.community"
+  color = [0.12, 0.14, 0.2, 1.0]
+  border = 2
+  border_color = [0.07, 0.07, 0.07, 1.0]
+  x = 246
+  y = -9
+  w = 136
+  h = 20
+  angle = -3
+
+  [[node.children]]
+  kind = "text"
+  visible = "item.community"
+  text = "{item.badge}"
+  x = 246
+  y = -6
+  w = 136
+  font = 2
+  bank = 7
+  scale = 1
+  align = "center"
 
 # ---- room
 [[node]]
@@ -1541,6 +1619,31 @@ enter_time = 6
   scale = 4
   align = "center"
 
+# who signed the verdict: OFFICIAL (official key) or COMMUNITY (key fingerprint)
+[[node]]
+kind = "text"
+visible = "mx.stamp_official"
+text = "{mx.stamp}"
+x = 470
+y = 160
+w = 340
+font = 2
+bank = 4
+scale = 1
+align = "center"
+
+[[node]]
+kind = "text"
+visible = "mx.stamp_other"
+text = "{mx.stamp}"
+x = 470
+y = 160
+w = 340
+font = 2
+bank = 7
+scale = 1
+align = "center"
+
 [[node]]
 kind = "text"
 visible = "is_matchup"
@@ -1659,23 +1762,23 @@ justify = "center"
 # status / error footer
 [[node]]
 kind = "text"
-dock = "left bottom"
+dock = "right bottom"
 text = "{status}"
-anchor = "bl"
-x = 60
-y = 60
+anchor = "br"
+x = 24
+y = 64
 font = 2
 bank = 7
 scale = 2
 
 [[node]]
 kind = "text"
-dock = "left bottom"
+dock = "right bottom"
 text = "{error}"
 visible = "has_error"
-anchor = "bl"
-x = 60
-y = 28
+anchor = "br"
+x = 24
+y = 100
 font = 1
 bank = 4
 scale = 2

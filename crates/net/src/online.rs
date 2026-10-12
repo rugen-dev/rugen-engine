@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 pub use rugen_proto::{
     CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo, MatchupView,
     PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay, ResultAck, RoomInfo,
-    RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, Verdict,
-    VerdictKind, b64_decode, ping_bars, rank_name,
+    RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, SignedBlob,
+    TruthFeed, Verdict, VerdictKind, b64_decode, ping_bars, rank_name,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -541,6 +541,29 @@ impl OnlineClient {
 
     pub fn season(&self) -> OnlineResult<Season> {
         Self::decode(self.call("GET", "/seasons/current", None)?)
+    }
+
+    // ---- official server / signatures (API 4)
+
+    /// The server's own signed truth feed (`GET /v1/truth`).
+    pub fn truth(&self) -> OnlineResult<SignedBlob> {
+        Self::decode(self.call("GET", "/v1/truth", None)?)
+    }
+
+    /// The official feed a community server holds (`GET /v1/truth/official`).
+    pub fn official_mirror(&self) -> OnlineResult<SignedBlob> {
+        Self::decode(self.call("GET", "/v1/truth/official", None)?)
+    }
+
+    /// The server signs our random `nonce` (proves which key it holds).
+    pub fn identity(&self, nonce: &str) -> OnlineResult<SignedBlob> {
+        Self::decode(self.call("GET", &format!("/v1/identity?nonce={nonce}"), None)?)
+    }
+
+    /// Outcome of one of our matches, signed once settled.
+    pub fn match_result(&self, match_id: u64) -> OnlineResult<ResultAck> {
+        let k = self.key()?;
+        Self::decode(self.call("GET", &format!("/match/{match_id}/result?key={k}"), None)?)
     }
 }
 

@@ -27,6 +27,8 @@
 //! ```
 
 #![forbid(unsafe_code)]
+// the ONLINE screen's data context is one large json! literal
+#![recursion_limit = "256"]
 
 use anyhow::Context;
 
@@ -40,6 +42,7 @@ mod input;
 mod kit;
 mod lifebar;
 mod matchup;
+mod official;
 mod online;
 mod options;
 mod pixelize;

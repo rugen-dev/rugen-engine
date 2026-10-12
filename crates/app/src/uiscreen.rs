@@ -60,6 +60,19 @@ pub struct CharStats {
     pub wins: u32,
 }
 
+/// A server's rating of this player, kept for the title screen rank card.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RankSnap {
+    pub server: String,
+    /// The server proved it is the official one (global ranking).
+    pub official: bool,
+    pub rating: i32,
+    pub rank: String,
+    pub wins: u32,
+    pub losses: u32,
+}
+
 /// Local player profile (`profile.json` in the game root).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -85,6 +98,9 @@ pub struct Profile {
     /// Accounts on other servers, keyed by server address: (id, key).
     #[serde(default)]
     pub online_accounts: std::collections::BTreeMap<String, (u64, String)>,
+    /// Last known online rating per server address.
+    #[serde(default)]
+    pub online_ranks: std::collections::BTreeMap<String, RankSnap>,
 }
 
 impl Default for Profile {
@@ -102,6 +118,7 @@ impl Default for Profile {
             online_id: 0,
             main_char: String::new(),
             online_accounts: Default::default(),
+            online_ranks: Default::default(),
         }
     }
 }
@@ -140,6 +157,51 @@ impl Profile {
             "UNRANKED".into()
         } else {
             format!("{}", 1000 + self.wins as i64 * 25 - self.losses as i64 * 15)
+        }
+    }
+
+    /// Title screen rank card: (title, rating, line). The official rating
+    /// when known, else the best community one (labelled), else local.
+    pub fn rank_card(&self) -> (String, String, String) {
+        let official = self.online_ranks.values().find(|r| r.official);
+        let community = self
+            .online_ranks
+            .values()
+            .filter(|r| !r.official && r.wins + r.losses > 0)
+            .max_by_key(|r| r.rating);
+        match (official, community) {
+            (Some(r), _) => (
+                "RANKED · OFFICIAL".into(),
+                r.rating.to_string(),
+                format!("{} · {}W {}L", r.rank, r.wins, r.losses),
+            ),
+            (None, Some(r)) => (
+                "RANKED · COMMUNITY".into(),
+                r.rating.to_string(),
+                format!(
+                    "{} · {}",
+                    r.server.to_uppercase().chars().take(14).collect::<String>(),
+                    r.rank
+                ),
+            ),
+            (None, None) => (
+                "RANKED · LOCAL".into(),
+                if self.wins + self.losses == 0 {
+                    "1500".into()
+                } else {
+                    self.rating_text()
+                },
+                format!(
+                    "{} · {}W {}L",
+                    if self.wins + self.losses == 0 {
+                        "UNRANKED"
+                    } else {
+                        "LOCAL"
+                    },
+                    self.wins,
+                    self.losses
+                ),
+            ),
         }
     }
 
@@ -747,14 +809,12 @@ impl UiScreen {
                 let version = env!("CARGO_PKG_VERSION");
                 let short: Vec<&str> = version.split('.').take(2).collect();
                 let p = &self.profile;
+                let rank = p.rank_card();
                 json!({
                     "featured": self.featured_json(),
                     "arenas": self.arenas,
                     "vol": format!("VOL. {}", short.join(".")),
-                    "ranked": {
-                        "rating": if p.wins + p.losses == 0 { "1500".to_string() } else { p.rating_text() },
-                        "line": format!("{} · {}W {}L", if p.wins + p.losses == 0 { "UNRANKED" } else { "LOCAL" }, p.wins, p.losses),
-                    },
+                    "ranked": { "title": rank.0, "rating": rank.1, "line": rank.2 },
                     "keys": self.keys_json(),
                     "menu": menu,
                     "news": self.news,
