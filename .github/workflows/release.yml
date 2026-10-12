@@ -35,6 +35,7 @@ jobs:
           cp -r motif dist/
           cp chars/README.md dist/chars/
           cp stages/README.md dist/stages/
+          cp packaging/rugen.desktop dist/
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/rugen.exe target/release/rugen-server.exe dist/
             7z a rugen-${{ matrix.name }}.zip ./dist/*

@@ -30,6 +30,9 @@ ab_glyph = "0.2"
 image-webp = "0.2"
 rugen-ui.workspace = true
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true
 
@@ -41,6 +44,8 @@ assets = [
   { source = "LICENSE-MIT", dest = "/usr/share/licenses/rugen/LICENSE-MIT", mode = "644", doc = true },
   { source = "LICENSE-APACHE", dest = "/usr/share/licenses/rugen/LICENSE-APACHE", mode = "644", doc = true },
   { source = "README.md", dest = "/usr/share/doc/rugen/README.md", mode = "644", doc = true },
+  { source = "packaging/rugen.desktop", dest = "/usr/share/applications/rugen.desktop", mode = "644" },
+  { source = "motif/brand/rugen.png", dest = "/usr/share/icons/hicolor/256x256/apps/rugen.png", mode = "644" },
 ]
 [package.metadata.generate-rpm.requires]
 systemd-libs = "*"

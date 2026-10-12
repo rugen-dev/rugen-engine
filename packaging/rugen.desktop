@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=rugen
+Comment=MUGEN-compatible 2D fighting game engine
+Exec=rugen
+Icon=rugen
+Terminal=false
+Categories=Game;ActionGame;
