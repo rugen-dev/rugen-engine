@@ -781,7 +781,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK / SAVE & LEAVE"
+  text = "SAVE & BACK"
   font = 2
   bank = 9
   alpha = 0.6
