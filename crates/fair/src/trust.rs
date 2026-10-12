@@ -36,9 +36,10 @@
 //! and address are baked into the build ([`OFFICIAL_KEY`],
 //! [`OFFICIAL_SERVER`]) from the `RUGEN_OFFICIAL_KEY` /
 //! `RUGEN_OFFICIAL_SERVER` environment variables at compile time; without
-//! them the placeholders below are used (the development key's private half
-//! is public, see [`DEV_SIGNING_SEED`], so such a build has no real
-//! official server).
+//! them the defaults below are used: the official domain `play.rugen.dev`
+//! and the development key, whose private half is public (see
+//! [`DEV_SIGNING_SEED`]): until a release is built with the real public
+//! key, nothing such a build shows as OFFICIAL is trustworthy.
 
 use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
 use rugen_proto::{SignedBlob, TRUST_VERSION, TruthFeed, from_hex, to_hex};
@@ -46,14 +47,14 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-/// Placeholder official address of builds made without `RUGEN_OFFICIAL_SERVER`.
-pub const PLACEHOLDER_OFFICIAL_SERVER: &str = "https://play.rugen.example";
+/// Official address of builds made without `RUGEN_OFFICIAL_SERVER`.
+pub const DEFAULT_OFFICIAL_SERVER: &str = "https://play.rugen.dev";
 
 /// Address of the official rugen server (pinned first in the ONLINE list,
 /// default feed source of community servers). Build-time setting.
 pub const OFFICIAL_SERVER: &str = match option_env!("RUGEN_OFFICIAL_SERVER") {
     Some(s) if !s.is_empty() => s,
-    _ => PLACEHOLDER_OFFICIAL_SERVER,
+    _ => DEFAULT_OFFICIAL_SERVER,
 };
 
 /// Seed of the development key: **public knowledge**, for tests and local
@@ -176,9 +177,9 @@ pub fn official_is_dev() -> bool {
     OFFICIAL_KEY.eq_ignore_ascii_case(DEV_PUBLIC_KEY)
 }
 
-/// The official address is still the placeholder (`RUGEN_OFFICIAL_SERVER` unset).
-pub fn official_is_placeholder() -> bool {
-    OFFICIAL_SERVER == PLACEHOLDER_OFFICIAL_SERVER
+/// The official address is the default one (`RUGEN_OFFICIAL_SERVER` unset).
+pub fn official_is_default() -> bool {
+    OFFICIAL_SERVER == DEFAULT_OFFICIAL_SERVER
 }
 
 /// An Ed25519 signing key (a server's private key).
