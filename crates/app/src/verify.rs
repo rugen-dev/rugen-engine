@@ -103,12 +103,17 @@ impl Report {
 fn soak(
     data: Arc<CharData>,
     other: Arc<CharData>,
+    fx: Option<Arc<rugen_sim::FxData>>,
     seed: u64,
     frames: u32,
     stats: &mut Stats,
     issues: &mut Vec<String>,
 ) -> bool {
     let mut w = World::new(Stage::default(), seed);
+    if let Some(fx) = fx {
+        w.round = rugen_sim::RoundState::new(fx.round.clone());
+        w.fx = Some(fx);
+    }
     w.add_player(data, 0, 1);
     w.add_player(other, 1, 2);
     w.players[1].ai_level = 8;
@@ -283,9 +288,12 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         ));
     }
 
+    // fightfx (sparks, dust) as in a real match, so F-anim lookups are meaningful
+    let fx = rugen_sim::FxData::load(data_dir).ok();
     let mut ran = soak(
         data.clone(),
         data.clone(),
+        fx.clone(),
         11,
         SOAK_FRAMES,
         &mut stats,
@@ -293,9 +301,20 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
     );
     if ran && let Some(sp) = sparring {
         if let Ok(kfm) = CharData::load_with_data(sp, data_dir) {
-            ran = soak(data.clone(), kfm, 23, SOAK_FRAMES, &mut stats, &mut issues);
+            ran = soak(
+                data.clone(),
+                kfm,
+                fx.clone(),
+                23,
+                SOAK_FRAMES,
+                &mut stats,
+                &mut issues,
+            );
         }
     }
+    // the two soaks often report the same things
+    let mut seen = BTreeSet::new();
+    issues.retain(|i| seen.insert(i.clone()));
     if stats.max_hit_percent >= 60 {
         issues.push(format!(
             "a single hit took {}% of a life bar",
