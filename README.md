@@ -46,9 +46,23 @@ the other attack buttons, Start) confirm and **B cancels** (pad South / East).
 The mouse is off by default (cursor hidden, no hover): `[input] mouse = true`
 or OPTIONS > VIDEO > MOUSE IN MENUS turns it on.
 
-ONLINE is always on the title screen. It first lists **servers** (`[net]
-server` plus `[net] servers` favourites; ADD SERVER saves one) with name,
-message of the day, players online and ping. On a server: **Lobby** (public
+ONLINE is always on the title screen. It first lists **servers**: the
+**official server** (`https://play.rugen.dev`, built in, always first with an
+OFFICIAL badge, cannot be removed), then your **community servers**
+(`[net] servers`, COMMUNITY badge; ADD SERVER / REMOVE SERVER edit them;
+`[net] server` picks the default selection, empty = official) with name,
+message of the day, players online and ping. Only the official server's
+ranked, Elo, seasons and leaderboard are the **global ranking**; community
+servers work fully and are labelled with their name everywhere a rating
+shows (lobby, leaderboard, player card, title screen rank card). A server
+counts as official only after it signs a random challenge with the official
+Ed25519 key baked into the game. The official server also publishes a
+signed **truth feed** (global cheat blocklist + community character
+ratings): the game caches the verified feed, marks blocked fighters in its
+roster and matchup cards, and community servers enforce it in their
+verdicts. Matchup verdicts and ranked results are signed: OFFICIAL stamps
+need the official key, other servers show their own key fingerprint, and a
+bad signature is rejected. On a server: **Lobby** (public
 rooms: join or watch), **Create Room** (public or private, optional password,
 rounds, timer, classic / arena, free pick / mirror, spectator seats; the host
 can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
@@ -153,7 +167,9 @@ The online hub lives in its own repository,
 with SQLite inside (lobby, rooms, ranked, the match relay that keeps player
 IPs private, bring-your-own-character matchups). Docker Compose / Dokploy
 guide and image `ghcr.io/rugen-dev/rugen-server` there. Players add
-`https://your-host` in ONLINE.
+`https://your-host` in ONLINE (a community server; it follows the official
+blocklist automatically). The official server address and public key are
+build-time settings of the game, see [BUILDING.md](BUILDING.md#official-server).
 
 ## Status
 
