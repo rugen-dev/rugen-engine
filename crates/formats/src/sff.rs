@@ -678,6 +678,23 @@ fn lz5_decode(rle: &[u8], w: u16, h: u16) -> Vec<u8> {
     p
 }
 
+/// RGBA8 pixels as a PNG stream (best compression; used by the v2 writer).
+fn png_encode_rgba(px: &[u8], w: u16, h: u16) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(png::Compression::High);
+        let mut wr = enc.write_header().expect("png header into a Vec");
+        let need = w as usize * h as usize * 4;
+        let mut data = px.to_vec();
+        data.resize(need, 0);
+        wr.write_image_data(&data).expect("png data into a Vec");
+    }
+    out
+}
+
 fn png_decode(data: &[u8], format: u8, w: u16, h: u16) -> Result<Pixels> {
     let mut dec = png::Decoder::new(Cursor::new(data));
     if format != 10 {
@@ -842,8 +859,8 @@ mod tests {
 // ---------------------------------------------------------------- writer
 
 impl Sff {
-    /// Serialize as SFF v2.0.1: raw 8-bit indexed sprites (format 0) or raw
-    /// RGBA (format 0, depth 32), palettes with their alpha kept. Palettes are
+    /// Serialize as SFF v2.0.1: raw 8-bit indexed sprites (format 0) or
+    /// PNG-compressed RGBA (format 12, depth 32), palettes with their alpha kept. Palettes are
     /// written in index order with the keys from [`Sff::palette_keys`] or `(0, i)`.
     pub fn write_v2(&self) -> Vec<u8> {
         let mut out = vec![0u8; 512];
@@ -880,8 +897,10 @@ impl Sff {
                     (0u8, 8u8, px.len() as u32)
                 }
                 Pixels::Rgba(px) => {
-                    ldata.extend_from_slice(px);
-                    (0u8, 32u8, px.len() as u32)
+                    let png = png_encode_rgba(px, s.width, s.height);
+                    ldata.extend_from_slice(&(px.len() as u32).to_le_bytes());
+                    ldata.extend_from_slice(&png);
+                    (12u8, 32u8, png.len() as u32 + 4)
                 }
             };
             spr_nodes.extend_from_slice(&g.to_le_bytes());

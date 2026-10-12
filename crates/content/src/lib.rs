@@ -246,8 +246,32 @@ impl Library {
     pub fn chars(&self) -> Vec<Entry> {
         Self::scan(&self.chars_dir())
     }
+    /// Stages in `stages/` plus the built-ins in `motif/stages/` (a user
+    /// stage with the same id wins).
     pub fn stages(&self) -> Vec<Entry> {
-        Self::scan(&self.stages_dir())
+        let mut out = Self::scan(&self.stages_dir());
+        for e in Self::scan(&self.root.join("motif").join("stages")) {
+            if !out.iter().any(|o| o.id.eq_ignore_ascii_case(&e.id)) {
+                out.push(e);
+            }
+        }
+        out.sort_by_key(|a| a.id.to_ascii_lowercase());
+        out
+    }
+
+    /// Stage used when nothing else is picked: the built-in `training`, else
+    /// the first stage found, else MUGEN's stage0 from `reference/`.
+    pub fn default_stage(&self) -> Option<PathBuf> {
+        let stages = self.stages();
+        stages
+            .iter()
+            .find(|e| e.id.eq_ignore_ascii_case("training"))
+            .or_else(|| stages.first())
+            .and_then(|e| self.prepare_stage(e).ok().map(|(d, m)| d.join(m.def)))
+            .or_else(|| {
+                let p = self.root.join("reference/mugen-1.1b1/stages/stage0.def");
+                p.exists().then_some(p)
+            })
     }
 
     /// Find a char by id (case-insensitive), or treat `name` as a path to a .def / archive / folder.

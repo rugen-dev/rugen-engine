@@ -171,13 +171,7 @@ impl SelectScreen {
                 .ok()
         });
         // no stages installed: fall back to the bundled training stage if present
-        let stage = stage.or_else(|| {
-            let p = self
-                .lib
-                .root
-                .join("reference/mugen-1.1b1/stages/stage0.def");
-            p.exists().then_some(p)
-        });
+        let stage = stage.or_else(|| self.lib.default_stage());
         let ai = |human: bool| if human { 0 } else { self.ai_level };
         let tutorial = self.mode == Mode::Tutorial;
         let setup = FightSetup {

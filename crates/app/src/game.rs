@@ -469,13 +469,7 @@ impl Shell {
         let stage = stages
             .get((wins as usize) % stages.len().max(1))
             .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| d.join(m.def)))
-            .or_else(|| {
-                let p = self
-                    .lib
-                    .root
-                    .join("reference/mugen-1.1b1/stages/stage0.def");
-                p.exists().then_some(p)
-            });
+            .or_else(|| self.lib.default_stage());
         let side = |def: &PathBuf| {
             let (name, img) = char_card(def);
             Portrait::new(name, img.map(|(w, h, rgba)| (w, h, rgba, [0, 0])))
@@ -616,13 +610,7 @@ impl Shell {
                     .find(|e| e.id.eq_ignore_ascii_case(&n.stage))
                     .or_else(|| self.lib.stages().into_iter().next())
                     .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| d.join(m.def)))
-                    .or_else(|| {
-                        let p = self
-                            .lib
-                            .root
-                            .join("reference/mugen-1.1b1/stages/stage0.def");
-                        p.exists().then_some(p)
-                    });
+                    .or_else(|| self.lib.default_stage());
                 self.transition(Transition::Fight(FightSetup {
                     p1,
                     p2,

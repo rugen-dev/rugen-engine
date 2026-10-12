@@ -3,6 +3,7 @@
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
+//! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             online rollback match against a peer
 //!   --room code --relay ip:port [--p2]                          same, peer found through rugen-server
@@ -47,6 +48,7 @@ mod settings;
 mod settings_gen;
 mod sprites;
 mod stage;
+mod stagegen;
 mod system;
 mod title;
 mod tutorial;
@@ -153,12 +155,7 @@ fn main() -> anyhow::Result<()> {
             };
             let p1 = resolve(p1)?;
             let p2 = rest.get(1).map(|s| resolve(s)).transpose()?;
-            let stage = stage.or_else(|| {
-                lib.stages().first().map(|e| e.id.clone()).or_else(|| {
-                    let p = lib.root.join("reference/mugen-1.1b1/stages/stage0.def");
-                    p.exists().then(|| p.display().to_string())
-                })
-            });
+            let stage = stage.or_else(|| lib.default_stage().map(|p| p.display().to_string()));
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);
@@ -359,6 +356,16 @@ fn main() -> anyhow::Result<()> {
                     .then_some(pixelize::BLACK),
             )?;
             println!("wrote {output} ({w}x{h}, {} colours)", palette.len());
+            Ok(())
+        }
+        Some("stage-gen") => {
+            let out = args
+                .iter()
+                .position(|a| a == "--out")
+                .and_then(|i| args.get(i + 1).cloned())
+                .unwrap_or_else(|| "motif/stages".into());
+            stagegen::generate(std::path::Path::new(&out))?;
+            println!("wrote the built-in stages to {out}/");
             Ok(())
         }
         Some("fontgen") => {

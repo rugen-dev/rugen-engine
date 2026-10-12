@@ -379,13 +379,7 @@ impl Roster {
             let s = self.stages.get(i)?;
             Some(s.dir.as_ref()?.join(&s.manifest.as_ref()?.def))
         });
-        path.or_else(|| {
-            let p = self
-                .lib
-                .root
-                .join("reference/mugen-1.1b1/stages/stage0.def");
-            p.exists().then_some(p)
-        })
+        path.or_else(|| self.lib.default_stage())
     }
 
     fn portrait(&self, side: usize) -> Portrait {

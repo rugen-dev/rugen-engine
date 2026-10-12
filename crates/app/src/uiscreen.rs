@@ -420,18 +420,15 @@ impl UiScreen {
         feats.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
         self.featured = feats.into_iter().map(|(_, f)| f).collect();
         let stages = lib.stages();
-        let first = stages.first().and_then(|e| lib.prepare_stage(e).ok());
-        let builtin = lib
-            .root
-            .join("reference/mugen-1.1b1/stages/stage0.def")
-            .exists();
-        self.try_stage = first.as_ref().map(|(d, m)| d.join(&m.def)).or_else(|| {
-            let p = lib.root.join("reference/mugen-1.1b1/stages/stage0.def");
-            p.exists().then_some(p)
-        });
+        let first = stages
+            .iter()
+            .find(|e| e.id.eq_ignore_ascii_case("training"))
+            .or_else(|| stages.first())
+            .and_then(|e| lib.prepare_stage(e).ok());
+        self.try_stage = lib.default_stage();
         let (count, name) = match first {
             Some((_, m)) => (stages.len(), m.display_name.to_uppercase()),
-            None if builtin => (1, "STAGE 0".to_string()),
+            None if self.try_stage.is_some() => (1, "TRAINING ROOM".to_string()),
             None => (0, "NO ARENAS YET".to_string()),
         };
         self.arenas = json!({

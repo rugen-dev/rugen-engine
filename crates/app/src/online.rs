@@ -448,10 +448,7 @@ impl OnlineScreen {
                     .ok()
                     .map(|(d, man)| d.join(man.def))
             })
-            .or_else(|| {
-                let p = self.root.join("reference/mugen-1.1b1/stages/stage0.def");
-                p.exists().then_some(p)
-            });
+            .or_else(|| self.lib.default_stage());
         self.pending_fight = Some(FightSetup {
             p1,
             p2,

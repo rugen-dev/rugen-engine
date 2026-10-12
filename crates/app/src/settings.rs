@@ -118,7 +118,7 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
             row(
                 "zoom_out",
                 "CAMERA ZOOM OUT",
-                Widget::Slider((c.camera.zoom_out - 0.3) / 0.7),
+                Widget::Slider((c.camera.zoom_out - 0.25) / 0.75),
                 format!("{:.2}", c.camera.zoom_out),
                 "How far the camera may pull back before fighters stop dragging each other. Lower = wider view.",
             ),
@@ -406,7 +406,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
     match id {
         "master" => c.audio.master = step(c.audio.master, 0.1 * d, 0.0, 1.0),
         "music" => c.audio.music = step(c.audio.music, 0.1 * d, 0.0, 1.0),
-        "zoom_out" => c.camera.zoom_out = step(c.camera.zoom_out, 0.05 * d, 0.3, 1.0),
+        "zoom_out" => c.camera.zoom_out = step(c.camera.zoom_out, 0.05 * d, 0.25, 1.0),
         "zoom_in" => c.camera.zoom_in = step(c.camera.zoom_in, 0.05 * d, 1.0, 2.0),
         "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
         "air_dash" => c.game.air_dash = !c.game.air_dash,

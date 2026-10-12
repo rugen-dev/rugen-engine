@@ -105,7 +105,7 @@ impl OptionsScreen {
         match item {
             Item::Master => c.audio.master = (c.audio.master + 0.1 * step).clamp(0.0, 1.0),
             Item::Music => c.audio.music = (c.audio.music + 0.1 * step).clamp(0.0, 1.0),
-            Item::ZoomOut => c.camera.zoom_out = (c.camera.zoom_out + 0.05 * step).clamp(0.3, 1.0),
+            Item::ZoomOut => c.camera.zoom_out = (c.camera.zoom_out + 0.05 * step).clamp(0.25, 1.0),
             Item::ZoomIn => c.camera.zoom_in = (c.camera.zoom_in + 0.05 * step).clamp(1.0, 2.0),
             Item::Fullscreen => c.video.fullscreen = !c.video.fullscreen,
             Item::AiLevel => c.game.ai_level = (c.game.ai_level + dir).clamp(1, 8),

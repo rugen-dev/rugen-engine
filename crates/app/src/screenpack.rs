@@ -21,7 +21,7 @@ pub struct Canvas {
     pub px: Vec<u8>,
 }
 
-type Rgba = [u8; 4];
+pub type Rgba = [u8; 4];
 
 fn lerp(a: Rgba, b: Rgba, t: f32) -> Rgba {
     let t = t.clamp(0.0, 1.0);

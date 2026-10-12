@@ -1025,6 +1025,6 @@ mod tests {
         assert_eq!(lb.winicon_follow, [true, true]);
         assert!(lb.round_tag.font.is_some());
         assert_eq!(lb.combo[0].angle, 6.0);
-        assert_eq!(lb.time_counter.1.map(|f| f.scale), Some(4.0));
+        assert_eq!(lb.time_counter.1.map(|f| f.scale), Some(5.0));
     }
 }
