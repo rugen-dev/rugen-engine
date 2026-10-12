@@ -14,6 +14,8 @@ pub mod online;
 pub mod quality;
 pub mod relay;
 pub mod socket;
+pub mod stun;
+pub mod turn;
 
 pub use quality::{EventFilter, Quality, auto_input_delay};
 pub use relay::{RelaySocket, slot_addr};
@@ -148,6 +150,11 @@ pub struct Netplay {
     /// for result verification and replays.
     log: Vec<[u16; 2]>,
     log_start: Option<u32>,
+    /// World checksum every [`rugen_proto::evidence::CHECKSUM_EVERY`]
+    /// frames (corrected on rollback), for result verification.
+    checks: Vec<(u32, u64)>,
+    /// TURN byte counters when the session had a `turn` transport.
+    turn_meter: Option<std::sync::Arc<std::sync::Mutex<turn::TurnStats>>>,
 }
 
 impl Netplay {
@@ -206,7 +213,10 @@ impl Netplay {
                 players.push((PlayerType::Spectator(slot_addr(slot)), slot as usize));
             }
         }
-        Self::start(socket, &players, local_handle, opts)
+        let meter = socket.turn_meter();
+        let mut n = Self::start(socket, &players, local_handle, opts)?;
+        n.turn_meter = meter;
+        Ok(n)
     }
 
     /// Watch a relayed match: inputs come from P1 (slot 0), confirmed only.
@@ -232,6 +242,8 @@ impl Netplay {
             skip_frames: 0,
             log: Vec::new(),
             log_start: None,
+            checks: Vec::new(),
+            turn_meter: None,
         }
     }
 
@@ -298,6 +310,20 @@ impl Netplay {
                 v
             })
             .collect()
+    }
+
+    /// `(frame, world checksum)` every
+    /// [`CHECKSUM_EVERY`](rugen_proto::evidence::CHECKSUM_EVERY) frames.
+    pub fn checksum_log(&self) -> &[(u32, u64)] {
+        &self.checks
+    }
+
+    /// Bytes moved through TURN so far (`None`: the session had no `turn`
+    /// transport, i.e. the server offers none).
+    pub fn turn_stats(&self) -> Option<turn::TurnStats> {
+        self.turn_meter
+            .as_ref()
+            .map(|m| m.lock().map(|s| *s).unwrap_or_default())
     }
 
     pub fn is_synctest(&self) -> bool {
@@ -445,6 +471,11 @@ impl Netplay {
                         inputs.get(1).map_or(0, |(i, _)| i.0),
                     ]);
                     world.step(&b);
+                    if world.frame % rugen_proto::evidence::CHECKSUM_EVERY == 0 {
+                        let f = world.frame;
+                        self.checks.retain(|(g, _)| *g < f);
+                        self.checks.push((f, world.checksum()));
+                    }
                     if world.frame > self.events.highest() {
                         out.new_frames += 1;
                     } else {

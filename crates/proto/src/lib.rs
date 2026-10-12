@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod evidence;
 pub mod fair;
 pub mod relay;
 pub mod trust;
@@ -63,13 +64,43 @@ pub struct Registered {
 /// One way to reach a server's match relay. Servers list them in their
 /// order of preference; clients try the kinds they know in that order and
 /// ignore unknown ones (so new transports, e.g. TURN, need no API break).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RelayTransport {
     /// `udp` (addr = `host:port`) or `ws` (addr = path like `/relay` on the
     /// server's own URL, or an absolute `ws(s)://` URL).
     pub kind: String,
     pub addr: String,
+    /// `turn`: TURN URLs (`turn:` / `turns:`) of a TURN service both players
+    /// relay through (the server only signals; it never sees the packets).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<String>,
+    /// `turn`: short-lived long-term credential for this player only.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub username: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub credential: String,
+    /// `turn`: unix time the credential stops working.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub expires: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+// TURN credentials must never end up in logs
+impl std::fmt::Debug for RelayTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("RelayTransport");
+        d.field("kind", &self.kind).field("addr", &self.addr);
+        if !self.urls.is_empty() {
+            d.field("urls", &self.urls)
+                .field("credential", &"<redacted>")
+                .field("expires", &self.expires);
+        }
+        d.finish()
+    }
 }
 
 impl RelayTransport {
@@ -77,6 +108,7 @@ impl RelayTransport {
         Self {
             kind: "udp".into(),
             addr: addr.into(),
+            ..Default::default()
         }
     }
 
@@ -84,6 +116,18 @@ impl RelayTransport {
         Self {
             kind: "ws".into(),
             addr: addr.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn turn(urls: Vec<String>, username: &str, credential: &str, expires: u64) -> Self {
+        Self {
+            kind: "turn".into(),
+            urls,
+            username: username.into(),
+            credential: credential.into(),
+            expires,
+            ..Default::default()
         }
     }
 }
@@ -176,6 +220,15 @@ pub struct SessionTicket {
     /// these instead of `udp`. Unknown kinds are skipped.
     #[serde(default)]
     pub transports: Vec<RelayTransport>,
+}
+
+impl SessionTicket {
+    /// The `turn` transport of this ticket, if the server issued one.
+    pub fn turn(&self) -> Option<&RelayTransport> {
+        self.transports
+            .iter()
+            .find(|t| t.kind == "turn" && !t.urls.is_empty())
+    }
 }
 
 /// One entry of the public lobby (`GET /rooms`).
@@ -410,6 +463,30 @@ mod tests {
             serde_json::from_str(r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":"h:1"}"#)
                 .unwrap();
         assert!(old.transports.is_empty());
+    }
+
+    #[test]
+    fn turn_transport_travels_in_the_ticket() {
+        let mut t = SessionTicket::default();
+        assert!(t.turn().is_none());
+        t.transports = relay_transports(None);
+        t.transports.insert(
+            0,
+            RelayTransport::turn(vec!["turn:t.example:3478".into()], "u", "secret", 99),
+        );
+        let s = serde_json::to_string(&t).unwrap();
+        assert!(s.contains(r#""kind":"turn""#) && s.contains(r#""expires":99"#));
+        // the other kinds stay as small as before
+        assert!(s.contains(r#"{"kind":"ws","addr":"/relay"}"#));
+        let back: SessionTicket = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, t);
+        assert_eq!(back.turn().unwrap().username, "u");
+        assert!(!format!("{t:?}").contains("secret"));
+        // an API 3 ticket still decodes
+        let old: SessionTicket =
+            serde_json::from_str(r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":"h:1"}"#)
+                .unwrap();
+        assert!(old.transports.is_empty() && old.turn().is_none());
     }
 
     #[test]

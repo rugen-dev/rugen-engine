@@ -67,8 +67,10 @@ rooms: join or watch), **Create Room** (public or private, optional password,
 rounds, timer, classic / arena, free pick / mirror, spectator seats; the host
 can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
 ping-aware matchmaking), **Leaderboard**. Matches are **relayed by the
-server** (UDP, or a WebSocket fallback through HTTPS-only networks): players
-never learn each other's IP address. Accounts are anonymous keys per server in
+server** (UDP, or a WebSocket fallback through HTTPS-only networks), or, when
+the server offers it, through **Cloudflare Realtime TURN** (real UDP over
+Cloudflare's anycast network, both players always relayed): players never
+learn each other's IP address. Accounts are anonymous keys per server in
 `profile.json`. Both sides report results with their input streams; they
 only count when they agree.
 

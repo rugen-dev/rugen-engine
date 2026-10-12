@@ -533,6 +533,7 @@ impl Match {
     /// What a result report carries: last frame, world checksum and both
     /// players' inputs (the server compares the two reports).
     pub fn evidence(&self) -> rugen_net::online::Evidence {
+        let turn = self.net.as_ref().and_then(|n| n.turn_stats());
         rugen_net::online::Evidence {
             frames: self.world.frame,
             checksum: Some(self.world.checksum()),
@@ -541,6 +542,15 @@ impl Match {
                 .as_ref()
                 .map(|n| n.input_log_bytes())
                 .unwrap_or_default(),
+            checksums: self
+                .net
+                .as_ref()
+                .map(|n| n.checksum_log().to_vec())
+                .unwrap_or_default(),
+            compact: turn.is_some(),
+            turn_bytes: turn
+                .filter(|s| s.tx_packets > 0)
+                .map(|s| (s.rx_wire, s.tx_wire)),
         }
     }
 
@@ -1509,6 +1519,10 @@ fn relay_session(
     socket.wait_for(0b011, Duration::from_secs(90), &mut |s| {
         log::info!("netplay: {s}")
     })?;
+    // a `turn` ticket transport: lift the match onto TURN when both sides
+    // reach it quickly (keeps trying in the background otherwise)
+    socket.settle_turn(Duration::from_millis(1500));
+    let transport = socket.transport_name();
     let peer = 1 - ticket.slot;
     let rtt = socket.peer_rtt(peer, 8, Duration::from_secs(2));
     let o = NetOptions {

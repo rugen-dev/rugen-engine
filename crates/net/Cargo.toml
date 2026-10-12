@@ -18,6 +18,13 @@ rugen-proto.workspace = true
 bincode = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+# TURN client (crate::turn / crate::stun); rustls + roots are already pulled in by tungstenite / ureq
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
+crc32fast = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [lints]
 workspace = true
