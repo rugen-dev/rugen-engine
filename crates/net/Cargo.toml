@@ -1,6 +1,6 @@
 [package]
 name = "rugen-net"
-description = "Rollback netplay via ggrs, transport, desync detection"
+description = "Rollback netplay via ggrs, server relay client (UDP / WebSocket), lobby API client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,8 @@ serde.workspace = true
 serde_json = "1"
 rugen-proto.workspace = true
 bincode = "1"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+tungstenite = { version = "0.27", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
 [lints]
 workspace = true
