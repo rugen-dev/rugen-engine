@@ -21,6 +21,8 @@ pub struct Punched {
     pub remote: SocketAddr,
     /// Median round trip of the exchange.
     pub rtt_ms: Option<u32>,
+    /// Median / p95 / jitter of the exchange.
+    pub rtt: Option<crate::RttStats>,
 }
 
 pub struct Socket {
@@ -84,19 +86,21 @@ impl Socket {
         let mut buf = [0u8; 512];
         while start.elapsed() < timeout {
             if let Some(c) = contact
-                && (samples.len() >= 8 || c.elapsed() > Duration::from_millis(1500))
+                && (samples.len() >= 20 || c.elapsed() > Duration::from_millis(1500))
             {
                 for _ in 0..3 {
                     let _ = self
                         .socket
                         .send_to(format!("rugen1 punch {}", ms()).as_bytes(), peer);
                 }
+                let us: Vec<u32> = samples.iter().map(|ms| ms * 1000).collect();
                 return Ok(Punched {
                     remote: peer,
                     rtt_ms: median(&mut samples),
+                    rtt: crate::RttStats::from_us(&us),
                 });
             }
-            let every = if contact.is_some() { 60 } else { 100 };
+            let every = if contact.is_some() { 30 } else { 100 };
             if last_send.elapsed() >= Duration::from_millis(every) {
                 let _ = self
                     .socket

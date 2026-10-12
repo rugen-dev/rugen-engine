@@ -10,22 +10,29 @@
 
 #![forbid(unsafe_code)]
 
+pub(crate) mod batch;
+pub mod direct;
 pub mod online;
+pub mod path;
 pub mod quality;
 pub mod relay;
 pub mod socket;
 pub mod stun;
 pub mod turn;
 
-pub use quality::{EventFilter, Quality, auto_input_delay};
+pub use direct::DirectConfig;
+pub use path::{LinkInfo, PathKind};
+pub use quality::{
+    DelayPolicy, EventFilter, Mispredictions, Pacer, Quality, RttStats, TICK, auto_input_delay,
+};
 pub use relay::{RelaySocket, slot_addr};
 pub use socket::{Punched, Socket};
 
 use std::net::SocketAddr;
 
 use ggrs::{
-    DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, NonBlockingSocket, P2PSession, PlayerType,
-    SessionBuilder, SessionState, SpectatorSession, SyncTestSession,
+    DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, InputStatus, NonBlockingSocket, P2PSession,
+    PlayerType, SessionBuilder, SessionState, SpectatorSession, SyncTestSession,
 };
 use rugen_sim::world::Event;
 use rugen_sim::{Buttons, World};
@@ -86,20 +93,25 @@ enum Session {
 pub struct Options {
     /// Frames of local input delay (fewer rollbacks at the cost of latency).
     pub input_delay: usize,
-    /// How far ggrs may predict ahead before stalling.
+    /// How far ggrs may predict ahead before stalling (the rollback window).
     pub max_prediction: usize,
     /// Checksum comparison interval in frames (0 = off).
     pub desync_interval: u32,
     pub fps: usize,
+    /// Smooth time sync: stretch the local tick while ahead of the peer
+    /// ([`Pacer`], see [`Netplay::tick_duration`]) instead of freezing
+    /// frames on ggrs' wait recommendation.
+    pub time_dilation: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
-            input_delay: 2,
-            max_prediction: 8,
+            input_delay: 1,
+            max_prediction: DelayPolicy::default().prediction_window,
             desync_interval: 30,
             fps: 60,
+            time_dilation: true,
         }
     }
 }
@@ -117,6 +129,34 @@ pub struct Stats {
     pub unstable: bool,
     /// Input delay this session runs with.
     pub input_delay: usize,
+    /// Ticks the simulation could not advance (prediction window full):
+    /// the hard stalls the delay policy and the pacer try to avoid.
+    pub stalls: u64,
+    /// Ticks skipped on ggrs' wait recommendation (time dilation off).
+    pub skipped: u64,
+    /// Frames re-simulated in total, and the deepest single rollback.
+    pub resimulated: u64,
+    pub max_rollback: u32,
+    /// First predictions of the remote input that were wrong / made.
+    pub mispredicted: u64,
+    pub predicted: u64,
+    /// Current tick length multiplier from the pacer (1.0 = 60 Hz).
+    pub tick_scale: f32,
+    /// The path to the other player (direct / TURN / relay) and how many
+    /// times the match switched paths.
+    pub path: PathKind,
+    pub path_switches: u32,
+}
+
+impl Stats {
+    /// Wrong first predictions / first predictions.
+    pub fn misprediction_rate(&self) -> f32 {
+        if self.predicted == 0 {
+            0.0
+        } else {
+            self.mispredicted as f32 / self.predicted as f32
+        }
+    }
 }
 
 impl Stats {
@@ -146,6 +186,9 @@ pub struct Netplay {
     quality: Quality,
     stats: Stats,
     skip_frames: u32,
+    /// Smooth time sync (None: ggrs' frame skips instead).
+    pacer: Option<Pacer>,
+    mispredict: Mispredictions,
     /// Inputs of both players per simulated frame (corrected on rollback),
     /// for result verification and replays.
     log: Vec<[u16; 2]>,
@@ -155,6 +198,8 @@ pub struct Netplay {
     checks: Vec<(u32, u64)>,
     /// TURN byte counters when the session had a `turn` transport.
     turn_meter: Option<std::sync::Arc<std::sync::Mutex<turn::TurnStats>>>,
+    /// Path information of a relay-session socket.
+    link: Option<std::sync::Arc<std::sync::Mutex<LinkInfo>>>,
 }
 
 impl Netplay {
@@ -214,8 +259,10 @@ impl Netplay {
             }
         }
         let meter = socket.turn_meter();
+        let link = socket.link();
         let mut n = Self::start(socket, &players, local_handle, opts)?;
         n.turn_meter = meter;
+        n.link = Some(link);
         Ok(n)
     }
 
@@ -237,13 +284,17 @@ impl Netplay {
             quality: Quality::default(),
             stats: Stats {
                 input_delay: opts.input_delay,
+                tick_scale: 1.0,
                 ..Default::default()
             },
             skip_frames: 0,
+            pacer: opts.time_dilation.then(Pacer::default),
+            mispredict: Mispredictions::default(),
             log: Vec::new(),
             log_start: None,
             checks: Vec::new(),
             turn_meter: None,
+            link: None,
         }
     }
 
@@ -335,7 +386,28 @@ impl Netplay {
     }
 
     pub fn stats(&self) -> Stats {
-        self.stats
+        let mut s = self.stats;
+        if let Some(l) = self.link.as_ref().and_then(|l| l.lock().ok().map(|l| *l)) {
+            s.path = l.kind;
+            s.path_switches = l.switches;
+        } else if matches!(self.session, Session::P2P(_)) {
+            // LAN / explicit-IP sessions are direct by construction
+            s.path = PathKind::Direct;
+        }
+        s
+    }
+
+    /// Path information of an online (relay session) match.
+    pub fn link(&self) -> Option<LinkInfo> {
+        self.link.as_ref().and_then(|l| l.lock().ok().map(|l| *l))
+    }
+
+    /// How long the current tick should last: 1/60 s, stretched by a few
+    /// percent while this side runs ahead of the peer (smooth time sync).
+    /// The caller's loop paces the simulation with it; rendering keeps the
+    /// display rate.
+    pub fn tick_duration(&self) -> std::time::Duration {
+        self.pacer.as_ref().map_or(TICK, Pacer::tick)
     }
 
     /// Pump the network. Call once per tick before [`advance`](Self::advance).
@@ -354,6 +426,7 @@ impl Netplay {
         let mut out = Advanced::default();
         if self.skip_frames > 0 {
             self.skip_frames -= 1;
+            self.stats.skipped += 1;
             return Ok(out);
         }
         let requests = match &mut self.session {
@@ -385,8 +458,11 @@ impl Netplay {
                         }
                         // time sync: we are ahead of the peer, so pause a few
                         // frames (a brief slowdown instead of big rollbacks)
+                        // (with time dilation the pacer handles it smoothly)
                         GgrsEvent::WaitRecommendation { skip_frames } => {
-                            self.skip_frames = skip_frames;
+                            if self.pacer.is_none() {
+                                self.skip_frames = skip_frames;
+                            }
                         }
                         GgrsEvent::DesyncDetected {
                             frame,
@@ -409,6 +485,7 @@ impl Netplay {
                 match s.advance_frame() {
                     Ok(r) => r,
                     Err(GgrsError::PredictionThreshold) => {
+                        self.stats.stalls += 1;
                         out.notices.push("waiting for remote".into());
                         return Ok(out);
                     }
@@ -449,6 +526,7 @@ impl Netplay {
             }
         };
         let mut resimulated = 0;
+        let remote = 1 - self.local_handle.min(1);
         for req in requests {
             match req {
                 GgrsRequest::SaveGameState { cell, frame } => {
@@ -462,6 +540,15 @@ impl Netplay {
                     }
                 }
                 GgrsRequest::AdvanceFrame { inputs } => {
+                    let first = world.frame + 1 > self.events.highest();
+                    if let Some((i, st)) = inputs.get(remote) {
+                        self.mispredict.simulated(
+                            world.frame,
+                            i.0,
+                            first,
+                            *st == InputStatus::Predicted,
+                        );
+                    }
                     let b: Vec<Buttons> = inputs.iter().map(|(i, _)| Buttons::from(*i)).collect();
                     let start = *self.log_start.get_or_insert(world.frame);
                     let idx = world.frame.saturating_sub(start) as usize;
@@ -488,12 +575,28 @@ impl Netplay {
         }
         self.quality.push_tick(resimulated);
         self.stats.avg_rollback = self.quality.avg_rollback();
+        self.stats.resimulated += u64::from(resimulated);
+        self.stats.max_rollback = self.stats.max_rollback.max(resimulated);
         if let Session::P2P(s) = &self.session {
+            // the prediction window was full: ggrs answered without a new frame
+            if out.new_frames == 0 && self.stats.synchronized {
+                self.stats.stalls += 1;
+                if out.notices.is_empty() {
+                    out.notices.push("waiting for remote".into());
+                }
+            }
+            self.mispredict.confirmed(s.confirmed_frame());
+            self.stats.predicted = self.mispredict.predicted;
+            self.stats.mispredicted = self.mispredict.wrong;
             self.stats.frames_ahead = s.frames_ahead();
             if let Some(h) = s.remote_player_handles().first()
                 && let Ok(st) = s.network_stats(*h)
             {
                 self.stats.ping_ms = st.ping;
+                if let Some(p) = self.pacer.as_mut() {
+                    p.update(st.local_frames_behind, st.remote_frames_behind);
+                    self.stats.tick_scale = p.scale();
+                }
             }
             self.stats.unstable = self.quality.unstable(self.stats.frames_ahead);
         }

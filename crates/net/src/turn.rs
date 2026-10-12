@@ -28,8 +28,6 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use bincode::Options as _;
-
 use crate::stun::{self, Builder, Class, Message, attr, method};
 
 /// Credentials and URLs of one TURN service (a `turn` ticket transport).
@@ -159,7 +157,7 @@ fn err(msg: impl Into<String>) -> io::Error {
     io::Error::other(msg.into())
 }
 
-fn tid() -> [u8; 12] {
+pub(crate) fn tid() -> [u8; 12] {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let s = RandomState::new();
@@ -862,8 +860,6 @@ impl Drop for TurnClient {
 /// Relay payload types (first byte of a relay `DATA` payload); 0-2 are
 /// defined in [`crate::relay`].
 pub(crate) const T_TURN: u8 = 3;
-/// TURN datagram: every ggrs message of one tick, varint-encoded.
-const T_BATCH: u8 = 4;
 /// TURN path check (overlay internal), payload = sender clock u64.
 const T_PROBE: u8 = 5;
 const T_PROBE_ACK: u8 = 6;
@@ -871,27 +867,12 @@ const T_PROBE_ACK: u8 = 6;
 const SIG_OFFER: u8 = 0;
 const SIG_UNAVAILABLE: u8 = 1;
 
-/// ggrs message kinds (bincode variant index of `MessageBody`).
-const MSG_INPUT: u8 = 2;
-const MSG_INPUT_ACK: u8 = 3;
-const MSG_KEEP_ALIVE: u8 = 7;
-
 /// Without a TURN packet from the peer for this long the overlay counts as
 /// unhealthy and traffic goes through the server relay as well.
 const HEALTHY: Duration = Duration::from_millis(800);
 /// Give up on TURN when it is not working after this long.
 const GIVE_UP: Duration = Duration::from_secs(12);
 const ALLOC_BUDGET: Duration = Duration::from_secs(4);
-
-fn compact() -> impl bincode::Options {
-    bincode::DefaultOptions::new()
-}
-
-fn variant(msg: &ggrs::Message) -> Option<u8> {
-    // bincode 1 (fixint): u16 magic, u32 variant index, fields
-    let b = bincode::serialize(msg).ok()?;
-    b.get(2).copied()
-}
 
 enum State {
     Allocating(Receiver<io::Result<TurnClient>>),
@@ -919,14 +900,12 @@ pub(crate) struct Overlay {
     last_rx: Instant,
     clock: Instant,
     rtt: Option<u32>,
-    batch: Vec<(u8, Vec<u8>)>,
-    batch_since: Option<Instant>,
+    srtt: crate::path::Srtt,
+    last_ack: Option<Instant>,
+    batcher: crate::batch::Batcher,
     pub(crate) inbox: VecDeque<Vec<u8>>,
     rx: Vec<(SocketAddr, Vec<u8>)>,
     meter: Arc<Mutex<TurnStats>>,
-    /// Diagnostic: one datagram per ggrs message, plain encoding
-    /// (`RUGEN_TURN_PLAIN=1`, to measure what the optimisations save).
-    pub(crate) plain: bool,
 }
 
 impl Overlay {
@@ -969,12 +948,14 @@ impl Overlay {
             last_rx: now,
             clock: now,
             rtt: None,
-            batch: Vec::new(),
-            batch_since: None,
+            srtt: Default::default(),
+            last_ack: None,
+            // diagnostic: one datagram per ggrs message, plain encoding
+            // (to measure what the optimisations save)
+            batcher: crate::batch::Batcher::new(std::env::var_os("RUGEN_TURN_PLAIN").is_some()),
             inbox: VecDeque::new(),
             rx: Vec::new(),
             meter: Arc::default(),
-            plain: std::env::var_os("RUGEN_TURN_PLAIN").is_some(),
         })
     }
 
@@ -998,6 +979,21 @@ impl Overlay {
 
     pub(crate) fn rtt(&self) -> Option<u32> {
         self.rtt
+    }
+
+    /// Smoothed probe round trip / jitter.
+    pub(crate) fn srtt(&self) -> crate::path::Srtt {
+        self.srtt
+    }
+
+    /// Usable as a path right now: verified and a probe answered lately
+    /// (it carries no traffic while another path is selected).
+    pub(crate) fn usable(&self) -> bool {
+        self.verified
+            && (self.healthy()
+                || self
+                    .last_ack
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(5)))
     }
 
     pub(crate) fn stats(&self) -> TurnStats {
@@ -1094,10 +1090,12 @@ impl Overlay {
                     out.push(offer(c.relayed()));
                     self.last_offer = Some(now);
                 }
-                if !self.verified
-                    && self
-                        .last_probe
-                        .is_none_or(|t| now.duration_since(t) >= Duration::from_millis(100))
+                // probes: every 100 ms until the path works, then every 2 s
+                // (round trip for path selection, keeps the path warm)
+                let every = Duration::from_millis(if self.verified { 2000 } else { 100 });
+                if self
+                    .last_probe
+                    .is_none_or(|t| now.duration_since(t) >= every)
                     && let Some(p) = self.peer_addr
                 {
                     let mut probe = vec![T_PROBE];
@@ -1171,6 +1169,8 @@ impl Overlay {
                     let t = u64::from_be_bytes(d[1..9].try_into().unwrap_or_default());
                     let rtt = self.clock.elapsed().as_millis() as u64;
                     self.rtt = Some(rtt.saturating_sub(t) as u32);
+                    self.srtt.sample(rtt.saturating_sub(t) as f32);
+                    self.last_ack = Some(Instant::now());
                     if !self.verified {
                         log::info!(
                             "turn: path to the other player works ({} ms), switching",
@@ -1179,39 +1179,13 @@ impl Overlay {
                     }
                     self.verified = true;
                 }
-                T_BATCH => {
-                    let mut i = 1;
-                    while i < d.len() {
-                        let (len, hdr) = match d[i] {
-                            0xFF if i + 2 < d.len() => {
-                                (u16::from_be_bytes([d[i + 1], d[i + 2]]) as usize, 3)
-                            }
-                            n => (n as usize, 1),
-                        };
-                        let Some(m) = d.get(i + hdr..i + hdr + len) else {
-                            break;
-                        };
-                        if let Ok(msg) = compact().deserialize::<ggrs::Message>(m)
-                            && let Ok(b) = bincode::serialize(&msg)
-                        {
-                            let mut p = Vec::with_capacity(b.len() + 1);
-                            p.push(crate::relay::T_GGRS);
-                            p.extend(b);
-                            self.inbox.push_back(p);
-                        }
-                        i += hdr + len;
-                    }
-                }
-                _ => self.inbox.push_back(d),
+                _ => crate::batch::unpack(&d, &mut self.inbox),
             }
         }
         for a in acks {
             c.send(peer, &a);
         }
-        if self
-            .batch_since
-            .is_some_and(|t| t.elapsed() >= Duration::from_millis(4))
-        {
+        if self.batcher.due() {
             self.flush();
         }
         self.record();
@@ -1220,53 +1194,25 @@ impl Overlay {
     /// Send a relay-format payload to the peer over TURN. ggrs messages are
     /// held and coalesced until the tick's input goes out.
     pub(crate) fn send(&mut self, p: &[u8]) {
-        if p.is_empty() {
-            return;
-        }
-        if p[0] != crate::relay::T_GGRS || self.plain {
-            if let (State::Ready(c), Some(peer)) = (&mut self.state, self.peer_addr) {
-                c.send(peer, p);
-            }
-            return;
-        }
-        let Ok(msg) = bincode::deserialize::<ggrs::Message>(&p[1..]) else {
-            return;
-        };
-        let (Some(kind), Ok(bytes)) = (variant(&msg), compact().serialize(&msg)) else {
-            return;
-        };
-        self.batch.push((kind, bytes));
-        self.batch_since.get_or_insert_with(Instant::now);
-        if kind == MSG_INPUT {
-            self.flush();
+        if let Some(d) = self.batcher.push(p) {
+            self.send_raw(&d);
         }
     }
 
-    /// Send the held ggrs messages as one datagram, dropping the ones the
-    /// batch makes redundant (an input carries the ack frame; any message
-    /// keeps the connection alive).
+    /// Send the held ggrs messages as one datagram.
     pub(crate) fn flush(&mut self) {
-        self.batch_since = None;
-        if self.batch.is_empty() {
-            return;
+        if let Some(d) = self.batcher.flush() {
+            self.send_raw(&d);
         }
-        let has_input = self.batch.iter().any(|(k, _)| *k == MSG_INPUT);
-        let n = self.batch.len();
-        let mut out = vec![T_BATCH];
-        for (k, b) in self.batch.drain(..) {
-            if (has_input && k == MSG_INPUT_ACK) || (n > 1 && k == MSG_KEEP_ALIVE) {
-                continue;
-            }
-            if b.len() < 0xFF {
-                out.push(b.len() as u8);
-            } else {
-                out.push(0xFF);
-                out.extend((b.len() as u16).to_be_bytes());
-            }
-            out.extend(b);
-        }
+    }
+
+    pub(crate) fn set_plain(&mut self, plain: bool) {
+        self.batcher.plain = plain;
+    }
+
+    fn send_raw(&mut self, d: &[u8]) {
         if let (State::Ready(c), Some(peer)) = (&mut self.state, self.peer_addr) {
-            c.send(peer, &out);
+            c.send(peer, d);
         }
     }
 }
