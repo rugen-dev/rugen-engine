@@ -14,6 +14,7 @@ pub(crate) mod batch;
 pub mod direct;
 pub mod online;
 pub mod path;
+pub mod predict;
 pub mod quality;
 pub mod relay;
 pub mod socket;
