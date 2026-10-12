@@ -7,11 +7,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fair;
 pub mod relay;
+
+pub use fair::*;
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: u32 = 2;
+pub const API_VERSION: u32 = 3;
 
 /// Rank band name for a rating.
 pub fn rank_name(rating: i32) -> &'static str {
@@ -175,6 +178,9 @@ pub struct RoomInfo {
     /// This member's relay ticket for the running match.
     #[serde(default)]
     pub ticket: Option<SessionTicket>,
+    /// Pick / verdict / file sync phase before the match (API 3).
+    #[serde(default)]
+    pub matchup: Option<MatchupView>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -201,6 +207,9 @@ pub struct MatchInfo {
     pub est_ping_ms: Option<u32>,
     #[serde(default)]
     pub ticket: Option<SessionTicket>,
+    /// Pick / verdict / file sync phase; the ticket arrives in it (API 3).
+    #[serde(default)]
+    pub matchup: Option<MatchupView>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -241,6 +250,12 @@ pub struct Replay {
     pub winner: Option<u64>,
     /// Confirmed inputs, 4 bytes per frame (P1 u16 LE, P2 u16 LE), hex.
     pub inputs: String,
+    /// Fingerprints of P1, P2 and the stage (API 3).
+    #[serde(default)]
+    pub fingerprints: Vec<String>,
+    /// The server still holds every package of this match.
+    #[serde(default)]
+    pub files_available: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -270,6 +285,10 @@ pub enum ServerMsg {
     /// The queue paired us.
     Found {
         found: MatchInfo,
+    },
+    /// The matchup phase of a match we play or watch changed.
+    Matchup {
+        matchup: MatchupView,
     },
     /// The host removed us from a room.
     Kicked {

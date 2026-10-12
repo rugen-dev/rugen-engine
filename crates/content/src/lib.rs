@@ -25,7 +25,19 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 /// Bump when the cache layout or conversion output changes.
-pub const CACHE_VERSION: u32 = 4;
+///
+/// v5 added the content fingerprint, the fairness profile and the card
+/// portrait to the manifest; v4 entries are upgraded in place (extracted
+/// files and verify results are kept), older ones are rebuilt.
+pub const CACHE_VERSION: u32 = 5;
+
+/// Mixed into the cache-directory hash. Frozen at the value
+/// [`CACHE_VERSION`] had when the scheme was introduced, so bumping the
+/// manifest version does not move every prepared directory.
+const HASH_EPOCH: u32 = 4;
+
+/// Oldest manifest version [`Library::prepare_char`] upgrades in place.
+const MIGRATABLE_FROM: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -83,6 +95,37 @@ pub struct Manifest {
     /// Stage preview (`thumb.png` in the cache dir, from the first background sprite).
     #[serde(default)]
     pub thumb: Option<PortraitInfo>,
+    /// sha256 of the canonical gameplay files (`rugen-fair`); same for the
+    /// same content whatever the archive, folder name or junk files.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    /// Main .def relative to the package root (the def's folder).
+    #[serde(default)]
+    pub package_def: Option<String>,
+    /// Sum of the canonical files' sizes (uncompressed).
+    #[serde(default)]
+    pub content_size: u64,
+    /// Static fairness analysis (characters), cached so online picks are instant.
+    #[serde(default)]
+    pub profile: Option<rugen_proto::FairnessProfile>,
+    /// Small WebP card portrait (`card.webp`) sent with online picks.
+    #[serde(default)]
+    pub card: Option<String>,
+    /// Problem computing the fingerprint (the entry cannot go online).
+    #[serde(default)]
+    pub fair_error: Option<String>,
+    /// A stage (else a character).
+    #[serde(default)]
+    pub stage: bool,
+}
+
+impl Manifest {
+    /// The fairness profile with this entry's verify verdict filled in.
+    pub fn fair_profile(&self) -> Option<rugen_proto::FairnessProfile> {
+        let mut p = self.profile.clone()?;
+        p.verify = self.verify.as_ref().map(|v| v.verdict.clone());
+        Some(p)
+    }
 }
 
 /// Verification verdict stored in the cache manifest.
@@ -312,7 +355,7 @@ impl Library {
     /// Cache key: archive bytes hashed (folders: path + newest mtime), plus the cache version.
     fn source_hash(entry: &Entry) -> Result<String> {
         let mut h = blake3::Hasher::new();
-        h.update(&CACHE_VERSION.to_le_bytes());
+        h.update(&HASH_EPOCH.to_le_bytes());
         match entry.kind {
             Kind::Dir => {
                 h.update(entry.source.to_string_lossy().as_bytes());
@@ -370,12 +413,20 @@ impl Library {
             .join(format!("{}-{}", sanitize(&entry.id), hash));
         let manifest_path = dir.join("rugen.json");
         if let Ok(text) = fs::read_to_string(&manifest_path)
-            && let Ok(m) = serde_json::from_str::<Manifest>(&text)
-            && m.cache_version == CACHE_VERSION
+            && let Ok(mut m) = serde_json::from_str::<Manifest>(&text)
             && m.source_hash == hash
             && dir.join(&m.def).exists()
         {
-            return Ok((dir, m));
+            if m.cache_version == CACHE_VERSION {
+                return Ok((dir, m));
+            }
+            if (MIGRATABLE_FROM..CACHE_VERSION).contains(&m.cache_version) {
+                log::info!("upgrading cache entry {} to v{CACHE_VERSION}", entry.id);
+                self.add_fair_info(&dir, &mut m, kind_dir == "stages");
+                m.cache_version = CACHE_VERSION;
+                Self::save_manifest(&dir, &m)?;
+                return Ok((dir, m));
+            }
         }
         log::info!("preparing {} from {}", entry.id, entry.source.display());
         if dir.exists() {
@@ -422,7 +473,7 @@ impl Library {
         } else {
             None
         };
-        let m = Manifest {
+        let mut m = Manifest {
             cache_version: CACHE_VERSION,
             id: entry.id.clone(),
             def,
@@ -434,13 +485,253 @@ impl Library {
             thumb,
             source_hash: hash,
             verify: None,
+            fingerprint: None,
+            package_def: None,
+            content_size: 0,
+            profile: None,
+            card: None,
+            fair_error: None,
+            stage: false,
         };
+        self.add_fair_info(&dir, &mut m, kind_dir == "stages");
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&m).map_err(|e| Error::Other(e.to_string()))?,
         )?;
         Ok((dir, m))
     }
+}
+
+impl Library {
+    /// Fingerprint, fairness profile and card portrait of a prepared entry.
+    fn add_fair_info(&self, dir: &Path, m: &mut Manifest, stage: bool) {
+        m.stage = stage;
+        let def = dir.join(&m.def);
+        let kind = if stage {
+            rugen_fair::Kind::Stage
+        } else {
+            rugen_fair::Kind::Char
+        };
+        let data = self.data_dir();
+        match rugen_fair::files::content_files(kind, &def, Some(&data)) {
+            Ok(files) => {
+                match rugen_fair::fingerprint(&files) {
+                    Ok(fp) => m.fingerprint = Some(fp),
+                    Err(e) => m.fair_error = Some(e.to_string()),
+                }
+                m.package_def = Some(files.def.clone());
+                m.content_size = files.total_size();
+                if !stage {
+                    match rugen_fair::profile::analyze(&files) {
+                        Ok(p) => m.profile = Some(p),
+                        Err(e) => log::warn!("{}: fairness profile: {e}", m.id),
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("{}: not shareable online: {e}", m.id);
+                m.fair_error = Some(e.to_string());
+            }
+        }
+        let src = if stage {
+            m.thumb.as_ref()
+        } else {
+            m.portrait_big.as_ref().or(m.portrait_small.as_ref())
+        };
+        m.card = src.and_then(|p| write_card(&dir.join(&p.file), &dir.join("card.webp")).ok());
+    }
+
+    /// `cache/packages/<fingerprint>.rgpk`: the optimised upload package of a
+    /// prepared entry, built on first use.
+    pub fn package(&self, dir: &Path, m: &Manifest) -> Result<PathBuf> {
+        let fp = m
+            .fingerprint
+            .clone()
+            .ok_or_else(|| Error::Other(format!("{}: no fingerprint", m.id)))?;
+        let out = self.cache_dir().join("packages").join(format!("{fp}.rgpk"));
+        if out.exists() {
+            return Ok(out);
+        }
+        let kind = if m.stage {
+            rugen_fair::Kind::Stage
+        } else {
+            rugen_fair::Kind::Char
+        };
+        let data = self.data_dir();
+        let def = dir.join(&m.def);
+        let files = rugen_fair::files::content_files(kind, &def, Some(&data))
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let real = rugen_fair::fingerprint(&files).map_err(|e| Error::Other(e.to_string()))?;
+        if real != fp {
+            return Err(Error::Other(format!(
+                "{}: files changed since they were prepared",
+                m.id
+            )));
+        }
+        rugen_fair::package::write_file(&files, &fp, &out)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(out)
+    }
+
+    /// Where downloaded packages are unpacked: `cache/net/<kind>/<fingerprint>/`.
+    /// Never inside `chars/` / `stages/`, never over local files.
+    pub fn net_dir(&self, stage: bool) -> PathBuf {
+        self.cache_dir()
+            .join("net")
+            .join(if stage { "stages" } else { "chars" })
+    }
+
+    /// Unpack a downloaded package (whose fingerprint must be `fp`) into the
+    /// net cache and return its prepared directory + manifest.
+    pub fn install_package(
+        &self,
+        pkg: &Path,
+        fp: &str,
+        max_bytes: u64,
+    ) -> Result<(PathBuf, Manifest)> {
+        let mut f = fs::File::open(pkg)?;
+        let header =
+            rugen_fair::package::read_header(&mut f).map_err(|e| Error::Other(e.to_string()))?;
+        let stage = header.kind == rugen_fair::Kind::Stage;
+        let dir = self.net_dir(stage).join(fp);
+        if let Some(found) = self.find_fingerprint(fp) {
+            return Ok(found);
+        }
+        let tmp = self.net_dir(stage).join(format!(".{fp}.unpack"));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(self.net_dir(stage))?;
+        let u = rugen_fair::package::unpack(fs::File::open(pkg)?, &tmp, max_bytes)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        if u.fingerprint != fp {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err(Error::Other(format!(
+                "downloaded package is {} instead of {}",
+                rugen_fair::short(&u.fingerprint),
+                rugen_fair::short(fp)
+            )));
+        }
+        let _ = fs::remove_dir_all(&dir);
+        fs::rename(&tmp, &dir)?;
+        let parsed = rugen_formats::def::Def::open(dir.join(&u.def)).ok();
+        let info = |key: &str| {
+            parsed
+                .as_ref()
+                .and_then(|d| d.section("info"))
+                .and_then(|i| i.str(key).map(str::to_string))
+        };
+        let id = u
+            .def
+            .trim_end_matches(".def")
+            .trim_end_matches(".DEF")
+            .to_string();
+        let (portrait_small, portrait_big) = match (&parsed, stage) {
+            (Some(d), false) => extract_portraits(&dir, &u.def, d),
+            _ => (None, None),
+        };
+        let thumb = match (&parsed, stage) {
+            (Some(d), true) => extract_stage_thumb(&dir, &u.def, d),
+            _ => None,
+        };
+        let mut m = Manifest {
+            cache_version: CACHE_VERSION,
+            display_name: info("displayname")
+                .or_else(|| info("name"))
+                .unwrap_or_else(|| id.clone()),
+            author: info("author").unwrap_or_default(),
+            id,
+            def: u.def.clone(),
+            portrait_small,
+            portrait_big,
+            source_hash: fp.to_string(),
+            verify: None,
+            art: None,
+            thumb,
+            fingerprint: Some(fp.to_string()),
+            package_def: Some(u.def.clone()),
+            content_size: u.bytes,
+            profile: None,
+            card: None,
+            fair_error: None,
+            stage,
+        };
+        if !stage {
+            m.profile = rugen_fair::profile::analyze(&u.files).ok();
+        }
+        let src = if stage {
+            m.thumb.as_ref()
+        } else {
+            m.portrait_big.as_ref().or(m.portrait_small.as_ref())
+        };
+        m.card = src.and_then(|p| write_card(&dir.join(&p.file), &dir.join("card.webp")).ok());
+        Self::save_manifest(&dir, &m)?;
+        Ok((dir, m))
+    }
+
+    /// A prepared entry (local or downloaded) with this fingerprint.
+    pub fn find_fingerprint(&self, fp: &str) -> Option<(PathBuf, Manifest)> {
+        if !rugen_proto::is_fingerprint(fp) {
+            return None;
+        }
+        for stage in [false, true] {
+            let dir = self.net_dir(stage).join(fp);
+            if let Some(m) = read_manifest(&dir)
+                && m.fingerprint.as_deref() == Some(fp)
+                && dir.join(&m.def).exists()
+            {
+                return Some((dir, m));
+            }
+        }
+        for kind in ["chars", "stages"] {
+            let Ok(rd) = fs::read_dir(self.cache_dir().join(kind)) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                if let Some(m) = read_manifest(&e.path())
+                    && m.cache_version == CACHE_VERSION
+                    && m.fingerprint.as_deref() == Some(fp)
+                    && e.path().join(&m.def).exists()
+                {
+                    return Some((e.path(), m));
+                }
+            }
+        }
+        None
+    }
+}
+
+fn read_manifest(dir: &Path) -> Option<Manifest> {
+    serde_json::from_str(&fs::read_to_string(dir.join("rugen.json")).ok()?).ok()
+}
+
+/// Card portrait: the PNG scaled to fit 96x96, lossless WebP (a few KB).
+fn write_card(png_path: &Path, out: &Path) -> Result<String> {
+    let (w, h, rgba) = read_png(png_path)?;
+    if w == 0 || h == 0 {
+        return Err(Error::Other("empty portrait".into()));
+    }
+    let s = (96.0 / w.max(h) as f32).min(1.0);
+    let (tw, th) = (
+        ((w as f32 * s) as u32).max(1),
+        ((h as f32 * s) as u32).max(1),
+    );
+    let mut px = Vec::with_capacity((tw * th * 4) as usize);
+    for y in 0..th {
+        for x in 0..tw {
+            let sx = (x * w / tw).min(w - 1);
+            let sy = (y * h / th).min(h - 1);
+            let i = ((sy * w + sx) * 4) as usize;
+            px.extend_from_slice(rgba.get(i..i + 4).unwrap_or(&[0, 0, 0, 0]));
+        }
+    }
+    let mut bytes = Vec::new();
+    image_webp::WebPEncoder::new(&mut bytes)
+        .encode(&px, tw, th, image_webp::ColorType::Rgba8)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    fs::write(out, bytes)?;
+    Ok(out
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default())
 }
 
 /// Convert the select-screen portraits to PNG next to the manifest.
@@ -852,6 +1143,121 @@ mod tests {
         let (dir2, _) = lib.prepare_char(&chars[0]).unwrap();
         assert_eq!(dir, dir2);
         assert!(lib.find_char("tiny").is_some());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+    fn tiny_files() -> Vec<(&'static str, &'static [u8])> {
+        vec![
+            (
+                "tiny.def",
+                b"[Info]\nname = \"Tiny\"\n[Files]\ncmd = tiny.cmd\ncns = tiny.cns\nsprite = tiny.sff\nanim = tiny.air\nstcommon = common1.cns\n",
+            ),
+            ("tiny.cmd", b"[Statedef -1]\n"),
+            (
+                "tiny.cns",
+                b"[Data]\nlife = 1000\n[Statedef 200]\nmovetype = A\n[State 200, h]\ntype = HitDef\ntrigger1 = 1\ndamage = 40\nguardflag = MA\n",
+            ),
+            ("tiny.sff", b"not really an sff"),
+            ("tiny.air", b"[Begin Action 0]\n0,0, 0,0, 10\n"),
+            ("common1.cns", b"[Statedef 0]\n"),
+        ]
+    }
+
+    #[test]
+    fn fingerprint_is_archive_independent() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join(format!("rugen-content-fp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("chars/Folder")).unwrap();
+        for (n, b) in tiny_files() {
+            fs::write(tmp.join("chars/Folder").join(n), b).unwrap();
+        }
+        // zip: nested folder, junk, readme
+        {
+            let f = fs::File::create(tmp.join("chars/Zipped.zip")).unwrap();
+            let mut z = zip::ZipWriter::new(f);
+            let o = zip::write::SimpleFileOptions::default();
+            for (n, b) in tiny_files().into_iter().rev() {
+                z.start_file(format!("Tiny v2/{n}"), o).unwrap();
+                z.write_all(b).unwrap();
+            }
+            z.start_file("Tiny v2/readme.txt", o).unwrap();
+            z.write_all(b"made by me").unwrap();
+            z.start_file("Tiny v2/Thumbs.db", o).unwrap();
+            z.write_all(b"junk").unwrap();
+            z.finish().unwrap();
+        }
+        // rar, when a RAR creator is installed
+        let rar = std::process::Command::new("rar")
+            .current_dir(tmp.join("chars"))
+            .args(["a", "-r", "-inul", "Rarred.rar", "Folder"])
+            .status()
+            .is_ok_and(|s| s.success());
+        let lib = Library::discover(Some(&tmp));
+        let fp = |id: &str| {
+            let e = lib.find_char(id).unwrap();
+            lib.prepare_char(&e).unwrap().1.fingerprint.unwrap()
+        };
+        let a = fp("Folder");
+        assert_eq!(fp("Zipped"), a, "zip == folder");
+        if rar {
+            assert_eq!(fp("Rarred"), a, "rar == folder");
+        } else {
+            eprintln!("no `rar` binary: rar case skipped");
+        }
+        // profile and package are there too
+        let e = lib.find_char("Folder").unwrap();
+        let (dir, m) = lib.prepare_char(&e).unwrap();
+        assert_eq!(m.profile.as_ref().unwrap().max_hit_damage, 40);
+        let pkg = lib.package(&dir, &m).unwrap();
+        // a second library ("the opponent") installs it into its net cache
+        let other = tmp.join("other");
+        fs::create_dir_all(other.join("chars")).unwrap();
+        let lib2 = Library::discover(Some(&other));
+        assert!(lib2.find_fingerprint(&a).is_none());
+        let (d2, m2) = lib2.install_package(&pkg, &a, 1 << 20).unwrap();
+        assert!(d2.starts_with(other.join("cache/net/chars")));
+        assert_eq!(m2.fingerprint.as_deref(), Some(a.as_str()));
+        assert_eq!(m2.display_name, "Tiny");
+        assert!(lib2.find_fingerprint(&a).is_some());
+        assert!(
+            lib2.install_package(&pkg, &"0".repeat(64), 1 << 20)
+                .is_err()
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn v4_manifests_upgrade_in_place() {
+        let tmp = std::env::temp_dir().join(format!("rugen-content-mig-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("chars/T")).unwrap();
+        for (n, b) in tiny_files() {
+            fs::write(tmp.join("chars/T").join(n), b).unwrap();
+        }
+        let lib = Library::discover(Some(&tmp));
+        let e = lib.find_char("T").unwrap();
+        let (dir, mut m) = lib.prepare_char(&e).unwrap();
+        // pretend it is an old v4 entry with a verify result
+        m.cache_version = 4;
+        m.fingerprint = None;
+        m.profile = None;
+        m.verify = Some(VerifyInfo {
+            verdict: "verified".into(),
+            issues: vec![],
+            engine_version: "x".into(),
+            when: 1,
+        });
+        Library::save_manifest(&dir, &m).unwrap();
+        fs::write(dir.join("marker"), "kept").unwrap();
+        let (dir2, m2) = lib.prepare_char(&e).unwrap();
+        assert_eq!(dir, dir2, "same directory");
+        assert!(dir.join("marker").exists(), "not re-extracted");
+        assert_eq!(m2.cache_version, CACHE_VERSION);
+        assert!(m2.fingerprint.is_some() && m2.profile.is_some());
+        assert_eq!(
+            m2.fair_profile().unwrap().verify.as_deref(),
+            Some("verified")
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 }

@@ -2841,13 +2841,31 @@ name = "rugen-content"
 version = "0.2.0"
 dependencies = [
  "blake3",
+ "image-webp",
  "log",
  "png",
+ "rugen-fair",
  "rugen-formats",
+ "rugen-proto",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "rugen-fair"
+version = "0.2.0"
+dependencies = [
+ "libm",
+ "log",
+ "rugen-cns",
+ "rugen-formats",
+ "rugen-proto",
+ "sha2",
+ "thiserror 2.0.21",
+ "zip",
+ "zstd",
 ]
 
 [[package]]

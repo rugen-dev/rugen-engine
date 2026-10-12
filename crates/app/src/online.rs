@@ -1204,7 +1204,7 @@ impl OnlineScreen {
                         self.fail("room", format!("{code} closed or you were removed"));
                     }
                 }
-                ServerMsg::Pong | ServerMsg::Error { .. } => {}
+                ServerMsg::Pong | ServerMsg::Error { .. } | ServerMsg::Matchup { .. } => {}
             }
         }
     }

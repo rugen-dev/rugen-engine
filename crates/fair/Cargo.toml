@@ -1,0 +1,24 @@
+[package]
+name = "rugen-fair"
+description = "Content fingerprints, optimised packages and fairness analysis of MUGEN characters (no GPU / audio)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rugen-formats.workspace = true
+rugen-cns.workspace = true
+rugen-proto.workspace = true
+thiserror.workspace = true
+log.workspace = true
+libm.workspace = true
+sha2 = "0.11"
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true
