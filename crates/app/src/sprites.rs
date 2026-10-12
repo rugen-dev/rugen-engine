@@ -199,6 +199,22 @@ impl FontGpu {
         align: i32,
         scale: f32,
     ) {
+        self.draw_clipped(r, text, pos, bank, align, scale, None, 1.0);
+    }
+
+    /// [`draw`](Self::draw) with a logical-space clip rectangle and alpha.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_clipped(
+        &mut self,
+        r: &mut Renderer,
+        text: &str,
+        pos: [f32; 2],
+        bank: i32,
+        align: i32,
+        scale: f32,
+        clip: Option<[f32; 4]>,
+        alpha: f32,
+    ) {
         self.init(r);
         let bank = self.banks[(bank.max(0) as usize).min(self.banks.len() - 1)];
         let total = self.width(text, scale);
@@ -219,6 +235,8 @@ impl FontGpu {
                     .or_insert_with(|| r.add_indexed(g.width as u32, g.height as u32, &g.pixels));
                 let mut d = Draw::new(tex, Some(bank), [x, y], [0.0, 0.0]);
                 d.scale = [scale, scale];
+                d.clip = clip;
+                d.color = [1.0, 1.0, 1.0, alpha];
                 r.draw(d);
             }
             x += (w + self.font.spacing[0] as f32) * scale;

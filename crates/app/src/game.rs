@@ -22,6 +22,7 @@ use crate::play::{FightSetup, Match};
 use crate::select::SelectScreen;
 use crate::system::SystemData;
 use crate::title::TitleScreen;
+use crate::uiscreen::{MouseEvent, UiKind, UiScreen};
 use crate::versus::{Portrait, VersusScreen};
 
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
@@ -56,6 +57,8 @@ enum Screen {
     Blank,
     Title(TitleScreen),
     Options(Box<OptionsScreen>),
+    /// TOML-driven screen from `motif/ui/`.
+    Ui(Box<UiScreen>),
     Select(SelectScreen),
     Versus(VersusScreen),
     Match(Box<Match>),
@@ -165,13 +168,15 @@ impl Shell {
 
     /// Take the edited config out of the options screen, apply and save it.
     fn apply_options(&mut self) {
-        let Screen::Options(o) = &self.screen else {
-            return;
+        let (dirty, config) = match &self.screen {
+            Screen::Options(o) => (o.dirty, o.config.clone()),
+            Screen::Ui(u) if u.kind == UiKind::Options => (u.dirty, u.config.clone()),
+            _ => return,
         };
-        if !o.dirty {
+        if !dirty {
             return;
         }
-        self.config = o.config.clone();
+        self.config = config;
         self.input.rebind(&self.config.input);
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
@@ -405,6 +410,22 @@ impl Shell {
                 let netplay = !self.config.net.remote.trim().is_empty()
                     || !self.config.net.relay.trim().is_empty();
                 self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Title) => {
+                        match UiScreen::load(
+                            UiKind::Title,
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            netplay,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/title.toml: {e:#}");
+                                Screen::Title(TitleScreen::new(sys, netplay))
+                            }
+                        }
+                    }
                     Some(sys) => Screen::Title(TitleScreen::new(sys, netplay)),
                     None => {
                         log::error!("no system.def: cannot show the title screen");
@@ -415,6 +436,25 @@ impl Shell {
             }
             Transition::Options => {
                 self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Options) => {
+                        match UiScreen::load(
+                            UiKind::Options,
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            false,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/options.toml: {e:#}");
+                                Screen::Options(Box::new(OptionsScreen::new(
+                                    self.config.clone(),
+                                    sys,
+                                )))
+                            }
+                        }
+                    }
                     Some(sys) => {
                         Screen::Options(Box::new(OptionsScreen::new(self.config.clone(), sys)))
                     }
@@ -533,6 +573,16 @@ impl Shell {
                     self.apply_options();
                 }
             }
+            Screen::Ui(u) => {
+                if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
+                    next = u.tick(pressed, sys, &mut g.renderer, &mut |snd| {
+                        sfx_queue.push(snd)
+                    });
+                }
+                if next.is_some() && u.kind == UiKind::Options {
+                    self.apply_options();
+                }
+            }
             Screen::Select(s) => {
                 if let Some(sys) = self.system.as_ref() {
                     next = s.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
@@ -596,6 +646,7 @@ impl Shell {
             (Screen::Title(t), Some(sys)) => t.render(r, sys),
             (Screen::Select(s), Some(sys)) => s.render(r, sys),
             (Screen::Options(o), Some(sys)) => o.render(r, sys),
+            (Screen::Ui(u), Some(sys)) => u.render(r, sys),
             (Screen::Versus(v), Some(sys)) => v.render(r, sys),
             (Screen::Match(m), _) => m.render(r),
             _ => (
@@ -650,6 +701,14 @@ impl Shell {
             }
             return;
         }
+        if let Screen::Ui(u) = &mut self.screen
+            && u.capturing()
+        {
+            if pressed && let Some(sys) = self.system.as_ref() {
+                u.raw_key(key, sys);
+            }
+            return;
+        }
         let lower = match key {
             Key::Character(c) => Key::Character(c.to_lowercase().into()),
             k => k.clone(),
@@ -675,6 +734,11 @@ impl Shell {
         if pressed && key == &Key::Named(NamedKey::Escape) {
             match self.screen {
                 Screen::Title(_) | Screen::Blank => event_loop.exit(),
+                Screen::Ui(ref u) if u.kind == UiKind::Title => event_loop.exit(),
+                Screen::Ui(_) => {
+                    self.apply_options();
+                    self.transition(Transition::Title);
+                }
                 Screen::Select(_) => {
                     let snd = self.system.as_ref().and_then(|s| s.select.cancel_snd);
                     self.system_sfx(snd);
@@ -739,6 +803,34 @@ impl ApplicationHandler for Shell {
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 let key = event.logical_key.clone();
                 self.key(&key, event.state == ElementState::Pressed, event_loop);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Screen::Ui(u) = &mut self.screen {
+                    u.mouse(MouseEvent::Move(position.x as f32, position.y as f32));
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Screen::Ui(u) = &mut self.screen {
+                    u.mouse(MouseEvent::Left);
+                }
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
+                if let Screen::Ui(u) = &mut self.screen {
+                    u.mouse(MouseEvent::Button(state == ElementState::Pressed));
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                if let Screen::Ui(u) = &mut self.screen {
+                    u.mouse(MouseEvent::Wheel(lines));
+                }
             }
             _ => {}
         }

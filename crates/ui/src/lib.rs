@@ -556,15 +556,24 @@ impl Ui {
         } else {
             clip
         };
+        let action = |a: &Option<String>| {
+            a.as_deref()
+                .map(|a| interpolate(a, ctx))
+                .filter(|a| !a.is_empty())
+        };
+        let (on_press, on_left, on_right) =
+            (action(&n.on_press), action(&n.on_left), action(&n.on_right));
+        let focusable =
+            focusable && (on_press.is_some() || on_left.is_some() || on_right.is_some());
         self.instances.push(Instance {
             def: def_idx,
             key: key.clone(),
             rect,
             clip,
             text: n.text.as_deref().map(|t| interpolate(t, ctx)),
-            on_press: n.on_press.as_deref().map(|a| interpolate(a, ctx)),
-            on_left: n.on_left.as_deref().map(|a| interpolate(a, ctx)),
-            on_right: n.on_right.as_deref().map(|a| interpolate(a, ctx)),
+            on_press,
+            on_left,
+            on_right,
             focusable,
             scroll_owner: None,
             ctx: ctx.clone(),
@@ -874,13 +883,19 @@ impl Ui {
                 } else {
                     "left"
                 };
+                let inset = n.pad.unwrap_or(0.0);
                 let (align, x) = match n.align.as_deref().unwrap_or(default_align) {
-                    "right" => (-1, rect.x + rect.w),
+                    "right" => (-1, rect.x + rect.w - inset),
                     "center" => (0, rect.x + rect.w / 2.0),
-                    _ => (1, rect.x),
+                    _ => (1, rect.x + inset),
                 };
                 let th = p.text_height(font, scale);
                 let y = rect.y + (rect.h + th) / 2.0;
+                let text_clip = if n.w.is_some() && n.kind == Kind::Text {
+                    Some(clip.map_or(rect, |c| c.intersect(&rect)))
+                } else {
+                    clip
+                };
                 p.draw_text(
                     font,
                     text,
@@ -890,7 +905,7 @@ impl Ui {
                     align,
                     scale,
                     alpha,
-                    clip,
+                    text_clip,
                 );
             }
         }

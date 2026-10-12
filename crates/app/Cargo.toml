@@ -27,6 +27,8 @@ toml.workspace = true
 png.workspace = true
 libm.workspace = true
 ab_glyph = "0.2"
+image-webp = "0.2"
+rugen-ui.workspace = true
 
 [lints]
 workspace = true
