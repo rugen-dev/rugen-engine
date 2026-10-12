@@ -46,6 +46,8 @@ pub enum Mode {
     Training,
     Tutorial,
     Watch,
+    /// Smash-style fight on an `[Arena]` stage: stocks, blast zones, ring-out.
+    Arena,
     Netplay,
     Options,
     Exit,
@@ -237,6 +239,10 @@ pub struct Shell {
     match_stats: crate::screeninfo::MatchStats,
     /// Shell tick at which the applied options get written to rugen.toml.
     save_due: Option<u32>,
+    /// Menu base keys held (arrows, Enter) that no player mapping claims.
+    menu_keys: Buttons,
+    /// Mouse cursor visibility last applied to the window.
+    cursor_shown: Option<bool>,
 }
 
 impl Shell {
@@ -303,6 +309,35 @@ impl Shell {
             key_releases: Vec::new(),
             match_stats: Default::default(),
             save_due: None,
+            menu_keys: Buttons::default(),
+            cursor_shown: None,
+        }
+    }
+
+    /// A menu is on screen (everything but a running fight; the pause menu counts).
+    fn in_menu(&self) -> bool {
+        !matches!(self.screen, Screen::Match(_)) || self.pause.is_some()
+    }
+
+    /// Show the mouse cursor only where it does something: menus with `[input] mouse` on.
+    fn update_cursor(&mut self) {
+        let want = self.config.input.mouse && self.in_menu() && self.harness.script.is_none();
+        if self.cursor_shown == Some(want) {
+            return;
+        }
+        let Some(g) = &self.gpu else { return };
+        g.window.set_cursor_visible(want);
+        self.cursor_shown = Some(want);
+        if !want {
+            // forget the last position so a still cursor cannot hold a hover
+            match &mut self.screen {
+                Screen::Ui(u) => u.mouse(MouseEvent::Left),
+                Screen::Online(o) => o.mouse(MouseEvent::Left),
+                _ => {}
+            }
+            if let Some(p) = self.pause.as_mut() {
+                p.mouse(MouseEvent::Left);
+            }
         }
     }
 
@@ -772,7 +807,6 @@ impl Shell {
                             &self.lib.root,
                             sys,
                             &self.config,
-                            netplay,
                             &self.lib,
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
@@ -799,7 +833,6 @@ impl Shell {
                             &self.lib.root,
                             sys,
                             &self.config,
-                            false,
                             &self.lib,
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
@@ -837,7 +870,6 @@ impl Shell {
                             &self.lib.root,
                             sys,
                             &self.config,
-                            false,
                             &self.lib,
                         ) {
                             Ok(mut u) => {
@@ -870,7 +902,6 @@ impl Shell {
                             &self.lib.root,
                             sys,
                             &self.config,
-                            false,
                             &self.lib,
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
@@ -1020,6 +1051,12 @@ impl Shell {
             } else {
                 now[1] = script.remove(0);
             }
+        }
+        if self.in_menu() {
+            // menu base keys (arrows / Enter no player claims) and pads with no
+            // player slot drive the menu focus as player 1
+            let extra = self.menu_keys.bits() | self.input.spare_pads().bits();
+            now[0] = Buttons::from_bits(now[0].bits() | extra);
         }
         let pressed = [
             Buttons::from_bits(now[0].bits() & !self.prev[0].bits()),
@@ -1370,6 +1407,29 @@ impl Shell {
             Key::Character(c) => Key::Character(c.to_lowercase().into()),
             k => k.clone(),
         };
+        // Esc backs out of every screen whatever the bindings say
+        if key == &Key::Named(NamedKey::Escape) {
+            if pressed {
+                self.escape();
+            }
+            if !self.input.bound(&lower) {
+                return;
+            }
+        }
+        // arrows / Enter work in every menu; a player mapping that uses them keeps them
+        if let Some(bit) = menu_bit(&lower)
+            && !self.input.bound(&lower)
+        {
+            let mut b = self.menu_keys;
+            match bit {
+                0 => b.u = pressed,
+                1 => b.d = pressed,
+                2 => b.l = pressed,
+                3 => b.r = pressed,
+                _ => b.a = pressed,
+            }
+            self.menu_keys = b;
+        }
         if self.input.key(&lower, pressed) {
             return;
         }
@@ -1403,58 +1463,64 @@ impl Shell {
                 }
                 _ => {}
             }
-            return;
         }
-        if pressed && key == &Key::Named(NamedKey::Escape) {
-            match self.screen {
-                Screen::Title(_) | Screen::Blank => self.quit = true,
-                Screen::Ui(ref u) if u.kind == UiKind::Title => self.quit = true,
-                Screen::Ui(ref mut u) => {
-                    let kind = u.kind;
-                    let t = match self.system.as_ref() {
-                        Some(sys) => u.escape(sys),
-                        None => Some(Transition::Title),
-                    };
-                    if let Some(t) = t {
-                        if kind == UiKind::Controls {
-                            self.reopen_tab = Some(crate::settings::CONTROLS_TAB);
-                        }
-                        self.apply_options();
-                        self.transition(t);
+    }
+
+    /// Esc: back / cancel on every screen, the pause menu in a fight.
+    fn escape(&mut self) {
+        match self.screen {
+            Screen::Title(_) | Screen::Blank => self.quit = true,
+            // the first Esc on the title only moves to EXIT
+            Screen::Ui(ref mut u) if u.kind == UiKind::Title => {
+                if !u.focus_exit() {
+                    self.quit = true;
+                }
+            }
+            Screen::Ui(ref mut u) => {
+                let kind = u.kind;
+                let t = match self.system.as_ref() {
+                    Some(sys) => u.escape(sys),
+                    None => Some(Transition::Title),
+                };
+                if let Some(t) = t {
+                    if kind == UiKind::Controls {
+                        self.reopen_tab = Some(crate::settings::CONTROLS_TAB);
                     }
-                }
-                Screen::Online(ref mut o) => {
-                    if o.back() {
-                        self.transition(Transition::Title);
-                    }
-                }
-                Screen::Select(_) => {
-                    let snd = self.system.as_ref().and_then(|s| s.select.cancel_snd);
-                    self.system_sfx(snd);
-                    self.transition(Transition::Title);
-                }
-                Screen::Options(_) => {
                     self.apply_options();
+                    self.transition(t);
+                }
+            }
+            Screen::Online(ref mut o) => {
+                if o.back() {
                     self.transition(Transition::Title);
                 }
-                Screen::Match(ref m) if self.pause.is_some() => {
-                    let _ = m;
-                    self.pause = None;
-                }
-                Screen::Match(ref m)
-                    if !m.is_net()
-                        && !m.is_tutorial()
-                        && !m.world.round.match_over
-                        && UiScreen::available(&self.motif_dir, UiKind::Pause) =>
-                {
-                    self.open_pause(0);
-                }
-                Screen::Versus(_) | Screen::Match(_) => {
-                    if self.quick {
-                        self.quit = true;
-                    } else {
-                        self.transition(Transition::Title);
-                    }
+            }
+            Screen::Select(_) => {
+                let snd = self.system.as_ref().and_then(|s| s.select.cancel_snd);
+                self.system_sfx(snd);
+                self.transition(Transition::Title);
+            }
+            Screen::Options(_) => {
+                self.apply_options();
+                self.transition(Transition::Title);
+            }
+            Screen::Match(ref m) if self.pause.is_some() => {
+                let _ = m;
+                self.pause = None;
+            }
+            Screen::Match(ref m)
+                if !m.is_net()
+                    && !m.is_tutorial()
+                    && !m.world.round.match_over
+                    && UiScreen::available(&self.motif_dir, UiKind::Pause) =>
+            {
+                self.open_pause(0);
+            }
+            Screen::Versus(_) | Screen::Match(_) => {
+                if self.quick {
+                    self.quit = true;
+                } else {
+                    self.transition(Transition::Title);
                 }
             }
         }
@@ -1508,11 +1574,12 @@ impl ApplicationHandler for Shell {
                     event_loop.exit();
                 }
             }
-            // a scripted run is driven by the script alone; a stray cursor would steal focus
+            // a scripted run is driven by the script alone; a stray cursor would steal
+            // focus. `[input] mouse = false` (the default) keeps the mouse out entirely.
             WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseInput { .. }
             | WindowEvent::MouseWheel { .. }
-                if self.harness.script.is_some() => {}
+                if self.harness.script.is_some() || !self.config.input.mouse => {}
             WindowEvent::CursorMoved { position, .. } => match &mut self.screen {
                 Screen::Match(_) if self.pause.is_some() => {
                     if let Some(p) = self.pause.as_mut() {
@@ -1576,9 +1643,22 @@ impl ApplicationHandler for Shell {
         if self.quit && self.harness.shot.is_none() {
             event_loop.exit();
         }
+        self.update_cursor();
         if let Some(g) = &self.gpu {
             g.window.request_redraw();
         }
+    }
+}
+
+/// Menu base key → bit (0..3 = up, down, left, right; 4 = confirm).
+fn menu_bit(key: &Key) -> Option<u8> {
+    match key {
+        Key::Named(NamedKey::ArrowUp) => Some(0),
+        Key::Named(NamedKey::ArrowDown) => Some(1),
+        Key::Named(NamedKey::ArrowLeft) => Some(2),
+        Key::Named(NamedKey::ArrowRight) => Some(3),
+        Key::Named(NamedKey::Enter) => Some(4),
+        _ => None,
     }
 }
 

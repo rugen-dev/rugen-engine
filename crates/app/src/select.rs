@@ -82,7 +82,7 @@ impl SelectScreen {
         }
         let human = match mode {
             Mode::Versus => [true, true],
-            Mode::Arcade | Mode::Training | Mode::Tutorial => [true, false],
+            Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let s = &sys.select;
@@ -345,6 +345,7 @@ impl SelectScreen {
             Mode::Versus => "VS Mode",
             Mode::Training => "Training",
             Mode::Watch => "Watch",
+            Mode::Arena => "Arena",
             Mode::Tutorial => "Tutorial",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };

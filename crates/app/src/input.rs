@@ -139,6 +139,29 @@ impl InputState {
         used
     }
 
+    /// True when a player mapping uses this key.
+    pub fn bound(&self, key: &Key) -> bool {
+        self.keys.iter().flatten().any(|k| k == key)
+    }
+
+    /// Buttons held on gamepads no player slot claims (they still drive menus).
+    pub fn spare_pads(&self) -> Buttons {
+        let mut out = Buttons::default();
+        for (i, pad) in self.pads.iter().enumerate() {
+            if self.pad_slot.contains(&(i as i32)) {
+                continue;
+            }
+            let mut b = pad.held;
+            let dz = self.deadzone;
+            b.l |= pad.stick[0] < -dz;
+            b.r |= pad.stick[0] > dz;
+            b.u |= pad.stick[1] > dz;
+            b.d |= pad.stick[1] < -dz;
+            out = Buttons::from_bits(out.bits() | b.bits());
+        }
+        out
+    }
+
     /// Drain gamepad events.
     pub fn poll(&mut self) {
         let Some(g) = self.gilrs.as_mut() else { return };
