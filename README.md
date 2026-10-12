@@ -51,6 +51,10 @@ key rebinding; saves `rugen.toml`), NETPLAY, EXIT. `[camera] zoom_out` /
 `zoom_in` in `rugen.toml` decide how far players can separate before the
 screen edge stops them, on any stage.
 
+Menus are data: `motif/ui/*.toml` + WebP art (see `motif/ui/README.md`);
+`rugen ui-gen` regenerates the defaults. Mouse, keyboard and gamepad all work
+in them.
+
 For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
 match runs reloads it in place (checked once a second), and `rugen check`
 lists what the engine cannot run yet.

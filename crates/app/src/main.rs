@@ -39,6 +39,8 @@ mod stage;
 mod system;
 mod title;
 mod tutorial;
+mod uigen;
+mod uiscreen;
 mod verify;
 mod versus;
 mod viewer;
@@ -241,6 +243,22 @@ fn main() -> anyhow::Result<()> {
                 "wrote the rugen screenpack to {out}/ (font {})",
                 ttf.display()
             );
+            Ok(())
+        }
+        Some("ui-gen") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let out = opt("--out").unwrap_or_else(|| "motif".into());
+            let ttf = opt("--font")
+                .map(std::path::PathBuf::from)
+                .or_else(fontgen::default_ttf)
+                .ok_or_else(|| anyhow::anyhow!("no TTF found; pass --font file.ttf"))?;
+            let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
+            uigen::generate(&bytes, std::path::Path::new(&out))?;
+            println!("wrote the front end to {out}/ui/ (font {})", ttf.display());
             Ok(())
         }
         Some("fontgen") => {
