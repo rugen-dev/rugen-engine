@@ -6,7 +6,7 @@ MUGEN-compatible 2D fighting game engine in Rust.
 - Runs on Windows, Linux, macOS from one codebase.
 - Rollback netplay designed in from the first commit.
 
-Docs: <https://rugen-dev.github.io/rugen-docs/>. Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server).
+Docs: <https://rugen.dev>. Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server).
 
 See [DESIGN.md](DESIGN.md) for architecture and phase plan, [reference/README.md](reference/README.md) for reference material.
 

@@ -144,7 +144,7 @@ jobs:
           Unsigned: the first time, right-click \`rugen\` → Open (or \`xattr -dr com.apple.quarantine <folder>\`).
 
           Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server) ·
-          Docs: https://rugen-dev.github.io/rugen-docs/
+          Docs: https://rugen.dev
           NOTES
           sed -i 's/^          //' notes.md
       - uses: softprops/action-gh-release@v2
