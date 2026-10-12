@@ -27,7 +27,7 @@ pub const TABS: [(&str, &str, &str); 6] = [
 ];
 
 pub const CONTROLS_TAB: usize = 3;
-const INTERFACE_TAB: usize = 5;
+pub const INTERFACE_TAB: usize = 5;
 
 const ROUND_TIMES: [i32; 4] = [30, 60, 99, 0];
 const RESOLUTIONS: [(u32, u32); 3] = [(1280, 720), (1600, 900), (1920, 1080)];
@@ -151,7 +151,7 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         .position(|r| *r == (c.video.width, c.video.height)),
                 ),
                 String::new(),
-                "Size of the game window. Menus always lay out in 1280x720 and scale.",
+                "Size of the game window. Menus stretch to any shape of window.",
             ),
         ],
         "audio" => vec![
@@ -361,7 +361,7 @@ pub fn options_data(
     let help = if let Some(i) = index("rows[") {
         rows.get(i).map_or("", |r| r.help).to_string()
     } else if index("themes[").is_some() {
-        "Press enter to use this theme. It is applied when you leave the options.".to_string()
+        "Press enter to use this theme. It switches at once.".to_string()
     } else if tab == CONTROLS_TAB {
         "Press enter to open the controls page: one row per action, presets and a live test pad."
             .to_string()

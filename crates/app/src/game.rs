@@ -36,6 +36,8 @@ const STOCK_QUOTES: [&str; 4] = [
     "Victory is written in ink!",
 ];
 const SYSTEM_SND: u32 = u32::MAX - 2;
+/// Ticks between the last options change and writing rugen.toml.
+const SAVE_DELAY: u32 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -233,6 +235,8 @@ pub struct Shell {
     key_releases: Vec<(u32, Key)>,
     /// Stats of the match being played (read-only observer).
     match_stats: crate::screeninfo::MatchStats,
+    /// Shell tick at which the applied options get written to rugen.toml.
+    save_due: Option<u32>,
 }
 
 impl Shell {
@@ -298,6 +302,7 @@ impl Shell {
             key_ticks: 0,
             key_releases: Vec::new(),
             match_stats: Default::default(),
+            save_due: None,
         }
     }
 
@@ -354,18 +359,68 @@ impl Shell {
         Ok(())
     }
 
-    /// Take the edited config out of the options screen, apply and save it.
+    /// Leaving the options: apply what is left and save now.
     fn apply_options(&mut self) {
-        let (dirty, config) = match &self.screen {
-            Screen::Options(o) => (o.dirty, o.config.clone()),
-            Screen::Ui(u) if matches!(u.kind, UiKind::Options | UiKind::Controls) => {
-                (u.dirty, u.config.clone())
-            }
-            _ => return,
-        };
-        if !dirty {
-            return;
+        if let Some(c) = self.take_options_config()
+            && self.apply_config(c)
+        {
+            self.reload_motif();
         }
+        if self.save_due.take().is_some() {
+            self.save_config();
+        }
+    }
+
+    /// The options screen's config when it changed since the last call.
+    fn take_options_config(&mut self) -> Option<Config> {
+        match &mut self.screen {
+            Screen::Options(o) if o.dirty => {
+                o.dirty = false;
+                Some(o.config.clone())
+            }
+            Screen::Ui(u) if matches!(u.kind, UiKind::Options | UiKind::Controls) && u.dirty => {
+                u.dirty = false;
+                Some(u.config.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Options screens: every change takes effect the tick it is made (theme,
+    /// window, audio, bindings; gameplay values on the next fight) and is
+    /// saved to rugen.toml a moment later.
+    fn live_options(&mut self) {
+        if let Some(config) = self.take_options_config() {
+            self.save_due = Some(self.key_ticks + SAVE_DELAY);
+            if self.apply_config(config) {
+                self.reload_motif();
+                self.reopen_options();
+            }
+        }
+        if self.save_due.is_some_and(|t| self.key_ticks >= t) {
+            self.save_due = None;
+            self.save_config();
+        }
+    }
+
+    /// Re-open the options in the theme just switched to, on the same tab and row.
+    fn reopen_options(&mut self) {
+        let (tab, focus) = match &self.screen {
+            Screen::Ui(u) => (u.options_tab(), u.focus_key()),
+            _ => (crate::settings::INTERFACE_TAB, None),
+        };
+        self.reopen_tab = Some(tab);
+        self.transition(Transition::Options);
+        self.fade = 0.0;
+        if let (Screen::Ui(u), Some(key)) = (&mut self.screen, focus) {
+            u.restore_focus(&key);
+        }
+        self.play_system_music("title");
+    }
+
+    /// Make `config` the live one: bindings, volumes, window size and
+    /// fullscreen follow at once. True when the UI theme changed.
+    fn apply_config(&mut self, config: Config) -> bool {
         let theme_changed = !self
             .config
             .video
@@ -373,24 +428,27 @@ impl Shell {
             .trim()
             .eq_ignore_ascii_case(config.video.theme.trim());
         self.config = config;
-        if theme_changed {
-            self.reload_motif();
-        }
         self.input.rebind(&self.config.input);
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
             a.set_music_volume(self.config.audio.music);
         }
-        if let Some(g) = &self.gpu
+        if let Some(g) = self.gpu.as_mut()
             && !self.fullscreen
             && !self.config.video.fullscreen
         {
-            let want = winit::dpi::PhysicalSize::new(
+            // logical pixels, like the size the window was created with
+            let want = winit::dpi::LogicalSize::new(
                 self.config.video.width.max(320),
                 self.config.video.height.max(240),
             );
-            if g.window.inner_size() != want {
-                let _ = g.window.request_inner_size(want);
+            let have: winit::dpi::LogicalSize<u32> =
+                g.window.inner_size().to_logical(g.window.scale_factor());
+            if have != want {
+                // applied at once (Wayland): no Resized event follows
+                if let Some(s) = g.window.request_inner_size(want) {
+                    g.renderer.resize(s.width, s.height);
+                }
             }
         }
         if self.fullscreen != self.config.video.fullscreen {
@@ -402,6 +460,10 @@ impl Shell {
                 );
             }
         }
+        theme_changed
+    }
+
+    fn save_config(&self) {
         match self.config.save(&self.lib.root) {
             Ok(()) => log::info!("settings saved to rugen.toml"),
             Err(e) => log::warn!("settings not saved: {e}"),
@@ -1173,6 +1235,9 @@ impl Shell {
         for s in sfx_queue {
             self.system_sfx(s);
         }
+        if next.is_none() {
+            self.live_options();
+        }
         if let Some(t) = next {
             self.transition(t);
         }
@@ -1326,6 +1391,15 @@ impl Shell {
                     self.fullscreen
                         .then_some(winit::window::Fullscreen::Borderless(None)),
                 );
+            }
+            // keep an open options screen from switching it back on its next change
+            self.config.video.fullscreen = self.fullscreen;
+            match &mut self.screen {
+                Screen::Options(o) => o.config.video.fullscreen = self.fullscreen,
+                Screen::Ui(u) if matches!(u.kind, UiKind::Options | UiKind::Controls) => {
+                    u.config.video.fullscreen = self.fullscreen;
+                }
+                _ => {}
             }
             return;
         }

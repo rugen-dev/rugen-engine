@@ -41,6 +41,8 @@ pub struct Audio {
         StreamingSoundHandle<kira::sound::FromFileError>,
     )>,
     music_volume: f32,
+    /// Volume of the current track itself (system.def `bgm.volume`), 0..=2.
+    music_track: f32,
 }
 
 impl Audio {
@@ -54,16 +56,25 @@ impl Audio {
             master: 1.0,
             music: None,
             music_volume: 1.0,
+            music_track: 1.0,
         })
     }
 
+    /// Music loudness relative to the master volume; applies to the playing track at once.
     pub fn set_music_volume(&mut self, v: f32) {
         self.music_volume = v.clamp(0.0, 1.0);
+        self.refresh_music();
+    }
+
+    /// Linear music gain: master x music x track.
+    fn music_gain(&self) -> f32 {
+        self.master * self.music_volume * self.music_track
+    }
+
+    fn refresh_music(&mut self) {
+        let db = Decibels::from(volume_db(self.music_gain()));
         if let Some((_, h)) = self.music.as_mut() {
-            h.set_volume(
-                Decibels::from(volume_db(self.music_volume)),
-                Tween::default(),
-            );
+            h.set_volume(db, Tween::default());
         }
     }
 
@@ -81,6 +92,7 @@ impl Audio {
             return;
         }
         self.stop_music();
+        self.music_track = volume.clamp(0.0, 2.0);
         let data = match StreamingSoundData::from_file(path) {
             Ok(d) => d,
             Err(e) => {
@@ -88,7 +100,7 @@ impl Audio {
                 return;
             }
         };
-        let vol = Decibels::from(volume_db(self.music_volume * volume.clamp(0.0, 2.0)));
+        let vol = Decibels::from(volume_db(self.music_gain()));
         let mut data = data.with_settings(StreamingSoundSettings::new().volume(vol));
         if looping {
             data = data.loop_region(..);
@@ -105,8 +117,10 @@ impl Audio {
         }
     }
 
+    /// Overall loudness of sound effects and music; the playing track follows at once.
     pub fn set_master_volume(&mut self, v: f32) {
         self.master = v.clamp(0.0, 1.0);
+        self.refresh_music();
     }
 
     /// Decode and remember a sample. Returns false when the bytes are not playable.

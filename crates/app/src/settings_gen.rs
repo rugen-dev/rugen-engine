@@ -686,7 +686,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED WHEN YOU LEAVE THE OPTIONS"
+  text = "APPLIED AT ONCE AND SAVED"
   x = 28
   y = 400
   font = 2
