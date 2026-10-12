@@ -361,3 +361,152 @@ fn rollback_match_over_turn_stays_in_sync() {
         eprintln!("{r}");
     }
 }
+
+/// A refused TURN credential leaves both players on the server relay
+/// quickly (the failing side tells the other through the relay).
+#[test]
+fn refused_turn_falls_back_to_the_relay() {
+    let Some((_, creds)) = server() else {
+        eprintln!("RUGEN_TEST_TURN not set; skipping");
+        return;
+    };
+    let mut bad = only(&creds, false);
+    bad.credential = "wrong".into();
+    let forwarded = Arc::new(AtomicU64::new(0));
+    let srv = relay(forwarded);
+    let side = |slot: u8| {
+        let bad = bad.clone();
+        std::thread::spawn(move || {
+            let mut t = SessionTicket {
+                session: SESSION,
+                slot,
+                token: rugen_proto::to_hex(&token(slot as usize)),
+                udp: Some(srv.to_string()),
+                ..Default::default()
+            };
+            t.transports.push(RelayTransport::turn(
+                bad.urls.clone(),
+                &bad.username,
+                &bad.credential,
+                0,
+            ));
+            let mut s =
+                RelaySocket::connect_udp(&t, &srv.to_string(), Duration::from_secs(3)).unwrap();
+            s.wait_for(0b11, Duration::from_secs(10), &mut |_| {})
+                .unwrap();
+            let start = Instant::now();
+            let on = s.settle_turn(Duration::from_millis(1500));
+            let waited = start.elapsed();
+            let rtt = s.peer_rtt(1 - slot, 3, Duration::from_secs(2));
+            (on, waited, s.transport_name(), rtt)
+        })
+    };
+    let (a, b) = (side(0), side(1));
+    for (on, waited, name, rtt) in [a.join().unwrap(), b.join().unwrap()] {
+        assert!(!on);
+        assert_eq!(name, "UDP");
+        assert!(rtt.is_some(), "the relay still carries traffic");
+        assert!(
+            waited < Duration::from_millis(1500),
+            "gave up in {waited:?}"
+        );
+    }
+}
+
+/// Reach Cloudflare's TURN service over UDP, TCP and TLS with a bogus
+/// credential: each transport must get as far as the authenticated
+/// Allocate (401 → realm / nonce → MESSAGE-INTEGRITY → refused again).
+/// Network test: `RUGEN_TEST_CF_SMOKE=1`.
+#[test]
+fn cloudflare_turn_answers_on_every_transport() {
+    if std::env::var_os("RUGEN_TEST_CF_SMOKE").is_none() {
+        eprintln!("RUGEN_TEST_CF_SMOKE not set; skipping");
+        return;
+    }
+    for url in [
+        "turn:turn.cloudflare.com:3478?transport=udp",
+        "turn:turn.cloudflare.com:3478?transport=tcp",
+        "turns:turn.cloudflare.com:5349?transport=tcp",
+        "turns:turn.cloudflare.com:443?transport=tcp",
+    ] {
+        let c = TurnCredentials {
+            urls: vec![url.into()],
+            username: "0123456789abcdef".repeat(6),
+            credential: "bogus".into(),
+        };
+        let t = Instant::now();
+        let e = TurnClient::allocate(&c, Duration::from_secs(5))
+            .err()
+            .expect("a bogus credential is refused");
+        eprintln!("{url}: {e} ({:?})", t.elapsed());
+        // Cloudflare answers the authenticated request with 400 for an
+        // unknown credential (after the 401 challenge)
+        let e = e.to_string();
+        assert!(
+            e.contains("TURN error 4") && e.contains("(authenticated)"),
+            "{url}: {e}"
+        );
+    }
+}
+
+/// Real Cloudflare credentials (`RUGEN_CF_TURN_KEY_ID` / `RUGEN_CF_TURN_TOKEN`
+/// in the environment): two allocations relay to each other through
+/// Cloudflare and the round trip is printed. Credentials are revoked after.
+#[test]
+fn cloudflare_live_relay() {
+    let (Ok(key), Ok(token)) = (
+        std::env::var("RUGEN_CF_TURN_KEY_ID"),
+        std::env::var("RUGEN_CF_TURN_TOKEN"),
+    ) else {
+        eprintln!("RUGEN_CF_TURN_KEY_ID / RUGEN_CF_TURN_TOKEN not set; skipping");
+        return;
+    };
+    let api = format!("https://rtc.live.cloudflare.com/v1/turn/keys/{key}/credentials");
+    let generate = || -> TurnCredentials {
+        let v: serde_json::Value = ureq::post(&format!("{api}/generate-ice-servers"))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send_json(serde_json::json!({ "ttl": 300 }))
+            .expect("generate credentials")
+            .body_mut()
+            .read_json()
+            .unwrap();
+        let s = v["iceServers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s.get("username").is_some())
+            .unwrap();
+        TurnCredentials {
+            urls: s["urls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|u| u.as_str().map(String::from))
+                .collect(),
+            username: s["username"].as_str().unwrap().into(),
+            credential: s["credential"].as_str().unwrap().into(),
+        }
+    };
+    let (ca, cb) = (generate(), generate());
+    for tcp in [false, true] {
+        let pick = |c: &TurnCredentials| {
+            let mut c = c.clone();
+            c.urls
+                .retain(|u| u.starts_with("turn:") && u.ends_with("tcp") == tcp);
+            c
+        };
+        let mut a = TurnClient::allocate(&pick(&ca), Duration::from_secs(5)).expect("allocate a");
+        let mut b = TurnClient::allocate(&pick(&cb), Duration::from_secs(5)).expect("allocate b");
+        a.bind_peer(b.relayed(), Duration::from_secs(3))
+            .expect("bind a");
+        b.bind_peer(a.relayed(), Duration::from_secs(3))
+            .expect("bind b");
+        let rtts = echo_rtts(&mut a, &mut b, 100);
+        eprintln!("Cloudflare {}: {}", a.proto().name(), summary(rtts));
+    }
+    for c in [ca, cb] {
+        let _ = ureq::post(&format!("{api}/{}/revoke", c.username))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send_empty();
+    }
+}

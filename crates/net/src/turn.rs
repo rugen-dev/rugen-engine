@@ -612,7 +612,12 @@ impl TurnClient {
                             continue 'outer;
                         }
                         let (code, why) = resp.error().unwrap_or((0, String::new()));
-                        return Err(err(format!("TURN error {code} {why}")));
+                        let stage = if self.realm.is_empty() {
+                            "unauthenticated"
+                        } else {
+                            "authenticated"
+                        };
+                        return Err(err(format!("TURN error {code} {} ({stage})", why.trim())));
                     }
                     _ => continue,
                 }
@@ -873,7 +878,7 @@ const MSG_KEEP_ALIVE: u8 = 7;
 
 /// Without a TURN packet from the peer for this long the overlay counts as
 /// unhealthy and traffic goes through the server relay as well.
-const HEALTHY: Duration = Duration::from_millis(1500);
+const HEALTHY: Duration = Duration::from_millis(800);
 /// Give up on TURN when it is not working after this long.
 const GIVE_UP: Duration = Duration::from_secs(12);
 const ALLOC_BUDGET: Duration = Duration::from_secs(4);

@@ -303,6 +303,10 @@ impl RelaySocket {
         self.clock.elapsed().as_millis() as u64
     }
 
+    fn now_us(&self) -> u64 {
+        self.clock.elapsed().as_micros() as u64
+    }
+
     /// Answer pings from other slots; returns a pong's round trip.
     fn answer(&mut self, h: Header, p: &[u8]) -> Option<u32> {
         if h.kind != wire::DATA || p.is_empty() {
@@ -332,8 +336,9 @@ impl RelaySocket {
                 None
             }
             T_PONG if p.len() == 9 => {
+                // our own clock in µs (the peer only echoes it)
                 let t = u64::from_be_bytes(p[1..9].try_into().ok()?);
-                Some(self.now_ms().saturating_sub(t) as u32)
+                Some(self.now_us().saturating_sub(t) as u32)
             }
             _ => None,
         }
@@ -342,13 +347,20 @@ impl RelaySocket {
     /// Median round trip to the player in `peer` through the server
     /// (that player answers automatically while connecting or playing).
     pub fn peer_rtt(&mut self, peer: u8, samples: usize, timeout: Duration) -> Option<u32> {
+        let mut got = self.peer_rtt_samples(peer, samples, timeout);
+        median(&mut got).map(|us| (us + 500) / 1000)
+    }
+
+    /// Round-trip samples to `peer` in microseconds (pings every 40 ms
+    /// over the path match traffic takes: TURN once it is up).
+    pub fn peer_rtt_samples(&mut self, peer: u8, samples: usize, timeout: Duration) -> Vec<u32> {
         let start = Instant::now();
         let mut last = start - Duration::from_secs(1);
         let mut got = Vec::new();
         while start.elapsed() < timeout && got.len() < samples {
             if last.elapsed() >= Duration::from_millis(40) {
                 let mut p = vec![T_PING];
-                p.extend(self.now_ms().to_be_bytes());
+                p.extend(self.now_us().to_be_bytes());
                 self.send_payload(peer, &p);
                 last = Instant::now();
             }
@@ -359,9 +371,9 @@ impl RelaySocket {
                     got.push(rtt);
                 }
             }
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::sleep(Duration::from_micros(200));
         }
-        median(&mut got)
+        got
     }
 
     /// Median round trip to the server itself.
