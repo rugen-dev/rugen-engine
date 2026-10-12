@@ -1285,7 +1285,9 @@ impl Shell {
         if let Some(t) = next {
             self.transition(t);
         }
-        if advanced {
+        // a pause menu holds the match but still counts toward `--frames`
+        // (so a harness run can screenshot it)
+        if advanced || self.pause.is_some() {
             self.ticks += 1;
             if let Some(n) = self.harness.frames
                 && self.ticks >= n
