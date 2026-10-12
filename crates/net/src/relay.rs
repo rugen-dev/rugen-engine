@@ -114,27 +114,58 @@ impl RelaySocket {
         })
     }
 
-    /// Join the relay session of `ticket`: UDP if the server's relay port
-    /// answers within `udp_probe`, otherwise the WebSocket at `server_base`.
+    /// Join the relay session of `ticket` with the server's transports in
+    /// its order of preference (`ticket.transports`; older servers: UDP
+    /// from `ticket.udp`, then the WebSocket). UDP is tried only when the
+    /// server offers it and `udp_probe` is not zero: a server without UDP
+    /// (tunnel-only) goes straight to the WebSocket, no probe delay.
     pub fn connect(
         ticket: &SessionTicket,
         server_base: &str,
         udp_probe: Duration,
         progress: &mut dyn FnMut(&str),
     ) -> Result<Self> {
-        if let Some(udp) = ticket.udp.as_deref().filter(|_| !udp_probe.is_zero()) {
-            let udp = udp_target(udp, server_base);
-            match Self::connect_udp(ticket, &udp, udp_probe) {
-                Ok(s) => {
-                    progress("relay: UDP");
-                    return Ok(s);
+        let plan = if ticket.transports.is_empty() {
+            rugen_proto::relay_transports(ticket.udp.as_deref())
+        } else {
+            ticket.transports.clone()
+        };
+        let mut last = rz("the server offers no relay transport this game knows");
+        for t in plan {
+            match t.kind.as_str() {
+                "udp" if !udp_probe.is_zero() => {
+                    let udp = udp_target(&t.addr, server_base);
+                    match Self::connect_udp(ticket, &udp, udp_probe) {
+                        Ok(s) => {
+                            progress("relay: UDP");
+                            return Ok(s);
+                        }
+                        Err(e) => {
+                            progress(&format!(
+                                "relay: UDP unavailable ({e}), trying the next transport"
+                            ));
+                            last = e;
+                        }
+                    }
                 }
-                Err(e) => progress(&format!("relay: UDP unavailable ({e}), using WebSocket")),
+                "ws" => {
+                    let url = if t.addr.starts_with("ws://") || t.addr.starts_with("wss://") {
+                        t.addr.clone()
+                    } else {
+                        relay_ws_url(server_base)
+                    };
+                    match Self::connect_ws(ticket, &url) {
+                        Ok(s) => {
+                            progress("relay: WebSocket");
+                            return Ok(s);
+                        }
+                        Err(e) => last = e,
+                    }
+                }
+                _ => {}
             }
         }
-        let s = Self::connect_ws(ticket, &relay_ws_url(server_base))?;
-        progress("relay: WebSocket");
-        Ok(s)
+        Err(last)
     }
 
     pub fn connect_udp(ticket: &SessionTicket, server: &str, probe: Duration) -> Result<Self> {
@@ -513,6 +544,7 @@ mod tests {
             token: rugen_proto::to_hex(&tokens[slot as usize]),
             spectators: 0,
             udp: Some(server.to_string()),
+            transports: Vec::new(),
         };
         let mut a = RelaySocket::connect(
             &ticket(0),

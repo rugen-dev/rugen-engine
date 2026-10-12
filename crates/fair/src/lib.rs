@@ -12,12 +12,15 @@
 //! * [`profile`]: static analysis → [`FairnessProfile`] (stats, damage,
 //!   tools, cheat flags, power score).
 //! * [`verdict`]: FAIR / UNBALANCED / BLOCKED from two profiles.
+//! * [`trust`]: Ed25519 signatures over canonical JSON (official server,
+//!   truth feed, signed verdicts and results).
 
 #![forbid(unsafe_code)]
 
 pub mod files;
 pub mod package;
 pub mod profile;
+pub mod trust;
 pub mod verdict;
 
 use std::path::Path;

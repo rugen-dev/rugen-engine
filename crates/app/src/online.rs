@@ -1,7 +1,12 @@
 //! ONLINE screens on the UI engine (`motif/ui/online.toml`).
 //!
-//! 1. **Servers**: `[net] server` + `[net] servers` favourites with name,
-//!    MOTD, players online and ping; ADD SERVER saves a new favourite.
+//! 1. **Servers**: the built-in **official** server, pinned first (it holds
+//!    the global ranking and the global cheat blocklist), then the
+//!    **community** servers of `[net] servers` with name, MOTD, players
+//!    online and ping; ADD SERVER / REMOVE SERVER edit the community list.
+//!    A server is shown as OFFICIAL only once it signed our nonce with the
+//!    official key (see [`crate::official`]); ranked, leaderboard and
+//!    ratings are labelled OFFICIAL or COMMUNITY (server name) everywhere.
 //! 2. **Lobby** of the chosen server: public rooms (join / watch), create a
 //!    room (name, public / private, password, rules, spectator seats), join
 //!    by code (+ password), quick match, ranked, leaderboard.
@@ -38,10 +43,12 @@ use winit::keyboard::Key;
 use crate::config::{Config, GOOD_PING_MS};
 use crate::game::Transition;
 use crate::matchup::{Driver, Shared, Xfer, XferState};
+use crate::official::{self, Stamp, Trust};
 use crate::play::{FightSetup, NetMode};
 use crate::system::SystemData;
 use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, viewport};
 use crate::versus::Portrait;
+use rugen_net::online::SignedBlob;
 use rugen_net::online::{FighterCard, VerdictKind};
 
 /// Which online match a fight belongs to, for result reporting.
@@ -63,6 +70,20 @@ static RESUME: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
 
 /// Fighter brought to the last matchup (picked again for a rematch).
 static LAST_PICK: Mutex<Option<String>> = Mutex::new(None);
+
+/// The last reported online result: (server, match id, my account, ack).
+/// Shown on the ONLINE screen with its signature stamp; fetched again
+/// while the opponent has not reported yet.
+pub struct LastResult {
+    pub server: String,
+    pub match_id: u64,
+    pub me: u64,
+    pub ranked: bool,
+    pub won: bool,
+    pub ack: Option<ResultAck>,
+}
+
+static LAST_RESULT: Mutex<Option<LastResult>> = Mutex::new(None);
 
 /// Match ids already played from this machine (a stale room view never restarts one).
 static STARTED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
@@ -110,6 +131,8 @@ struct Mx {
 enum State {
     Servers,
     AddServer,
+    /// Picking a community server to remove.
+    RemoveServer,
     Menu,
     Lobby,
     Create,
@@ -125,7 +148,11 @@ enum State {
 
 enum Job {
     Register(Pending<Registered>),
-    Info(usize, Pending<(ServerInfo, u32)>),
+    Info(usize, Pending<(ServerInfo, u32, Option<SignedBlob>)>),
+    /// The official truth feed (from the official server or a mirror).
+    Truth(Pending<SignedBlob>),
+    /// Our last result again (signed once the opponent reported).
+    Result(Pending<ResultAck>),
     Me(Pending<ProfileInfo>),
     Rooms(Pending<Vec<RoomSummary>>),
     Room(Pending<RoomInfo>),
@@ -138,9 +165,14 @@ enum Job {
 #[derive(Clone, Debug, Default)]
 struct ServerRow {
     addr: String,
+    /// The built-in official entry (pinned, cannot be removed).
+    official: bool,
     info: Option<ServerInfo>,
     ping: Option<u32>,
     error: bool,
+    /// Who the server proved to be (identity nonce).
+    trust: Trust,
+    nonce: String,
 }
 
 /// The create-room form.
@@ -217,6 +249,8 @@ pub struct OnlineScreen {
     pub hold_for_shot: bool,
     /// CONFIRM was visible last refresh (focus moves onto it when it appears).
     confirm_focused: bool,
+    /// Server row to focus once the list is laid out (the default server).
+    pending_focus: Option<usize>,
 }
 
 /// Account (id, key) for `server`; the legacy single key belongs to `[net] server`.
@@ -224,7 +258,12 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
     if let Some((id, key)) = profile.online_accounts.get(server) {
         return (*id, key.clone());
     }
-    if server.eq_ignore_ascii_case(config.net.server.trim()) && !profile.online_key.is_empty() {
+    let legacy = if config.net.server.trim().is_empty() {
+        official::server()
+    } else {
+        config.net.server.trim()
+    };
+    if official::same_server(server, legacy) && !profile.online_key.is_empty() {
         return (profile.online_id, profile.online_key.clone());
     }
     (0, String::new())
@@ -287,10 +326,11 @@ impl OnlineScreen {
             error: String::new(),
             servers: config
                 .net
-                .server_list()
+                .server_list(official::server())
                 .into_iter()
-                .map(|addr| ServerRow {
-                    addr,
+                .map(|e| ServerRow {
+                    addr: e.addr,
+                    official: e.official,
                     ..Default::default()
                 })
                 .collect(),
@@ -317,18 +357,18 @@ impl OnlineScreen {
             auto_quit_at: None,
             hold_for_shot: false,
             confirm_focused: false,
+            pending_focus: None,
             direct_side: 0,
             addr: String::new(),
             local_ip: rugen_net::socket::lan_ip()
                 .map(|ip| ip.to_string())
                 .unwrap_or_else(|| "YOUR-IP".into()),
         };
-        s.status = if s.servers.is_empty() {
-            "NO SERVER YET: ADD ONE, OR PLAY A DIRECT (LAN) MATCH".into()
-        } else {
-            "PICK A SERVER".into()
-        };
+        s.status = "PICK A SERVER: OFFICIAL OR COMMUNITY".into();
+        official::init(&lib.cache_dir());
         s.probe_servers();
+        s.fetch_truth(None);
+        s.poll_last_result();
         // back from a match: straight into the same server (and room)
         if let Some((server, room)) = RESUME.lock().ok().and_then(|mut r| r.take()) {
             s.connect(&server);
@@ -341,7 +381,93 @@ impl OnlineScreen {
             }
         }
         s.refresh();
+        if s.state == State::Servers {
+            let default = s.config.net.default_index(official::server());
+            s.pending_focus = (default > 0).then_some(default);
+        }
         Ok(s)
+    }
+
+    /// Download the official truth feed (blocklist + ratings): from the
+    /// official server, or the mirror of `via` (a community server).
+    fn fetch_truth(&mut self, via: Option<&str>) {
+        let c = OnlineClient::new(via.unwrap_or(official::server()), None);
+        let mirror = via.is_some();
+        self.jobs.push(Job::Truth(Pending::spawn(move || {
+            if mirror {
+                c.official_mirror()
+            } else {
+                c.truth()
+            }
+        })));
+    }
+
+    /// The last result is still waiting for the opponent's report: ask again.
+    fn poll_last_result(&mut self) {
+        let Some((server, id)) = LAST_RESULT.lock().ok().and_then(|l| {
+            l.as_ref()
+                .filter(|r| {
+                    r.ack
+                        .as_ref()
+                        .is_none_or(|a| a.signed.is_none() && !a.disputed)
+                })
+                .map(|r| (r.server.clone(), r.match_id))
+        }) else {
+            return;
+        };
+        let (_, key) = account_for(&self.profile, &self.config, &server);
+        if key.is_empty() {
+            return;
+        }
+        let c = OnlineClient::new(&server, Some(key));
+        self.jobs
+            .push(Job::Result(Pending::spawn(move || c.match_result(id))));
+    }
+
+    /// What we know about a server's operator.
+    fn trust_of(&self, addr: &str) -> Trust {
+        self.servers
+            .iter()
+            .find(|r| official::same_server(&r.addr, addr))
+            .map(|r| r.trust.clone())
+            .unwrap_or_default()
+    }
+
+    /// Ranking scope of the connected server: `OFFICIAL` (global) or
+    /// `COMMUNITY · NAME` (local to that server).
+    fn scope(&self) -> String {
+        match self.trust_of(&self.client.server) {
+            Trust::Official => "OFFICIAL".into(),
+            Trust::Impostor => format!("UNVERIFIED · {}", self.server_name().to_uppercase()),
+            _ => format!("COMMUNITY · {}", self.server_name().to_uppercase()),
+        }
+    }
+
+    /// The last result line (signature stamp included).
+    fn last_result_line(&self) -> String {
+        let Ok(l) = LAST_RESULT.lock() else {
+            return String::new();
+        };
+        let Some(r) = l.as_ref() else {
+            return String::new();
+        };
+        let what = if r.ranked { "RANKED" } else { "MATCH" };
+        let outcome = if r.won { "WIN" } else { "LOSS" };
+        match &r.ack {
+            None => format!("LAST {what}: {outcome} - REPORTING..."),
+            Some(a) if a.disputed => format!("LAST {what}: {outcome} - DISPUTED, NOT COUNTED"),
+            Some(a) if a.signed.is_none() && a.delta.is_none() => {
+                format!("LAST {what}: {outcome} - WAITING FOR THE OPPONENT'S REPORT")
+            }
+            Some(a) => {
+                let stamp = official::result_stamp(a, r.match_id, r.me);
+                let rating = match (r.ranked, a.rating, a.delta) {
+                    (true, Some(rt), Some(d)) => format!(" {d:+} -> {rt}"),
+                    _ => String::new(),
+                };
+                format!("LAST {what}: {outcome}{rating} · {}", stamp.label("RESULT"))
+            }
+        }
     }
 
     /// `rugen play --server`: connect straight to `auto.server` and drive the flow.
@@ -358,6 +484,20 @@ impl OnlineScreen {
         let mut s = Self::load(motif, root, lib, config)?;
         s.jobs.clear();
         let server = auto.server.clone();
+        // still learn who runs the server (OFFICIAL / COMMUNITY labels)
+        if !s
+            .servers
+            .iter()
+            .any(|r| official::same_server(&r.addr, &server))
+        {
+            s.servers.push(ServerRow {
+                addr: server.clone(),
+                official: official::is_official_addr(&server),
+                ..Default::default()
+            });
+        }
+        s.probe_servers();
+        s.fetch_truth(None);
         s.auto = Some(auto);
         s.connect(&server);
         s.refresh();
@@ -721,13 +861,21 @@ impl OnlineScreen {
         }
         let has_portrait = self.mem.get(&key).is_some_and(|(w, _, _)| *w > 0);
         let p = d.profile.clone().unwrap_or_default();
-        let rating = match &c.rating {
-            Some(r) if r.games > 0 => format!(
-                "COMMUNITY {}  ({} GAMES, {} WINS)",
-                r.rating, r.games, r.wins
-            ),
-            _ => "COMMUNITY: UNRATED".to_string(),
+        let here = if self.trust_of(&self.client.server).is_official() {
+            "OFFICIAL"
+        } else {
+            "THIS SERVER"
         };
+        let mut rating = match &c.rating {
+            Some(r) if r.games > 0 => format!("{here} {}  ({} GAMES)", r.rating, r.games),
+            _ => format!("{here}: UNRATED"),
+        };
+        if here != "OFFICIAL"
+            && let Some((r, g)) = official::rating(&d.fingerprint)
+        {
+            rating = format!("{rating}  ·  OFFICIAL {r} ({g})");
+        }
+        let official_block = official::blocked(&d.fingerprint);
         let name = d.name.to_uppercase();
         json!({
             "present": true,
@@ -741,7 +889,9 @@ impl OnlineScreen {
             "stats3": format!("BEST HIT {}   COMBO ~{}", p.max_hit_damage, p.est_combo_damage),
             "power": format!("POWER {:.0}", p.power_score),
             "rating": rating,
-            "verified": if p.blocked() { "BLOCKED: NEVER SHARED" } else if c.verified { "FILES CHECKED BY THE SERVER" } else { "WAITING FOR THE SERVER CHECK" },
+            "verified": if official_block.is_some() { "BLOCKED BY THE OFFICIAL SERVER" } else if p.blocked() { "BLOCKED: NEVER SHARED" } else if c.verified { "FILES CHECKED BY THE SERVER" } else { "WAITING FOR THE SERVER CHECK" },
+            "official_block": official_block.as_ref().map(|w| format!("OFFICIAL BLOCK: {w}")).unwrap_or_default(),
+            "has_official_block": official_block.is_some(),
             "size": format!("{:.1} MB", d.size as f64 / 1048576.0),
             "status": status,
             "flags": p.flags.iter().map(|f| f.code.to_uppercase()).collect::<Vec<_>>().join(" "),
@@ -795,7 +945,8 @@ impl OnlineScreen {
             let Some(card) = &v.fighters[i] else {
                 return "PICKING...".into();
             };
-            let blocked = card.decl.profile.as_ref().is_some_and(|p| p.blocked());
+            let blocked = card.decl.profile.as_ref().is_some_and(|p| p.blocked())
+                || official::blocked(&card.decl.fingerprint).is_some();
             if blocked {
                 "BLOCKED".into()
             } else if v.ready[i] {
@@ -868,12 +1019,20 @@ impl OnlineScreen {
             (_, "started") => "MATCH STARTING".to_string(),
             _ => String::new(),
         };
+        let stamp = if both && kind.is_some() {
+            official::verdict_stamp(&v)
+        } else {
+            Stamp::Unsigned
+        };
+        if let Stamp::Forged(e) = &stamp {
+            log::warn!("online: verdict signature rejected: {e}");
+        }
         let can_confirm = !spectator
             && phase == "confirm"
             && !snap.accepted
             && !(ranked && kind == Some(VerdictKind::Unbalanced));
         json!({
-            "title": if spectator { "WATCHING" } else if ranked { "RANKED MATCHUP" } else { "MATCHUP" },
+            "title": if spectator { "WATCHING".to_string() } else if ranked { format!("RANKED MATCHUP · {}", if self.trust_of(&self.client.server).is_official() { "OFFICIAL" } else { "COMMUNITY" }) } else { "MATCHUP".to_string() },
             "left": left,
             "right": right,
             "left_tag": if spectator { "P1" } else { "YOU" },
@@ -885,6 +1044,9 @@ impl OnlineScreen {
             "unbalanced": both && kind == Some(VerdictKind::Unbalanced),
             "blocked": both && kind == Some(VerdictKind::Blocked),
             "ratio": verdict.as_ref().filter(|v| v.ratio > 0.0).map(|v| format!("POWER RATIO {:.2}", v.ratio)).unwrap_or_default(),
+            "stamp": if both && kind.is_some() { stamp.label("VERDICT") } else { String::new() },
+            "stamp_official": stamp.is_official(),
+            "stamp_other": both && kind.is_some() && !stamp.is_official(),
             "reasons": reasons,
             "no_reasons": reasons.is_empty(),
             "hint": hint,
@@ -899,16 +1061,24 @@ impl OnlineScreen {
         })
     }
 
-    /// Ask every listed server for its info and measure the round trip.
+    /// Ask every listed server for its info, measure the round trip and
+    /// have it sign a fresh nonce (who holds which key).
     fn probe_servers(&mut self) {
-        for (i, row) in self.servers.iter().enumerate() {
+        for (i, row) in self.servers.iter_mut().enumerate() {
             let c = OnlineClient::new(&row.addr, None);
+            row.nonce = official::nonce();
+            let nonce = row.nonce.clone();
             self.jobs.push(Job::Info(
                 i,
                 Pending::spawn(move || {
                     let info = c.info()?;
                     let ping = c.ping()?;
-                    Ok((info, ping))
+                    let id = if info.key.is_some() {
+                        c.identity(&nonce).ok()
+                    } else {
+                        None
+                    };
+                    Ok((info, ping, id))
                 }),
             ));
         }
@@ -922,6 +1092,10 @@ impl OnlineScreen {
         self.state = State::Menu;
         self.error.clear();
         self.status = format!("CONNECTING TO {}", server.to_uppercase());
+        // no official feed yet (official server unreachable): its mirror here
+        if official::feed().is_none() && !official::is_official_addr(server) {
+            self.fetch_truth(Some(server));
+        }
         if self.client.key.is_none() {
             let mut c = self.client.clone();
             self.jobs
@@ -1004,6 +1178,14 @@ impl OnlineScreen {
                 .and_then(|q| q.found.as_ref())
                 .and_then(|m| m.est_ping_ms)
         });
+        let scope = self.scope();
+        let ranked_official = scope == "OFFICIAL";
+        let scope_short = if ranked_official {
+            "OFFICIAL"
+        } else {
+            "COMMUNITY"
+        }
+        .to_string();
         let board_rows: Vec<Value> = self
             .board
             .as_ref()
@@ -1013,6 +1195,7 @@ impl OnlineScreen {
                     .enumerate()
                     .map(|(i, p)| {
                         json!({
+                            "scope": scope_short.clone(),
                             "pos": i + 1,
                             "name": p.name,
                             "rating": p.rating,
@@ -1027,7 +1210,7 @@ impl OnlineScreen {
             .board
             .as_ref()
             .and_then(|b| b.me.as_ref())
-            .map(|(pos, _)| format!("YOUR RANK #{pos}"))
+            .map(|(pos, _)| format!("YOUR {scope_short} RANK #{pos}"))
             .unwrap_or_else(|| "UNRANKED - PLAY A RANKED MATCH".into());
         let has_server = self.client.key.is_some() || self.state != State::Servers;
         let menu: Vec<Value> = match self.state {
@@ -1037,20 +1220,30 @@ impl OnlineScreen {
                     .iter()
                     .enumerate()
                     .map(|(i, r)| {
+                        let name = |s: &str, n: usize| s.to_uppercase().chars().take(n).collect::<String>();
                         let label = match (&r.info, r.error) {
-                            (Some(info), _) => format!(
-                                "{}  {}",
-                                info.name.to_uppercase().chars().take(14).collect::<String>(),
-                                ping_text(r.ping)
-                            ),
-                            (None, true) => format!("{} OFFLINE", r.addr.to_uppercase().chars().take(14).collect::<String>()),
-                            (None, false) => format!("{} ...", r.addr.to_uppercase().chars().take(16).collect::<String>()),
+                            (Some(info), _) => format!("{}  {}", name(&info.name, 15), r.ping.map_or("--".into(), |p| format!("{p} MS"))),
+                            (None, true) => format!("{} OFFLINE", name(official::host_label(&r.addr), 12)),
+                            (None, false) => format!("{} ...", name(official::host_label(&r.addr), 17)),
                         };
-                        json!({ "id": format!("srv{i}"), "label": label, "action": format!("server:{i}") })
+                        let badge = match (r.official, &r.trust) {
+                            (_, Trust::Impostor) => "UNVERIFIED",
+                            (true, _) => "OFFICIAL",
+                            (false, _) => "COMMUNITY",
+                        };
+                        json!({
+                            "id": format!("srv{i}"), "label": label, "action": format!("server:{i}"),
+                            "badge": badge, "has_badge": true,
+                            "official": r.official && r.trust != Trust::Impostor,
+                            "community": !r.official || r.trust == Trust::Impostor,
+                        })
                     })
                     .collect();
+                m.push(json!({ "id": "add", "label": "ADD SERVER", "action": "online:add" }));
+                if self.servers.iter().any(|r| !r.official) {
+                    m.push(json!({ "id": "remove", "label": "REMOVE SERVER", "action": "online:remove" }));
+                }
                 m.extend([
-                    json!({ "id": "add", "label": "ADD SERVER", "action": "online:add" }),
                     json!({ "id": "host", "label": "HOST DIRECT (LAN)", "action": "online:host" }),
                     json!({ "id": "direct", "label": "JOIN DIRECT (LAN)", "action": "online:direct" }),
                 ]);
@@ -1058,6 +1251,25 @@ impl OnlineScreen {
                     m.push(json!({ "id": "netplay", "label": "NETPLAY (RUGEN.TOML)", "action": "netplay" }));
                 }
                 m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
+                m
+            }
+            State::RemoveServer => {
+                let mut m: Vec<Value> = self
+                    .servers
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| !r.official)
+                    .map(|(i, r)| {
+                        let name = r.info.as_ref().map_or(official::host_label(&r.addr).to_string(), |i| i.name.clone());
+                        json!({
+                            "id": format!("rm{i}"),
+                            "label": format!("REMOVE {}", name.to_uppercase().chars().take(16).collect::<String>()),
+                            "action": format!("server_remove:{i}"),
+                            "badge": "COMMUNITY", "has_badge": true, "community": true, "official": false,
+                        })
+                    })
+                    .collect();
+                m.push(json!({ "id": "back", "label": "CANCEL", "action": "back" }));
                 m
             }
             _ => vec![
@@ -1106,8 +1318,12 @@ impl OnlineScreen {
                     .collect()
             })
             .unwrap_or_default();
-        let server_line = if self.state == State::Servers {
-            "SERVERS".to_string()
+        let server_line = if matches!(self.state, State::Servers | State::RemoveServer) {
+            if official::feed().is_some() {
+                "SERVERS  ·  OFFICIAL BLOCKLIST UP TO DATE".to_string()
+            } else {
+                "SERVERS".to_string()
+            }
         } else {
             let info = self
                 .servers
@@ -1116,7 +1332,7 @@ impl OnlineScreen {
                 .and_then(|r| r.info.clone());
             format!(
                 "{}   {} ONLINE   {} ROOMS   {}",
-                self.server_name().to_uppercase(),
+                scope,
                 info.as_ref().map_or(0, |i| i.online),
                 info.as_ref().map_or(0, |i| i.rooms),
                 ping_text(self.server_ping()),
@@ -1133,8 +1349,8 @@ impl OnlineScreen {
         let f = &self.form;
         let data = json!({
             "menu": menu,
-            "is_menu": matches!(self.state, State::Menu | State::Servers),
-            "is_servers": self.state == State::Servers,
+            "is_menu": matches!(self.state, State::Menu | State::Servers | State::RemoveServer),
+            "is_servers": matches!(self.state, State::Servers | State::RemoveServer),
             "is_add": self.state == State::AddServer,
             "is_lobby": self.state == State::Lobby,
             "is_create": self.state == State::Create,
@@ -1146,8 +1362,13 @@ impl OnlineScreen {
             "is_matchup": self.state == State::Matchup,
             "not_matchup": self.state != State::Matchup,
             "mx": mx,
-            "has_server": has_server && self.state != State::Servers && self.state != State::Matchup,
-            "no_server": self.state == State::Servers,
+            "has_server": has_server && !matches!(self.state, State::Servers | State::RemoveServer | State::Matchup),
+            "no_server": matches!(self.state, State::Servers | State::RemoveServer),
+            "scope": scope,
+            "ranked_official": ranked_official,
+            "ranked_community": !ranked_official,
+            "last_result": self.last_result_line(),
+            "has_last_result": !self.last_result_line().is_empty() && !matches!(self.state, State::Matchup),
             "server_line": server_line,
             "motd": motd,
             "lobby": lobby,
@@ -1181,6 +1402,11 @@ impl OnlineScreen {
                 "ping": ping_text(self.server_ping()),
             },
             "me": {
+                "scope": if ranked_official {
+                    "OFFICIAL RANKING · GLOBAL".to_string()
+                } else {
+                    format!("COMMUNITY RANKING · {}", self.server_name().to_uppercase().chars().take(14).collect::<String>())
+                },
                 "name": me.name,
                 "rating": me.rating,
                 "best": me.best_rating,
@@ -1202,6 +1428,7 @@ impl OnlineScreen {
             "typed": format!("{:<5}", self.typed).replace(' ', "_"),
             "password": self.password,
             "opponent": {
+                "scope": scope_short,
                 "name": opp.name,
                 "rating": opp.rating,
                 "rank": opp.rank,
@@ -1209,13 +1436,13 @@ impl OnlineScreen {
                 "ping": ping_text(opp_ping),
             },
             "queue": {
-                "title": if self.ranked { "RANKED" } else { "QUICK MATCH" },
+                "title": if self.ranked { format!("RANKED · {scope_short}") } else { "QUICK MATCH".to_string() },
                 "secs": self.queue.as_ref().map_or(0, |q| q.waiting_secs),
                 "count": self.queue.as_ref().map_or(0, |q| q.players_in_queue),
                 "found": self.queue.as_ref().is_some_and(|q| q.found.is_some()),
             },
             "board": board_rows,
-            "season": self.board.as_ref().map(|b| b.season.name.clone()).unwrap_or_default(),
+            "season": self.board.as_ref().map(|b| format!("{} · {}", scope, b.season.name.to_uppercase())).unwrap_or_default(),
             "my_rank": my_rank,
             "profile": serde_json::to_value(&self.profile).map(|mut v| {
                 // never hand account keys to the UI layer
@@ -1311,6 +1538,7 @@ impl OnlineScreen {
     fn save_config(&self) {
         let mut c = crate::config::Config::load(&self.root);
         c.net.servers = self.config.net.servers.clone();
+        c.net.server = self.config.net.server.clone();
         if let Err(e) = c.save(&self.root) {
             log::warn!("could not save rugen.toml: {e}");
         }
@@ -1338,6 +1566,23 @@ impl OnlineScreen {
                 self.status = "PICK A SERVER".into();
                 self.probe_servers();
             }
+            ("online", "remove") => {
+                self.state = State::RemoveServer;
+                self.status = "PICK THE COMMUNITY SERVER TO REMOVE (THE OFFICIAL ONE STAYS)".into();
+            }
+            ("server_remove", i) => {
+                if let Some(row) = i.parse::<usize>().ok().and_then(|i| self.servers.get(i))
+                    && !row.official
+                {
+                    let addr = row.addr.clone();
+                    self.config.net.remove_server(&addr, official::server());
+                    self.servers.retain(|r| r.addr != addr);
+                    self.save_config();
+                    self.status = format!("REMOVED {}", addr.to_uppercase());
+                }
+                self.state = State::Servers;
+                self.probe_servers();
+            }
             ("online", "add") => {
                 self.addr.clear();
                 self.error.clear();
@@ -1362,13 +1607,19 @@ impl OnlineScreen {
                     self.ui.edit("server_addr");
                     return None;
                 }
+                if official::is_official_addr(&addr) {
+                    self.state = State::Servers;
+                    self.status = "THE OFFICIAL SERVER IS ALWAYS LISTED".into();
+                    return None;
+                }
                 if !self
                     .servers
                     .iter()
-                    .any(|r| r.addr.eq_ignore_ascii_case(&addr))
+                    .any(|r| official::same_server(&r.addr, &addr))
                 {
                     self.servers.push(ServerRow {
                         addr: addr.clone(),
+                        official: false,
                         ..Default::default()
                     });
                     self.config.net.servers.push(addr.clone());
@@ -1653,7 +1904,7 @@ impl OnlineScreen {
         self.status.clear();
         self.state = if matches!(
             self.state,
-            State::Servers | State::AddServer | State::Direct
+            State::Servers | State::AddServer | State::RemoveServer | State::Direct
         ) || self.client.server.is_empty()
         {
             State::Servers
@@ -1670,7 +1921,10 @@ impl OnlineScreen {
         self.auto_exit(&format!("{what}: {e}"));
         self.error = format!("{what}: {e}").to_uppercase();
         self.status.clear();
-        if !matches!(self.state, State::Board | State::Servers | State::Lobby) {
+        if !matches!(
+            self.state,
+            State::Board | State::Servers | State::RemoveServer | State::Lobby
+        ) {
             self.state = if self.client.server.is_empty() {
                 State::Servers
             } else {
@@ -1821,7 +2075,16 @@ impl OnlineScreen {
                         let i = *i;
                         if let Some(row) = self.servers.get_mut(i) {
                             match r {
-                                Ok((info, ping)) => {
+                                Ok((info, ping, id)) => {
+                                    let claims = row.official || info.official;
+                                    row.trust =
+                                        official::identity_trust(id.as_ref(), &row.nonce, claims);
+                                    if row.trust == Trust::Impostor {
+                                        log::warn!(
+                                            "online: {} could not prove it is the official server",
+                                            row.addr
+                                        );
+                                    }
                                     row.info = Some(info);
                                     row.ping = Some(ping);
                                     row.error = false;
@@ -1834,9 +2097,34 @@ impl OnlineScreen {
                         }
                     }
                 },
+                Job::Truth(p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(blob)) => match official::store_feed(&self.lib.cache_dir(), &blob) {
+                        Ok(f) => log::info!(
+                            "online: official feed #{}: {} blocked, {} rated",
+                            f.sequence,
+                            f.blocked.len(),
+                            f.ratings.len()
+                        ),
+                        Err(e) => log::warn!("online: official feed rejected: {e}"),
+                    },
+                    Some(Err(e)) => log::info!("online: official feed: {e}"),
+                },
+                Job::Result(p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(ack)) => {
+                        if let Ok(mut l) = LAST_RESULT.lock()
+                            && let Some(r) = l.as_mut()
+                        {
+                            r.ack = Some(ack);
+                        }
+                    }
+                    Some(Err(e)) => log::info!("online: last result: {e}"),
+                },
                 Job::Me(p) => match p.take() {
                     None => keep.push(j),
                     Some(Ok(me)) => {
+                        self.remember_rank(&me);
                         if me.name != self.profile.name && self.me.is_none() {
                             // first contact: push the local name to the server
                             let (c, name) = (self.client.clone(), self.profile.name.clone());
@@ -1914,6 +2202,27 @@ impl OnlineScreen {
         self.jobs = keep;
     }
 
+    /// Keep the rating of this server in the profile (title screen rank card).
+    fn remember_rank(&mut self, me: &ProfileInfo) {
+        if self.auto.as_ref().is_some_and(|a| a.guest) {
+            return;
+        }
+        let snap = crate::uiscreen::RankSnap {
+            server: self.server_name(),
+            official: self.trust_of(&self.client.server).is_official(),
+            rating: me.rating,
+            rank: me.rank.clone(),
+            wins: me.wins,
+            losses: me.losses,
+        };
+        if self.profile.online_ranks.get(&self.client.server) != Some(&snap) {
+            self.profile
+                .online_ranks
+                .insert(self.client.server.clone(), snap);
+            self.profile.save(&self.root);
+        }
+    }
+
     /// Periodic polling (rooms are also a heartbeat; pushes arrive via presence).
     fn poll_server(&mut self) {
         if self.client.server.is_empty() || self.tick % 60 != 0 {
@@ -1934,6 +2243,7 @@ impl OnlineScreen {
                 self.jobs
                     .push(Job::Queue(Pending::spawn(move || c.poll_queue())));
             }
+            State::Menu if self.tick % 600 == 0 => self.poll_last_result(),
             State::Lobby if self.tick % 300 == 0 => {
                 let c = self.client.clone();
                 self.jobs
@@ -2000,6 +2310,14 @@ impl OnlineScreen {
             };
             self.ui.tick(nav, &mut host)
         };
+        // list items are keyed `<list>[i].<id>`: move from row 0 to the default row
+        if self.tick > 1
+            && let Some(i) = self.pending_focus.take()
+            && let Some(f) = self.ui.focused().filter(|f| f.contains("[0]."))
+        {
+            let key = f.replacen("[0].", &format!("[{i}]."), 1);
+            self.ui.set_focus(Some(&key));
+        }
         let mut out = None;
         for e in events {
             match e {
@@ -2108,6 +2426,16 @@ pub fn report_result(
     let (_, key) = account_for(&profile, config, &m.server);
     let c = OnlineClient::new(&m.server, Some(key));
     let (id, winner) = (m.match_id, m.players[winner_side]);
+    if let Ok(mut l) = LAST_RESULT.lock() {
+        *l = Some(LastResult {
+            server: m.server.clone(),
+            match_id: id,
+            me: m.players[m.my_side],
+            ranked: m.ranked,
+            won: winner_side == m.my_side,
+            ack: None,
+        });
+    }
     log::info!(
         "online: reporting {} match {id}, winner {winner}, {} frames",
         if m.ranked { "ranked" } else { "unranked" },
@@ -2120,6 +2448,14 @@ pub fn report_result(
 pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
     match ack {
         Ok(a) => {
+            if let Ok(mut l) = LAST_RESULT.lock()
+                && let Some(r) = l.as_mut()
+            {
+                if let Stamp::Forged(e) = official::result_stamp(a, r.match_id, r.me) {
+                    log::warn!("online: result signature rejected: {e}");
+                }
+                r.ack = Some(a.clone());
+            }
             if a.disputed {
                 log::warn!("online: the two reports disagree; the result was not counted");
                 return;

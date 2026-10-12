@@ -149,26 +149,92 @@ pub struct Net {
     pub stage: String,
     /// Room code pre-filled by JOIN A ROOM.
     pub room: String,
-    /// Default `rugen-server` (`https://rugen.example.com` or `host:port`)
-    /// for the ONLINE menu. All online traffic goes through it.
+    /// Server selected by default in the ONLINE list: empty = the official
+    /// server (built in, always listed first), else one of `servers`.
     pub server: String,
-    /// Favourite servers shown in the ONLINE server list.
+    /// Community servers (`https://host` or `host:port`) listed below the
+    /// official one. The official server is never stored here.
     pub servers: Vec<String>,
     /// Skip the UDP fast path and relay over the WebSocket only.
     pub websocket_only: bool,
 }
 
+/// One row of the ONLINE server list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerEntry {
+    pub addr: String,
+    /// The built-in official server (pinned first, cannot be removed).
+    pub official: bool,
+}
+
 impl Net {
-    /// The server list: `server` first, then the favourites, no duplicates.
-    pub fn server_list(&self) -> Vec<String> {
-        let mut v: Vec<String> = Vec::new();
-        for s in std::iter::once(&self.server).chain(&self.servers) {
+    /// Bring `server` / `servers` to the official + community layout:
+    /// the official address leaves `servers` (and `server` becomes empty
+    /// when it named it); a custom default server (older configs) joins the
+    /// community list; duplicates go. True when anything changed.
+    pub fn migrate_servers(&mut self, official: &str) -> bool {
+        let same = crate::official::same_server;
+        let before = (self.server.clone(), self.servers.clone());
+        let mut community: Vec<String> = Vec::new();
+        let default = self.server.trim().to_string();
+        let extra = (!default.is_empty()).then_some(&default);
+        for s in extra.into_iter().chain(&self.servers) {
             let s = s.trim();
-            if !s.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(s)) {
-                v.push(s.to_string());
+            if s.is_empty() || same(s, official) || community.iter().any(|c| same(c, s)) {
+                continue;
             }
+            community.push(s.to_string());
         }
+        self.servers = community;
+        if same(&default, official) {
+            self.server.clear();
+        } else {
+            self.server = default;
+        }
+        (self.server.clone(), self.servers.clone()) != before
+    }
+
+    /// The server list: the official server first, then the community ones.
+    pub fn server_list(&self, official: &str) -> Vec<ServerEntry> {
+        let mut v = vec![ServerEntry {
+            addr: official.to_string(),
+            official: true,
+        }];
+        v.extend(
+            self.servers
+                .iter()
+                .filter(|s| !s.trim().is_empty() && !crate::official::same_server(s, official))
+                .map(|s| ServerEntry {
+                    addr: s.trim().to_string(),
+                    official: false,
+                }),
+        );
         v
+    }
+
+    /// Index in [`Net::server_list`] of the default selection.
+    pub fn default_index(&self, official: &str) -> usize {
+        if self.server.trim().is_empty() {
+            return 0;
+        }
+        self.server_list(official)
+            .iter()
+            .position(|e| crate::official::same_server(&e.addr, &self.server))
+            .unwrap_or(0)
+    }
+
+    /// Remove a community server (never the official one). True when removed.
+    pub fn remove_server(&mut self, addr: &str, official: &str) -> bool {
+        if crate::official::same_server(addr, official) {
+            return false;
+        }
+        let n = self.servers.len();
+        self.servers
+            .retain(|s| !crate::official::same_server(s, addr));
+        if crate::official::same_server(&self.server, addr) {
+            self.server.clear();
+        }
+        self.servers.len() != n
     }
 }
 
@@ -384,6 +450,12 @@ impl Config {
                     if c.camera.zoom_in == OLD_DEFAULT_ZOOM_IN {
                         c.camera.zoom_in = CameraCfg::default().zoom_in;
                     }
+                    // official server built in: [net] servers = community only
+                    if c.net.migrate_servers(crate::official::server()) {
+                        log::info!(
+                            "rugen.toml: [net] servers migrated (official server is built in)"
+                        );
+                    }
                     c
                 }
                 Err(e) => {
@@ -422,6 +494,59 @@ mod tests {
         let back: Config = toml::from_str("[net]\nport = 9000\n").unwrap();
         assert_eq!(back.net.port, 9000);
         assert_eq!(back.video.width, 1280);
+    }
+
+    const OFFICIAL: &str = "https://play.rugen.dev";
+
+    #[test]
+    fn server_config_migrates_to_official_plus_community() {
+        // an old config: custom default, favourites incl. the official one
+        let mut n: Net = toml::from_str::<Config>(
+            "[net]\nserver = \"https://mine.example\"\nservers = [\"https://play.rugen.dev/\", \"10.0.0.2:8080\", \"https://MINE.example\"]\n",
+        )
+        .unwrap()
+        .net;
+        assert!(n.migrate_servers(OFFICIAL));
+        assert_eq!(n.servers, vec!["https://mine.example", "10.0.0.2:8080"]);
+        assert_eq!(
+            n.server, "https://mine.example",
+            "still the default selection"
+        );
+        assert!(!n.migrate_servers(OFFICIAL), "idempotent");
+        // the official server as the old default: becomes the built-in default
+        let mut o = Net {
+            server: "HTTPS://play.rugen.dev".into(),
+            servers: vec![],
+            ..Net::default()
+        };
+        assert!(o.migrate_servers(OFFICIAL));
+        assert!(o.server.is_empty() && o.servers.is_empty());
+        let mut fresh = Net::default();
+        assert!(!fresh.migrate_servers(OFFICIAL));
+    }
+
+    #[test]
+    fn official_server_is_pinned_first_and_cannot_be_removed() {
+        let mut n = Net {
+            servers: vec!["https://a.example".into(), "b.example:8080".into()],
+            server: "b.example:8080".into(),
+            ..Net::default()
+        };
+        let list = n.server_list(OFFICIAL);
+        assert_eq!(list.len(), 3);
+        assert!(list[0].official && list[0].addr == OFFICIAL);
+        assert!(list[1..].iter().all(|e| !e.official));
+        assert_eq!(n.default_index(OFFICIAL), 2);
+        assert!(!n.remove_server(OFFICIAL, OFFICIAL));
+        assert!(!n.remove_server("https://play.rugen.dev/", OFFICIAL));
+        assert!(n.remove_server("http://b.example:8080", OFFICIAL));
+        assert!(
+            n.server.is_empty(),
+            "removed default falls back to official"
+        );
+        assert_eq!(n.default_index(OFFICIAL), 0);
+        assert_eq!(n.server_list(OFFICIAL).len(), 2);
+        assert!(Net::default().server_list(OFFICIAL)[0].official);
     }
 
     #[test]

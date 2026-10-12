@@ -204,6 +204,8 @@ pub struct MatchupView {
     pub mirror: bool,
     /// Relay ticket once the match started.
     pub ticket: Option<SessionTicket>,
+    /// The verdict as a [`crate::VerdictStatement`] signed by the server (API 4).
+    pub signed: Option<crate::SignedBlob>,
 }
 
 impl MatchupView {

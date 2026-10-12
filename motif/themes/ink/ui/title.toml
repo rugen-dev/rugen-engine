@@ -291,7 +291,7 @@ enter_delay = 10
 
   [[node.children]]
   kind = "text"
-  text = "RANKED · LOCAL"
+  text = "{ranked.title}"
   x = 16
   y = 14
   font = 2

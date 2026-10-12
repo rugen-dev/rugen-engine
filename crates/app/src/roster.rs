@@ -81,7 +81,15 @@ pub struct Roster {
     seed: u32,
 }
 
+/// Why the official server blocks this fighter (cached, verified feed).
+fn official_block(m: &Manifest) -> Option<String> {
+    m.fingerprint.as_deref().and_then(crate::official::blocked)
+}
+
 fn verdict_of(m: &Manifest) -> (&'static str, String) {
+    if official_block(m).is_some() {
+        return ("ui/badge_bad.webp", "BLOCKED BY THE OFFICIAL SERVER".into());
+    }
     match m.verify.as_ref() {
         Some(v) if v.verdict == "verified" => ("ui/badge_ok.webp", "VERIFIED".into()),
         Some(v) if v.verdict == "warn" => (
@@ -617,6 +625,11 @@ impl Roster {
             ),
             Some(v) if v.verdict == "broken" => ("⚠ BROKEN".to_string(), false),
             _ => ("NOT CHECKED".to_string(), true),
+        };
+        // the official blocklist wins: this fighter is refused online everywhere
+        let (status, ok) = match official_block(m) {
+            Some(why) => (format!("⚠ OFFICIAL BLOCK: {why}"), false),
+            None => (status, ok),
         };
         let st = profile.chars.get(&m.id);
         let (plays, wins) = st.map_or((0, 0), |s| (s.plays, s.wins));
