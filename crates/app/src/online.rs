@@ -1,6 +1,10 @@
 //! ONLINE screens on the UI engine (`motif/ui/online.toml`): custom rooms by
 //! code, ranked queue with Elo, leaderboard. Talks to `rugen-server` through
 //! [`rugen_net::online::OnlineClient`] on worker threads so frames never wait.
+//!
+//! Without `[net] server` the screen still opens: it explains what a server
+//! adds and offers a DIRECT MATCH (LAN / IP) where each player types the
+//! other's address (host plays 1P, the joiner 2P).
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -41,6 +45,8 @@ enum State {
     Join,
     Queue,
     Board,
+    /// Typing the peer's address for a direct (LAN / IP) match.
+    Direct,
 }
 
 enum Job {
@@ -78,6 +84,13 @@ pub struct OnlineScreen {
     tick: u32,
     /// Set when a match is about to start; the shell takes it.
     pub started: Option<OnlineMatch>,
+    /// `[net] server` is set: rooms, ranked and the leaderboard are available.
+    has_server: bool,
+    /// Direct match: our side (0 = host / 1P) and the typed peer address.
+    direct_side: usize,
+    addr: String,
+    /// This machine's LAN address, for the other player to type.
+    local_ip: String,
     pending_fight: Option<FightSetup>,
 }
 
@@ -89,7 +102,7 @@ impl OnlineScreen {
         let def = ScreenDef::parse(&text).with_context(|| path.display().to_string())?;
         let profile = Profile::load(root);
         let server = config.net.server.trim().to_string();
-        anyhow::ensure!(!server.is_empty(), "[net] server is not set in rugen.toml");
+        let has_server = !server.is_empty();
         let client = OnlineClient::new(&server, Some(profile.online_key.clone()));
         let mut s = Self {
             ui: Ui::new(def, Value::Null),
@@ -103,7 +116,11 @@ impl OnlineScreen {
             profile,
             root: root.to_path_buf(),
             state: State::Menu,
-            status: "CONNECTING".into(),
+            status: if has_server {
+                "CONNECTING".into()
+            } else {
+                String::new()
+            },
             error: String::new(),
             info: None,
             me: None,
@@ -116,7 +133,15 @@ impl OnlineScreen {
             tick: 0,
             started: None,
             pending_fight: None,
+            has_server,
+            direct_side: 0,
+            addr: String::new(),
+            local_ip: local_ip(),
         };
+        if !has_server {
+            s.refresh();
+            return Ok(s);
+        }
         let c = s.client.clone();
         s.jobs.push(Job::Info(Pending::spawn(move || c.info())));
         if s.client.key.is_none() {
@@ -201,13 +226,41 @@ impl OnlineScreen {
             .and_then(|b| b.me.as_ref())
             .map(|(pos, _)| format!("YOUR RANK #{pos}"))
             .unwrap_or_else(|| "UNRANKED - PLAY A RANKED MATCH".into());
-        let menu = json!([
-            { "id": "room", "label": "CUSTOM ROOM", "action": "online:room" },
-            { "id": "join", "label": "JOIN A ROOM", "action": "online:join" },
-            { "id": "ranked", "label": "RANKED", "action": "online:ranked" },
-            { "id": "board", "label": "LEADERBOARD", "action": "online:board" },
-            { "id": "back", "label": "BACK", "action": "back" },
+        let mut menu = Vec::new();
+        if self.has_server {
+            menu.extend([
+                json!({ "id": "room", "label": "CUSTOM ROOM", "action": "online:room" }),
+                json!({ "id": "join", "label": "JOIN A ROOM", "action": "online:join" }),
+                json!({ "id": "ranked", "label": "RANKED", "action": "online:ranked" }),
+                json!({ "id": "board", "label": "LEADERBOARD", "action": "online:board" }),
+            ]);
+        }
+        menu.extend([
+            json!({ "id": "host", "label": "HOST DIRECT MATCH", "action": "online:host" }),
+            json!({ "id": "direct", "label": "JOIN DIRECT MATCH", "action": "online:direct" }),
         ]);
+        let n = &self.config.net;
+        if !n.remote.trim().is_empty() || !n.relay.trim().is_empty() {
+            // the fixed peer / relay room written in rugen.toml
+            menu.push(
+                json!({ "id": "netplay", "label": "NETPLAY (RUGEN.TOML)", "action": "netplay" }),
+            );
+        }
+        menu.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
+        let server_line = if self.has_server {
+            format!(
+                "{}   {} ONLINE   {} IN QUEUE",
+                self.info
+                    .as_ref()
+                    .map(|i| i.name.clone())
+                    .unwrap_or_else(|| self.config.net.server.clone()),
+                self.info.as_ref().map_or(0, |i| i.online),
+                self.info.as_ref().map_or(0, |i| i.queued),
+            )
+        } else {
+            "NO SERVER SET  -  DIRECT MATCHES ONLY".to_string()
+        };
+        let port = self.config.net.port;
         let data = json!({
             "menu": menu,
             "is_menu": self.state == State::Menu,
@@ -215,6 +268,21 @@ impl OnlineScreen {
             "is_join": self.state == State::Join,
             "is_queue": self.state == State::Queue,
             "is_board": self.state == State::Board,
+            "is_direct": self.state == State::Direct,
+            "has_server": self.has_server,
+            "no_server": !self.has_server && self.state == State::Menu,
+            "server_line": server_line,
+            "direct": {
+                "title": if self.direct_side == 0 { "HOST  -  YOU PLAY 1P" } else { "JOIN  -  YOU PLAY 2P" },
+                "addr": self.addr,
+                "mine": format!("{}:{port}", self.local_ip),
+                "fighters": format!(
+                    "1P {}  VS  2P {}   STAGE {}",
+                    self.config.net.p1.to_uppercase(),
+                    self.config.net.p2.to_uppercase(),
+                    if self.config.net.stage.trim().is_empty() { "AUTO".to_string() } else { self.config.net.stage.to_uppercase() },
+                ),
+            },
             "status": self.status,
             "error": self.error,
             "has_error": !self.error.is_empty(),
@@ -266,7 +334,7 @@ impl OnlineScreen {
         let Some(k) = crate::uiscreen::text_key(key) else {
             return self.ui.text_focused();
         };
-        if k == rugen_ui::TextKey::Escape && self.state == State::Join {
+        if k == rugen_ui::TextKey::Escape && matches!(self.state, State::Join | State::Direct) {
             self.ui.text_key(k);
             self.cancel();
             self.refresh();
@@ -369,9 +437,92 @@ impl OnlineScreen {
                     .push(Job::Board(Pending::spawn(move || c.leaderboard())));
             }
             ("online", "cancel") => self.cancel(),
+            ("online", "host") | ("online", "direct") => {
+                self.direct_side = usize::from(arg == "direct");
+                self.error.clear();
+                self.status = "TYPE THE OTHER PLAYER'S ADDRESS AND PRESS ENTER".into();
+                self.state = State::Direct;
+                self.ui.set_input("addr", &self.addr);
+                self.refresh();
+                self.ui.edit("addr");
+            }
+            ("addr", v) => {
+                self.addr = v
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-'))
+                    .take(40)
+                    .collect();
+                self.ui.set_input("addr", &self.addr);
+            }
+            ("direct", "go") => self.direct_go(),
+            ("netplay", _) => return Some(Transition::Netplay),
+            ("online", _) if !self.has_server => {
+                self.status = "NEEDS A SERVER: SET [net] server IN RUGEN.TOML".into();
+            }
             _ => log::warn!("online: unknown action {a:?}"),
         }
         None
+    }
+
+    /// Direct match: resolve the typed address and both `[net]` fighters, then fight.
+    fn direct_go(&mut self) {
+        use std::net::ToSocketAddrs as _;
+        let typed = self.addr.trim();
+        if typed.is_empty() {
+            self.status = "TYPE AN ADDRESS, E.G. 192.168.1.20".into();
+            self.ui.edit("addr");
+            return;
+        }
+        let with_port = if typed.contains(':') {
+            typed.to_string()
+        } else {
+            format!("{typed}:{}", self.config.net.port)
+        };
+        let remote = match with_port.to_socket_addrs().map(|mut a| a.next()) {
+            Ok(Some(a)) => a,
+            Ok(None) | Err(_) => {
+                self.status = format!("CANNOT REACH {}", with_port.to_uppercase());
+                self.ui.edit("addr");
+                return;
+            }
+        };
+        let resolve = |lib: &Library, id: &str| -> Option<PathBuf> {
+            let e = lib.find_char(id)?;
+            lib.prepare_char(&e).ok().map(|(d, man)| d.join(man.def))
+        };
+        let n = self.config.net.clone();
+        let (Some(p1), Some(p2)) = (resolve(&self.lib, &n.p1), resolve(&self.lib, &n.p2)) else {
+            self.fail(
+                "cannot start",
+                format!("[net] p1 {:?} / p2 {:?} must be installed", n.p1, n.p2),
+            );
+            return;
+        };
+        let stage = self
+            .lib
+            .stages()
+            .into_iter()
+            .find(|e| e.id.eq_ignore_ascii_case(&n.stage))
+            .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| d.join(m.def)))
+            .or_else(|| self.lib.default_stage());
+        log::info!(
+            "online: direct match with {remote} as side {}",
+            self.direct_side + 1
+        );
+        self.pending_fight = Some(FightSetup {
+            p1,
+            p2,
+            stage,
+            ai: [0, 0],
+            net: Some(NetMode::P2P {
+                port: n.port,
+                remote,
+                side: self.direct_side,
+            }),
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+        });
     }
 
     fn cancel(&mut self) {
@@ -621,7 +772,7 @@ impl OnlineScreen {
 
     /// Periodic polling while waiting in a room or the queue.
     fn poll_server(&mut self) {
-        if self.tick % 60 != 0 {
+        if !self.has_server || self.tick % 60 != 0 {
             return;
         }
         let busy_room = self.jobs.iter().any(|j| matches!(j, Job::Room(_)));
@@ -679,8 +830,8 @@ impl OnlineScreen {
                 down: any(|b| b.d),
                 left: any(|b| b.l),
                 right: any(|b| b.r),
-                accept: any(|b| b.a || b.b || b.c || b.x || b.y || b.z || b.s),
-                back: false,
+                accept: any(|b| b.a || b.c || b.x || b.y || b.z || b.s),
+                back: any(|b| b.b),
             }
         };
         let events = {
@@ -756,6 +907,17 @@ impl OnlineScreen {
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],
         )
     }
+}
+
+/// This machine's LAN address (the route to the internet; no packet is sent).
+fn local_ip() -> String {
+    std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("8.8.8.8:80")?;
+            s.local_addr()
+        })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "YOUR-IP".into())
 }
 
 /// Report a finished online match on a worker thread.
