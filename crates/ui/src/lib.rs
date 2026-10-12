@@ -212,6 +212,10 @@ pub struct NodeDef {
     pub blink: Option<f32>,
     /// Navigation group (inherited by children): up/down stay inside the group when they can.
     pub group: Option<String>,
+    /// Text: break into lines at spaces to fit `w`, centred vertically in `h`.
+    pub wrap: bool,
+    /// Extra space between wrapped lines (default 40% of the line height).
+    pub line_gap: Option<f32>,
     pub children: Vec<NodeDef>,
 }
 
@@ -518,7 +522,7 @@ enum Pool<'a> {
     All,
     /// Same navigation group only.
     Group(&'a str),
-    /// Nodes entirely past the current one along the direction.
+    /// Nodes entirely past the current one along the direction, in the same column.
     Beyond,
 }
 
@@ -1508,7 +1512,9 @@ impl Ui {
                     Pool::All => true,
                     Pool::Beyond => {
                         let gap = (from.rect.h + i.rect.h) / 2.0;
-                        (i.rect.center().1 - from.rect.center().1) * dy >= gap
+                        let overlap = i.rect.x < from.rect.x + from.rect.w
+                            && from.rect.x < i.rect.x + i.rect.w;
+                        overlap && (i.rect.center().1 - from.rect.center().1) * dy >= gap
                     }
                     Pool::Group(g) => self.group_of(i) == Some(g),
                 }
@@ -1779,6 +1785,26 @@ impl Ui {
                 } else {
                     clip
                 };
+                if n.wrap && n.kind == Kind::Text {
+                    let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
+                    let step = th + n.line_gap.unwrap_or(th * 0.4);
+                    let total = step * lines.len() as f32 - (step - th);
+                    let top = rect.y + ((rect.h - total) / 2.0).max(0.0);
+                    for (i, line) in lines.iter().enumerate() {
+                        p.draw_text(
+                            font,
+                            line,
+                            x,
+                            top + th + step * i as f32,
+                            bank,
+                            align,
+                            scale,
+                            alpha,
+                            clip,
+                        );
+                    }
+                    continue;
+                }
                 p.draw_text(
                     font,
                     &text,
@@ -2449,6 +2475,14 @@ id = "tab"
 h = 40
 on_press = "tab:{index}"
 [[node]]
+kind = "button"
+id = "head"
+x = 450
+y = 0
+w = 100
+h = 40
+on_press = "head"
+[[node]]
 kind = "vbox"
 id = "rows"
 x = 400
@@ -2489,14 +2523,12 @@ on_press = "row:{index}"
         ui.draw(&mut p);
         assert!(p.drawn.contains(&"text:MARK0".to_string()));
         assert!(!p.drawn.contains(&"text:MARK1".to_string()));
-        // leaving the group upwards falls back to any focusable node
-        ui.tick(
-            Nav {
-                up: true,
-                ..Default::default()
-            },
-            &mut p,
-        );
-        assert!(ui.focused().unwrap().starts_with("tabs["));
+        // leaving the group: only a node above in the same column, never the tab column
+        let up = Nav {
+            up: true,
+            ..Default::default()
+        };
+        ui.tick(up, &mut p);
+        assert_eq!(ui.focused(), Some("head"));
     }
 }

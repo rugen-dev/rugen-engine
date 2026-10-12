@@ -397,7 +397,7 @@ pub(crate) fn draw_keycap(
         .map(|g| interpolate(g, ctx))
         .filter(|g| glyph_bits(g).is_some());
     if let Some(g) = glyph {
-        let s = (inner.h * 0.7).max(7.0);
+        let s = (inner.h * 0.8).max(7.0);
         draw_glyph(
             p,
             &g,
@@ -478,6 +478,34 @@ pub(crate) fn draw_slider(
     .unwrap_or(RED);
     p.draw_rect(knob, fade(kc, alpha), 0.0, clip);
     draw_border(p, knob, b, 0.0, edge, alpha, clip);
+}
+
+/// Greedy word wrap of `text` into lines at most `width` wide.
+pub(crate) fn wrap_lines(
+    p: &mut dyn Painter,
+    font: i32,
+    scale: f32,
+    text: &str,
+    width: f32,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if cur.is_empty() {
+            word.to_string()
+        } else {
+            format!("{cur} {word}")
+        };
+        if !cur.is_empty() && p.text_width(font, &candidate, scale) > width {
+            lines.push(std::mem::replace(&mut cur, word.to_string()));
+        } else {
+            cur = candidate;
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
 
 /// Repeat an image at its own size (times `scale`) across `r`.
