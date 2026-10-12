@@ -25,7 +25,7 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 /// Bump when the cache layout or conversion output changes.
-pub const CACHE_VERSION: u32 = 3;
+pub const CACHE_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -76,6 +76,13 @@ pub struct Manifest {
     /// Result of `rugen verify` (headless soak); `None` until it has run.
     #[serde(default)]
     pub verify: Option<VerifyInfo>,
+    /// Modder-supplied large render (`rugen_art.webp` / `.png` in the character), copied
+    /// into the cache dir; the roster shows it instead of the 9000,1 portrait.
+    #[serde(default)]
+    pub art: Option<String>,
+    /// Stage preview (`thumb.png` in the cache dir, from the first background sprite).
+    #[serde(default)]
+    pub thumb: Option<PortraitInfo>,
 }
 
 /// Verification verdict stored in the cache manifest.
@@ -346,6 +353,18 @@ impl Library {
         } else {
             (None, None)
         };
+        let art = if kind_dir == "chars" {
+            copy_custom_art(&dir)
+        } else {
+            None
+        };
+        let thumb = if kind_dir == "stages" {
+            parsed
+                .as_ref()
+                .and_then(|d| extract_stage_thumb(&dir, &def, d))
+        } else {
+            None
+        };
         let m = Manifest {
             cache_version: CACHE_VERSION,
             id: entry.id.clone(),
@@ -354,6 +373,8 @@ impl Library {
             author,
             portrait_small,
             portrait_big,
+            art,
+            thumb,
             source_hash: hash,
             verify: None,
         };
@@ -461,6 +482,95 @@ pub fn read_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
 }
 
 /// Case-insensitive lookup of `name` (which may contain subdirectories) under `dir`.
+/// `rugen_art.webp` / `rugen_art.png` anywhere up to two levels deep → `art.<ext>` in the cache dir.
+fn copy_custom_art(dir: &Path) -> Option<String> {
+    fn scan(d: &Path) -> Option<PathBuf> {
+        fs::read_dir(d).ok()?.flatten().map(|e| e.path()).find(|p| {
+            let name = p
+                .file_name()
+                .map(|f| f.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            name == "rugen_art.webp" || name == "rugen_art.png"
+        })
+    }
+    let src = scan(dir).or_else(|| {
+        fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .find_map(|p| scan(&p))
+    })?;
+    let ext = src.extension()?.to_string_lossy().to_ascii_lowercase();
+    let name = format!("art.{ext}");
+    fs::copy(&src, dir.join(&name)).ok()?;
+    Some(name)
+}
+
+/// Stage preview: the first `[BG]` sprite (or the largest sprite) scaled to 160 px wide.
+fn extract_stage_thumb(
+    dir: &Path,
+    def: &str,
+    parsed: &rugen_formats::def::Def,
+) -> Option<PortraitInfo> {
+    let def_dir = dir.join(def);
+    let def_dir = def_dir.parent().unwrap_or(dir);
+    let spr = parsed.section("bgdef")?.raw("spr")?.trim().to_string();
+    let path = find_ci(def_dir, &spr)?;
+    let sff = rugen_formats::sff::Sff::open(&path, false).ok()?;
+    let first = parsed
+        .sections_named("bg")
+        .filter_map(|s| s.i32s("spriteno"))
+        .find(|v| v.len() >= 2)
+        .map(|v| (v[0] as u16, v[1] as u16));
+    let sprite = first.and_then(|(g, n)| sff.get(g, n)).or_else(|| {
+        sff.sprites
+            .values()
+            .max_by_key(|s| s.width as u32 * s.height as u32)
+    })?;
+    if sprite.width == 0 || sprite.height == 0 {
+        return None;
+    }
+    let pal = sprite
+        .palette
+        .and_then(|i| sff.palettes.get(i))
+        .cloned()
+        .unwrap_or_default();
+    let rgba_at = |x: usize, y: usize| -> [u8; 4] {
+        let i = y * sprite.width as usize + x;
+        match &sprite.pixels {
+            rugen_formats::sff::Pixels::Rgba(px) => px
+                .get(i * 4..i * 4 + 4)
+                .map_or([0; 4], |p| [p[0], p[1], p[2], p[3]]),
+            rugen_formats::sff::Pixels::Indexed(px) => {
+                let k = px.get(i).copied().unwrap_or(0);
+                if k == 0 {
+                    [0, 0, 0, 0]
+                } else {
+                    pal.get(k as usize).copied().unwrap_or([0, 0, 0, 255])
+                }
+            }
+        }
+    };
+    let tw = 160u32.min(sprite.width as u32);
+    let th = ((sprite.height as u32 * tw) / sprite.width as u32).clamp(1, 160);
+    let mut out = Vec::with_capacity((tw * th * 4) as usize);
+    for y in 0..th {
+        for x in 0..tw {
+            let sx = (x as usize * sprite.width as usize) / tw as usize;
+            let sy = (y as usize * sprite.height as usize) / th as usize;
+            out.extend_from_slice(&rgba_at(sx, sy));
+        }
+    }
+    write_png(&dir.join("thumb.png"), tw, th, &out).ok()?;
+    Some(PortraitInfo {
+        file: "thumb.png".into(),
+        width: tw,
+        height: th,
+        axis: [0, 0],
+    })
+}
+
 fn find_ci(dir: &Path, name: &str) -> Option<PathBuf> {
     let direct = dir.join(name);
     if direct.exists() {
