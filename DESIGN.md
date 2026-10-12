@@ -82,6 +82,27 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
 - Per-frame state hash exchanged; desync surfaces as an error, never silent drift.
 - Content hashing: both sides verify char/stage hashes before match.
 - Replays = input log + content hashes. Spectating = same stream.
+- Transports (server tickets list them in order: `turn`, `udp`, `ws`):
+  - **TURN** (`rugen_net::turn` + `stun`, a ~1k-line RFC 8656 client: long-term
+    auth, Allocate / Refresh / CreatePermission / ChannelBind, UDP then TCP then
+    TLS to the TURN server). Both players allocate a relayed address on the
+    server-issued service (Cloudflare Realtime TURN on the official server), swap
+    those addresses through the authenticated relay session (a TURN server's
+    address, never a player's), bind a channel to each other and move ggrs
+    traffic over ChannelData once a probe round trip works (≤ 1.5 s at match
+    start, else it keeps trying in the background and switches mid-match). The
+    server relay stays connected for signalling, keep-alives and as fallback
+    (used again whenever TURN goes quiet for 0.8 s).
+  - Cost discipline for metered TURN: ChannelData only (4-byte header), all
+    ggrs messages of a tick coalesced into one datagram in a varint encoding,
+    input acks / keep-alives dropped when an input carries them, refreshes just
+    before expiry, allocation released on drop. ≈3.4 KB/s per player and
+    direction (plain encoding: ≈7.7 KB/s).
+  - **UDP relay** to the server (1.5 s probe), else the **WebSocket** `/relay`.
+- Result evidence: confirmed input log (RLE when the server offers TURN) plus
+  a world checksum every 60 frames; the server compares both reports on the
+  confirmed frames and disputes (and re-simulates, when built with `resim`) on
+  a mismatch, so a match it never saw is still verified.
 
 ### Cross-platform stack (pure Rust, no C deps)
 
