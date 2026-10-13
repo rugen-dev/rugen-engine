@@ -718,7 +718,7 @@ impl UiScreen {
                     .iter()
                     .skip(page * MOVES_PER_PAGE)
                     .take(MOVES_PER_PAGE)
-                    .map(|m| json!({ "name": m.name, "notation": m.notation, "super": m.super_move }))
+                    .map(|m| json!({ "name": m.name, "notation": m.notation, "super": m.super_move(), "group": m.group.label() }))
                     .collect();
                 let mut menu = vec![
                     json!({ "id": "resume", "label": "RESUME", "action": "resume", "style": "main" }),
