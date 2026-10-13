@@ -24,15 +24,16 @@ collision lines. New characters can read `GroundY` and `OnPlatform`.
 ## Arenas (rugen extension)
 
 An `[Arena]` section turns a stage into a Smash-style arena. Every key is
-optional; `examples/arena/arena.def` shows a complete one:
+optional; `examples/arena/arena.def` (the layout of the bundled Ink Arena)
+shows a complete one:
 
 ```
 [Arena]
-blastzone = -520, -420, 520, 160   ; left, top, right, bottom: crossing it = ring-out
-walls = 0                          ; 0 = players may leave the screen edges
-stocks = 3                         ; lives per round; respawn above the start spot
-floor = -240, 240                  ; the floor only exists here, pits elsewhere
-spawn_y = -140                     ; respawn height
+blastzone = -920, -540, 920, 160   ; left, top, right, bottom: crossing it = ring-out
+walls = 0                          ; 0 = players may leave the screen edges (default 1)
+stocks = 3                         ; lives per round; respawn above the start spot (default 0)
+floor = -640, 640                  ; the floor only exists here, pits elsewhere
+spawn_y = -140                     ; respawn height (default -120)
 air_jumps = 1                      ; extra air jumps (overrides rugen.toml [game])
 air_dash = 1                       ; double-tap forward/back in the air
 fast_fall = 1                      ; hold down while falling
@@ -41,5 +42,7 @@ fast_fall = 1                      ; hold down while falling
 A ring-out with stocks left respawns the player with full life and a short
 invulnerability; the last stock is a KO. The camera also pulls back for
 height (`boundhigh` and the zoom limits still apply), so tall platform
-layouts stay in view. The lifebar shows remaining stocks as marks under the
-win icons.
+layouts stay in view, but never so far that the shortest fighter drops
+below a tenth of the screen height (`[Camera] zoomout` lower than that is
+ignored on arena stages). The lifebar shows remaining stocks as marks under
+the win icons and the clock in minutes and seconds.
