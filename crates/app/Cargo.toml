@@ -44,8 +44,8 @@ maintainer = "rugen-dev <https://github.com/rugen-dev>"
 section = "games"
 extended-description = """\
 MUGEN-compatible 2D fighting game engine with rollback netplay. \
-Put characters and stages (.zip / .rar) in ~/.local/share/rugen/chars and \
-~/.local/share/rugen/stages."""
+Put characters and stages (.zip / .rar / .rgc / .rgs) in \
+~/.local/share/rugen/chars and ~/.local/share/rugen/stages."""
 depends = "$auto"
 assets = [
   ["target/release/rugen", "usr/bin/", "755"],

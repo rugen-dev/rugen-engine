@@ -220,3 +220,33 @@ of online matchups, the official blocklist and character ratings.
   touching the source; `rugen export <file> [dir]` writes the folder back
   (sprites identical, sounds as decoded WAV, images as PNG; the files the
   converter copied from `data/` are left out).
+
+## Measurements
+
+Same machine (12 threads), engine v0.5.0 before (archive + extracted copy +
+`.rugen-opt/` optimiser cache) and after (content file). Sizes in MB.
+
+| | KFM (folder) | G6 Naruto (.rar) | G6 Sasuke Rinnegan (.rar) | stage0-720 (.zip) |
+|---|---|---|---|---|
+| original | 0.59 | 41.2 (71 extracted) | 45.2 (86 extracted) | 0.08 |
+| before, on disk | 1.95 | 147.8 | 179.9 | 0.80 |
+| after: content file | 0.29 | **20.9** | **26.5** | 0.07 |
+| sprites | 0.21 | 18.49 (SFF 41.4) | 24.85 (SFF 60.5) | 0.07 |
+| sounds | 0.01 | 1.68 (SND 31.7) | 1.48 | – |
+| logic (compiled) | 0.03 | 0.10 | 0.10 | – |
+| other files | 0.03 | 0.66 | 0.06 | 0.01 |
+| conversion | 0.3–0.8 s | 7–12 s | 11–12 s | 0.7 s |
+| cached prepare (menus) | 0.3 → 0.1 ms | 15–30 → 0.1 ms | 17–31 → 0.1 ms | 0.1 → 0.0 ms |
+| fight load | 4.7 → 4.6 ms | 14–24 → 8–15 ms | 14–55 → 10–17 ms | 0.1 → 0.1 ms |
+
+Conversion includes extracting the archive, encoding, writing and reading
+the file back to recompute its fingerprint. Before, the first import took
+1.2 s (Naruto) / 1.3 s (Sasuke) but left 106 / 135 MB of cache. Fight load
+ranges are medians of repeated runs on a busy machine (KFM: mean of 100
+loads, same harness). With the original archives kept in `originals/`
+(the default), add their size. Naruto's 0.59 MB sprite-sheet PNG stays a
+PNG: `image-webp`'s lossless encoder made it 0.84 MB.
+
+Rollback is unchanged (Naruto vs Sasuke, `crates/sim/examples/rollbench.rs`):
+save / load / step 9.7 / 9.3 / 61.3 µs from `.rgc` vs 9.9 / 9.5 / 60.1 µs
+before, same final checksum.

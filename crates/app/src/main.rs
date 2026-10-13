@@ -78,6 +78,33 @@ fn library(root: Option<&str>) -> rugen_content::Library {
     lib
 }
 
+/// A recorded def path, or the same character / stage found again by id when
+/// the path is gone (`cache/chars/<id>-<hash>/x.def` of older versions).
+fn relocate(
+    lib: &rugen_content::Library,
+    def: &std::path::Path,
+    stage: bool,
+) -> std::path::PathBuf {
+    if rugen_formats::vfs::exists(def) {
+        return def.to_path_buf();
+    }
+    let id = def
+        .parent()
+        .and_then(|d| d.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .map(|n| n.rsplit_once('-').map_or(n.clone(), |(a, _)| a.to_string()))
+        .unwrap_or_default();
+    let found = if stage {
+        lib.stages()
+            .into_iter()
+            .find(|e| e.id.eq_ignore_ascii_case(&id))
+            .and_then(|e| lib.prepare_stage(&e).ok())
+    } else {
+        lib.find_char(&id).and_then(|e| lib.prepare_char(&e).ok())
+    };
+    found.map_or_else(|| def.to_path_buf(), |(d, m)| m.def_path(&d))
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,wgpu_hal=warn,wgpu_core=warn,naga=warn"),
@@ -483,7 +510,11 @@ fn main() -> anyhow::Result<()> {
                 record: None,
                 keys: Vec::new(),
             };
-            let setup = r.setup();
+            let mut setup = r.setup();
+            // recordings made before content files point into old cache folders
+            setup.p1 = relocate(&lib, &setup.p1, false);
+            setup.p2 = relocate(&lib, &setup.p2, false);
+            setup.stage = setup.stage.map(|s| relocate(&lib, &s, true));
             game::Shell::new(
                 config,
                 lib,
