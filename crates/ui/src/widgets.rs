@@ -252,11 +252,13 @@ fn label(
     let font = n.font.unwrap_or(1);
     let scale = n.scale.unwrap_or(1.0);
     let th = p.text_height(font, scale);
+    // centred on the glyphs' ink, like button labels
+    let ink = p.text_center_dy(font, scale);
     p.draw_text(
         font,
         text,
         r.x + r.w / 2.0,
-        r.y + (r.h + th) / 2.0,
+        r.y + (r.h + th) / 2.0 - ink,
         bank,
         0,
         scale,
