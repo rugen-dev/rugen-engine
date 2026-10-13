@@ -603,6 +603,12 @@ fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
         .unwrap_or(e)
         .trim()
         .to_uppercase();
+    if msg == "NO SUCH ROUTE" {
+        return (
+            format!("{} CAN'T DO THAT", server.to_uppercase()),
+            "IT MAY RUN AN OLDER OR A DIFFERENT SERVER VERSION.".into(),
+        );
+    }
     let title = match what {
         "room" => "COULDN'T OPEN THE ROOM",
         "lobby" => "COULDN'T LOAD THE ROOMS",
@@ -2549,7 +2555,7 @@ impl OnlineScreen {
             "host_card": card(0),
             "chal_card": card(1),
             "spect": spect,
-            "waiting": player && !opp,
+            "waiting": !opp,
             "can_rematch": player && opp,
             "can_kick": host && opp,
             "watching": !player,
@@ -4210,6 +4216,13 @@ impl OnlineScreen {
 
     /// Periodic polling (rooms are also a heartbeat; pushes arrive via presence).
     fn poll_server(&mut self) {
+        // live player / room counts and pings on the hub
+        if self.state == State::Servers
+            && self.tick % 900 == 0
+            && !self.jobs.iter().any(|j| matches!(j, Job::Info(..)))
+        {
+            self.probe_servers();
+        }
         if self.client.server.is_empty() || self.tick % 60 != 0 {
             return;
         }
@@ -4284,6 +4297,9 @@ impl OnlineScreen {
             }
         };
         if let Some(k) = self.pending_focus_key.take() {
+            // lay out the screen the focus belongs to first (a state change
+            // from the shell's Esc has not refreshed the data yet)
+            self.refresh();
             if std::mem::take(&mut self.pending_edit) {
                 self.ui.edit(&k);
             } else {
