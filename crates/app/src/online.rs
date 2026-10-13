@@ -161,6 +161,15 @@ enum Job {
     Done(Pending<()>),
 }
 
+/// Why an older server (API before .rgc) cannot be used.
+fn outdated_error(server: &str, api: u32) -> String {
+    format!(
+        "{} RUNS AN OLDER VERSION (API {api}, THIS GAME NEEDS {}): IT CANNOT TAKE .RGC FIGHTERS",
+        server.to_uppercase(),
+        rugen_proto::API_VERSION
+    )
+}
+
 /// One row of the server list.
 #[derive(Clone, Debug, Default)]
 struct ServerRow {
@@ -1095,11 +1104,7 @@ impl OnlineScreen {
             .and_then(|r| r.info.as_ref())
             .map(|i| i.api);
         if let Some(api) = api.filter(|&a| a < rugen_proto::API_VERSION) {
-            self.error = format!(
-                "{} RUNS AN OLDER VERSION (API {api}, THIS GAME NEEDS {}): IT CANNOT TAKE .RGC FIGHTERS",
-                server.to_uppercase(),
-                rugen_proto::API_VERSION
-            );
+            self.error = outdated_error(server, api);
             return;
         }
         let (id, key) = account_for(&self.profile, &self.config, server);
@@ -2093,6 +2098,7 @@ impl OnlineScreen {
     fn poll_jobs(&mut self) {
         let mut jobs = std::mem::take(&mut self.jobs);
         let mut keep = Vec::new();
+        let mut outdated = None;
         for mut j in jobs.drain(..) {
             match &mut j {
                 Job::Register(p) => match p.take() {
@@ -2127,6 +2133,13 @@ impl OnlineScreen {
                                             "online: {} could not prove it is the official server",
                                             row.addr
                                         );
+                                    }
+                                    // connected before the probe answered (resume, auto,
+                                    // a quick pick): leave a server too old for .rgc
+                                    if info.api < rugen_proto::API_VERSION
+                                        && row.addr == self.client.server
+                                    {
+                                        outdated = Some((row.addr.clone(), info.api));
                                     }
                                     row.info = Some(info);
                                     row.ping = Some(ping);
@@ -2243,6 +2256,12 @@ impl OnlineScreen {
         }
         keep.append(&mut self.jobs);
         self.jobs = keep;
+        if let Some((server, api)) = outdated {
+            self.presence = None;
+            self.client = OnlineClient::new("", None);
+            self.state = State::Servers;
+            self.error = outdated_error(&server, api);
+        }
     }
 
     /// Keep the rating of this server in the profile (title screen rank card).
