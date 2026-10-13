@@ -16,14 +16,29 @@ const PUNCH: &[u8] = b"rugen1 punch ";
 const PONG: &[u8] = b"rugen1 pong ";
 
 /// Outcome of [`Socket::handshake`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Punched {
     pub remote: SocketAddr,
     /// Median round trip of the exchange.
     pub rtt_ms: Option<u32>,
     /// Median / p95 / jitter of the exchange.
     pub rtt: Option<crate::RttStats>,
+    /// The match rules the peer sent ([`HandshakeRules::Receive`]); `None`
+    /// when it sent none (an older build) or none were asked for.
+    pub rules: Option<String>,
 }
+
+/// Match rules carried by [`Socket::handshake_with`]: the host sends its own
+/// (a short ASCII string without spaces), the other side receives them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandshakeRules<'a> {
+    None,
+    Send(&'a str),
+    Receive,
+}
+
+/// Marker of the rules inside a punch: `rugen1 punch <ms> r=<rules>`.
+const RULES: &str = " r=";
 
 pub struct Socket {
     socket: UdpSocket,
@@ -77,6 +92,24 @@ impl Socket {
         timeout: Duration,
         progress: &mut dyn FnMut(&str),
     ) -> Result<Punched> {
+        self.handshake_with(peer, timeout, HandshakeRules::None, progress)
+    }
+
+    /// [`handshake`](Self::handshake) that also carries the host's match
+    /// rules: `Send` appends them to every punch, `Receive` keeps going (up
+    /// to 3 s after contact) until they arrive.
+    pub fn handshake_with(
+        &mut self,
+        peer: SocketAddr,
+        timeout: Duration,
+        rules: HandshakeRules,
+        progress: &mut dyn FnMut(&str),
+    ) -> Result<Punched> {
+        let suffix = match rules {
+            HandshakeRules::Send(r) => format!("{RULES}{r}"),
+            _ => String::new(),
+        };
+        let mut got: Option<String> = None;
         progress(&format!("waiting for {peer}"));
         let start = Instant::now();
         let ms = || start.elapsed().as_millis() as u64;
@@ -85,39 +118,54 @@ impl Socket {
         let mut samples: Vec<u32> = Vec::new();
         let mut buf = [0u8; 512];
         while start.elapsed() < timeout {
+            let waiting_rules = rules == HandshakeRules::Receive
+                && got.is_none()
+                && contact.is_some_and(|c| c.elapsed() < Duration::from_secs(3));
             if let Some(c) = contact
                 && (samples.len() >= 20 || c.elapsed() > Duration::from_millis(1500))
+                && !waiting_rules
             {
                 for _ in 0..3 {
                     let _ = self
                         .socket
-                        .send_to(format!("rugen1 punch {}", ms()).as_bytes(), peer);
+                        .send_to(format!("rugen1 punch {}{suffix}", ms()).as_bytes(), peer);
                 }
                 let us: Vec<u32> = samples.iter().map(|ms| ms * 1000).collect();
                 return Ok(Punched {
                     remote: peer,
                     rtt_ms: median(&mut samples),
                     rtt: crate::RttStats::from_us(&us),
+                    rules: got,
                 });
             }
             let every = if contact.is_some() { 30 } else { 100 };
             if last_send.elapsed() >= Duration::from_millis(every) {
                 let _ = self
                     .socket
-                    .send_to(format!("rugen1 punch {}", ms()).as_bytes(), peer);
+                    .send_to(format!("rugen1 punch {}{suffix}", ms()).as_bytes(), peer);
                 last_send = Instant::now();
             }
             match self.socket.recv_from(&mut buf) {
                 Ok((n, from)) if from == peer => {
                     let d = &buf[..n];
                     if let Some(t) = d.strip_prefix(PUNCH) {
+                        let text = std::str::from_utf8(t).unwrap_or("");
+                        let (stamp, sent) = match text.split_once(RULES) {
+                            Some((a, r)) => (a, Some(r.trim())),
+                            None => (text, None),
+                        };
+                        if rules == HandshakeRules::Receive
+                            && let Some(r) = sent
+                        {
+                            got = Some(r.to_string());
+                        }
                         let mut pong = PONG.to_vec();
-                        pong.extend_from_slice(t);
+                        pong.extend_from_slice(stamp.trim().as_bytes());
                         let _ = self.socket.send_to(&pong, from);
                     } else if let Some(t) = d.strip_prefix(PONG)
                         && let Some(t) = std::str::from_utf8(t)
                             .ok()
-                            .and_then(|t| t.trim().parse::<u64>().ok())
+                            .and_then(|t| t.split_whitespace().next()?.parse::<u64>().ok())
                     {
                         samples.push(ms().saturating_sub(t) as u32);
                     }
@@ -154,6 +202,7 @@ impl NonBlockingSocket<SocketAddr> for Socket {
                     if let Some(t) = data.strip_prefix(PUNCH) {
                         // the peer is still handshaking: answer so it can finish
                         let mut pong = PONG.to_vec();
+                        let t = t.split(|b| *b == b' ').next().unwrap_or(t);
                         pong.extend_from_slice(t);
                         let _ = self.socket.send_to(&pong, from);
                         continue;
@@ -204,6 +253,37 @@ mod tests {
         assert_eq!(ra.remote.port(), pb);
         assert_eq!(rb.remote.port(), pa);
         assert!(ra.rtt_ms.unwrap() < 200);
+    }
+
+    #[test]
+    fn handshake_carries_the_hosts_rules() {
+        let mut a = Socket::bind(0).unwrap();
+        let mut b = Socket::bind(0).unwrap();
+        let (pa, pb) = (a.local_port(), b.local_port());
+        let t = std::thread::spawn(move || {
+            b.handshake_with(
+                SocketAddr::from(([127, 0, 0, 1], pa)),
+                Duration::from_secs(5),
+                HandshakeRules::Receive,
+                &mut |_| {},
+            )
+            .unwrap()
+        });
+        let ra = a
+            .handshake_with(
+                SocketAddr::from(([127, 0, 0, 1], pb)),
+                Duration::from_secs(5),
+                HandshakeRules::Send("fighter_size=chibi"),
+                &mut |_| {},
+            )
+            .unwrap();
+        let rb = t.join().unwrap();
+        assert_eq!(rb.rules.as_deref(), Some("fighter_size=chibi"));
+        assert_eq!(ra.rules, None);
+        assert!(
+            ra.rtt_ms.is_some(),
+            "pongs still parse with rules in the punch"
+        );
     }
 
     #[test]

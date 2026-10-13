@@ -27,7 +27,7 @@ pub use quality::{
     DelayPolicy, EventFilter, Mispredictions, Pacer, Quality, RttStats, TICK, auto_input_delay,
 };
 pub use relay::{Exit, RelaySocket, slot_addr};
-pub use socket::{Punched, Socket};
+pub use socket::{HandshakeRules, Punched, Socket};
 
 use std::net::SocketAddr;
 
