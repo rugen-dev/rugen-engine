@@ -279,6 +279,20 @@ enter_time = 16
     fit_y = 1
     visible = "card1.present"
 
+    # nobody here yet: an empty mat, not a blank sheet
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    x = 0
+    y = 0
+    w = 198
+    h = 198
+    align = "center"
+    font = 3
+    scale = 2
+    bank = 17
+    visible = "!card1.present"
+
   [[node.children]]
   kind = "text"
   text = "1P"
@@ -419,6 +433,20 @@ enter_time = 16
     fit_y = 1
     flip = true
     visible = "card2.present"
+
+    # nobody here yet: an empty mat, not a blank sheet
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    x = 194
+    y = 0
+    w = 198
+    h = 198
+    align = "center"
+    font = 3
+    scale = 2
+    bank = 17
+    visible = "!card2.present"
 
   [[node.children]]
   kind = "text"
