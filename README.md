@@ -71,12 +71,12 @@ rugen play kfm        # a quick match against the computer
 - [ ] Online: ranked seasons, per-fighter leaderboards, tournament brackets in rooms
 - [ ] Shareable replays by code
 - [ ] Creator tools: user themes folder with live reload, fighter debugger
-- [ ] Discord Rich Presence
 - [ ] Translations (French first), Steam Deck layout
 
 **Not planned for now**
 
 - In-game browsing and downloading of fighters from a public catalogue
+- Discord Rich Presence
 
 ## Build from source
 
