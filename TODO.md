@@ -51,6 +51,22 @@ each commit. Tick the box and add the commit hash when done.
 
 ## UI
 
+- [ ] **Mouse cursor in menus, alongside the keyboard.** The mouse was
+  turned off (`[input] mouse = false`) because it fought the keyboard. Make
+  it work and turn it back on by default:
+  - hover moves the focus and click activates, on every screen (title,
+    options, controls, select, stage select, online, pause);
+  - the keyboard / pad always wins: a key press takes the focus back, and
+    the cursor only takes over once the mouse actually moves (not on a
+    stray event while it rests);
+  - hide the cursor after a few seconds without mouse movement and during
+    fights;
+  - the wheel scrolls lists and the stage strip; sliders and toggles work by
+    click and drag.
+- [ ] **Held direction repeats in menus.** Holding ↑ / ↓ (or ← / →) moves
+  only once; it should repeat: first repeat after about 0.4 s, then every
+  ~0.08 s, on keyboard and pad, on every list, grid and slider (the stage
+  strip already does this; share one repeat helper).
 - [ ] **Pad labels outside fights.** Hints on menu screens (select
   `pick_key`, title) always show keyboard keys; switch to the pad's button
   names when the last input came from a gamepad, as fight overlays do.
