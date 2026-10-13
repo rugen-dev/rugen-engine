@@ -739,6 +739,23 @@ impl Lifebar {
         }
     }
 
+    /// Unscaled width of `line` in fight.def font `index` and where its ink
+    /// (letters and digits) starts and ends, relative to the baseline that
+    /// [`Lifebar::text_at`] draws on.
+    pub fn text_ink(&self, index: i32, line: &str) -> Option<[f32; 3]> {
+        let f = self.fonts.get(&index)?;
+        let cell_top = 1.0 + f.font.offset[1] as f32 - f32::from(f.font.size[1]);
+        let (t, b) = f
+            .font
+            .ink_rows()
+            .unwrap_or((0, f.font.size[1].saturating_sub(1)));
+        Some([
+            f.width(line, 1.0),
+            cell_top + f32::from(t),
+            cell_top + f32::from(b) + 1.0,
+        ])
+    }
+
     /// Unscaled width and height of `line` in fight.def font `index`.
     pub fn text_size(&self, index: i32, line: &str) -> Option<[f32; 2]> {
         let f = self.fonts.get(&index)?;

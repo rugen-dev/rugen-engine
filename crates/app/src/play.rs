@@ -1669,24 +1669,41 @@ impl Match {
         }
         if let Some(t) = self.tutorial.as_ref() {
             let lines = t.text();
+            // screenpack fonts when the fight.def has them, else the built-in
+            // 3x5 font; lines stack by their real height so a big title
+            // never runs into the hint below it
+            let fonts = [(4, 0), (3, 1), (1, 5)];
+            let builtin = [
+                (2.0, [1.0, 0.9, 0.3, 1.0]),
+                (1.2, [1.0, 1.0, 1.0, 1.0]),
+                (1.0, [0.7, 0.8, 1.0, 1.0]),
+            ];
+            let ink = |k: usize| {
+                lifebar
+                    .as_ref()
+                    .and_then(|lb| lb.text_ink(fonts[k].0, &lines[k]))
+                    .unwrap_or_else(|| {
+                        // the built-in font draws down from the given top
+                        let px = builtin[k].0;
+                        [lines[k].chars().count() as f32 * 4.0 * px, 0.0, 5.0 * px]
+                    })
+            };
+            let inks = [ink(0), ink(1), ink(2)];
+            let layout = tutorial_layout(&inks);
+            let half = layout.width / 2.0;
             r.rect(
-                hud(screen_w / 2.0 - 150.0, 64.0),
-                hud(screen_w / 2.0 + 150.0, 108.0),
+                hud(screen_w / 2.0 - half, layout.top),
+                hud(screen_w / 2.0 + half, layout.bottom),
                 [0.0, 0.0, 0.0, 0.55],
             );
-            // screenpack fonts when the fight.def has them, else the built-in 3x5 font
-            let fonts = [(4, 0, 88.0), (3, 1, 98.0), (1, 5, 106.0)];
-            for (k, (index, bank, y)) in fonts.iter().enumerate() {
+            for (k, (index, bank)) in fonts.iter().enumerate() {
+                let base = layout.baselines[k];
                 let drawn = lifebar.as_mut().is_some_and(|lb| {
-                    lb.text_at(r, *index, &lines[k], hud(screen_w / 2.0, *y), *bank, 0, u)
+                    lb.text_at(r, *index, &lines[k], hud(screen_w / 2.0, base), *bank, 0, u)
                 });
                 if !drawn {
-                    let (px, y, col) = match k {
-                        0 => (2.0, 70.0, [1.0, 0.9, 0.3, 1.0]),
-                        1 => (1.2, 86.0, [1.0, 1.0, 1.0, 1.0]),
-                        _ => (1.0, 98.0, [0.7, 0.8, 1.0, 1.0]),
-                    };
-                    draw_text(r, &lines[k], hud(screen_w / 2.0, y), px * u, col);
+                    let (px, col) = builtin[k];
+                    draw_text(r, &lines[k], hud(screen_w / 2.0, base), px * u, col);
                 }
             }
         }
@@ -1897,6 +1914,35 @@ pub fn parse_script(s: &str) -> Vec<Buttons> {
     out
 }
 
+/// Where the tutorial panel goes (HUD units): its box and each line's
+/// baseline, from the lines' `[width, ink top, ink bottom]` (the ink band
+/// relative to the baseline).
+struct TutorialLayout {
+    top: f32,
+    bottom: f32,
+    width: f32,
+    baselines: [f32; 3],
+}
+
+fn tutorial_layout(inks: &[[f32; 3]; 3]) -> TutorialLayout {
+    const TOP: f32 = 44.0;
+    const PAD: f32 = 5.0;
+    const GAP: f32 = 2.0;
+    let mut y = TOP + PAD;
+    let mut baselines = [0.0; 3];
+    for (k, m) in inks.iter().enumerate() {
+        baselines[k] = y - m[1];
+        y = baselines[k] + m[2] + GAP;
+    }
+    let widest = inks.iter().map(|m| m[0]).fold(0.0, f32::max);
+    TutorialLayout {
+        top: TOP,
+        bottom: y - GAP + PAD,
+        width: (widest + 4.0 * PAD).max(300.0),
+        baselines,
+    }
+}
+
 fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f32; 4]) {
     let w = text.chars().count() as f32 * 4.0 * px;
     let mut x = center[0] - w / 2.0;
@@ -2092,6 +2138,27 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tutorial's step title, hint and progress never overlap ("JUMP"
+    /// sat on "PRESS ↑": fixed baselines ignored the font heights).
+    #[test]
+    fn tutorial_lines_do_not_overlap() {
+        // fight.def fonts: ink 14 units over the baseline for the title, 9
+        // for the hint (2 below it), the built-in font's 5 down from its top
+        let inks = [[60.0, -14.0, 0.0], [80.0, -9.0, 2.0], [400.0, 0.0, 5.0]];
+        let l = tutorial_layout(&inks);
+        let band = |k: usize| (l.baselines[k] + inks[k][1], l.baselines[k] + inks[k][2]);
+        assert!(band(0).0 > l.top, "inside the box");
+        for k in 1..3 {
+            assert!(
+                band(k).0 > band(k - 1).1,
+                "line {k} starts below line {}",
+                k - 1
+            );
+        }
+        assert!(l.bottom > band(2).1, "the box holds every line");
+        assert!(l.width >= 400.0, "and the widest one");
+    }
 
     /// Goku's ki blasts: AIR flags reach the draw (players, helpers,
     /// explods, projectiles and afterimages all resolve through here), the
