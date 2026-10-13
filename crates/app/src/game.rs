@@ -35,7 +35,7 @@ const STOCK_QUOTES: [&str; 4] = [
     "Next chapter, same result.",
     "Victory is written in ink!",
 ];
-const SYSTEM_SND: u32 = u32::MAX - 2;
+const SYSTEM_SND: u32 = rugen_audio::SYSTEM_BANK;
 /// Ticks between the last options change and writing rugen.toml.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -754,7 +754,7 @@ impl Shell {
             return;
         };
         let key = SoundKey {
-            source: SYSTEM_SND,
+            bank: SYSTEM_SND,
             group: g,
             number: n,
         };
@@ -777,6 +777,18 @@ impl Shell {
     }
 
     fn transition(&mut self, t: Transition) {
+        self.transition_inner(t);
+        // no match left (on screen or parked under the options): its fighters'
+        // voices stop and their samples go, so nothing carries into the next fight
+        if !matches!(self.screen, Screen::Match(_))
+            && self.parked.is_none()
+            && let Some(a) = self.audio.as_mut()
+        {
+            a.release_fight();
+        }
+    }
+
+    fn transition_inner(&mut self, t: Transition) {
         // every new screen fades in from black
         self.fade = 1.0;
         // the screen being left gives back its textures (a pause menu keeps
@@ -860,6 +872,9 @@ impl Shell {
             Transition::Restart => {
                 self.drop_pause();
                 self.fade = 0.0;
+                if let Some(a) = self.audio.as_mut() {
+                    a.stop_fight_voices();
+                }
                 if let Screen::Match(m) = &mut self.screen {
                     m.world.start_round();
                     // the recording no longer replays from the first frame
@@ -1210,6 +1225,11 @@ impl Shell {
             Transition::Fight(setup) => {
                 self.drop_pause();
                 self.parked = None;
+                // the fight being replaced (rematch, next arcade stage, online
+                // rematch) takes its voices and samples with it
+                if let Some(a) = self.audio.as_mut() {
+                    a.release_fight();
+                }
                 self.match_stats = Default::default();
                 // online: both sides must simulate with the same settings
                 let cfg = match (&setup.net, &self.online_match) {

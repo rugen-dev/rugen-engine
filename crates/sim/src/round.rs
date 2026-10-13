@@ -266,6 +266,8 @@ impl World {
             p.air_dash_time = 0;
             p.tap_tick = [0, 0];
             p.tap_pending = [false, false];
+            p.down_tap = 0;
+            p.drop_through = None;
             p.children.clear();
             p.pctime = -1;
             p.state_owner = p.data;

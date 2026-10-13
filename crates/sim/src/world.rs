@@ -104,6 +104,12 @@ pub struct Movement {
 /// Ground value for a player over a pit: far below everything.
 pub const NO_GROUND: f32 = 1.0e6;
 
+/// Two down presses this many ticks apart (or closer) drop through a platform.
+pub const DROP_TAP_WINDOW: u32 = 14;
+/// Ticks a dropped-through platform stays ignored (and at least until the
+/// feet are below its top), so the fighter does not land on it again at once.
+pub const DROP_IGNORE_TICKS: i32 = 12;
+
 /// A horizontal surface at height `y` (negative = above the floor) spanning `x1..=x2`
 /// in stage coordinates. Declared in a stage .def as
 /// `[Platform]` sections with `x = x1, x2` and `y = height`.
@@ -1758,6 +1764,7 @@ impl World {
         }
         if keys {
             self.engine_air_moves(i, &data, fb, bb, db);
+            self.platform_drop(i, db);
         }
         let p = &mut self.players[i];
         if p.state_type != StateType::A {
@@ -3138,6 +3145,48 @@ impl World {
         }
     }
 
+    /// One-way platforms: double-tap down (two presses within
+    /// [`DROP_TAP_WINDOW`] ticks) while standing on a platform with control
+    /// drops through it. The main floor never drops. (Down + jump cannot be
+    /// read: opposite directions cancel in the input buffer.) Reads only sim
+    /// inputs and the frame counter, so netplay and replays stay in sync.
+    fn platform_drop(&mut self, i: usize, db: i32) {
+        if self.stage.platforms.is_empty() {
+            return;
+        }
+        let frame = self.frame;
+        let p = &mut self.players[i];
+        let mut double = false;
+        if db == 1 {
+            let prev = p.down_tap;
+            p.down_tap = frame + 1;
+            double = prev != 0 && frame + 1 - prev <= DROP_TAP_WINDOW;
+        }
+        if !double
+            || !p.player_type
+            || !p.ctrl
+            || p.move_type == MoveType::H
+            || !matches!(p.state_type, StateType::S | StateType::C)
+            || p.ground >= 0.0
+            || (p.pos[1] - p.ground).abs() > 0.5
+        {
+            return;
+        }
+        let (x, ground) = (p.pos[0], p.ground);
+        let scale = self.local_scale(i);
+        let Some(k) = self
+            .stage
+            .platforms
+            .iter()
+            .position(|pl| pl.y / scale == ground && x >= pl.x1 / scale && x <= pl.x2 / scale)
+        else {
+            return;
+        };
+        let p = &mut self.players[i];
+        p.drop_through = Some((k, DROP_IGNORE_TICKS));
+        p.down_tap = 0;
+    }
+
     /// Ring-outs: a root player past the arena blast zone loses a stock
     /// (respawn) or is KO'd. Runs after the bounds phase.
     fn check_blastzone(&mut self) {
@@ -3208,13 +3257,13 @@ impl World {
         p.air_jump_count = 0;
         p.air_dash_used = false;
         p.air_dash_time = 0;
+        p.down_tap = 0;
+        p.drop_through = None;
         p.state_owner = p.data;
         self.change_state(i, 50, None, Some(true));
         self.run_current(i);
     }
 
-    /// Platforms: land on a surface crossed from above this tick, keep the
-    /// surface while standing within its span, fall off when leaving it.
     /// Queue a sound event unless this tick already hit the PlaySnd cap.
     pub(crate) fn push_sound(&mut self, ev: Event) {
         let n = self
@@ -3293,6 +3342,13 @@ impl World {
         }
     }
 
+    /// One-way platforms. A platform becomes the ground only by landing on it:
+    /// falling (`vel y >= 0`) with the feet at or above its top last tick and
+    /// at or below it now. Rising, or coming from below or the side, passes
+    /// through; airborne, the ground stays the surface left (inside its span)
+    /// or the floor. A surface stood on is kept while inside its span (the
+    /// feet may sink below it, as on the floor); walking off it drops the
+    /// player. A platform being dropped through is ignored for a while.
     fn update_ground(&mut self, i: usize) -> bool {
         if self.stage.platforms.is_empty() && self.stage.arena.floor.is_none() {
             return false;
@@ -3308,6 +3364,20 @@ impl World {
             (p.pos[0], p.old_pos[1], p.pos[1], p.vel[1], p.ground)
         };
         let scale = self.local_scale(i);
+        // the platform being dropped through: ignored for its ticks and until
+        // the feet are below its top (or the body left its span)
+        let ignored = match self.players[i].drop_through {
+            Some((k, t)) => {
+                let clear = self.stage.platforms.get(k).is_none_or(|pl| {
+                    let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
+                    new_y > y + 0.01 || x < x1 || x > x2
+                });
+                let t = t - 1;
+                self.players[i].drop_through = (t > 0 || !clear).then_some((k, t.max(0)));
+                Some(k)
+            }
+            None => None,
+        };
         let mut landed: Option<f32> = None;
         // the floor exists only inside the arena's span (a pit elsewhere)
         let on_floor_span = self
@@ -3319,13 +3389,17 @@ impl World {
         if on_floor_span && vy >= 0.0 && old_y <= 0.01 && new_y >= 0.0 && ground >= NO_GROUND {
             landed = Some(0.0);
         }
+        // feet on the ground last tick and not moving up: walking, so the
+        // next surface down (a lower platform, an adjacent one) is found at
+        // once; airborne, platforms count only once landed on
+        let standing = vy >= 0.0 && ground < NO_GROUND && (old_y - ground).abs() <= 0.5;
         // the surface already stood on, kept while inside its span even when the
         // feet sink below it (as on the floor, where Pos Y may go positive: the
         // common fall states wait for `Pos Y >= 25` before bouncing)
         let mut keep: Option<f32> = None;
-        for pl in &self.stage.platforms {
+        for (k, pl) in self.stage.platforms.iter().enumerate() {
             let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
-            if x < x1 || x > x2 {
+            if x < x1 || x > x2 || ignored == Some(k) {
                 continue;
             }
             if ground == y {
@@ -3337,7 +3411,7 @@ impl World {
                 landed = Some(y);
             }
             // highest surface at or below the feet (for walk-offs)
-            if y >= new_y - 0.01 && y < below {
+            if standing && y >= new_y - 0.01 && y < below {
                 below = y;
             }
         }
@@ -3348,10 +3422,7 @@ impl World {
             return false;
         }
         let p = &mut self.players[i];
-        p.ground = match keep {
-            Some(k) if new_y >= k - 0.01 || k <= below => k,
-            _ => below,
-        };
+        p.ground = keep.unwrap_or(below);
         // walked off the surface it stood on (the ground under the feet dropped
         // away this tick): the caller drops the player into the air-fall state.
         // A body content placed in the air (PosSet, binds) is left alone.
@@ -3664,6 +3735,242 @@ mod tests {
         run(&mut w, 60, Buttons::default());
         assert_eq!(w.players[0].state_no, 0, "attack finished");
         assert!(w.players[0].ctrl);
+    }
+
+    const NONE: Buttons = Buttons {
+        u: false,
+        d: false,
+        l: false,
+        r: false,
+        a: false,
+        b: false,
+        c: false,
+        x: false,
+        y: false,
+        z: false,
+        s: false,
+    };
+    const DOWN: Buttons = Buttons { d: true, ..NONE };
+
+    /// kfm standing on a platform spanning x -120..-20 at `y`.
+    fn on_platform(y: f32) -> Option<World> {
+        let mut w = world()?;
+        w.stage.platforms.push(Platform {
+            x1: -120.0,
+            x2: -20.0,
+            y,
+        });
+        run(&mut w, 5, NONE);
+        w.players[0].pos = [-70.0, y];
+        w.players[0].old_pos = w.players[0].pos;
+        w.players[0].ground = y;
+        run(&mut w, 10, NONE);
+        let p = &w.players[0];
+        assert_eq!(
+            (p.state_no, p.pos[1], p.ground),
+            (0, y, y),
+            "standing on it"
+        );
+        Some(w)
+    }
+
+    /// Jumping up through a platform: never snapped onto it, never treated as
+    /// the ground while rising (Pos Y stays floor-relative); landing comes
+    /// only on the way down.
+    #[test]
+    fn platform_rising_passes_through() {
+        let Some(mut w) = world() else { return };
+        w.stage.platforms.push(Platform {
+            x1: -120.0,
+            x2: -20.0,
+            y: -40.0,
+        });
+        run(&mut w, 5, NONE);
+        run(&mut w, 1, Buttons { u: true, ..NONE });
+        let mut passed_above = false;
+        let mut landed = false;
+        for t in 0..90 {
+            let old = w.players[0].pos[1];
+            w.step(&[NONE, NONE]);
+            let p = &w.players[0];
+            if p.pos[1] < old {
+                // moving up: free passage
+                assert_eq!(p.ground, 0.0, "t={t}: rising, ground {}", p.ground);
+                assert_ne!(p.state_no, 52, "t={t}: no landing while rising");
+                passed_above |= p.pos[1] < -40.0;
+            }
+            if p.ground == -40.0 && p.pos[1] == -40.0 {
+                assert!(passed_above, "landed before rising above the top");
+                landed = true;
+                break;
+            }
+        }
+        assert!(passed_above, "kfm's jump reaches above the platform");
+        assert!(landed, "lands on the platform on the way down");
+    }
+
+    /// Landing needs the feet at or above the top last tick: a body falling
+    /// into the span from the side, feet below the top, passes on to the floor.
+    #[test]
+    fn platform_lands_only_from_above() {
+        let Some(mut w) = world() else { return };
+        w.stage.platforms.push(Platform {
+            x1: -60.0,
+            x2: 60.0,
+            y: -40.0,
+        });
+        run(&mut w, 5, NONE);
+        // airborne left of the span, feet 2 below the top, drifting right
+        w.change_state(0, 50, None, None);
+        w.players[0].pos = [-75.0, -38.0];
+        w.players[0].old_pos = w.players[0].pos;
+        w.players[0].vel = [6.0, 0.5];
+        let mut floor = false;
+        for t in 0..60 {
+            w.step(&[NONE, NONE]);
+            let p = &w.players[0];
+            assert_ne!(
+                p.ground, -40.0,
+                "t={t}: snapped on from the side: {:?}",
+                p.pos
+            );
+            if p.pos[1] == 0.0 && p.ground == 0.0 {
+                assert!(p.pos[0] > -60.0, "entered the span on the way");
+                floor = true;
+                break;
+            }
+        }
+        assert!(floor, "fell to the floor");
+        // from straight below: a platform just under kfm's apex is not caught
+        // by the head or the rise, only by the fall
+        let Some(mut w) = world() else { return };
+        w.stage.platforms.push(Platform {
+            x1: -120.0,
+            x2: -20.0,
+            y: -100.0,
+        });
+        run(&mut w, 5, NONE);
+        run(&mut w, 1, Buttons { u: true, ..NONE });
+        run(&mut w, 90, NONE);
+        let p = &w.players[0];
+        assert_eq!(
+            (p.pos[1], p.ground),
+            (0.0, 0.0),
+            "out of reach: back on the floor"
+        );
+    }
+
+    /// Double-tap down on a platform drops through it to the floor.
+    #[test]
+    fn platform_double_tap_down_drops_through() {
+        let Some(mut w) = on_platform(-40.0) else {
+            return;
+        };
+        for b in [DOWN, DOWN, NONE, NONE, DOWN] {
+            w.step(&[b, NONE]);
+        }
+        assert!(w.players[0].drop_through.is_some(), "second tap drops");
+        let mut floor = false;
+        for _ in 0..60 {
+            w.step(&[NONE, NONE]);
+            let p = &w.players[0];
+            if p.pos[1] == 0.0 && p.ground == 0.0 {
+                floor = true;
+                break;
+            }
+        }
+        assert!(floor, "fell through to the floor: {:?}", w.players[0].pos);
+        assert!(w.players[0].drop_through.is_none(), "window over");
+        // too slow a double tap stays on the platform
+        let Some(mut w) = on_platform(-40.0) else {
+            return;
+        };
+        let mut slow = vec![DOWN, DOWN];
+        slow.extend(std::iter::repeat_n(NONE, DROP_TAP_WINDOW as usize + 2));
+        slow.push(DOWN);
+        slow.extend([NONE; 20]);
+        for b in slow {
+            w.step(&[b, NONE]);
+        }
+        assert_eq!(w.players[0].ground, -40.0, "slow taps do not drop");
+    }
+
+    /// The main floor (and the arena floor) never drops.
+    #[test]
+    fn platform_drop_never_through_the_floor() {
+        let Some(mut w) = on_platform(-40.0) else {
+            return;
+        };
+        // walk off the platform onto the floor first
+        let mut steps = 0;
+        while w.players[0].ground != 0.0 || w.players[0].state_no != 0 {
+            w.step(&[Buttons { r: true, ..NONE }, NONE]);
+            steps += 1;
+            assert!(steps < 200, "reached the floor");
+        }
+        run(&mut w, 10, NONE);
+        for b in [DOWN, NONE, DOWN, NONE, DOWN] {
+            w.step(&[b, NONE]);
+        }
+        run(&mut w, 30, NONE);
+        let p = &w.players[0];
+        assert!(p.drop_through.is_none());
+        assert_eq!((p.pos[1], p.ground), (0.0, 0.0));
+        assert_ne!(p.state_no, 50, "no fall from the floor");
+        // the arena floor span as well
+        w.stage.arena.floor = Some([-300.0, 300.0]);
+        for b in [DOWN, NONE, DOWN, NONE] {
+            w.step(&[b, NONE]);
+        }
+        run(&mut w, 30, NONE);
+        assert_eq!((w.players[0].pos[1], w.players[0].ground), (0.0, 0.0));
+    }
+
+    /// While the drop window runs, crossing the platform's top again from
+    /// above does not land on it; after it, landing works again.
+    #[test]
+    fn platform_no_reland_during_drop_window() {
+        let Some(mut w) = on_platform(-40.0) else {
+            return;
+        };
+        for b in [DOWN, NONE, DOWN] {
+            w.step(&[b, NONE]);
+        }
+        assert!(w.players[0].drop_through.is_some());
+        run(&mut w, 2, NONE);
+        // inside the window: put the feet back above the top, falling
+        let p = &mut w.players[0];
+        assert!(p.pos[1] > -40.0, "below the top already");
+        p.pos[1] = -45.0;
+        p.old_pos[1] = -45.0;
+        p.vel[1] = 2.0;
+        for t in 0..5 {
+            w.step(&[NONE, NONE]);
+            let p = &w.players[0];
+            assert_ne!(p.ground, -40.0, "t={t}: re-landed inside the window");
+        }
+        let mut floor = false;
+        for _ in 0..60 {
+            w.step(&[NONE, NONE]);
+            if w.players[0].pos[1] == 0.0 && w.players[0].ground == 0.0 {
+                floor = true;
+                break;
+            }
+        }
+        assert!(floor, "fell to the floor");
+        assert!(w.players[0].drop_through.is_none());
+        // the window is over: jump back up and land on the platform again
+        run(&mut w, 15, NONE);
+        run(&mut w, 1, Buttons { u: true, ..NONE });
+        let mut landed = false;
+        for _ in 0..90 {
+            w.step(&[NONE, NONE]);
+            if w.players[0].ground == -40.0 && w.players[0].state_no != 50 {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "lands on it again after the window");
     }
 
     /// A platform above the floor: jump onto it, stand on it, walk off and fall.

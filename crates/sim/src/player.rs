@@ -144,6 +144,12 @@ pub struct Player {
     /// Frame (+1) of the last forward / back press, and whether it completed a double tap.
     pub tap_tick: [u32; 2],
     pub tap_pending: [bool; 2],
+    /// Frame (+1) of the last down press: a second one soon after drops
+    /// through the platform stood on (see `World::platform_drop`).
+    pub down_tap: u32,
+    /// Platform being dropped through (index into `Stage::platforms`) and the
+    /// ticks it stays ignored; it is also ignored until the feet are below it.
+    pub drop_through: Option<(usize, i32)>,
     /// Lives left this round (`[Arena] stocks`); 0 = stocks disabled.
     pub stocks: i32,
     pub pal_no: i32,
@@ -366,6 +372,8 @@ impl Player {
             air_dash_time: 0,
             tap_tick: [0, 0],
             tap_pending: [false, false],
+            down_tap: 0,
+            drop_through: None,
             stocks: 0,
             pal_no,
             minus: 0,
