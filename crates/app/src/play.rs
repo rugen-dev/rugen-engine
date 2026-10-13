@@ -446,8 +446,10 @@ impl Match {
                 air_dash: cfg.game.air_dash,
                 fast_fall: cfg.game.fast_fall,
             },
-            // the options' round time; online peers keep the motif's so both sides agree
-            round_time: setup.net.is_none().then_some(cfg.game.round_time),
+            // offline: the options' round time; online rooms: the room's
+            // (both sides run `match_config`); LAN peers keep the motif's
+            round_time: (setup.net.is_none() || cfg.game.match_wins.is_some())
+                .then_some(cfg.game.round_time),
             ai: if setup.net.is_none() {
                 setup.ai
             } else {
@@ -457,11 +459,15 @@ impl Match {
         };
         let mut world = rugen_sim::headless::build_world(&spec)
             .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        // the room's ROUNDS (online; the same on both sides and in the server's re-simulation)
+        if let Some(w) = cfg.game.match_wins.filter(|_| setup.net.is_some()) {
+            world.round.config.match_wins = w;
+        }
         // a match rule for CPU sides; online rooms are human vs human
         world.arena_ai = setup.net.is_none() && setup.arena_ai.unwrap_or(cfg.game.arena_ai);
         for d in &world.data {
             for w in &d.warnings {
-                log::warn!("{}: {w}", d.name);
+                log::debug!("{}: {w}", d.name);
             }
             // Opus sounds of .rgc fighters decode in the background, ready before they play
             if let Some(snd) = &d.snd {
@@ -611,7 +617,7 @@ impl Match {
             match CharData::load_with_data(&def, &self.data_dir) {
                 Ok(d) => {
                     for w in &d.warnings {
-                        log::warn!("{}: {w}", d.name);
+                        log::debug!("{}: {w}", d.name);
                     }
                     log::info!("reloaded {}", d.name);
                     // both slots share data when the same character fights itself
@@ -705,7 +711,11 @@ impl Match {
                             self.smooth.tick(&shown, corrected.as_deref());
                         }
                         for n in &adv.notices {
-                            log::info!("netplay: {n}");
+                            // once per episode: a stall says "waiting for
+                            // remote" every tick until it ends
+                            if *n != self.net_status {
+                                log::info!("netplay: {n}");
+                            }
                             self.net_status = n.clone();
                         }
                         let st = net.stats();
@@ -793,10 +803,10 @@ impl Match {
             }
             t.tick(&self.world);
         }
-        if self.debug {
-            for w in self.world.warnings.drain(..) {
-                log::warn!("{w}");
-            }
+        // content warnings (a character asking for a missing action, ...):
+        // debug level, a normal session log stays readable
+        for w in self.world.warnings.drain(..) {
+            log::debug!("{w}");
         }
         true
     }

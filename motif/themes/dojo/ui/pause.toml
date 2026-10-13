@@ -451,6 +451,16 @@ enter_time = 12
   visible = "source"
 
 # ------------------------------------------------------------- key hints
+# on a dark strip: the labels must read over any stage under the dim
+[[node]]
+kind = "panel"
+dock = "right bottom"
+x = 532
+y = 668
+w = 748
+h = 44
+color = [0.078, 0.051, 0.043, 0.9]
+
 [[node]]
 kind = "hbox"
 dock = "right bottom"

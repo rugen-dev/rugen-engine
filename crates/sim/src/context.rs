@@ -118,24 +118,27 @@ impl Context for Ctx<'_> {
                 } else {
                     self.w.screen_bounds()
                 };
+                // screen values are stage units: in this fighter's own units
+                let s = self.w.local_scale(self.cur);
+                let (xmin, xmax, cam) = (xmin / s, xmax / s, self.w.cam_x / s);
                 let x = p.pos[0];
                 let front = if p.facing > 0.0 { xmax } else { xmin };
                 let back = if p.facing > 0.0 { xmin } else { xmax };
                 let (wf, wb) = self.w.player_width(self.cur);
                 match t {
-                    T::LeftEdge => Self::f(xmin - self.w.cam_x),
-                    T::RightEdge => Self::f(xmax - self.w.cam_x),
-                    T::FrontEdge => Self::f(front - self.w.cam_x),
-                    T::BackEdge => Self::f(back - self.w.cam_x),
+                    T::LeftEdge => Self::f(xmin - cam),
+                    T::RightEdge => Self::f(xmax - cam),
+                    T::FrontEdge => Self::f(front - cam),
+                    T::BackEdge => Self::f(back - cam),
                     T::FrontEdgeDist => Self::i(((front - x) * p.facing) as i32),
                     T::BackEdgeDist => Self::i(((x - back) * p.facing) as i32),
                     T::FrontEdgeBodyDist => Self::i(((front - x) * p.facing - wf) as i32),
                     _ => Self::i(((x - back) * p.facing - wb) as i32),
                 }
             }
-            T::BottomEdge => Self::f(self.w.stage.height),
+            T::BottomEdge => Self::f(self.w.stage.height / self.w.local_scale(self.cur)),
             T::TopEdge => Self::f(0.0),
-            T::CameraPos(Axis::X) => Self::f(self.w.cam_x),
+            T::CameraPos(Axis::X) => Self::f(self.w.cam_x / self.w.local_scale(self.cur)),
             T::CameraPos(Axis::Y) => Self::f(0.0),
             T::CameraZoom => Self::f(1.0),
             T::CanRecover => Self::b(
@@ -281,7 +284,7 @@ impl Context for Ctx<'_> {
                     _ => Value::Bottom,
                 }
             }
-            T::Pos(Axis::X) => Self::f(p.pos[0] - self.w.cam_x),
+            T::Pos(Axis::X) => Self::f(p.pos[0] - self.w.cam_x / self.w.local_scale(self.cur)),
             T::Pos(Axis::Y) => Self::f(p.pos[1] - p.ground),
             T::Power => Self::i(p.power),
             T::PowerMax => Self::i(p.power_max),
@@ -292,8 +295,12 @@ impl Context for Ctx<'_> {
             }
             T::RoundsExisted => Self::i(self.w.round.round_no - 1),
             T::RoundState => Self::i(self.w.round.round_state()),
-            T::ScreenPos(Axis::X) => Self::f(p.pos[0] - self.w.screen_left()),
-            T::ScreenPos(Axis::Y) => Self::f(p.pos[1] + self.w.stage.zoffset),
+            T::ScreenPos(Axis::X) => {
+                Self::f(p.pos[0] - self.w.screen_left() / self.w.local_scale(self.cur))
+            }
+            T::ScreenPos(Axis::Y) => {
+                Self::f(p.pos[1] + self.w.stage.zoffset / self.w.local_scale(self.cur))
+            }
             T::ScreenHeight => Self::f(self.w.stage.height),
             T::ScreenWidth => Self::f(self.w.stage.width),
             T::StateNo => Self::i(p.state_no),

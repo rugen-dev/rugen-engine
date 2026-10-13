@@ -680,6 +680,18 @@ impl UiScreen {
             "name": name,
             "line": format!("1 / {}", count.max(1)),
         });
+        // a system package keeps player files in the user data dir: say where
+        let chars = if lib.root == lib.assets {
+            "CHARS/".to_string()
+        } else {
+            let dir = lib.chars_dir();
+            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+            match home.as_deref().and_then(|h| dir.strip_prefix(h).ok()) {
+                Some(rel) => format!("~/{}/", rel.display()),
+                None => format!("{}/", dir.display()),
+            }
+        };
+        self.arenas["drop"] = Value::from(format!("DROP .ZIP OR .RAR FIGHTERS INTO {chars}"));
         let fighters = lib.chars().len();
         self.arenas["counts"] = Value::from(format!(
             "{} · {}",

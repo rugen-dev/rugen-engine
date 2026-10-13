@@ -21,7 +21,16 @@ later section while an earlier one has open boxes:
 
 - [x] **Arena AI merged** (2da53a2): self-KOs on Ink Arena 230 → 10 over 80
   CPU matches at level 4.
-- [ ] **Server sim must match 0.6.2.** 0.6.2 changes the simulation (one-way
+- [x] **Server sim must match 0.6.2.** (rugen-server c1c106e, f84d97f)
+  The server re-simulates only matches whose clients ran exactly the
+  `rugen-sim` version in its Cargo.lock (build.rs); any other version is
+  noted `unverified (version)` and stays an ordinary dispute (no
+  settlement, flag or block). Players of different versions never meet
+  (queue by `User-Agent`, rooms refuse them). 0.6.0 / 0.6.1 results stay
+  as their reports leave them. The resim applies the room's TIME / ROUNDS
+  like 0.6.2 clients. Still to do at release: bump the engine tag, rebuild,
+  deploy the server first.
+  Original note: 0.6.2 changes the simulation (one-way
   platforms, `airjump.neu` one-value fix), and the server re-simulates ranked
   matches with the engine tag it was built against (v0.6.0). Before
   releasing: check how the resim verifier treats a client whose sim differs
@@ -29,24 +38,39 @@ later section while an earlier one has open boxes:
   v0.6.2, rebuild the server against it, deploy the server first, then
   publish the client. Decide what happens to 0.6.0 / 0.6.1 clients' ranked
   results (verify with the matching sim, or ask them to update).
-- [ ] **Fresh install, every package.** Install the rpm, the deb and the
+- [x] **Fresh install, every package.** (b0a1eb1, 346e202, b9f25d6)
+  Packages ship MUGEN 1.1b1's base data (common1.cns, fightfx, sounds)
+  via scripts/stage-data.sh (no fighter loaded without it), the binary
+  needs glibc 2.34 instead of 2.43, explicit .deb / .rpm dependencies; the
+  camera / screen bounds now follow fighter units (CPU left the screen on
+  HD stages). Install the rpm, the deb and the
   tarball in a clean user (no `~/.local/share/rugen`, no `rugen.toml`):
   first launch, drop a zip into `chars/` and a stage into `stages/`,
   conversion, title, every mode, options, save, quit, relaunch.
-- [ ] **Smoke test every screen in both themes**, keyboard, gamepad and
+- [x] **Smoke test every screen in both themes** (8c5102e, ae100d3), keyboard, gamepad and
   mouse: title, all options tabs, controls, fighter select, stage select,
   versus, fight, pause and move list, result, every online screen, profile,
   leaderboard. No overlap, no clipped text, no dead button, no crash.
-- [ ] **Online end to end** with two clients against play.rugen.dev: quick
+- [x] **Online end to end** (1239226, ae100d3; rugen-server ac67861,
+  52a845e), two clients against a local server built from main: quick
   match, ranked, room by code, spectator, flee, rematch, an account created
   and logged in.
-- [ ] **No error or warning spam** in a normal session log (`RUST_LOG=info`);
+- [x] **No error or warning spam** (0d81b05) in a normal session log (`RUST_LOG=info`);
   character warnings stay at debug.
 - [ ] **Release 0.6.2** once the boxes above are ticked: version bump, tag,
   release notes in the usual order, README roadmap boxes for 0.6.2 ticked,
   docs updated, download page checked.
 
 ## Bugs
+
+- [ ] **Mixed localcoords between fighters.** P2Dist, collision and push
+  compare raw positions of two fighters whose localcoord (or FIGHTER SIZE)
+  differ; convert through `local_scale` like the camera now does.
+- [ ] **Offline replays do not record the round time** (online matches are
+  not recorded): a replay played after changing ROUND TIME may diverge.
+- [ ] **Windows / macOS packages lack data/.** release.yml (manual run)
+  does not ship the MUGEN base data that scripts/stage-data.sh adds to the
+  Linux packages.
 
 - [ ] **Black boxes around effects (top priority).** Goku's ki blasts (and
   likely other effects) show their black background instead of blending, as

@@ -224,7 +224,7 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
             vec![
                 row(
                     "delay",
-                    "NET INPUT DELAY",
+                    "INPUT DELAY",
                     {
                         let (opts, sel) = c.net.input_delay.choice();
                         Widget::Choice(opts, Some(sel))

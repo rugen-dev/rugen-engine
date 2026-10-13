@@ -239,6 +239,9 @@ pub struct Netplay {
     exit: Option<std::sync::Arc<Exit>>,
     /// ggrs declared the other player disconnected.
     peer_lost: bool,
+    /// The other player's address in the ggrs session: only its
+    /// disconnect ends the match (a spectator leaving never does).
+    remote: Option<SocketAddr>,
 }
 
 impl Netplay {
@@ -270,7 +273,9 @@ impl Netplay {
                 (kind, h)
             })
             .collect();
-        Self::start(socket, &players, local_handle, opts)
+        let mut n = Self::start(socket, &players, local_handle, opts)?;
+        n.remote = Some(remote);
+        Ok(n)
     }
 
     /// Match through a `rugen-server` relay session. `local_handle` is our
@@ -301,6 +306,7 @@ impl Netplay {
         let link = socket.link();
         let exit = socket.exit();
         let mut n = Self::start(socket, &players, local_handle, opts)?;
+        n.remote = Some(slot_addr(1 - local_handle as u8));
         n.turn_meter = meter;
         n.link = Some(link);
         n.exit = Some(exit);
@@ -338,6 +344,7 @@ impl Netplay {
             link: None,
             exit: None,
             peer_lost: false,
+            remote: None,
         }
     }
 
@@ -500,6 +507,9 @@ impl Netplay {
             self.stats.skipped += 1;
             return Ok(out);
         }
+        // the other player's address (a spectator's events do not count)
+        let remote = self.remote;
+        let is_player = |a: SocketAddr| remote.is_none_or(|r| r == a);
         let requests = match &mut self.session {
             Session::P2P(s) => {
                 for ev in s.events() {
@@ -511,6 +521,14 @@ impl Netplay {
                             self.stats.synchronized = true;
                             out.notices.push(format!("connected to {addr}"));
                         }
+                        // a spectator (P1 feeds them) coming and going is
+                        // not the match: only the other player counts
+                        GgrsEvent::Disconnected { addr } if !is_player(addr) => {
+                            out.notices.push(format!("spectator {addr} left"));
+                        }
+                        GgrsEvent::NetworkInterrupted { addr, .. }
+                        | GgrsEvent::NetworkResumed { addr }
+                            if !is_player(addr) => {}
                         GgrsEvent::Disconnected { addr } => {
                             self.stats.synchronized = false;
                             self.quality.interrupted = true;

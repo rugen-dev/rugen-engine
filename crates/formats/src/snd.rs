@@ -113,7 +113,7 @@ impl Snd {
         };
         for i in 0..count {
             if r.seek(SeekFrom::Start(ofs)).is_err() || ofs as usize + 16 > bytes.len() {
-                log::warn!("snd: truncated at sound {i}/{count}");
+                log::debug!("snd: truncated at sound {i}/{count}");
                 break;
             }
             let next = u32_(&mut r)? as u64;
@@ -123,13 +123,13 @@ impl Snd {
             let end = start.saturating_add(len).min(bytes.len());
             if key.0 >= 0 && key.1 >= 0 {
                 if snd.sounds.contains_key(&key) {
-                    log::warn!(
+                    log::debug!(
                         "snd: duplicate sound {},{} (index {i} ignored)",
                         key.0,
                         key.1
                     );
                 } else if len < 128 || end - start < 128 {
-                    log::warn!(
+                    log::debug!(
                         "snd: sound {},{} too small ({len} bytes), disabled",
                         key.0,
                         key.1
