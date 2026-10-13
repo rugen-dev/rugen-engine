@@ -1,234 +1,89 @@
+<img src="motif/brand/rugen.png" alt="rugen logo" width="96" align="right">
+
 # rugen
 
-MUGEN-compatible 2D fighting game engine in Rust.
+A M.U.G.E.N-compatible 2D fighting game engine in Rust: your existing
+characters and stages, unchanged, with rollback netplay.
 
-- Loads existing M.U.G.E.N / Ikemen GO content unchanged (`.def` `.cns` `.cmd` `.air` `.sff` `.snd`).
-- Runs on Windows, Linux, macOS from one codebase.
-- Rollback netplay designed in from the first commit.
+## Download
 
-Docs: <https://rugen.dev>. Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server).
+Builds for Windows, Linux (`.rpm`, `.deb`, tarball) and macOS are on the
+[releases page](https://github.com/rugen-dev/rugen-engine/releases). The
+[install guide](https://rugen.dev/getting-started/install/) explains each one.
 
-See [DESIGN.md](DESIGN.md) for architecture and phase plan, [reference/README.md](reference/README.md) for reference material.
+## Quick start
 
-## Build
+1. Drop fighters (`.zip`, `.rar`, folders or `.rgc`) into `chars/`.
+2. Drop stages (`.zip`, `.rar`, folders or `.rgs`) into `stages/`.
+3. Run `rugen`. New content is converted on launch, then the title screen opens.
 
+```sh
+rugen                 # the full game
+rugen play kfm        # a quick match against the computer
 ```
+
+## Features
+
+- Loads M.U.G.E.N 1.1 / Ikemen GO content as it is (`.def` `.cns` `.cmd`
+  `.air` `.sff` `.snd`), and packs it into compact `.rgc` / `.rgs` files.
+- Arcade, VS, Arena (stocks, blast zones, platforms), Training, a Tutorial
+  built from each fighter's own moves, and Watch.
+- Online play with rollback: rooms, quick match, ranked, spectators, peer to
+  peer first with TURN and relay fallbacks.
+- Bring your own character: players don't need the same fighters; the server
+  judges each matchup and the files sync in the background.
+- Every character is verified before its first match, so a broken one can't
+  ruin a fight.
+- Data-driven menus with two themes (Shonen Ink and Dojo), keyboard, gamepad
+  and mouse.
+- One codebase for Windows, Linux and macOS.
+
+## Build from source
+
+Stable Rust 1.85+. Linux also needs the udev and ALSA headers (see
+[BUILDING.md](BUILDING.md)).
+
+```sh
 cargo build --release
-./target/release/rugen                      # title → select → fight
-./target/release/rugen play kfm             # quick match against the computer
-./target/release/rugen play kfm kfm --net 1.2.3.4:7000 --port 7000       # host side
-./target/release/rugen play kfm kfm --net 5.6.7.8:7000 --port 7000 --p2  # joining side
-./target/release/rugen check G6_Naruto      # which controllers a character uses that we lack
-./target/release/rugen list
-./target/release/rugen convert MyChar/      # write MyChar.rgc (a shareable file), source untouched
-./target/release/rugen export G6_Naruto.rgc # back to a MUGEN folder (Fighter Factory opens it)
+./target/release/rugen
 ```
 
-Put characters (`.zip`, `.rar`, folders or `.rgc` files) in `chars/` and
-stages (`.zip`, `.rar`, folders or `.rgs`) in `stages/`. On launch everything
-new is converted into rugen's own content file, one per character (`.rgc`) or
-stage (`.rgs`), which the game plays in place: sprites pixel-exact, sounds as
-Opus, loose PNGs as lossless WebP, everything else byte for byte, plus the
-compiled logic. A 40 MB `.rar` character that used to take ~150 MB on disk
-(archive + extracted copy + optimiser cache) becomes a ~21 MB `.rgc`
-([numbers](docs/rgc-format.md#measurements)). Once the new file is written
-and reads back with the same fingerprint, the archive moves to
-`chars/originals/` (never scanned); set `[content] keep_originals = false` in
-`rugen.toml` to delete it instead. `.rgc` / `.rgs` files can be shared as they
-are: drop one in `chars/` and it plays. A folder is treated as a creator's
-working copy: it is never moved or deleted, only converted into `cache/`, again
-whenever one of its files changes (see below). `data/` holds the screenpack
-(`system.def`, `fight.def`, `common1.cns`, ...); without one the bundled MUGEN
-1.1 data in `reference/` is used. Format: [docs/rgc-format.md](docs/rgc-format.md).
+## Documentation
 
-Keys live in `rugen.toml` (written on first run). Defaults: P1 `z q s d` to
-move, `j k l` = a b c, `u i o` = x y z, `m` = s (the fighters' seventh
-button), `p` = START; P2 arrows + numpad `1 2 3` / `4 5 6`, `7` = s, Enter =
-START. START pauses and confirms menus and is never a fighter input; older
-configs keep their old start key as s and get a free START key. Gamepads
-work out of the box (LB = s, Start = START). OPTIONS / CONTROLS preview
-changes live and write them only on SAVE (F2). In a match: Space pause, `.` step, F2 hitboxes and
-platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
-Esc back.
+Everything else lives on **[rugen.dev](https://rugen.dev)**:
 
-Menus answer the base keys whatever the bindings: **Esc** backs out (on the
-title it first jumps to EXIT; on the select screen it takes back the last pick
-before leaving), **Enter** confirms, the **arrows** move the focus. A key a
-player mapping already uses stays that player's: with the defaults the arrows
-and Enter are P2's, which on single-cursor screens (title, options, arcade /
-training / arena select, pause, result) drives the same focus, while in the VS
-MODE select they move P2's own cursor and P1 uses its bound keys. Unbound
-arrows / Enter, and gamepads without a player slot, act as P1. In menus A (and
-the other attack buttons, s, START) confirm and **B cancels** (pad South / East).
-The mouse is off by default (cursor hidden, no hover): `[input] mouse = true`
-or OPTIONS > VIDEO > MOUSE IN MENUS turns it on.
+- Playing: [install](https://rugen.dev/getting-started/install/),
+  [first launch](https://rugen.dev/getting-started/first-launch/),
+  [characters & stages](https://rugen.dev/getting-started/content/),
+  [controls](https://rugen.dev/getting-started/controls/),
+  [settings](https://rugen.dev/getting-started/settings/),
+  [game modes](https://rugen.dev/playing/modes/),
+  [online](https://rugen.dev/playing/online/),
+  [CLI reference](https://rugen.dev/playing/cli/)
+- Creating: [characters](https://rugen.dev/creating/characters/),
+  [stages](https://rugen.dev/creating/stages/),
+  [screenpacks & themes](https://rugen.dev/creating/screenpacks/)
+- Hosting: [running a server](https://rugen.dev/server/overview/)
+- Engine: [architecture](https://rugen.dev/engine/architecture/),
+  [compatibility status](https://rugen.dev/engine/compatibility/),
+  [building](https://rugen.dev/engine/building/),
+  [contributing](https://rugen.dev/engine/contributing/)
 
-ONLINE is always on the title screen. It first lists **servers**: the
-**official server** (`https://play.rugen.dev`, built in, always first with an
-OFFICIAL badge, cannot be removed), then your **community servers**
-(`[net] servers`, COMMUNITY badge; ADD SERVER / REMOVE SERVER edit them;
-`[net] server` picks the default selection, empty = official) with name,
-message of the day, players online and ping. Only the official server's
-ranked, Elo, seasons and leaderboard are the **global ranking**; community
-servers work fully and are labelled with their name everywhere a rating
-shows (lobby, leaderboard, player card, title screen rank card). A server
-counts as official only after it signs a random challenge with the official
-Ed25519 key baked into the game. The official server also publishes a
-signed **truth feed** (global cheat blocklist + community character
-ratings): the game caches the verified feed, marks blocked fighters in its
-roster and matchup cards, and community servers enforce it in their
-verdicts. Matchup verdicts and ranked results are signed: OFFICIAL stamps
-need the official key, other servers show their own key fingerprint, and a
-bad signature is rejected. On a server: **Lobby** (public
-rooms: join or watch), **Create Room** (public or private, optional password,
-rounds, timer, classic / arena, free pick / mirror, spectator seats; the host
-can kick), **Join by Code**, **Quick Match**, **Ranked** (Elo, seasons,
-ping-aware matchmaking), **Leaderboard**. Matches connect the two players
-**directly, peer to peer** (UDP hole punching with authenticated checks, like
-SF6 / Tekken: the shortest path, so the lowest ping), with **Cloudflare
-Realtime TURN** and the **server relay** (UDP, or a WebSocket through
-HTTPS-only networks) as fallbacks; the game moves a match to the fastest
-working path at the start and switches mid-match when a path breaks or a
-better one comes up. **Privacy**: a direct connection lets the opponent's
-game see your IP address; OPTIONS > ONLINE > DIRECT CONNECTION OFF (`[net]
-direct = false`) keeps you always relayed and private (off on either side =
-relayed; IP addresses are never shown or logged). Two players behind
-symmetric NATs (some mobile / CGNAT networks) play over TURN. Lag hiding:
-input delay only beyond what the 12-frame rollback window hides (1 frame up
-to ~300 ms ping), smooth time sync (a few percent slower ticks instead of
-freezes), rollback corrections eased on screen, cheap rollbacks, and a
-low-latency renderer. **Accounts**: offline play needs none; online play
-needs one per server, made on the PROFILE page (home menu or server list):
-a username unique on that server and a password (6+ characters, no e-mail,
-so keep it safe; the server's operator can reset it). Log in with it on
-your other devices; an account from rugen 0.5 (no username yet) can be
-claimed and keeps its rating. Only the account key is kept in
-`profile.json`, never the password. Usernames show a ✓ on leaderboards and
-in rooms. Both sides report results with their input streams; they only
-count when they agree.
+## Related repositories
 
-**Bring your own character**: the machines do not need the same characters.
-Every online match opens a **matchup**: you pick a fighter from your own
-`chars/` (the select screen in online mode, P1 also picks the stage), and the
-server judges both at once from their fingerprints and fairness profiles
-(static CNS analysis: stats, damage, supers, invulnerability, cheat flags,
-power score): **FAIR**, **UNBALANCED** (casual only, both players must accept
-it; ranked refuses it) or **BLOCKED** (cheats such as life regeneration in
-state -2, permanent invulnerability, setting the opponent's life, or a
-character that fails `rugen verify`: change fighter). The MATCHUP screen shows
-both cards (portrait, author, stats, community rating per character), the
-verdict stamp and its reasons, CONFIRM / CHANGE FIGHTER, the opponent's status
-and the transfers: from the moment you pick, your fighter's `.rgc` (and P1's
-stage `.rgs`) uploads in the background if the server does not have it yet
-(the server recomputes its fingerprint from the content and re-analyses it,
-so an edited character cannot pass as the original), and the opponent's
-downloads into `cache/net/` and plays from there (instant when cached).
-Fingerprints cover the gameplay text, palettes and decoded sprites, not the
-sounds or how the files are packed, so the same character has the same
-fingerprint whether it came as a `.zip`, a `.rar`, a folder or an `.rgc`. Then VS and the fight. Packages on the server are temporary caches.
-Command line: `rugen play kfm --server https://host --room new` (prints a
-code) / `rugen play G6_Naruto --server https://host --room CODE [--spectate]`;
-each side brings the character it names, confirms unless BLOCKED and quits
-after the match.
+- [rugen-server](https://github.com/rugen-dev/rugen-server): the online hub
+  (lobby, rooms, ranked, relay, matchups).
+- [rugen-docs](https://github.com/rugen-dev/rugen-docs): the source of
+  rugen.dev.
 
-Without a server, **direct matches** (LAN / explicit IP) still work: HOST
-(1P) / JOIN (2P) in ONLINE, each player types the other's address, or `[net]
-remote = "ip:port"`, `side = 1` or `2` → NETPLAY entry, or `rugen play kfm
---net ip:port [--p2]`. `[net] input_delay = "auto"` adds delay only beyond
-what the rollback window hides (`prediction_window = 12`, `min_delay = 1`;
-or set a number). `[video] low_latency = true` (default) draws each frame
-right after its tick with at most one frame queued (mailbox / FIFO);
-`RUGEN_LATENCY=1` logs the input-to-display latency. Music: stage `bgmusic` and
-system.def `[Music]` entries play when they are mp3/ogg/flac/wav (MIDI is
-skipped). F11 toggles fullscreen. Menu matches are
-recorded into `replays/`; `rugen play ... --record file.json` records quick
-play and `rugen replay file.json` plays a recording back.
+## Contributing
 
-Title menu: ARCADE, VS MODE, ARENA (platform-fighter rules: pick your
-fighter and the CPU's, fight on a stage with an `[Arena]` section — stocks,
-blast zones, ring-out, air jumps; the built-in `motif/stages/ink_arena`, or
-any stage you add with one), TRAINING (you also pick the sparring partner),
-TUTORIAL (guided basics then every special move of the chosen character,
-detected as you perform it), WATCH (you pick both CPU fighters), ONLINE,
-OPTIONS (volumes, camera zoom limits, fullscreen, computer level, net delay,
-key rebinding; saves `rugen.toml`), EXIT. `[camera] zoom_out` /
-`zoom_in` in `rugen.toml` decide how far players can separate before the
-screen edge stops them, on any stage.
-
-Menus are data: `motif/themes/<theme>/ui/*.toml` + WebP art (see
-`motif/themes/dojo/ui/README.md`); themes live side by side under `motif/themes/`;
-`rugen ui-gen` regenerates the defaults. Mouse, keyboard and gamepad all work
-in them.
-
-The art direction is pixel art on a 640x360 grid shown at 2x: a night-sky
-palette (`motif/palette.gpl`: navy, maroon, gold, steel, teal), CC0 UI pieces
-from Kenney's "UI Pack - Pixel Adventure" (`motif/kit/`) recoloured onto that
-palette, OFL pixel fonts (Press Start 2P, Jersey 10) rendered at whole multiples of their pixel grid,
-and three parallax background layers. `motif/STYLE.md` has the rules, sizes
-and prompts for making more. Drop any image into `motif/art/` and
-`rugen ui-gen` pixelizes it (`rugen pixelize in.png out.webp --width 640
---dither` does one by hand); `rugen kit-import` re-exports the kit pieces.
-
-For character authors: keep your character as a folder in `chars/` (a folder
-wins over an `.rgc` of the same name). It is converted into `cache/rgc/` and
-converted again whenever a file in it changes; unchanged sprites and sounds
-are reused, so a `.cns` edit takes a moment. Editing a `.cns` / `.cmd` /
-`.air` / `.sff` while a match runs reloads the character in place (checked
-once a second). `rugen convert MyChar/` writes the `.rgc` you share; `rugen
-export file.rgc` gives any `.rgc` back as a MUGEN folder (def, sff, snd, cns,
-cmd, air, act, ...: sprites identical, sounds as WAV decoded from Opus,
-images as PNG) that Fighter Factory opens. `rugen check` lists what the engine
-cannot run yet.
-
-Broken characters cannot ruin a match: every character is verified the first
-time it is used (`rugen verify <char>` / `--all` does it by hand): it is
-loaded, inspected (unsupported controllers, missing sprites) and run through
-two 3000-frame headless matches. The verdict is stored in its cache manifest
-and shown as a green / yellow / red mark on the select screen; `broken`
-characters (crash, do not load, get stuck) cannot be picked and `rugen play`
-refuses them unless `--force`. The engine also caps helpers, explods,
-projectiles and sounds per tick, sanitizes non-finite positions, and if a
-character still panics mid-match it is disabled and loses while the other
-player keeps playing.
-
-Linux needs `libudev` and `alsa` headers, see [BUILDING.md](BUILDING.md). The `reference/` tree comes from `reference/fetch.sh`.
-
-## Screenpack
-
-The UI is an ordinary MUGEN motif in `motif/` (system.def, fight.def, SFF v2
-art, FNT v2 fonts) for a 426x240 pixel grid: dark slanted panels, slashed
-accents, pixel italic type. It is generated, not hand-drawn:
-
-```
-rugen screenpack-gen [--font bold.ttf] [--out motif/themes/dojo]   # regenerate the fight/system screenpack of a theme
-rugen fontgen bold.ttf --size 13 --italic 3 --rim --out motif/font/my.def --preview my.png
-```
-
-Edit the `.def` files to re-layout, swap sprites in the SFFs to retheme, or
-drop a classic MUGEN screenpack into `data/`; anything missing in `motif/`
-falls back to `data/`.
-
-## Hosting a server
-
-The online hub lives in its own repository,
-[rugen-server](https://github.com/rugen-dev/rugen-server): one small binary
-with SQLite inside (lobby, rooms, ranked, the match relay that keeps player
-IPs private, bring-your-own-character matchups). Docker Compose / Dokploy
-guide and image `ghcr.io/rugen-dev/rugen-server` there. Players add
-`https://your-host` in ONLINE (a community server; it follows the official
-blocklist automatically). The official server address and public key are
-build-time settings of the game, see [BUILDING.md](BUILDING.md#official-server).
-
-## Status
-
-Playable. Every MUGEN file format loads (SFF v1/v2, AIR, SND, ACT, DEF, FNT,
-CNS/CMD), the CNS compiler and VM run real community characters with every
-controller they use, matches go through rounds with the `fight.def` lifebars,
-the screenpack title/select/VS screens work, the camera pans and zooms like
-MUGEN 1.1, and online play uses rollback (ggrs) with a sync test that proves
-the simulation is deterministic. Stages can declare platforms. See DESIGN.md
-for what is left (replays, spectators, matchmaking, creator tools).
+Read the [contributing guide](https://rugen.dev/engine/contributing/), then
+[DESIGN.md](DESIGN.md) for the architecture and the rules the code follows.
+[BUILDING.md](BUILDING.md) has the system dependencies and the checks CI runs.
 
 ## License
 
-Engine: MIT OR Apache-2.0. Reference content under `reference/` keeps its own licenses and is not committed.
+MIT OR Apache-2.0 ([LICENSE-MIT](LICENSE-MIT),
+[LICENSE-APACHE](LICENSE-APACHE)). Content under `reference/` keeps its own
+licenses and is not committed.
