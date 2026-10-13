@@ -40,43 +40,67 @@ rugen play kfm        # a quick match against the computer
 
 ## Roadmap
 
-**Done**
+### Done
 
-- [x] M.U.G.E.N 1.1 / Ikemen GO characters and stages, unchanged
-- [x] Compact `.rgc` / `.rgs` content files (lossless sprites, Opus sound)
-- [x] Arcade, VS, Training, Tutorial, Watch
-- [x] Arena mode: stocks, blast zones, platforms, Smash-style HUD
-- [x] Rollback netplay: rooms, quick match, ranked, spectators, flee
-- [x] Bring your own character, with server-judged matchups
-- [x] Accounts, leaderboards, room codes without lookalike characters
-- [x] Pause menu with a move list read from each fighter's `.cmd`
-- [x] Fighter size option (none / chibi / small / normal)
-- [x] Stage select built for hundreds of stages
-- [x] Two themes (Ink and Dojo), keyboard, gamepad and mouse, explicit SAVE
-- [x] Daily S3 backups for servers
+- [x] **MUGEN content**: M.U.G.E.N 1.1 / Ikemen GO characters and stages load unchanged.
+- [x] **`.rgc` / `.rgs` files**: content packed small, with lossless sprites and Opus sound.
+- [x] **Arcade**: a ladder of CPU opponents.
+- [x] **VS**: two players on one machine.
+- [x] **Training**: practice against a dummy.
+- [x] **Tutorial**: lessons built from each fighter's own moves.
+- [x] **Watch**: CPU against CPU.
+- [x] **Arena**: stocks, blast zones and platforms.
+- [x] **Arena HUD**: Smash-style fighter cards along the bottom.
+- [x] **Rollback netplay**: online fights that stay smooth over distance.
+- [x] **Rooms**: private or public, joined by a code with no lookalike characters.
+- [x] **Quick match**: get paired with anyone online.
+- [x] **Ranked**: rated matches with tiers and leaderboards.
+- [x] **Spectators**: watch a room's match live.
+- [x] **Flee**: leave an online match properly; it counts as a loss.
+- [x] **Bring your own character**: players don't need the same fighters.
+- [x] **Accounts**: optional username and password per server.
+- [x] **Move list**: the pause menu reads each fighter's `.cmd`.
+- [x] **Fighter size**: brings fighters drawn at very different scales together.
+- [x] **Stage select**: a live preview and a strip built for hundreds of stages.
+- [x] **Ink theme**: manga-print menus.
+- [x] **Dojo theme**: a lacquer-and-washi training hall.
+- [x] **Keyboard, gamepad and mouse**: with your own keys shown everywhere.
+- [x] **Server backups**: daily copies to any S3-compatible bucket.
 
-**Next (0.6.2)**
+### Next (0.6.2)
 
-- [ ] Fix: sounds of earlier fighters playing in later fights
-- [ ] One-way arena platforms: jump through from below, double-tap down to drop
-- [ ] Arena AI: CPU fighters stay on stage, recover and use platforms
+- [ ] **Sound fix**: earlier fighters' voices no longer play in later fights.
+- [ ] **One-way platforms**: jump up through them, double-tap down to drop.
+- [ ] **Arena AI**: CPU fighters stay on stage, recover and use platforms.
 
-**Planned**
+### Planned
 
-- [ ] Training lab: hitbox display, frame data, input display, record / playback dummy
-- [ ] Team modes: Simul, Turns, Tag
-- [ ] Survival, Boss Rush, Time Attack
-- [ ] Storyboards: fighter intros and arcade endings
-- [ ] Arena: ledge grab, items to pick up and throw, stage hazards
-- [ ] Online: ranked seasons, per-fighter leaderboards, tournament brackets in rooms
-- [ ] Shareable replays by code
-- [ ] Creator tools: user themes folder with live reload, fighter debugger
-- [ ] Translations (French first), Steam Deck layout
+- [ ] **Hitbox display**: see the attack and hurt boxes in Training.
+- [ ] **Frame data**: startup, active and recovery frames for every move.
+- [ ] **Input display**: the inputs of both players on screen.
+- [ ] **Record and playback dummy**: record a sequence and practise against it.
+- [ ] **Simul**: two against two, all on screen at once.
+- [ ] **Turns**: teams fight one after another, the winner stays in.
+- [ ] **Tag**: switch partners in the middle of a fight.
+- [ ] **Survival**: one life bar against an endless line of opponents.
+- [ ] **Boss Rush**: the toughest fighters back to back.
+- [ ] **Time Attack**: clear the ladder as fast as possible.
+- [ ] **Storyboards**: fighter intros and arcade endings.
+- [ ] **Ledge grab**: catch the edge of an arena and climb back on.
+- [ ] **Items**: pickups that spawn on arena stages, to grab and throw.
+- [ ] **Stage hazards**: moving platforms and stage events.
+- [ ] **Ranked seasons**: ratings that reset on a schedule.
+- [ ] **Per-fighter leaderboards**: the best players of each character.
+- [ ] **Tournament brackets**: eight or sixteen players inside a room.
+- [ ] **Shareable replays**: send a match to someone by code.
+- [ ] **User themes folder**: your own themes with live reload, no rebuild.
+- [ ] **Fighter debugger**: step through frames, states and variables.
+- [ ] **French translation**: the first language after English.
+- [ ] **Steam Deck layout**: a handheld-friendly screen and controls.
 
-**Not planned for now**
+### Not planned for now
 
-- In-game browsing and downloading of fighters from a public catalogue
-- Discord Rich Presence
+- **Fighter catalogue**: browsing and downloading fighters from inside the game.
 
 ## Build from source
 
