@@ -1,0 +1,516 @@
+# rugen PAUSE — Dojo theme (layout of the approved "Pause and move list" mockup).
+# Coordinates are 1280x720. The fight stays visible, dimmed; the menu sits
+# on the left, the move list of the fighter who paused on a washi sheet.
+# Data: scene/has_scene (the frozen fight), menu[] {id label action}, who,
+# name, title, title_big, col1[] / col2[] rows {group label | name cost
+# parts[] {text cap}}, has_moves, no_moves, empty, source, facing, paged,
+# keys {start}.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 6
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "{scene}"
+w = "100%"
+h = "100%"
+visible = "has_scene"
+
+# dim, not black: the fight stays readable under the menu
+[[node]]
+kind = "panel"
+w = "100%"
+h = "100%"
+color = [0.078, 0.051, 0.043, 0.45]
+
+# ------------------------------------------------------------------ menu
+[[node]]
+kind = "panel"
+dock = "left"
+x = 48
+y = 40
+w = 344
+h = 560
+enter = "left"
+enter_time = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "PAUSE"
+  font = 3
+  scale = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{who}"
+  y = 64
+  font = 2
+  bank = 16
+
+  [[node.children]]
+  kind = "vbox"
+  id = "menu"
+  y = 108
+  w = 344
+  gap = 7
+  items = "menu"
+  stagger = 2
+
+    # fixed slot so the list never shifts with the focus
+    [[node.children.children]]
+    kind = "panel"
+    w = 344
+    h = 57
+
+    [[node.children.children]]
+    kind = "button"
+    id = "slab"
+    w = 320
+    h = 50
+    w_focus = 340
+    h_focus = 54
+    image = "ui/plaque9.webp"
+    image_focus = "ui/plaque9_lit.webp"
+    nine = [8, 8, 8, 10]
+    text = "{item.label}"
+    font = 6
+    bank = 14
+    bank_focus = 14
+    align = "left"
+    pad = 22
+    on_press = "{item.action}"
+    on_left = "page:-1"
+    on_right = "page:1"
+
+# ------------------------------------------------------------- move list
+[[node]]
+kind = "panel"
+dock = "right"
+x = 420
+y = 40
+w = 812
+h = 616
+enter = "right"
+enter_time = 12
+
+  # the washi sheet in its wooden frame
+  [[node.children]]
+  kind = "panel"
+  w = 812
+  h = 616
+  image = "ui/sheet9.webp"
+  nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  text = "{title}"
+  x = 32
+  y = 22
+  font = 3
+  bank = 12
+  visible = "title_big"
+
+  [[node.children]]
+  kind = "text"
+  text = "{title}"
+  x = 32
+  y = 28
+  font = 6
+  bank = 12
+  visible = "!title_big"
+
+  [[node.children]]
+  kind = "text"
+  text = "{facing}"
+  anchor = "tr"
+  x = 32
+  y = 34
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "{empty}"
+  x = 32
+  y = 260
+  w = 748
+  align = "center"
+  font = 6
+  bank = 12
+  visible = "no_moves"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 32
+  y = 76
+  w = 358
+  items = "col1"
+  stagger = 1
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    y = 10
+    h = 20
+    font = 2
+    bank = 13
+    visible = "item.group"
+
+    # one line: name and cost left, notation right
+    [[node.children.children]]
+    kind = "panel"
+    w = 358
+    h = 38
+    visible = "item.short"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 36
+      w = 358
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 38
+      gap = 8
+      align = "center"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.name}"
+        font = 2
+        bank = 12
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.cost}"
+        h = 16
+        pad = 5
+        color = [0.706, 0.188, 0.102, 1.0]
+        font = 1
+        bank = 14
+        visible = "item.cost"
+
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 38
+      gap = 4
+      align = "center"
+      justify = "end"
+      items = "item.parts"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        font = 2
+        bank = 12
+        visible = "!item.cap"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        h = 22
+        pad = 7
+        color = [0.341, 0.2, 0.122, 1.0]
+        font = 2
+        bank = 14
+        visible = "item.cap"
+
+    # too long for one line: the notation goes underneath
+    [[node.children.children]]
+    kind = "panel"
+    w = 358
+    h = 62
+    visible = "item.tall"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 60
+      w = 358
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 32
+      gap = 8
+      align = "center"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.name}"
+        font = 2
+        bank = 12
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.cost}"
+        h = 16
+        pad = 5
+        color = [0.706, 0.188, 0.102, 1.0]
+        font = 1
+        bank = 14
+        visible = "item.cost"
+
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 28
+      w = 358
+      h = 32
+      gap = 4
+      align = "center"
+      justify = "end"
+      items = "item.parts"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        font = 2
+        bank = 12
+        visible = "!item.cap"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        h = 22
+        pad = 7
+        color = [0.341, 0.2, 0.122, 1.0]
+        font = 2
+        bank = 14
+        visible = "item.cap"
+
+
+  [[node.children]]
+  kind = "vbox"
+  x = 422
+  y = 76
+  w = 358
+  items = "col2"
+  stagger = 1
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    y = 10
+    h = 20
+    font = 2
+    bank = 13
+    visible = "item.group"
+
+    # one line: name and cost left, notation right
+    [[node.children.children]]
+    kind = "panel"
+    w = 358
+    h = 38
+    visible = "item.short"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 36
+      w = 358
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 38
+      gap = 8
+      align = "center"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.name}"
+        font = 2
+        bank = 12
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.cost}"
+        h = 16
+        pad = 5
+        color = [0.706, 0.188, 0.102, 1.0]
+        font = 1
+        bank = 14
+        visible = "item.cost"
+
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 38
+      gap = 4
+      align = "center"
+      justify = "end"
+      items = "item.parts"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        font = 2
+        bank = 12
+        visible = "!item.cap"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        h = 22
+        pad = 7
+        color = [0.341, 0.2, 0.122, 1.0]
+        font = 2
+        bank = 14
+        visible = "item.cap"
+
+    # too long for one line: the notation goes underneath
+    [[node.children.children]]
+    kind = "panel"
+    w = 358
+    h = 62
+    visible = "item.tall"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 60
+      w = 358
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 0
+      w = 358
+      h = 32
+      gap = 8
+      align = "center"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.name}"
+        font = 2
+        bank = 12
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.cost}"
+        h = 16
+        pad = 5
+        color = [0.706, 0.188, 0.102, 1.0]
+        font = 1
+        bank = 14
+        visible = "item.cost"
+
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      y = 28
+      w = 358
+      h = 32
+      gap = 4
+      align = "center"
+      justify = "end"
+      items = "item.parts"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        font = 2
+        bank = 12
+        visible = "!item.cap"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "{item.text}"
+        h = 22
+        pad = 7
+        color = [0.341, 0.2, 0.122, 1.0]
+        font = 2
+        bank = 14
+        visible = "item.cap"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "{source}"
+  anchor = "bl"
+  x = 32
+  y = 22
+  font = 2
+  bank = 17
+  visible = "source"
+
+# ------------------------------------------------------------- key hints
+[[node]]
+kind = "hbox"
+dock = "right bottom"
+x = 532
+y = 676
+w = 700
+h = 28
+gap = 10
+justify = "end"
+align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "←→"
+  h = 30
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+  visible = "paged"
+
+  [[node.children]]
+  kind = "text"
+  text = "PAGE   "
+  font = 2
+  bank = 14
+  visible = "paged"
+
+  [[node.children]]
+  kind = "text"
+  text = "ENTER"
+  h = 30
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "SELECT   "
+  font = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "ESC"
+  h = 30
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "RESUME"
+  font = 2
+  bank = 14

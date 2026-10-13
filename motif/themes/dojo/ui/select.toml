@@ -1,525 +1,719 @@
-# rugen character select — Neon Dojo roster. Coordinates are 1280x720.
-# Data: title, prompt, room, cells[] (name thumb badge broken p1 p2 hover index),
-# shown{name author art verdict badge stats present}, p1/p2 (same shape), versus,
-# ready, searching, query, sort, count, stage{name thumb has_thumb}, profile, rating.
-background = [0.05, 0.06, 0.1, 1.0]
+# rugen CHARACTER SELECT — Dojo theme. Coordinates are 1280x720.
+# 12 x 5 cells of 64 px per page; past 60 fighters the grid pages (`paged`),
+# PAGE n / N comes from `pages.grid`.
+# Data: title, prompt, grid[] {index kind press name face has_face warn broken
+# random empty p1 p2}, roster_line, filter, card1/card2 {name_up name_big name_small author portrait
+# status ok bad record picked cpu present}, stage {name thumb has_thumb index count},
+# ready, query, sort, keys {a b start}.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
 
 [[node]]
 kind = "image"
 fit = "cover"
-image = "ui/bg.webp"
+image = "ui/hall.webp"
 w = "100%"
 h = "100%"
 
-# header
+# header under the beam: mode, the prompt on a vermilion plaque, keys
 [[node]]
 kind = "text"
 dock = "left top"
 text = "{title}"
-x = 40
-y = 16
+x = 44
+y = 30
 font = 3
-bank = 0
-scale = 2
+bank = 14
 enter = "down"
+enter_time = 12
 
 [[node]]
 kind = "text"
-dock = "top"
+dock = "left top"
 text = "{prompt}"
-x = 470
-y = 28
-font = 1
-bank = 4
-scale = 2
-
-# big art plate (left column)
-[[node]]
-kind = "image"
-dock = "left"
-id = "art"
-image = "ui/art_frame.webp"
-x = 40
-y = 68
-w = 400
-h = 440
-enter = "left"
-enter_time = 20
+x = 300
+y = 34
+h = 40
+pad = 22
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+font = 6
+bank = 14
+enter = "down"
+enter_time = 12
 
 [[node]]
-kind = "image"
-dock = "left"
-image = "{shown.art}"
-x = 60
-y = 84
-h = 404
-visible = "shown.present"
-enter = "left"
-enter_time = 20
-
-# info strip under the plate
-[[node]]
-kind = "panel"
-dock = "left"
-image = "ui/plate_lit.webp"
-x = 40
-y = 516
-w = 400
-h = 44
-enter = "left"
-enter_time = 22
+kind = "hbox"
+dock = "right top"
+x = 780
+y = 36
+w = 456
+h = 30
+gap = 10
+justify = "end"
+align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "{shown.name}"
-  anchor = "left"
-  x = 20
+  text = "TAB"
+  h = 28
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "SEARCH  "
   font = 2
-  bank = 7
-  scale = 2
-
-[[node]]
-kind = "panel"
-dock = "left"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 40
-y = 566
-w = 400
-h = 108
-enter = "left"
-enter_time = 24
+  bank = 16
 
   [[node.children]]
   kind = "text"
-  text = "BY {shown.author}"
-  x = 14
-  y = 10
+  text = "F1"
+  h = 28
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
   font = 1
-  bank = 6
   scale = 2
-
-  [[node.children]]
-  kind = "image"
-  image = "{shown.badge}"
-  x = 14
-  y = 36
-  w = 16
-  h = 16
-  visible = "shown.badge"
+  bank = 12
 
   [[node.children]]
   kind = "text"
-  text = "{shown.verdict}"
-  x = 38
-  y = 34
-  font = 1
-  bank = 4
-  scale = 2
+  text = "SORT: {sort}"
+  font = 2
+  bank = 16
 
-  [[node.children]]
-  kind = "text"
-  text = "{shown.stats}"
-  x = 14
-  y = 58
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "P1 {p1.name}   P2 {p2.name}"
-  x = 14
-  y = 82
-  font = 1
-  bank = 5
-  scale = 2
-  visible = "versus"
-
-# roster grid
-[[node]]
-kind = "panel"
-dock = "right"
-color = [0.05, 0.06, 0.12, 0.8]
-x = 466
-y = 62
-w = 780
-h = 330
-
+# roster grid: 12 x 5 wooden frames, 64 px with 8 px gaps, paged
 [[node]]
 kind = "grid"
-dock = "right"
-id = "cells"
-x = 470
-y = 66
-w = 772
-h = 322
-columns = 10
-cell_w = 77
-cell_h = 77
-items = "cells"
-enter = "right"
-enter_time = 20
+id = "grid"
+x = 204
+y = 100
+w = 856
+h = 352
+columns = 12
+cell_w = 64
+cell_h = 64
+gap = 8
+paged = true
+bleed = 40
+items = "grid"
+enter = "fade"
+enter_time = 14
 
   [[node.children]]
   kind = "button"
-  w = 76
-  h = 76
-  image = "ui/cell.webp"
-  image_focus = "ui/cell_lit.webp"
-  on_press = "pick:{item.index}"
+  w = 64
+  h = 64
+  image = "ui/cell_{item.kind}.webp"
+  on_press = "{item.press}"
 
     [[node.children.children]]
     kind = "image"
-    image = "{item.thumb}"
-    x = 6
-    y = 6
-    w = 64
-    h = 64
-    visible = "item.thumb"
+    image = "{item.face}"
+    x = 4
+    y = 4
+    w = 56
+    h = 56
+    fit = "cover"
+    fit_y = 0.12
+    visible = "item.face_ok"
 
     [[node.children.children]]
-    kind = "panel"
-    color = [0.0, 0.0, 0.0, 0.65]
-    x = 6
-    y = 6
+    kind = "image"
+    image = "{item.face}"
+    x = 4
+    y = 4
+    w = 56
+    h = 56
+    fit = "cover"
+    fit_y = 0.12
+    grey = true
+    alpha = 0.6
+    visible = "item.face_grey"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "ui/sel_x.webp"
     w = 64
     h = 64
     visible = "item.broken"
 
     [[node.children.children]]
     kind = "image"
-    image = "ui/cell_p1.webp"
-    w = 76
-    h = 76
+    image = "ui/sel_warn.webp"
+    anchor = "tr"
+    w = 26
+    h = 26
+    visible = "item.warn"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "1P"
+    anchor = "bl"
+    h = 20
+    pad = 4
+    color = [0.706, 0.188, 0.102, 1.0]
+    font = 1
+    bank = 14
     visible = "item.p1"
 
     [[node.children.children]]
-    kind = "image"
-    image = "ui/cell_p2.webp"
-    w = 76
-    h = 76
+    kind = "text"
+    text = "2P"
+    anchor = "br"
+    h = 20
+    pad = 4
+    color = [0.89, 0.702, 0.298, 1.0]
+    font = 1
+    bank = 12
     visible = "item.p2"
 
     [[node.children.children]]
     kind = "image"
-    image = "{item.badge}"
-    anchor = "tr"
-    x = 5
-    y = 5
-    w = 14
-    h = 14
-    visible = "item.badge"
+    image = "ui/sel_cur1.webp"
+    x = -6
+    y = -30
+    w = 76
+    h = 100
+    when = "focus"
+    top = true
 
-# grid toolbar
+    [[node.children.children]]
+    kind = "image"
+    image = "ui/sel_cur2.webp"
+    x = -6
+    y = -6
+    w = 76
+    h = 100
+    when = "focus2"
+    top = true
+
+# roster facts under the grid
 [[node]]
 kind = "text"
-dock = "right"
-text = "{count}"
-x = 474
-y = 406
-font = 1
-bank = 6
-scale = 2
+text = "{roster_line}"
+x = 204
+y = 464
+font = 2
+bank = 16
+visible = "!ready"
 
 [[node]]
-kind = "button"
-dock = "right"
+kind = "text"
+text = "PAGE {pages.grid.page} / {pages.grid.count}"
+x = 860
+y = 464
+w = 200
+align = "right"
+font = 2
+bank = 16
+visible = "!searching"
+
+# Tab search: a key-cap box while typing (arrows / Enter close it, Esc clears)
+[[node]]
+kind = "panel"
+x = 592
+y = 456
+w = 240
+h = 32
+image = "ui/key9.webp"
+nine = [4, 4, 4, 8]
+visible = "searching"
+
+[[node]]
+kind = "text"
+text = "ESC CLEARS"
+x = 840
+y = 464
+font = 2
+bank = 13
+visible = "searching"
+
+[[node]]
+kind = "input"
 id = "search"
-x = 748
-y = 400
-w = 130
-h = 32
-image = "ui/plate.webp"
-image_focus = "ui/plate_lit.webp"
-text = "SEARCH"
-font = 1
-bank = 7
-scale = 2
-on_press = "search"
-
-[[node]]
-kind = "button"
-dock = "right"
-id = "sort"
-x = 886
-y = 400
-w = 214
-h = 32
-image = "ui/plate.webp"
-image_focus = "ui/plate_lit.webp"
-text = "SORT: {sort}"
-font = 1
-bank = 7
-scale = 2
-on_press = "sort"
-
-[[node]]
-kind = "button"
-dock = "right"
-id = "random"
-x = 1108
-y = 400
-w = 134
-h = 32
-image = "ui/plate.webp"
-image_focus = "ui/plate_lit.webp"
-text = "RANDOM"
-font = 1
-bank = 7
-scale = 2
-on_press = "random"
-
-# player card (skewed, big gold number)
-[[node]]
-kind = "image"
-dock = "right"
-image = "ui/card.webp"
-x = 466
-y = 448
-w = 444
-h = 120
-enter = "up"
-enter_time = 20
-enter_delay = 4
-
-[[node]]
-kind = "text"
-dock = "right"
-text = "{profile.name}"
-x = 492
-y = 458
-font = 1
-bank = 2
-scale = 2
-
-[[node]]
-kind = "text"
-dock = "right"
-text = "{profile.wins}"
-x = 492
-y = 480
-font = 3
-bank = 3
-scale = 3
-
-[[node]]
-kind = "text"
-dock = "right"
-text = "WINS"
-x = 492
-y = 538
-font = 1
-bank = 6
-scale = 2
-
-[[node]]
-kind = "image"
-dock = "right"
-image = "{profile.avatar}"
-x = 818
+x = 604
 y = 462
-w = 56
-h = 56
+w = 220
+h = 24
+focus = false
+placeholder = ""
+max_len = 16
+font = 2
+bank = 12
+on_change = "query:{value}"
 
+# 1P card: a washi sheet, portrait in the window, name on a vermilion plaque
 [[node]]
-kind = "text"
-dock = "right"
-text = "LEVEL {profile.level}"
-x = 636
-y = 470
-font = 1
-bank = 4
-scale = 2
+kind = "panel"
+dock = "left"
+x = 20
+y = 490
+w = 408
+h = 214
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+enter = "left"
+enter_time = 16
 
-[[node]]
-kind = "text"
-dock = "right"
-text = "{profile.losses} LOSSES"
-x = 636
-y = 496
-font = 1
-bank = 6
-scale = 2
+  [[node.children]]
+  kind = "panel"
+  x = 8
+  y = 8
+  w = 392
+  h = 198
 
-[[node]]
-kind = "text"
-dock = "right"
-text = "RATING {rating}"
-x = 636
-y = 522
-font = 1
-bank = 7
-scale = 2
+    [[node.children.children]]
+    kind = "image"
+    image = "{card1.portrait}"
+    x = 0
+    y = 0
+    w = 190
+    h = 198
+    fit = "contain"
+    fit_y = 1
+    visible = "card1.present"
 
-# stage strip
+  [[node.children]]
+  kind = "text"
+  text = "1P"
+  x = 16
+  y = 16
+  h = 28
+  pad = 8
+  image = "ui/seal9.webp"
+  nine = [6, 6, 6, 6]
+  font = 1
+  scale = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "CPU"
+  x = 76
+  y = 21
+  h = 20
+  pad = 6
+  color = [0.114, 0.09, 0.078, 1.0]
+  font = 1
+  bank = 14
+  visible = "card1.cpu"
+
+  [[node.children]]
+  kind = "text"
+  text = "BY {card1.author}"
+  x = 206
+  y = 22
+  w = 186
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card1.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.record}"
+  x = 206
+  y = 50
+  w = 186
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card1.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.status}"
+  x = 206
+  y = 78
+  w = 186
+  ellipsis = true
+  font = 2
+  bank = 13
+  visible = "card1.bad"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.status}"
+  x = 206
+  y = 78
+  w = 186
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card1.ok"
+
+  [[node.children]]
+  kind = "text"
+  text = "PICKED"
+  x = 240
+  y = 106
+  h = 34
+  pad = 12
+  image = "ui/seal9.webp"
+  nine = [6, 6, 6, 6]
+  font = 6
+  bank = 14
+  angle = -6
+  visible = "card1.picked"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.name_up}"
+  x = -8
+  y = 150
+  h = 52
+  pad = 20
+  image = "ui/plaque9_red.webp"
+  nine = [8, 8, 8, 10]
+  font = 3
+  bank = 14
+  visible = "card1.name_big"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.name_up}"
+  x = -8
+  y = 158
+  h = 44
+  pad = 16
+  image = "ui/plaque9_red.webp"
+  nine = [8, 8, 8, 10]
+  font = 6
+  bank = 14
+  visible = "card1.name_small"
+
+# 2P card (mirrored, brass)
 [[node]]
 kind = "panel"
 dock = "right"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 920
-y = 448
-w = 322
-h = 120
+x = 852
+y = 490
+w = 408
+h = 214
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+enter = "right"
+enter_time = 16
+
+  [[node.children]]
+  kind = "panel"
+  x = 8
+  y = 8
+  w = 392
+  h = 198
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{card2.portrait}"
+    x = 202
+    y = 0
+    w = 190
+    h = 198
+    fit = "contain"
+    fit_y = 1
+    flip = true
+    visible = "card2.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "2P"
+  anchor = "tr"
+  x = 16
+  y = 16
+  h = 28
+  pad = 8
+  color = [0.89, 0.702, 0.298, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "CPU"
+  anchor = "tr"
+  x = 76
+  y = 21
+  h = 20
+  pad = 6
+  color = [0.114, 0.09, 0.078, 1.0]
+  font = 1
+  bank = 14
+  visible = "card2.cpu"
+
+  [[node.children]]
+  kind = "text"
+  text = "BY {card2.author}"
+  x = 16
+  y = 22
+  w = 186
+  align = "right"
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card2.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.record}"
+  x = 16
+  y = 50
+  w = 186
+  align = "right"
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card2.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.status}"
+  x = 16
+  y = 78
+  w = 186
+  align = "right"
+  ellipsis = true
+  font = 2
+  bank = 13
+  visible = "card2.bad"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.status}"
+  x = 16
+  y = 78
+  w = 186
+  align = "right"
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "card2.ok"
+
+  [[node.children]]
+  kind = "text"
+  text = "PICKED"
+  x = 40
+  y = 106
+  h = 34
+  pad = 12
+  image = "ui/seal9.webp"
+  nine = [6, 6, 6, 6]
+  font = 6
+  bank = 14
+  angle = 6
+  visible = "card2.picked"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.name_up}"
+  anchor = "tr"
+  x = -8
+  y = 150
+  h = 52
+  pad = 20
+  image = "ui/plaque9_gold.webp"
+  nine = [8, 8, 8, 10]
+  font = 3
+  bank = 12
+  visible = "card2.name_big"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.name_up}"
+  anchor = "tr"
+  x = -8
+  y = 158
+  h = 44
+  pad = 16
+  image = "ui/plaque9_gold.webp"
+  nine = [8, 8, 8, 10]
+  font = 6
+  bank = 12
+  visible = "card2.name_small"
+
+# stage picker: a lacquer panel
+[[node]]
+kind = "panel"
+x = 460
+y = 500
+w = 366
+h = 150
+image = "ui/lacq9.webp"
+nine = [12, 12, 12, 12]
 enter = "up"
-enter_time = 20
+enter_time = 16
+enter_delay = 4
+
+  [[node.children]]
+  kind = "panel"
+  x = 12
+  y = 12
+  w = 146
+  h = 126
+  color = [0.078, 0.051, 0.043, 1.0]
+  border = 2
+  border_color = [0.341, 0.2, 0.122, 1.0]
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{stage.thumb}"
+    x = 2
+    y = 2
+    w = 142
+    h = 122
+    fit = "cover"
+    visible = "stage.has_thumb"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    w = 146
+    h = 126
+    align = "center"
+    font = 3
+    bank = 16
+    visible = "!stage.has_thumb"
 
   [[node.children]]
   kind = "text"
   text = "STAGE"
-  x = 12
-  y = 8
-  font = 1
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "image"
-  image = "{stage.thumb}"
-  x = 12
-  y = 32
-  w = 120
-  h = 68
-  visible = "stage.has_thumb"
-
-  [[node.children]]
-  kind = "panel"
-  color = [0.08, 0.1, 0.18, 1.0]
-  x = 12
-  y = 32
-  w = 120
-  h = 68
-  visible = "!stage.has_thumb"
+  x = 172
+  y = 14
+  font = 2
+  bank = 15
 
   [[node.children]]
   kind = "text"
   text = "{stage.name}"
-  x = 144
-  y = 34
-  w = 170
-  font = 1
-  bank = 7
-  scale = 2
+  x = 172
+  y = 36
+  w = 182
+  h = 56
+  wrap = true
+  line_h = 28
+  max_lines = 2
+  font = 6
+  bank = 14
 
   [[node.children]]
   kind = "button"
   id = "stage_prev"
-  x = 144
-  y = 66
-  w = 44
-  h = 32
-  image = "ui/plate.webp"
-  image_focus = "ui/plate_lit.webp"
-  text = "<"
-  font = 2
-  bank = 7
+  x = 170
+  y = 100
+  w = 38
+  h = 36
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "◀"
+  font = 1
   scale = 2
+  bank = 14
+  bank_focus = 14
   on_press = "stage:prev"
 
   [[node.children]]
   kind = "button"
   id = "stage_next"
-  x = 194
-  y = 66
-  w = 44
-  h = 32
-  image = "ui/plate.webp"
-  image_focus = "ui/plate_lit.webp"
-  text = ">"
-  font = 2
-  bank = 7
+  x = 214
+  y = 100
+  w = 38
+  h = 36
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "▶"
+  font = 1
   scale = 2
+  bank = 14
+  bank_focus = 14
   on_press = "stage:next"
 
   [[node.children]]
   kind = "button"
   id = "stage_random"
-  x = 244
-  y = 66
-  w = 68
-  h = 32
-  image = "ui/plate.webp"
-  image_focus = "ui/plate_lit.webp"
-  text = "RND"
-  font = 1
-  bank = 7
-  scale = 2
+  x = 258
+  y = 100
+  w = 96
+  h = 36
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "RANDOM"
+  font = 2
+  bank = 14
+  bank_focus = 14
   on_press = "stage:random"
 
-# confirm / back
+# fight! once everybody picked
 [[node]]
 kind = "button"
-dock = "right"
 id = "confirm"
-x = 920
-y = 598
-w = 322
-h = 54
-image = "ui/button_lit.webp"
-image_focus = "ui/button_lit.webp"
-text = "CONFIRM"
-font = 2
-bank = 7
-bank_focus = 4
-scale = 2
+x = 470
+y = 452
+w = 346
+h = 44
+image = "ui/plaque9_red.webp"
+image_focus = "ui/plaque9_lit.webp"
+nine = [8, 8, 8, 10]
+text = "FIGHT!"
+font = 3
+bank = 14
+bank_focus = 14
 on_press = "confirm"
 visible = "ready"
-hover_scale = 1.03
+hover_scale = 1.04
 
+# key hints on the floor under the stage picker
 [[node]]
-kind = "button"
-dock = "right"
-id = "back"
-x = 466
-y = 598
-w = 200
-h = 54
-image = "ui/button.webp"
-image_focus = "ui/button_lit.webp"
-text = "BACK"
-font = 2
-bank = 7
-bank_focus = 4
-scale = 2
-on_press = "back"
+kind = "hbox"
+x = 460
+y = 670
+w = 366
+h = 36
+gap = 8
+justify = "center"
+align = "center"
 
-# footer bar
-[[node]]
-kind = "panel"
-dock = "bottom"
-color = [0.04, 0.05, 0.08, 1.0]
-anchor = "bl"
-w = "100%"
-h = 30
+  [[node.children]]
+  kind = "text"
+  text = "{pick_key}"
+  h = 32
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+  visible = "pick_key"
 
-[[node]]
-kind = "panel"
-dock = "bottom"
-color = [0.63, 0.07, 0.17, 1.0]
-anchor = "bl"
-y = 30
-w = "100%"
-h = 2
+  [[node.children]]
+  kind = "text"
+  text = "PICK  "
+  font = 2
+  bank = 14
+  visible = "pick_key"
 
-[[node]]
-kind = "text"
-dock = "left bottom"
-text = "ROOM {room}     {count}"
-anchor = "bl"
-x = 24
-y = 8
-font = 1
-bank = 6
-scale = 2
+  [[node.children]]
+  kind = "text"
+  text = "ESC"
+  h = 32
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
 
-[[node]]
-kind = "text"
-dock = "right bottom"
-text = "ENTER  PICK     ESC  BACK"
-anchor = "br"
-x = 24
-y = 8
-font = 1
-bank = 6
-scale = 2
+  [[node.children]]
+  kind = "text"
+  text = "BACK"
+  font = 2
+  bank = 14

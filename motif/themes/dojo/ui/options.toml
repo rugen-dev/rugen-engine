@@ -1,113 +1,160 @@
-# rugen options — Neon Dojo. Coordinates are 1280x720; data in README.md.
-background = [0.03, 0.04, 0.08, 1.0]
+# rugen options — Dojo. Coordinates are 1280x720; data in ../README.md.
+# Tab plaques on the left, the rows on a washi sheet, help on a lacquer bar.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
 
 [[node]]
 kind = "image"
 fit = "cover"
-image = "ui/bg.webp"
+image = "ui/hall.webp"
 w = "100%"
 h = "100%"
 
+# ---------------------------------------------------------------- header
 [[node]]
 kind = "text"
 dock = "left top"
 text = "OPTIONS"
-x = 60
-y = 34
+x = 44
+y = 30
 font = 3
-bank = 0
-scale = 2
-enter = "down"
+bank = 14
 
 [[node]]
 kind = "text"
 dock = "right top"
 text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
-x = 60
-y = 46
+x = 44
+y = 44
 font = 2
-bank = 6
+bank = 16
 
+# ---------------------------------------------------------------- tabs
 [[node]]
 kind = "vbox"
 dock = "left"
 id = "tabs"
-x = 60
-y = 120
-w = 260
-h = 470
+x = 30
+y = 100
+w = 330
+h = 480
 gap = 10
 items = "tabs"
 group = "tabs"
 enter = "left"
+enter_time = 14
+stagger = 2
 
   [[node.children]]
   kind = "button"
   id = "tab"
-  h = 54
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  selected = "item.active"
+  w = 300
+  h = 50
   on_press = "{item.press}"
+
+    [[node.children.children]]
+    kind = "panel"
+    image = "ui/plaque9.webp"
+    nine = [8, 8, 8, 10]
+    w = 290
+    h = 50
+    visible = "!item.active"
+
+    [[node.children.children]]
+    kind = "panel"
+    image = "ui/plaque9_lit.webp"
+    nine = [8, 8, 8, 10]
+    w = 310
+    h = 50
+    visible = "item.active"
+
+    [[node.children.children]]
+    kind = "panel"
+    anchor = "left"
+    x = 18
+    w = 12
+    h = 12
+    color = [0.89, 0.702, 0.298, 1.0]
+    border = 2
+    border_color = [0.078, 0.051, 0.043, 1.0]
+    visible = "item.active"
 
     [[node.children.children]]
     kind = "text"
     text = "{item.label}"
     anchor = "left"
-    x = 26
-    font = 2
-    bank = 7
-    bank_focus = 4
-    selected = "item.active"
+    x = 24
+    font = 6
+    bank = 14
+    visible = "!item.active"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    anchor = "left"
+    x = 42
+    font = 6
+    bank = 14
+    visible = "item.active"
 
     [[node.children.children]]
     kind = "icon"
     glyph = "ext"
     anchor = "right"
-    x = 24
+    x = 30
     w = 14
     h = 14
-    color = [0.85, 0.87, 0.95, 1.0]
+    color = [0.976, 0.945, 0.871, 1.0]
     visible = "item.ext"
 
+# ---------------------------------------------------------------- content sheet
 [[node]]
 kind = "panel"
 dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 350
-y = 110
-w = 870
-h = 480
-pad = 24
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+x = 360
+y = 96
+w = 892
+h = 492
 enter = "up"
+enter_time = 14
 
   [[node.children]]
   kind = "text"
   text = "{tab.title}"
-  x = 4
-  font = 2
-  bank = 4
-  scale = 2
+  x = 30
+  y = 20
+  font = 6
+  bank = 12
 
   [[node.children]]
   kind = "text"
   text = "{tab.subtitle}"
-  x = 260
-  y = 10
+  x = 240
+  y = 28
   font = 2
-  bank = 6
+  bank = 17
   visible = "!show_themes"
+
+  [[node.children]]
+  kind = "panel"
+  dock = "stretch-x"
+  x = 22
+  y = 60
+  w = 848
+  h = 2
+  color = [0.341, 0.2, 0.122, 1.0]
 
   [[node.children]]
   kind = "list"
   dock = "stretch-x"
   id = "rows"
-  y = 54
-  w = 822
-  h = 370
-  gap = 6
+  x = 22
+  y = 66
+  w = 848
+  h = 404
   items = "rows"
   group = "rows"
   visible = "show_rows"
@@ -115,89 +162,125 @@ enter = "up"
     [[node.children.children]]
     kind = "button"
     id = "row"
-    h = 44
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
+    h = 46
     on_press = "{item.press}"
     on_left = "{item.left}"
     on_right = "{item.right}"
+
+      # focus: brighter paper and a vermilion seal bar
+      [[node.children.children.children]]
+      kind = "panel"
+      w = "100%"
+      h = "100%"
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 8
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      anchor = "bl"
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
       text = "{item.label}"
       anchor = "left"
       x = 22
-      font = 2
-      bank = 7
+      font = 6
+      bank = 12
+      when = "idle"
+
+      [[node.children.children.children]]
+      kind = "icon"
+      glyph = "tri_right"
+      anchor = "left"
+      x = 22
+      w = 14
+      h = 14
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      anchor = "left"
+      x = 44
+      font = 6
+      bank = 12
+      when = "focus"
 
       [[node.children.children.children]]
       kind = "hbox"
       anchor = "right"
-      x = 18
-      w = 600
-      gap = 10
+      x = 16
+      w = 620
+      gap = 16
       justify = "end"
       align = "center"
 
         [[node.children.children.children.children]]
         kind = "icon"
         glyph = "tri_left"
-        w = 10
-        h = 10
-        color = [1.0, 0.8, 0.3, 1.0]
+        w = 14
+        h = 14
+        color = [0.706, 0.188, 0.102, 1.0]
         when = "focus"
         visible = "item.adjustable"
 
         [[node.children.children.children.children]]
         kind = "pips"
-        h = 18
-        gap = 4
+        h = 22
+        gap = 5
+        border = 2
+        border_color = [0.341, 0.2, 0.122, 1.0]
+        color = [0.976, 0.945, 0.871, 1.0]
+        color2 = [0.706, 0.188, 0.102, 1.0]
         max_from = "item.max"
         value = "item.on"
-        border = 2
-        color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [1.0, 0.75, 0.25, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
         visible = "item.is_pips"
 
         [[node.children.children.children.children]]
         kind = "choice"
-        h = 28
-        pad = 12
+        h = 32
+        pad = 10
         border = 2
+        border_color = [0.341, 0.2, 0.122, 1.0]
+        color = [0.976, 0.945, 0.871, 1.0]
+        color2 = [0.706, 0.188, 0.102, 1.0]
         font = 2
-        bank = 7
-        bank_focus = 4
-        color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [0.6, 0.12, 0.2, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
-        text_color = [0.85, 0.87, 0.95, 1.0]
-        text_color_focus = [1.0, 0.8, 0.3, 1.0]
+        bank = 12
+        bank_focus = 14
         options = "item.options"
         value = "item.sel"
         visible = "item.is_choice"
 
         [[node.children.children.children.children]]
         kind = "slider"
-        w = 220
-        h = 12
+        w = 240
+        h = 14
         min = 0
         max = 1
         value = "item.frac"
-        knob = [14, 24]
+        knob = [18, 30]
         border = 2
-        track_color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [0.6, 0.12, 0.2, 1.0]
-        knob_color = [1.0, 0.75, 0.25, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
+        border_color = [0.341, 0.2, 0.122, 1.0]
+        track_color = [0.976, 0.945, 0.871, 1.0]
+        color2 = [0.706, 0.188, 0.102, 1.0]
+        knob_color = [0.89, 0.702, 0.298, 1.0]
         focus = false
         visible = "item.is_slider"
 
         [[node.children.children.children.children]]
         kind = "text"
         text = "{item.text}"
-        font = 2
-        bank = 4
+        font = 6
+        bank = 12
         visible = "item.has_text"
 
         [[node.children.children.children.children]]
@@ -205,25 +288,36 @@ enter = "up"
         glyph = "ext"
         w = 14
         h = 14
-        color = [1.0, 0.8, 0.3, 1.0]
+        color = [0.114, 0.09, 0.078, 1.0]
         visible = "item.is_link"
 
         [[node.children.children.children.children]]
         kind = "icon"
         glyph = "tri_right"
-        w = 10
-        h = 10
-        color = [1.0, 0.8, 0.3, 1.0]
+        w = 14
+        h = 14
+        color = [0.706, 0.188, 0.102, 1.0]
         when = "focus"
         visible = "item.adjustable"
+
+  # INTERFACE: theme picker
+  [[node.children]]
+  kind = "text"
+  text = "UI THEME"
+  x = 30
+  y = 74
+  font = 2
+  bank = 13
+  visible = "show_themes"
 
   [[node.children]]
   kind = "hbox"
   id = "themes"
-  y = 60
-  w = 822
-  h = 320
-  gap = 30
+  x = 30
+  y = 100
+  w = 840
+  h = 300
+  gap = 40
   items = "themes"
   group = "themes"
   visible = "show_themes"
@@ -231,76 +325,194 @@ enter = "up"
     [[node.children.children]]
     kind = "button"
     id = "card"
-    w = 390
-    h = 280
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
+    w = 392
+    h = 286
     on_press = "{item.press}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      image = "ui/sheet9_lit.webp"
+      nine = [12, 12, 12, 12]
+      w = 392
+      h = 230
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      image = "ui/lacq9.webp"
+      nine = [12, 12, 12, 12]
+      w = 392
+      h = 230
+      when = "idle"
 
       [[node.children.children.children]]
       kind = "image"
       image = "{item.preview}"
-      x = 9
-      y = 9
+      x = 10
+      y = 12
       w = 372
       h = 206
       visible = "item.has_preview"
 
       [[node.children.children.children]]
-      kind = "text"
-      text = "{item.label}"
-      x = 16
-      y = 232
-      font = 2
-      bank = 7
+      kind = "panel"
+      y = 238
+      w = 392
+      h = 44
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 238
+      w = 8
+      h = 44
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
 
       [[node.children.children.children]]
       kind = "text"
-      text = "ACTIVE"
-      anchor = "tr"
-      x = 16
-      y = 232
-      font = 2
-      bank = 4
+      text = "{item.label}"
+      x = 22
+      y = 244
+      font = 6
+      bank = 12
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 260
+      y = 244
+      w = 120
+      h = 32
+      color = [0.706, 0.188, 0.102, 1.0]
       visible = "item.active"
+
+        [[node.children.children.children.children]]
+        kind = "icon"
+        glyph = "check"
+        anchor = "left"
+        x = 12
+        w = 14
+        h = 14
+        color = [0.976, 0.945, 0.871, 1.0]
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        text = "ACTIVE"
+        anchor = "left"
+        x = 36
+        font = 2
+        bank = 14
 
       [[node.children.children.children]]
       kind = "text"
       text = "ENTER TO USE"
       anchor = "tr"
-      x = 16
-      y = 232
+      x = 12
+      y = 252
       font = 2
-      bank = 6
+      bank = 17
       visible = "!item.active"
 
+  [[node.children]]
+  kind = "text"
+  text = "APPLIED AT ONCE AND SAVED"
+  x = 30
+  y = 410
+  font = 2
+  bank = 17
+  visible = "show_themes"
+
+# ---------------------------------------------------------------- help bar
 [[node]]
 kind = "panel"
 dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 350
-y = 604
-w = 870
-h = 76
+image = "ui/lacq9.webp"
+nine = [12, 12, 12, 12]
+x = 360
+y = 598
+w = 892
+h = 80
+enter = "up"
+enter_time = 18
+
+  [[node.children]]
+  kind = "panel"
+  anchor = "left"
+  x = 22
+  w = 72
+  h = 30
+  color = [0.706, 0.188, 0.102, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    text = "HELP"
+    anchor = "center"
+    font = 2
+    bank = 14
 
   [[node.children]]
   kind = "text"
   dock = "stretch-x"
   text = "{help}"
-  x = 24
-  w = 820
-  h = 76
+  x = 114
+  y = 10
+  w = 750
+  h = 60
   wrap = true
+  line_gap = 8
   font = 2
-  bank = 7
+  bank = 14
+
+# ---------------------------------------------------------------- key hints
+[[node]]
+kind = "hbox"
+dock = "left"
+x = 30
+y = 600
+w = 320
+h = 34
+gap = 10
+align = "center"
+
+  [[node.children]]
+  kind = "keycap"
+  w = 34
+  h = 30
+  text = "{keys.left}"
+  glyph = "{keys.left_glyph}"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "keycap"
+  w = 34
+  h = 30
+  text = "{keys.right}"
+  glyph = "{keys.right_glyph}"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "CHANGE"
+  font = 2
+  bank = 14
 
 [[node]]
 kind = "hbox"
 dock = "left"
-x = 60
-y = 640
-w = 280
+x = 30
+y = 668
+w = 320
 h = 34
 gap = 10
 align = "center"
@@ -309,14 +521,15 @@ align = "center"
   kind = "keycap"
   h = 30
   text = "ESC"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
+  color = [0.933, 0.882, 0.769, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
 
   [[node.children]]
   kind = "text"
-  text = "BACK / SAVE"
+  text = "SAVE & BACK"
   font = 2
-  bank = 6
+  bank = 14

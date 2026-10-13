@@ -295,7 +295,7 @@ fn row_json(r: &Row) -> Value {
 pub fn theme_label(id: &str) -> String {
     match id {
         "ink" => "SHONEN INK".into(),
-        "dojo" => "NEON DOJO".into(),
+        "dojo" => "DOJO".into(),
         other => other.to_uppercase(),
     }
 }

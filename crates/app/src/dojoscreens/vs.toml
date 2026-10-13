@@ -1,0 +1,110 @@
+# rugen VERSUS — Dojo theme. Coordinates are 1280x720.
+# Data: p1/p2 {name name_up art has_art}, stage {name thumb has_thumb}, countdown.
+# The hall split by a pillar: P1's half in vermilion light, P2's in brass,
+# the VS seal on the pillar inside an ensō.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/hall_vs.webp"
+w = "100%"
+h = "100%"
+
+[[node]]
+kind = "image"
+dock = "left bottom"
+image = "{p1.art}"
+x = 40
+y = 100
+w = 560
+h = 560
+fit = "contain"
+fit_y = 1
+visible = "p1.has_art"
+enter = "left"
+enter_time = 16
+
+[[node]]
+kind = "image"
+dock = "right bottom"
+image = "{p2.art}"
+x = 680
+y = 100
+w = 560
+h = 560
+fit = "contain"
+fit_y = 1
+flip = true
+visible = "p2.has_art"
+enter = "right"
+enter_time = 16
+
+[[node]]
+kind = "image"
+image = "ui/enso.webp"
+x = 460
+y = 180
+w = 360
+h = 360
+alpha = 0.9
+enter = "fade"
+enter_time = 12
+enter_delay = 4
+
+[[node]]
+kind = "image"
+image = "ui/vs_seal.webp"
+x = 544
+y = 276
+enter = "fade"
+enter_time = 10
+enter_delay = 8
+ease = "back"
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "{p1.name_up}"
+x = 40
+y = 48
+h = 92
+pad = 30
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+font = 3
+scale = 2
+bank = 14
+enter = "left"
+enter_time = 14
+enter_delay = 4
+
+[[node]]
+kind = "text"
+dock = "right"
+text = "{p2.name_up}"
+anchor = "tr"
+x = 40
+y = 552
+h = 92
+pad = 30
+image = "ui/plaque9_gold.webp"
+nine = [8, 8, 8, 10]
+font = 3
+scale = 2
+bank = 12
+enter = "right"
+enter_time = 14
+enter_delay = 4
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "ROUND 1 · {stage.name}"
+x = 44
+y = 672
+font = 6
+bank = 14
+enter = "fade"
+enter_delay = 10

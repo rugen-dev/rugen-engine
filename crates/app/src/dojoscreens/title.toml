@@ -1,0 +1,380 @@
+# rugen HOME — Dojo theme. Coordinates are 1280x720.
+# Data: menu[] {id label action desc exit right}, featured {name art present},
+# arenas {name line counts}, ranked {title rating line}, profile, keys.
+# Fonts: 6 body (Jersey 30), 2 captions (Jersey 20), 1 / 4 Press Start for
+# key caps and numbers. Banks: 12 sumi, 13 vermilion, 14 washi, 15 brass,
+# 16 muted on lacquer, 17 soft sumi on washi.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/hall_title.webp"
+w = "100%"
+h = "100%"
+
+# logo: carved seal, RUGEN in washi, vermilion brush stroke
+[[node]]
+kind = "image"
+dock = "left"
+image = "ui/logo.webp"
+x = 56
+y = 40
+enter = "down"
+enter_time = 18
+ease = "back"
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "{arenas.counts}"
+x = 144
+y = 140
+font = 2
+bank = 16
+enter = "fade"
+enter_delay = 12
+
+# menu: wooden plaques; the focused one turns vermilion with a brass edge,
+# grows and shows its description under it
+[[node]]
+kind = "vbox"
+dock = "left"
+id = "menu"
+x = 56
+y = 182
+w = 470
+gap = 4
+items = "menu"
+stagger = 2
+enter = "left"
+enter_time = 16
+
+  [[node.children]]
+  kind = "button"
+  id = "slab"
+  w = 400
+  h = 34
+  w_focus = 440
+  h_focus = 46
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "{item.label}"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  align = "left"
+  pad = 40
+  on_press = "{item.action}"
+  on_right = "{item.right}"
+  visible = "!item.exit"
+
+  # a brass stud on the focused plaque
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 17
+  w = 12
+  h = 12
+  color = [0.89, 0.702, 0.298, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"
+  visible = "!item.exit"
+
+  [[node.children]]
+  kind = "text"
+  text = "{item.desc}"
+  x = 40
+  y = 50
+  font = 2
+  bank = 16
+  when = "focus"
+
+  [[node.children]]
+  kind = "button"
+  id = "exit"
+  w = 200
+  h = 30
+  w_focus = 240
+  h_focus = 38
+  image = "ui/plaque9_dark.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "{item.label}"
+  font = 6
+  bank = 16
+  bank_focus = 14
+  align = "left"
+  pad = 30
+  on_press = "{item.action}"
+  visible = "item.exit"
+
+# featured fighter: a hanging scroll
+[[node]]
+kind = "panel"
+dock = "right"
+x = 600
+y = 30
+w = 648
+h = 408
+enter = "right"
+enter_time = 18
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/scroll.webp"
+  w = 648
+  h = 408
+
+  [[node.children]]
+  kind = "panel"
+  x = 22
+  y = 22
+  w = 604
+  h = 364
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{featured.art}"
+    x = 270
+    y = 4
+    w = 330
+    h = 360
+    fit = "contain"
+    fit_y = 1
+    visible = "featured.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "FEATURED"
+  x = 44
+  y = 44
+  h = 28
+  pad = 10
+  image = "ui/seal9.webp"
+  nine = [6, 6, 6, 6]
+  font = 2
+  bank = 14
+  visible = "featured.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{featured.name}"
+  x = 40
+  y = 280
+  h = 62
+  pad = 24
+  image = "ui/plaque9_red.webp"
+  nine = [8, 8, 8, 10]
+  font = 3
+  bank = 14
+  visible = "featured.present"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 48
+  y = 350
+  w = 400
+  h = 24
+  gap = 8
+  align = "center"
+  visible = "featured.present"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "PRESS ▶ TO TRY"
+    font = 2
+    bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "DROP .ZIP OR .RAR FIGHTERS INTO CHARS/"
+  x = 44
+  y = 190
+  font = 6
+  bank = 12
+  visible = "!featured.present"
+
+# arenas: a lacquer card
+[[node]]
+kind = "panel"
+dock = "right"
+x = 640
+y = 458
+w = 296
+h = 168
+image = "ui/lacq9.webp"
+nine = [12, 12, 12, 12]
+enter = "up"
+enter_time = 18
+enter_delay = 6
+
+  [[node.children]]
+  kind = "text"
+  text = "ARENAS"
+  x = 20
+  y = 20
+  h = 26
+  pad = 8
+  color = [0.706, 0.188, 0.102, 1.0]
+  font = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{arenas.name}"
+  x = 20
+  y = 60
+  w = 256
+  h = 64
+  wrap = true
+  line_h = 30
+  font = 6
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{arenas.line}"
+  anchor = "tr"
+  x = 20
+  y = 22
+  font = 2
+  bank = 16
+
+# ranked: a washi card
+[[node]]
+kind = "panel"
+dock = "right"
+x = 952
+y = 458
+w = 296
+h = 168
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+enter = "up"
+enter_time = 18
+enter_delay = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "{ranked.title}"
+  x = 22
+  y = 20
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "{ranked.rating}"
+  x = 22
+  y = 52
+  font = 4
+  scale = 3
+  bank = 13
+
+  [[node.children]]
+  kind = "text"
+  text = "{ranked.line}"
+  x = 22
+  y = 120
+  font = 2
+  bank = 17
+
+# footer on the floor band
+[[node]]
+kind = "panel"
+dock = "bottom"
+x = 0
+y = 660
+w = "100%"
+h = 60
+
+  [[node.children]]
+  kind = "image"
+  image = "{profile.avatar}"
+  x = 28
+  y = 10
+  w = 40
+  h = 40
+  outline = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{profile.name}"
+  x = 82
+  y = 4
+  font = 6
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{profile.record}"
+  x = 82
+  y = 34
+  font = 2
+  bank = 16
+
+  [[node.children]]
+  kind = "hbox"
+  dock = "right"
+  x = 560
+  y = 12
+  w = 692
+  h = 36
+  gap = 10
+  justify = "end"
+  align = "center"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "ENTER"
+    h = 32
+    pad = 10
+    image = "ui/key9.webp"
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 12
+
+    [[node.children.children]]
+    kind = "text"
+    text = "SELECT  "
+    font = 2
+    bank = 14
+
+    [[node.children.children]]
+    kind = "text"
+    text = "ESC"
+    h = 32
+    pad = 10
+    image = "ui/key9.webp"
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 12
+
+    [[node.children.children]]
+    kind = "text"
+    text = "BACK  "
+    font = 2
+    bank = 14
+
+    [[node.children.children]]
+    kind = "text"
+    text = "F11"
+    h = 32
+    pad = 10
+    image = "ui/key9.webp"
+    nine = [4, 4, 4, 8]
+    font = 1
+    scale = 2
+    bank = 12
+
+    [[node.children.children]]
+    kind = "text"
+    text = "FULLSCREEN"
+    font = 2
+    bank = 14
