@@ -2329,8 +2329,11 @@ mod tests {
     /// CANCEL like leaving the screen, and quits once it is answered.
     #[test]
     fn window_close_asks_before_dropping_unsaved_options() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let lib = rugen_content::Library::discover(Some(&root));
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lib = rugen_content::Library::discover(Some(&repo));
+        // the player profile is written under `root`: keep it out of the repo
+        let root = std::env::temp_dir().join(format!("rugen-close-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
         let config = Config::default();
         for theme in ["ink", "dojo"] {
             let motif = lib.motif_dir_for(theme);
@@ -2356,6 +2359,7 @@ mod tests {
             ));
             assert_eq!(ui.take_request(), Some(SaveRequest::Save));
         }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
