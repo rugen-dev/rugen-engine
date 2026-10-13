@@ -2187,7 +2187,7 @@ impl OnlineScreen {
                 let off = problem.is_some();
                 json!({
                     "is_server": true,
-                    "name": fit(&self.row_name(i), if tag.is_empty() { 19 } else { 13 }),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 19 } else { 14 }),
                     "tag": tag,
                     "tag_red": tone == "red",
                     "tag_amber": tone == "amber",
@@ -2328,7 +2328,7 @@ impl OnlineScreen {
                     AcctState::None => ("NO USERNAMES ON THIS SERVER".into(), "", false),
                 };
                 json!({
-                    "name": fit(&self.row_name(i), if tag.is_empty() { 18 } else { 12 }),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 18 } else { 14 }),
                     "tag": tag,
                     "tag_red": tone == "red",
                     "tag_amber": tone == "amber",

@@ -697,7 +697,7 @@ impl Roster {
                 // their fighter once they picked, else a waiting line
                 match &self.foe.1 {
                     Some(f) => format!("BRINGS {f}"),
-                    None => "WAITING FOR THEIR PICK...".to_string(),
+                    None => "THEY ARE PICKING...".to_string(),
                 }
             } else {
                 "CPU".to_string()
@@ -998,7 +998,7 @@ mod tests {
         assert_eq!(d["card2"]["cpu"], false);
         // the opponent card names them and waits for their pick
         assert_eq!(d["card2"]["name_up"], "OPPONENT");
-        assert_eq!(d["card2"]["status"], "WAITING FOR THEIR PICK...");
+        assert_eq!(d["card2"]["status"], "THEY ARE PICKING...");
         r.set_foe("Ayame".into(), Some("SASUKE".into()));
         let d = r.data(&Profile::default(), "ONLINE");
         assert_eq!(d["card2"]["name_up"], "AYAME");

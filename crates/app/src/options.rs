@@ -150,7 +150,7 @@ impl OptionsScreen {
             Item::ZoomIn => "CAMERA ZOOM IN",
             Item::Fullscreen => "FULLSCREEN",
             Item::AiLevel => "COMPUTER LEVEL",
-            Item::InputDelay => "NET INPUT DELAY",
+            Item::InputDelay => "INPUT DELAY",
             Item::Theme => "UI THEME",
             Item::KeysP1 => "P1 KEYS",
             Item::KeysP2 => "P2 KEYS",
