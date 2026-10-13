@@ -1714,6 +1714,7 @@ impl Ui {
         let mut pen_x = inner.x;
         let mut pen_y = inner.y - scroll;
         let mut content_h = 0.0f32;
+        let items_start = self.instances.len();
         let cols = n.columns.unwrap_or(1).max(1) as usize;
         let cw = n.cell_w.unwrap_or(inner.w / cols as f32);
         let ch = n.cell_h.unwrap_or(inner.h);
@@ -1792,6 +1793,21 @@ impl Ui {
                     _ => {}
                 }
             }
+            // an hbox of items centres each item across (`align = "center"`)
+            if n.kind == Kind::Hbox && n.align.as_deref() == Some("center") {
+                let insts = &mut self.instances[before..];
+                let top = insts.iter().map(|i| i.rect.y).fold(f32::MAX, f32::min);
+                let bottom = insts
+                    .iter()
+                    .map(|i| i.rect.y + i.rect.h)
+                    .fold(f32::MIN, f32::max);
+                if top <= bottom {
+                    let dy = inner.y + (inner.h - (bottom - top)) / 2.0 - top;
+                    for inst in insts {
+                        inst.rect.y += dy;
+                    }
+                }
+            }
             match n.kind {
                 Kind::Vbox | Kind::List => {
                     pen_y += extent + gap;
@@ -1800,6 +1816,33 @@ impl Ui {
                 Kind::Hbox => pen_x += extent + gap,
                 Kind::Grid => content_h = ((i / cols) as f32 + 1.0) * (ch + gap) - gap,
                 _ => {}
+            }
+        }
+        // `justify = "center" | "end"` moves a row / column of items as a whole
+        if !scroller && item_count > 0 {
+            let used = match n.kind {
+                Kind::Hbox => pen_x - gap - inner.x,
+                Kind::Vbox => pen_y - gap - inner.y,
+                _ => -1.0,
+            };
+            let main = if n.kind == Kind::Hbox {
+                inner.w
+            } else {
+                inner.h
+            };
+            let off = match n.justify.as_deref() {
+                Some("end") if used >= 0.0 => (main - used).max(0.0),
+                Some("center") if used >= 0.0 => ((main - used) / 2.0).max(0.0),
+                _ => 0.0,
+            };
+            if off > 0.0 {
+                for inst in &mut self.instances[items_start..] {
+                    if n.kind == Kind::Hbox {
+                        inst.rect.x += off;
+                    } else {
+                        inst.rect.y += off;
+                    }
+                }
             }
         }
         *cursor = start_cursor + subtree;
@@ -2977,6 +3020,49 @@ on_press = "pick:{index}"
         let ev = ui.tick(nav_accept(), &mut p);
         assert_eq!(ev, vec![Event::Action("pick:12".into())]);
         assert!(ui.scroll["roster"] > 0.0, "grid scrolled: {:?}", ui.scroll);
+    }
+
+    #[test]
+    fn item_rows_justify_end_and_centre_across() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "hbox"
+x = 0
+y = 0
+w = 300
+h = 40
+gap = 10
+justify = "end"
+align = "center"
+items = "keys"
+[[node.children]]
+kind = "panel"
+id = "k"
+w = 50
+h = 20
+"#,
+        )
+        .unwrap();
+        let keys = serde_json::json!({ "keys": [1, 2] });
+        let mut ui = Ui::new(def, keys);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        let first = ui
+            .instances
+            .iter()
+            .find(|i| i.key.ends_with("[0].k"))
+            .unwrap()
+            .rect;
+        let last = ui
+            .instances
+            .iter()
+            .find(|i| i.key.ends_with("[1].k"))
+            .unwrap()
+            .rect;
+        // 50 + 10 + 50 = 110 wide, flush right; 20 high in a 40 row
+        assert_eq!((first.x, last.x + last.w), (190.0, 300.0));
+        assert_eq!(first.y, 10.0);
     }
 
     #[test]
