@@ -38,6 +38,46 @@ rugen play kfm        # a quick match against the computer
   and mouse.
 - One codebase for Windows, Linux and macOS.
 
+## Roadmap
+
+**Done**
+
+- [x] M.U.G.E.N 1.1 / Ikemen GO characters and stages, unchanged
+- [x] Compact `.rgc` / `.rgs` content files (lossless sprites, Opus sound)
+- [x] Arcade, VS, Training, Tutorial, Watch
+- [x] Arena mode: stocks, blast zones, platforms, Smash-style HUD
+- [x] Rollback netplay: rooms, quick match, ranked, spectators, flee
+- [x] Bring your own character, with server-judged matchups
+- [x] Accounts, leaderboards, room codes without lookalike characters
+- [x] Pause menu with a move list read from each fighter's `.cmd`
+- [x] Fighter size option (none / chibi / small / normal)
+- [x] Stage select built for hundreds of stages
+- [x] Two themes (Ink and Dojo), keyboard, gamepad and mouse, explicit SAVE
+- [x] Daily S3 backups for servers
+
+**Next (0.6.2)**
+
+- [ ] Fix: sounds of earlier fighters playing in later fights
+- [ ] One-way arena platforms: jump through from below, double-tap down to drop
+- [ ] Arena AI: CPU fighters stay on stage, recover and use platforms
+
+**Planned**
+
+- [ ] Training lab: hitbox display, frame data, input display, record / playback dummy
+- [ ] Team modes: Simul, Turns, Tag
+- [ ] Survival, Boss Rush, Time Attack
+- [ ] Storyboards: fighter intros and arcade endings
+- [ ] Arena: ledge grab, items to pick up and throw, stage hazards
+- [ ] Online: ranked seasons, per-fighter leaderboards, tournament brackets in rooms
+- [ ] Shareable replays by code
+- [ ] Creator tools: user themes folder with live reload, fighter debugger
+- [ ] Discord Rich Presence
+- [ ] Translations (French first), Steam Deck layout
+
+**Not planned for now**
+
+- In-game browsing and downloading of fighters from a public catalogue
+
 ## Build from source
 
 Stable Rust 1.85+. Linux also needs the udev and ALSA headers (see
