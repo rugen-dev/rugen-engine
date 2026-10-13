@@ -278,16 +278,7 @@ font = 3
 bank = 11
 scale = 2
 
-[[node]]
-kind = "text"
-dock = "right top"
-text = "SAVED TO RUGEN.TOML"
-anchor = "tr"
-x = 40
-y = 34
-font = 2
-bank = 11
-
+@SAVE_STATUS@
 # ---------------------------------------------------------------- tabs
 [[node]]
 kind = "vbox"
@@ -355,7 +346,7 @@ stagger = 2
     h = 14
     color = [0.95, 0.94, 0.89, 1.0]
     visible = "item.ext"
-
+@SAVE_BUTTON@
 # ---------------------------------------------------------------- content panel
 [[node]]
 kind = "panel"
@@ -648,7 +639,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE AND SAVED"
+  text = "APPLIED AT ONCE - SAVE TO KEEP IT"
   x = 28
   y = 400
   font = 2
@@ -753,10 +744,10 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE & BACK"
+  text = "BACK"
   font = 2
   bank = 9
-"##;
+@SAVE_OVERLAYS@"##;
 
 const INK_CONTROLS: &str = r##"# rugen controls — Shonen Ink. Coordinates are 1280x720; data in ../README.md.
 background = [0.95, 0.94, 0.89, 1.0]
@@ -862,6 +853,7 @@ group = "header"
   h = 12
   color = [1.0, 1.0, 1.0, 1.0]
 
+@SAVE_BUTTON@@SAVE_STATUS@
 # ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
@@ -1008,6 +1000,37 @@ enter_time = 14
   y = 352
   font = 2
   bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "S"
+  x = 312
+  y = 394
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "START"
+  x = 520
+  y = 394
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "keycap"
+  x = 336
+  y = 386
+  w = 44
+  h = 32
+  text = "{pad.s.cap}"
+  glyph = "{pad.s.glyph}"
+  selected = "pad.s.lit"
+  color_focus = [0.878, 0.125, 0.125, 1.0]
+  text_color_focus = [1.0, 1.0, 1.0, 1.0]
+  font = 2
+  bank = 9
+  bank_focus = 11
 
   [[node.children]]
   kind = "image"
@@ -1177,7 +1200,7 @@ enter_time = 18
     [[node.children.children]]
     kind = "button"
     id = "row"
-    h = 38
+    h = 34
     on_press = "{item.press}"
 
       [[node.children.children.children]]
@@ -1213,7 +1236,7 @@ enter_time = 18
       [[node.children.children.children]]
       kind = "keycap"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       pad = 0
@@ -1235,7 +1258,7 @@ enter_time = 18
       image_focus = "ui/ring_lit.webp"
       selected = "item.hot"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       visible = "item.round"
@@ -1244,7 +1267,7 @@ enter_time = 18
       kind = "text"
       text = "{item.icon}"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       align = "center"
       font = 1
@@ -1257,7 +1280,7 @@ enter_time = 18
       kind = "text"
       text = "{item.label}"
       anchor = "left"
-      x = 52
+      x = 186
       font = 2
       bank = 9
       bank_focus = 11
@@ -1267,7 +1290,7 @@ enter_time = 18
       kind = "text"
       text = "{item.group}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 9
       bank_focus = 11
@@ -1278,7 +1301,7 @@ enter_time = 18
       kind = "text"
       text = "{item.conflict_text}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 10
       bank_focus = 11
@@ -1289,7 +1312,7 @@ enter_time = 18
       kind = "text"
       text = "PRESS A KEY - ESC CANCEL"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 11
       blink = 40
@@ -1297,25 +1320,27 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
-      font = 2
+      font = 1
+      scale = 2
       bank = 9
       visible = "item.clean"
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
-      font = 2
+      font = 1
+      scale = 2
       bank = 10
       border_color = [0.878, 0.125, 0.125, 1.0]
       text_color = [0.878, 0.125, 0.125, 1.0]
@@ -1323,12 +1348,13 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "..."
-      font = 2
+      font = 1
+      scale = 2
       bank = 9
       visible = "item.listening"
 
@@ -1393,7 +1419,7 @@ align = "center"
   text = "1P/2P"
   font = 2
   bank = 9
-"##;
+@SAVE_OVERLAYS@"##;
 
 const DOJO_OPTIONS: &str = include_str!("dojoscreens/options.toml");
 const DOJO_CONTROLS: &str = include_str!("dojoscreens/controls.toml");
@@ -1497,6 +1523,385 @@ fn dojo_button(id: &str, label: &str, x: i32, y: i32) -> String {
     )
 }
 
+/// Colours and fonts of the save pieces (button, status, toast, dialog).
+struct SavePalette {
+    accent: &'static str,
+    dark: &'static str,
+    light: &'static str,
+    /// Edge of a focused piece (ink: black shadow side, dojo: brass).
+    edge: &'static str,
+    big_font: u32,
+    big_scale: u32,
+    big_light: u32,
+    big_dark: u32,
+    small_font: u32,
+    small_light: u32,
+    small_dark: u32,
+}
+
+const INK_SAVE: SavePalette = SavePalette {
+    accent: "[0.878, 0.125, 0.125, 1.0]",
+    dark: "[0.067, 0.067, 0.067, 1.0]",
+    light: "[1.0, 1.0, 1.0, 1.0]",
+    edge: "[0.067, 0.067, 0.067, 1.0]",
+    big_font: 1,
+    big_scale: 2,
+    big_light: 11,
+    big_dark: 9,
+    small_font: 2,
+    small_light: 11,
+    small_dark: 9,
+};
+
+const DOJO_SAVE: SavePalette = SavePalette {
+    accent: "[0.706, 0.188, 0.102, 1.0]",
+    dark: "[0.078, 0.051, 0.043, 1.0]",
+    light: "[0.976, 0.945, 0.871, 1.0]",
+    edge: "[0.89, 0.702, 0.298, 1.0]",
+    big_font: 6,
+    big_scale: 1,
+    big_light: 14,
+    big_dark: 12,
+    small_font: 2,
+    small_light: 14,
+    small_dark: 12,
+};
+
+/// A focusable button whose focus is a filled accent slab with a hard
+/// shadow and an `edge` frame, the same for the mouse and the keys.
+/// `hot` (a bind path, or "") fills it with the accent while idle too.
+#[allow(clippy::too_many_arguments)]
+fn save_style_button(
+    p: &SavePalette,
+    id: &str,
+    label: &str,
+    press: &str,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    extra: &str,
+    hot: &str,
+) -> String {
+    let hot_fill = if hot.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"
+  [[node.children]]
+  kind = "panel"
+  color = {accent}
+  visible = "{hot}"
+"#,
+            accent = p.accent
+        )
+    };
+    let text = |bank: u32, visible: &str| {
+        format!(
+            "\n  [[node.children]]\n  kind = \"text\"\n  text = \"{label}\"\n  anchor = \"center\"\n  font = {}\n  scale = {}\n  bank = {bank}\n  when = \"blur\"\n{visible}",
+            p.big_font, p.big_scale
+        )
+    };
+    let blur_text = if hot.is_empty() {
+        text(p.big_dark, "")
+    } else {
+        text(p.big_dark, &format!("  visible = \"!{hot}\"\n"))
+            + &text(p.big_light, &format!("  visible = \"{hot}\"\n"))
+    };
+    format!(
+        r#"
+[[node]]
+kind = "button"
+id = "{id}"
+x = {x}
+y = {y}
+w = {w}
+h = {h}
+on_press = "{press}"
+{extra}
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = {dark}
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = {light}
+  border = 3
+  border_color = {dark}
+{hot_fill}
+  [[node.children]]
+  kind = "panel"
+  color = {accent}
+  border = 3
+  border_color = {edge}
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = {light}
+  when = "focus"
+
+{blur_text}  [[node.children]]
+  kind = "text"
+  text = "{label}"
+  anchor = "center"
+  font = {bf}
+  scale = {bs}
+  bank = {bl}
+  when = "focus"
+"#,
+        dark = p.dark,
+        light = p.light,
+        accent = p.accent,
+        edge = p.edge,
+        bf = p.big_font,
+        bs = p.big_scale,
+        bl = p.big_light,
+        blur_text = blur_text,
+    )
+}
+
+/// SAVE button (F2) of the options / controls pages: accent-filled while
+/// there are unsaved changes.
+fn save_button(p: &SavePalette, x: i32, y: i32, w: i32, h: i32, dock: &str, group: &str) -> String {
+    let mut b = save_style_button(
+        p,
+        "save",
+        "SAVE",
+        "save",
+        x,
+        y,
+        w,
+        h,
+        &format!("dock = \"{dock}\"\ngroup = \"{group}\"\n"),
+        "save.unsaved",
+    );
+    b.push_str(&format!(
+        r#"
+  [[node.children]]
+  kind = "keycap"
+  anchor = "right"
+  x = 10
+  h = {kh}
+  text = "F2"
+  font = {sf}
+  bank = {sd}
+"#,
+        kh = (h - 16).min(30),
+        sf = p.small_font,
+        sd = p.small_dark,
+    ));
+    b
+}
+
+/// Header status: an accent badge "UNSAVED CHANGES", else "ALL SAVED".
+fn save_status(p: &SavePalette, place: &str, x: i32, y: i32, short: bool) -> String {
+    format!(
+        r#"
+[[node]]
+kind = "text"
+{place}
+x = {x}
+y = {ty}
+text = "ALL SAVED"
+font = {sf}
+bank = {sl}
+visible = "save.clean"
+
+[[node]]
+kind = "panel"
+{place}
+x = {x}
+y = {y}
+w = {w}
+h = 32
+color = {accent}
+border = 3
+border_color = {edge}
+visible = "save.unsaved"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  anchor = "left"
+  x = 12
+  w = 14
+  h = 14
+  color = {light}
+
+  [[node.children]]
+  kind = "text"
+  text = "{unsaved}"
+  anchor = "left"
+  x = 36
+  font = {sf}
+  bank = {sl}
+"#,
+        ty = y + 10,
+        w = if short { 132 } else { 220 },
+        unsaved = if short { "UNSAVED" } else { "UNSAVED CHANGES" },
+        accent = p.accent,
+        edge = p.edge,
+        light = p.light,
+        sf = p.small_font,
+        sl = p.small_light,
+    )
+}
+
+/// "SAVED" toast under the header and the leave dialog (SAVE / DISCARD /
+/// CANCEL) over everything.
+fn save_overlays(p: &SavePalette, toast_y: i32) -> String {
+    let mut out = format!(
+        r#"
+# ---------------------------------------------------------------- saved toast
+[[node]]
+kind = "panel"
+dock = "top"
+x = 470
+y = {toast_y}
+w = 340
+h = 44
+color = {accent}
+border = 3
+border_color = {edge}
+visible = "save.toast"
+top = true
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "check"
+  anchor = "left"
+  x = 18
+  w = 16
+  h = 16
+  color = {light}
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVED TO RUGEN.TOML"
+  anchor = "left"
+  x = 46
+  font = {sf}
+  bank = {sl}
+
+# ---------------------------------------------------------------- leave dialog
+[[node]]
+kind = "panel"
+dock = "fill"
+w = "100%"
+h = "100%"
+color = [0.0, 0.0, 0.0, 0.6]
+visible = "save.confirm"
+modal = true
+top = true
+
+[[node]]
+kind = "panel"
+x = 336
+y = 216
+w = 620
+h = 300
+color = {dark}
+visible = "save.confirm"
+top = true
+
+[[node]]
+kind = "panel"
+x = 330
+y = 210
+w = 620
+h = 300
+color = {light}
+border = 4
+border_color = {dark}
+visible = "save.confirm"
+modal = true
+top = true
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 0
+  w = 620
+  h = 56
+  color = {accent}
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  x = 26
+  y = 20
+  w = 16
+  h = 16
+  color = {light}
+
+  [[node.children]]
+  kind = "text"
+  text = "UNSAVED CHANGES"
+  x = 54
+  y = 14
+  font = {bf}
+  scale = {bs}
+  bank = {bl}
+
+  [[node.children]]
+  kind = "text"
+  text = "You changed settings that are not in rugen.toml yet. Save them before leaving?"
+  x = 30
+  y = 84
+  w = 560
+  h = 80
+  wrap = true
+  line_gap = 8
+  font = {sf}
+  bank = {sd}
+"#,
+        accent = p.accent,
+        edge = p.edge,
+        light = p.light,
+        dark = p.dark,
+        bf = p.big_font,
+        bs = p.big_scale,
+        bl = p.big_light,
+        sf = p.small_font,
+        sl = p.small_light,
+        sd = p.small_dark,
+        toast_y = toast_y,
+    );
+    // the buttons sit inside the dialog's frame (absolute, drawn on top)
+    for (i, (id, label, press)) in [
+        ("dlg_save", "SAVE", "leave:save"),
+        ("dlg_discard", "DISCARD", "leave:discard"),
+        ("dlg_cancel", "CANCEL", "leave:cancel"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let b = save_style_button(
+            p,
+            id,
+            label,
+            press,
+            360 + i as i32 * 192,
+            420,
+            172,
+            56,
+            "visible = \"save.confirm\"\nmodal = true\ntop = true\ngroup = \"dialog\"\n",
+            "",
+        );
+        out.push_str(&b);
+    }
+    out
+}
+
 /// The final TOML texts (buttons expanded).
 pub fn screens() -> [(&'static str, String, String); 2] {
     let ink_buttons: String = [
@@ -1521,16 +1926,41 @@ pub fn screens() -> [(&'static str, String, String); 2] {
     .iter()
     .map(|(id, l, x, y)| dojo_button(id, l, *x, *y))
     .collect();
+    // options: SAVE under the tab column, status top right; controls: both
+    // in the header next to 1P / 2P
+    let options = |text: &str, p: &SavePalette, tabs_y: i32| {
+        text.replace(
+            "@SAVE_STATUS@",
+            &save_status(p, "dock = \"right top\"\nanchor = \"tr\"", 40, 28, false),
+        )
+        .replace(
+            "@SAVE_BUTTON@",
+            &save_button(p, 30, tabs_y, 290, 50, "left", "tabs"),
+        )
+        .replace("@SAVE_OVERLAYS@", &save_overlays(p, 20))
+    };
+    let controls = |text: &str, p: &SavePalette, buttons: &str| {
+        text.replace("@BUTTONS@", buttons)
+            .replace(
+                "@SAVE_BUTTON@",
+                &save_button(p, 640, 22, 210, 40, "top", "header"),
+            )
+            .replace(
+                "@SAVE_STATUS@",
+                &save_status(p, "dock = \"top\"", 866, 26, true),
+            )
+            .replace("@SAVE_OVERLAYS@", &save_overlays(p, 88))
+    };
     [
         (
             "ink",
-            INK_OPTIONS.to_string(),
-            INK_CONTROLS.replace("@BUTTONS@", &ink_buttons),
+            options(INK_OPTIONS, &INK_SAVE, 520),
+            controls(INK_CONTROLS, &INK_SAVE, &ink_buttons),
         ),
         (
             "dojo",
-            DOJO_OPTIONS.to_string(),
-            DOJO_CONTROLS.replace("@BUTTONS@", &dojo_buttons),
+            options(DOJO_OPTIONS, &DOJO_SAVE, 500),
+            controls(DOJO_CONTROLS, &DOJO_SAVE, &dojo_buttons),
         ),
     ]
 }

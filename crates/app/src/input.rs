@@ -21,7 +21,10 @@ pub fn parse_key(name: &str) -> Key {
         "Backspace" => Some(NamedKey::Backspace),
         "Escape" => Some(NamedKey::Escape),
         "Delete" => Some(NamedKey::Delete),
+        "F1" => Some(NamedKey::F1),
+        "F2" => Some(NamedKey::F2),
         "F5" => Some(NamedKey::F5),
+        "F11" => Some(NamedKey::F11),
         _ => None,
     };
     match named {
@@ -60,32 +63,117 @@ pub fn key_name(key: &Key) -> Option<String> {
     })
 }
 
+/// Bit of START in the raw per-player masks (past the 11 [`Buttons`] bits,
+/// which `Buttons::from_bits` drops: START never reaches the simulation).
+pub const START_BIT: u16 = 1 << 11;
+
+/// The device a player last used: hints show its keys or buttons.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Device {
+    #[default]
+    Keyboard,
+    Pad(PadKind),
+}
+
+/// Button naming of a gamepad family (gilrs reports positions: South, East...).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PadKind {
+    #[default]
+    Generic,
+    Xbox,
+    PlayStation,
+    Nintendo,
+}
+
+impl PadKind {
+    /// Guess the family from the name the driver reports.
+    pub fn from_name(name: &str) -> Self {
+        let n = name.to_lowercase();
+        let any = |words: &[&str]| words.iter().any(|w| n.contains(w));
+        if any(&[
+            "playstation",
+            "dualshock",
+            "dualsense",
+            "ps3",
+            "ps4",
+            "ps5",
+            "sony",
+        ]) {
+            Self::PlayStation
+        } else if any(&["nintendo", "switch", "joy-con", "pro controller"]) {
+            Self::Nintendo
+        } else if any(&["xbox", "x-box", "xinput", "microsoft"]) {
+            Self::Xbox
+        } else {
+            Self::Generic
+        }
+    }
+}
+
 struct Pad {
     id: gilrs::GamepadId,
-    held: Buttons,
+    /// Raw mask: Buttons bits + [`START_BIT`].
+    held: u16,
     /// Buttons pressed since the last tick (kept even if already released).
-    taps: Buttons,
+    taps: u16,
     stick: [f32; 2],
+    kind: PadKind,
+}
+
+impl Pad {
+    fn new(id: gilrs::GamepadId, kind: PadKind) -> Self {
+        Self {
+            id,
+            held: 0,
+            taps: 0,
+            stick: [0.0; 2],
+            kind,
+        }
+    }
+}
+
+/// Gamepad button → slot (order u d l r a b c x y z s start), the fixed
+/// mapping the controls page shows.
+pub fn pad_slot(b: gilrs::Button) -> Option<usize> {
+    use gilrs::Button;
+    Some(match b {
+        Button::DPadUp => 0,
+        Button::DPadDown => 1,
+        Button::DPadLeft => 2,
+        Button::DPadRight => 3,
+        Button::South => 4,
+        Button::East => 5,
+        Button::RightTrigger2 => 6,
+        Button::West => 7,
+        Button::North => 8,
+        Button::RightTrigger => 9,
+        Button::LeftTrigger => 10,
+        Button::Start => 11,
+        _ => return None,
+    })
 }
 
 pub struct InputState {
-    /// Per player: 11 keys in Buttons order.
-    keys: [[Key; 11]; 2],
-    keyboard: [Buttons; 2],
+    /// Per player: 12 keys (u d l r a b c x y z s start).
+    keys: [[Key; 12]; 2],
+    /// Raw masks: Buttons bits + [`START_BIT`].
+    keyboard: [u16; 2],
     /// Keys pressed since the last tick: a tap shorter than a tick (or one that
     /// lands while a slow frame blocks the loop) still reaches the game once.
-    taps: [Buttons; 2],
+    taps: [u16; 2],
     gilrs: Option<gilrs::Gilrs>,
     pads: Vec<Pad>,
     pad_slot: [i32; 2],
     /// Player whose gamepad pressed Select/Back (the pad's pause button).
     pad_pause: Option<usize>,
     deadzone: f32,
+    /// What each player pressed last: keyboard or its gamepad.
+    device: [Device; 2],
 }
 
 impl InputState {
     pub fn new(cfg: &config::Input) -> Self {
-        let map = |k: &config::PlayerKeys| -> [Key; 11] {
+        let map = |k: &config::PlayerKeys| -> [Key; 12] {
             let n = k.names();
             std::array::from_fn(|i| parse_key(n[i]))
         };
@@ -98,23 +186,22 @@ impl InputState {
         };
         let mut s = Self {
             keys: [map(&cfg.p1), map(&cfg.p2)],
-            keyboard: [Buttons::default(); 2],
-            taps: [Buttons::default(); 2],
+            keyboard: [0; 2],
+            taps: [0; 2],
             gilrs,
             pads: Vec::new(),
             pad_slot: [cfg.gamepad_p1, cfg.gamepad_p2],
             pad_pause: None,
             deadzone: cfg.deadzone.clamp(0.1, 0.95),
+            device: [Device::Keyboard; 2],
         };
         if let Some(g) = &s.gilrs {
-            let ids: Vec<gilrs::GamepadId> = g.gamepads().map(|(id, _)| id).collect();
-            for id in ids {
-                s.pads.push(Pad {
-                    id,
-                    held: Buttons::default(),
-                    taps: Buttons::default(),
-                    stick: [0.0; 2],
-                });
+            let found: Vec<(gilrs::GamepadId, PadKind)> = g
+                .gamepads()
+                .map(|(id, gp)| (id, PadKind::from_name(gp.name())))
+                .collect();
+            for (id, kind) in found {
+                s.pads.push(Pad::new(id, kind));
             }
             log::info!("{} gamepad(s) connected", s.pads.len());
         }
@@ -123,7 +210,7 @@ impl InputState {
 
     /// Replace the keyboard mapping (after rebinding in the options screen).
     pub fn rebind(&mut self, cfg: &config::Input) {
-        let map = |k: &config::PlayerKeys| -> [Key; 11] {
+        let map = |k: &config::PlayerKeys| -> [Key; 12] {
             let n = k.names();
             std::array::from_fn(|i| parse_key(n[i]))
         };
@@ -141,6 +228,7 @@ impl InputState {
                     set(&mut self.keyboard[p], i, pressed);
                     if pressed {
                         set(&mut self.taps[p], i, true);
+                        self.device[p] = Device::Keyboard;
                     }
                     used = true;
                 }
@@ -151,15 +239,15 @@ impl InputState {
 
     /// Forget every held key (the window lost focus: its releases will not come).
     pub fn release_all(&mut self) {
-        self.keyboard = [Buttons::default(); 2];
-        self.taps = [Buttons::default(); 2];
+        self.keyboard = [0; 2];
+        self.taps = [0; 2];
     }
 
     /// The tick consumed this tick's taps.
     pub fn end_tick(&mut self) {
-        self.taps = [Buttons::default(); 2];
+        self.taps = [0; 2];
         for pad in &mut self.pads {
-            pad.taps = Buttons::default();
+            pad.taps = 0;
         }
     }
 
@@ -168,16 +256,22 @@ impl InputState {
         self.keys.iter().flatten().any(|k| k == key)
     }
 
-    /// Buttons held on gamepads no player slot claims (they still drive menus).
-    pub fn spare_pads(&self) -> Buttons {
-        let mut out = Buttons::default();
+    /// Raw masks (Buttons bits + [`START_BIT`]) held on gamepads no player
+    /// slot claims (they still drive menus).
+    pub fn spare_pads(&self) -> u16 {
+        let mut out = 0;
         for (i, pad) in self.pads.iter().enumerate() {
             if self.pad_slot.contains(&(i as i32)) {
                 continue;
             }
-            out = Buttons::from_bits(out.bits() | self.pad_buttons(pad).bits());
+            out |= self.pad_buttons(pad);
         }
         out
+    }
+
+    /// The device each player used last.
+    pub fn devices(&self) -> [Device; 2] {
+        self.device
     }
 
     /// Drain gamepad events.
@@ -187,43 +281,28 @@ impl InputState {
             let idx = match self.pads.iter().position(|p| p.id == ev.id) {
                 Some(i) => i,
                 None => {
-                    self.pads.push(Pad {
-                        id: ev.id,
-                        held: Buttons::default(),
-                        taps: Buttons::default(),
-                        stick: [0.0; 2],
-                    });
+                    let kind = PadKind::from_name(g.gamepad(ev.id).name());
+                    self.pads.push(Pad::new(ev.id, kind));
                     self.pads.len() - 1
                 }
             };
+            let owner = self.pad_slot.iter().position(|&slot| slot == idx as i32);
             let pad = &mut self.pads[idx];
             use gilrs::{Axis, Button, EventType};
             match ev.event {
                 EventType::ButtonPressed(b, _) | EventType::ButtonReleased(b, _) => {
                     let pressed = matches!(ev.event, EventType::ButtonPressed(..));
-                    let slot = match b {
-                        Button::DPadUp => Some(0),
-                        Button::DPadDown => Some(1),
-                        Button::DPadLeft => Some(2),
-                        Button::DPadRight => Some(3),
-                        Button::South => Some(4),
-                        Button::East => Some(5),
-                        Button::RightTrigger2 => Some(6),
-                        Button::West => Some(7),
-                        Button::North => Some(8),
-                        Button::RightTrigger => Some(9),
-                        Button::Start => Some(10),
-                        _ => None,
-                    };
-                    if let Some(s) = slot {
+                    if let Some(s) = pad_slot(b) {
                         set(&mut pad.held, s, pressed);
                         if pressed {
                             set(&mut pad.taps, s, true);
                         }
                     }
+                    if pressed && let Some(p) = owner {
+                        self.device[p] = Device::Pad(pad.kind);
+                    }
                     if pressed && matches!(b, Button::Select | Button::Mode) {
-                        let pi = idx as i32;
-                        self.pad_pause = self.pad_slot.iter().position(|&slot| slot == pi);
+                        self.pad_pause = owner;
                     }
                 }
                 EventType::AxisChanged(a, v, _) => match a {
@@ -232,9 +311,12 @@ impl InputState {
                     _ => {}
                 },
                 EventType::Disconnected => {
-                    pad.held = Buttons::default();
-                    pad.taps = Buttons::default();
+                    pad.held = 0;
+                    pad.taps = 0;
                     pad.stick = [0.0; 2];
+                    if let Some(p) = owner {
+                        self.device[p] = Device::Keyboard;
+                    }
                 }
                 _ => {}
             }
@@ -246,8 +328,9 @@ impl InputState {
         self.pad_pause.take()
     }
 
-    /// Connected gamepads in slot order: name and held buttons (stick included).
-    pub fn pads(&self) -> Vec<(String, Buttons)> {
+    /// Connected gamepads in slot order: name, family and held raw mask
+    /// (stick included, [`START_BIT`] for Start).
+    pub fn pads(&self) -> Vec<(String, PadKind, u16)> {
         let Some(g) = self.gilrs.as_ref() else {
             return Vec::new();
         };
@@ -255,44 +338,51 @@ impl InputState {
             .iter()
             .filter_map(|p| {
                 let gp = g.connected_gamepad(p.id)?;
-                let mut b = p.held;
-                let dz = self.deadzone;
-                b.l |= p.stick[0] < -dz;
-                b.r |= p.stick[0] > dz;
-                b.u |= p.stick[1] > dz;
-                b.d |= p.stick[1] < -dz;
-                Some((gp.name().to_string(), b))
+                Some((gp.name().to_string(), p.kind, self.stick_mask(p, p.held)))
             })
             .collect()
     }
 
-    /// A pad's held buttons, its stick past the deadzone and this tick's taps.
-    fn pad_buttons(&self, pad: &Pad) -> Buttons {
-        let mut b = Buttons::from_bits(pad.held.bits() | pad.taps.bits());
+    fn stick_mask(&self, pad: &Pad, mut b: u16) -> u16 {
         let dz = self.deadzone;
-        b.l |= pad.stick[0] < -dz;
-        b.r |= pad.stick[0] > dz;
-        b.u |= pad.stick[1] > dz;
-        b.d |= pad.stick[1] < -dz;
+        for (bit, on) in [
+            (2, pad.stick[0] < -dz),
+            (3, pad.stick[0] > dz),
+            (0, pad.stick[1] > dz),
+            (1, pad.stick[1] < -dz),
+        ] {
+            if on {
+                b |= 1 << bit;
+            }
+        }
         b
     }
 
-    /// Current buttons for both players (keyboard OR gamepad), including keys
-    /// tapped and released since the last tick.
-    pub fn buttons(&self) -> [Buttons; 2] {
-        let mut out =
-            [0, 1].map(|p| Buttons::from_bits(self.keyboard[p].bits() | self.taps[p].bits()));
+    /// A pad's held buttons, its stick past the deadzone and this tick's taps.
+    fn pad_buttons(&self, pad: &Pad) -> u16 {
+        self.stick_mask(pad, pad.held | pad.taps)
+    }
+
+    /// Raw masks for both players (keyboard OR gamepad, Buttons bits +
+    /// [`START_BIT`]), including keys tapped and released since the last tick.
+    pub fn raw(&self) -> [u16; 2] {
+        let mut out = [0, 1].map(|p| self.keyboard[p] | self.taps[p]);
         for (p, o) in out.iter_mut().enumerate() {
             let slot = self.pad_slot[p];
             if slot < 0 {
                 continue;
             }
-            let Some(pad) = self.pads.get(slot as usize) else {
-                continue;
-            };
-            *o = Buttons::from_bits(o.bits() | self.pad_buttons(pad).bits());
+            if let Some(pad) = self.pads.get(slot as usize) {
+                *o |= self.pad_buttons(pad);
+            }
         }
         out
+    }
+
+    /// Current fighter buttons for both players (START left out).
+    #[cfg(test)]
+    pub fn buttons(&self) -> [Buttons; 2] {
+        self.raw().map(Buttons::from_bits)
     }
 }
 
@@ -300,27 +390,19 @@ impl InputState {
 /// (or `--p2`) gave it, so both players' controls (P1 / P2 keyboard
 /// layouts, both gamepad slots) drive it. Without this, the P2 seat only
 /// listened to the P2 bindings: a player on its usual P1 keys or its only
-/// gamepad lost buttons it had no P2 binding for (Start: power charge).
+/// gamepad lost buttons it had no P2 binding for (S: power charge).
 pub fn seat_inputs(now: [Buttons; 2]) -> [Buttons; 2] {
     let merged = Buttons::from_bits(now[0].bits() | now[1].bits());
     [merged; 2]
 }
 
-fn set(b: &mut Buttons, i: usize, v: bool) {
-    let slot = match i {
-        0 => &mut b.u,
-        1 => &mut b.d,
-        2 => &mut b.l,
-        3 => &mut b.r,
-        4 => &mut b.a,
-        5 => &mut b.b,
-        6 => &mut b.c,
-        7 => &mut b.x,
-        8 => &mut b.y,
-        9 => &mut b.z,
-        _ => &mut b.s,
-    };
-    *slot = v;
+/// Set bit `i` (order u d l r a b c x y z s start) of a raw mask.
+fn set(b: &mut u16, i: usize, v: bool) {
+    if v {
+        *b |= 1 << i;
+    } else {
+        *b &= !(1 << i);
+    }
 }
 
 #[cfg(test)]
@@ -349,12 +431,27 @@ mod tests {
     }
 
     #[test]
+    fn start_is_apart_from_the_s_button() {
+        let mut s = InputState::new(&config::Input::default());
+        // P1 START (`p`): raw START bit, never a fighter button
+        s.key(&Key::Character("p".into()), true);
+        assert_eq!(s.raw()[0], START_BIT);
+        assert_eq!(s.buttons()[0].bits(), 0, "START never reaches the fight");
+        s.key(&Key::Character("p".into()), false);
+        s.end_tick();
+        // P1 S (`m`): the fighter's s button
+        s.key(&Key::Character("m".into()), true);
+        assert!(s.buttons()[0].s);
+        assert_eq!(s.raw()[0] & START_BIT, 0);
+    }
+
+    #[test]
     fn a_netplay_seat_hears_every_local_control() {
-        // default bindings: P1 Start is `m`, P2 Start is Enter
+        // default bindings: P1 S is `m`, P2 S is `7`
         let mut s = InputState::new(&config::Input::default());
         for (key, name) in [
-            (Key::Character("m".into()), "P1 start"),
-            (Key::Named(NamedKey::Enter), "P2 start"),
+            (Key::Character("m".into()), "P1 s"),
+            (Key::Character("7".into()), "P2 s"),
         ] {
             s.key(&key, true);
             let seats = seat_inputs(s.buttons());
@@ -362,9 +459,9 @@ mod tests {
             s.key(&key, false);
             s.end_tick();
         }
-        // every button of the P1 layout reaches the P2 seat
+        // every fighter button of the P1 layout reaches the P2 seat
         let p1 = config::PlayerKeys::p1();
-        for (i, name) in p1.names().iter().enumerate() {
+        for (i, name) in p1.names()[..11].iter().enumerate() {
             let key = parse_key(name);
             s.key(&key, true);
             let seat2 = seat_inputs(s.buttons())[1];

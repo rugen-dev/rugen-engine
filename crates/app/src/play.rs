@@ -257,7 +257,6 @@ pub struct Match {
     /// Stage music file, if any.
     pub bgm: Option<PathBuf>,
     pub tutorial: Option<crate::tutorial::Tutorial>,
-    prev_start: bool,
     /// Profile stats already written for this match.
     pub stats_recorded: bool,
 }
@@ -430,7 +429,6 @@ impl Match {
             gpu_dirty: Vec::new(),
             bgm,
             tutorial: None,
-            prev_start: false,
             stats_recorded: false,
         })
     }
@@ -692,21 +690,32 @@ impl Match {
                 self.world.round.time_left = -1;
             }
             t.tick(&self.world);
-            if inputs[0].s && !self.prev_start {
-                if t.finished {
-                    self.leave = true;
-                } else {
-                    t.skip();
-                }
-            }
         }
-        self.prev_start = inputs[0].s;
         if self.debug {
             for w in self.world.warnings.drain(..) {
                 log::warn!("{w}");
             }
         }
         true
+    }
+
+    /// A player pressed START (not a fighter button): skips a tutorial
+    /// step / leaves a finished tutorial, skips the win pose and the
+    /// early-end linger.
+    pub fn start_pressed(&mut self) {
+        if let Some(t) = self.tutorial.as_mut() {
+            if t.finished {
+                self.leave = true;
+            } else {
+                t.skip();
+            }
+        }
+        if self.world.round.match_over && self.over_ticks > 30 {
+            self.leave = true;
+        }
+        if self.early.as_ref().is_some_and(|(_, t)| *t > 60) {
+            self.leave = true;
+        }
     }
 
     pub fn setup(&self) -> &FightSetup {

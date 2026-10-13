@@ -37,7 +37,6 @@ const STOCK_QUOTES: [&str; 4] = [
 ];
 const SYSTEM_SND: u32 = u32::MAX - 2;
 /// Ticks between the last options change and writing rugen.toml.
-const SAVE_DELAY: u32 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -214,6 +213,8 @@ pub struct Shell {
     gpu: Option<Gpu>,
     input: InputState,
     prev: [Buttons; 2],
+    /// START held last tick, per player.
+    prev_start: [bool; 2],
     audio: Option<Audio>,
     system: Option<SystemData>,
     screen: Screen,
@@ -248,8 +249,9 @@ pub struct Shell {
     key_releases: Vec<(u32, Key)>,
     /// Stats of the match being played (read-only observer).
     match_stats: crate::screeninfo::MatchStats,
-    /// Shell tick at which the applied options get written to rugen.toml.
-    save_due: Option<u32>,
+    /// The settings as rugen.toml holds them: the options screens preview
+    /// edits live and only SAVE writes them (DISCARD goes back to these).
+    saved: Config,
     /// Menu base keys held (arrows, Enter) that no player mapping claims.
     menu_keys: Buttons,
     /// Menu base keys pressed since the last tick (a quick tap still counts).
@@ -323,12 +325,14 @@ impl Shell {
         };
         Self {
             input: InputState::new(&config.input),
+            saved: config.clone(),
             config,
             lib,
             data_dir,
             motif_dir,
             gpu: None,
             prev: [Buttons::default(); 2],
+            prev_start: [false; 2],
             audio,
             system,
             screen: Screen::Blank,
@@ -356,7 +360,6 @@ impl Shell {
             key_ticks: 0,
             key_releases: Vec::new(),
             match_stats: Default::default(),
-            save_due: None,
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
             ctrl: false,
@@ -421,7 +424,11 @@ impl Shell {
         let setup = m.setup().clone();
         let def = if side == 0 { &setup.p1 } else { &setup.p2 };
         let (name, art) = char_card(def);
-        let (cmd, moves) = crate::screeninfo::move_list(def);
+        let (cmd, mut moves) = crate::screeninfo::move_list(def);
+        // buttons as this player presses them: `[A]` → `[J]` (or the pad's)
+        let keys =
+            crate::keylabel::Labels::new(&self.config.input, side, self.input.devices()[side]);
+        crate::screeninfo::relabel(&mut moves, |b| keys.button(b));
         let info = crate::uiscreen::PauseInfo {
             side,
             name,
@@ -451,15 +458,67 @@ impl Shell {
         Ok(())
     }
 
-    /// Leaving the options: apply what is left and save now.
+    /// Leaving the options: apply what is left, then carry out a SAVE /
+    /// DISCARD picked on the way out.
     fn apply_options(&mut self) {
         if let Some(c) = self.take_options_config()
             && self.apply_config(c)
         {
             self.reload_motif();
         }
-        if self.save_due.take().is_some() {
+        self.settings_request();
+    }
+
+    /// SAVE writes the edited settings to rugen.toml; DISCARD puts the live
+    /// settings back to what rugen.toml holds.
+    fn settings_request(&mut self) {
+        let Screen::Ui(u) = &mut self.screen else {
+            return;
+        };
+        let Some(req) = u.take_request() else {
+            return;
+        };
+        let edited = u.config.clone();
+        let theme_changed = match req {
+            crate::uiscreen::SaveRequest::Save => {
+                u.dirty = false;
+                let changed = self.apply_config(edited);
+                self.save_config();
+                self.saved = self.config.clone();
+                if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
+                    u.saved(sys);
+                }
+                changed
+            }
+            crate::uiscreen::SaveRequest::Discard => {
+                let back = self.saved.clone();
+                u.config = back.clone();
+                u.dirty = false;
+                log::info!("settings: unsaved changes discarded");
+                self.apply_config(back)
+            }
+        };
+        if theme_changed {
+            self.reload_motif();
+        }
+    }
+
+    /// Options / controls on screen: whether their edits differ from rugen.toml.
+    fn track_unsaved(&mut self) {
+        if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref())
+            && matches!(u.kind, UiKind::Options | UiKind::Controls)
+        {
+            let unsaved = u.config != self.saved;
+            u.set_unsaved(unsaved, sys);
+        }
+    }
+
+    /// Classic (flat motif) options: no save button, leaving saves.
+    fn save_classic_options(&mut self) {
+        if matches!(self.screen, Screen::Options(_)) {
+            self.apply_options();
             self.save_config();
+            self.saved = self.config.clone();
         }
     }
 
@@ -479,20 +538,17 @@ impl Shell {
     }
 
     /// Options screens: every change takes effect the tick it is made (theme,
-    /// window, audio, bindings; gameplay values on the next fight) and is
-    /// saved to rugen.toml a moment later.
+    /// window, audio, bindings; gameplay values on the next fight) as a
+    /// preview; SAVE writes it to rugen.toml.
     fn live_options(&mut self) {
-        if let Some(config) = self.take_options_config() {
-            self.save_due = Some(self.key_ticks + SAVE_DELAY);
-            if self.apply_config(config) {
-                self.reload_motif();
-                self.reopen_options();
-            }
+        if let Some(config) = self.take_options_config()
+            && self.apply_config(config)
+        {
+            self.reload_motif();
+            self.reopen_options();
         }
-        if self.save_due.is_some_and(|t| self.key_ticks >= t) {
-            self.save_due = None;
-            self.save_config();
-        }
+        self.settings_request();
+        self.track_unsaved();
     }
 
     /// Re-open the options in the theme just switched to, on the same tab and row.
@@ -1000,6 +1056,7 @@ impl Shell {
                         ) {
                             Ok(mut u) => {
                                 u.set_player(player, sys);
+                                u.set_from_pause(self.parked.is_some());
                                 Some(u)
                             }
                             Err(e) => {
@@ -1091,10 +1148,13 @@ impl Shell {
                 match Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg) {
                     Ok(mut m) => {
                         if setup.tutorial {
-                            m.tutorial = Some(crate::tutorial::Tutorial::new(
-                                &m.world.data[0],
-                                &self.config.input.p1,
-                            ));
+                            let keys = crate::keylabel::Labels::new(
+                                &self.config.input,
+                                0,
+                                self.input.devices()[0],
+                            );
+                            m.tutorial =
+                                Some(crate::tutorial::Tutorial::new(&m.world.data[0], &keys));
                         }
                         if let Some(a) = self.audio.as_mut() {
                             a.play_music(m.bgm.as_deref(), 1.0, true);
@@ -1212,7 +1272,10 @@ impl Shell {
         for (_, key) in up {
             self.key(&key, false);
         }
-        let mut now = self.input.buttons();
+        let raw = self.input.raw();
+        let mut now = raw.map(Buttons::from_bits);
+        // START: pause / menus, never a fighter input (see `input::START_BIT`)
+        let mut start_now = raw.map(|b| b & crate::input::START_BIT != 0);
         self.input.end_tick();
         let menu_taps = std::mem::take(&mut self.menu_taps);
         let pad_pause = self.input.take_pause();
@@ -1240,9 +1303,24 @@ impl Shell {
         if self.in_menu() {
             // menu base keys (arrows / Enter no player claims) and pads with no
             // player slot drive the menu focus as player 1
-            let extra = self.menu_keys.bits() | menu_taps.bits() | self.input.spare_pads().bits();
+            let spare = self.input.spare_pads();
+            start_now[0] |= spare & crate::input::START_BIT != 0;
+            let extra = self.menu_keys.bits() | menu_taps.bits() | spare;
             now[0] = Buttons::from_bits(now[0].bits() | extra);
+            // START confirms in menus, as the s button always did (the pause
+            // menu is the exception: there START resumes)
+            if self.pause.is_none() {
+                for (b, start) in now.iter_mut().zip(start_now) {
+                    b.s |= start;
+                }
+            }
         }
+        let start_pressed = [
+            start_now[0] && !self.prev_start[0],
+            start_now[1] && !self.prev_start[1],
+        ];
+        self.prev_start = start_now;
+        let start_side = start_pressed.iter().position(|&p| p);
         let pressed = [
             Buttons::from_bits(now[0].bits() & !self.prev[0].bits()),
             Buttons::from_bits(now[1].bits() & !self.prev[1].bits()),
@@ -1266,7 +1344,7 @@ impl Shell {
                     next = o.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
                 }
                 if next.is_some() {
-                    self.apply_options();
+                    self.save_classic_options();
                 }
             }
             Screen::Ui(u) => {
@@ -1347,9 +1425,8 @@ impl Shell {
                     resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
-                    // Start / Enter accept in the menu (Enter is P2 Start);
-                    // Esc and a pad's Select / Back resume
-                    if resume.is_none() && pad_pause.is_some() {
+                    // START, Esc and a pad's Select / Back resume
+                    if resume.is_none() && (pad_pause.is_some() || start_side.is_some()) {
                         resume = Some(Transition::Resume);
                     }
                 }
@@ -1367,9 +1444,13 @@ impl Shell {
                 }
             }
             Screen::Match(m) => {
-                // Esc or a pad's Select/Back opens the pause menu in local
-                // matches; Start belongs to the fighters (power charge, taunts)
-                if let Some(side) = pad_pause
+                // START, Esc or a pad's Select/Back opens the pause menu in
+                // local matches (S is the fighters' button: power charge, taunts)
+                let pause_req = start_side.or(pad_pause);
+                if start_side.is_some() {
+                    m.start_pressed();
+                }
+                if let Some(side) = pause_req
                     && !m.is_net()
                     && !m.is_tutorial()
                     && !m.world.round.match_over
@@ -1379,7 +1460,7 @@ impl Shell {
                 }
                 // netplay: Select/Back opens the online menu instead (the
                 // match keeps running under it)
-                if pad_pause.is_some() && m.is_netplay_seat() {
+                if pause_req.is_some() && m.is_netplay_seat() {
                     m.toggle_flee_menu();
                 }
                 let mut now = now;
@@ -1630,6 +1711,18 @@ impl Shell {
                 return;
             }
         }
+        // Ctrl+S: save on the options / controls pages (F2 too)
+        if pressed
+            && self.ctrl
+            && lowercase(key) == Key::Character("s".into())
+            && let Screen::Ui(u) = &mut self.screen
+            && matches!(u.kind, UiKind::Options | UiKind::Controls)
+            && let Some(sys) = self.system.as_ref()
+        {
+            u.hotkey(&Key::Named(NamedKey::F2), sys);
+            self.settings_request();
+            return;
+        }
         // Ctrl+V: paste a room code
         if pressed
             && self.ctrl
@@ -1742,7 +1835,7 @@ impl Shell {
                 self.transition(Transition::Title);
             }
             Screen::Options(_) => {
-                self.apply_options();
+                self.save_classic_options();
                 self.transition(Transition::Title);
             }
             Screen::Match(ref m) if self.pause.is_some() => {

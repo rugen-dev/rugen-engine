@@ -88,6 +88,7 @@ group = "header"
   h = 12
   color = [0.976, 0.945, 0.871, 1.0]
 
+@SAVE_BUTTON@@SAVE_STATUS@
 # ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
@@ -241,6 +242,41 @@ enter_time = 14
   y = 352
   font = 2
   bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "S"
+  x = 312
+  y = 394
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "START"
+  x = 520
+  y = 394
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "keycap"
+  x = 336
+  y = 386
+  w = 44
+  h = 32
+  text = "{pad.s.cap}"
+  glyph = "{pad.s.glyph}"
+  selected = "pad.s.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
   kind = "image"
@@ -422,7 +458,7 @@ enter_time = 18
     [[node.children.children]]
     kind = "button"
     id = "row"
-    h = 38
+    h = 34
     on_press = "{item.press}"
 
       [[node.children.children.children]]
@@ -457,7 +493,7 @@ enter_time = 18
       [[node.children.children.children]]
       kind = "keycap"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       pad = 0
@@ -482,7 +518,7 @@ enter_time = 18
       image_focus = "ui/ring_lit.webp"
       selected = "item.hot"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       visible = "item.round"
@@ -491,7 +527,7 @@ enter_time = 18
       kind = "text"
       text = "{item.icon}"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       align = "center"
       font = 1
@@ -504,7 +540,7 @@ enter_time = 18
       kind = "text"
       text = "{item.label}"
       anchor = "left"
-      x = 52
+      x = 186
       font = 2
       bank = 12
       bank_focus = 14
@@ -514,7 +550,7 @@ enter_time = 18
       kind = "text"
       text = "{item.group}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 12
       bank_focus = 14
@@ -525,7 +561,7 @@ enter_time = 18
       kind = "text"
       text = "{item.conflict_text}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 13
       bank_focus = 14
@@ -536,7 +572,7 @@ enter_time = 18
       kind = "text"
       text = "PRESS A KEY - ESC CANCEL"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 14
       blink = 40
@@ -544,9 +580,9 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
@@ -554,21 +590,23 @@ enter_time = 18
       border = 2
       border_color = [0.078, 0.051, 0.043, 1.0]
       text_color = [0.114, 0.09, 0.078, 1.0]
-      font = 2
+      font = 1
+      scale = 2
       bank = 12
       visible = "item.clean"
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
       color = [0.976, 0.945, 0.871, 1.0]
       border = 2
-      font = 2
+      font = 1
+      scale = 2
       bank = 13
       border_color = [0.706, 0.188, 0.102, 1.0]
       text_color = [0.706, 0.188, 0.102, 1.0]
@@ -576,16 +614,17 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "..."
       color = [0.976, 0.945, 0.871, 1.0]
       border = 2
       border_color = [0.078, 0.051, 0.043, 1.0]
       text_color = [0.114, 0.09, 0.078, 1.0]
-      font = 2
+      font = 1
+      scale = 2
       bank = 12
       visible = "item.listening"
 
@@ -668,3 +707,4 @@ align = "center"
   text = "1P/2P"
   font = 2
   bank = 14
+@SAVE_OVERLAYS@
