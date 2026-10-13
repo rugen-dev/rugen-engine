@@ -90,6 +90,8 @@ pub enum Transition {
     Resume,
     /// Pause menu: restart the current round.
     Restart,
+    /// Training pause menu: back to the match and RECORD / PLAY / LOOP.
+    Training(crate::training::Command),
     Quit,
 }
 
@@ -550,8 +552,16 @@ impl Shell {
         let keys =
             crate::keylabel::Labels::new(&self.config.input, side, self.input.devices()[side]);
         crate::screeninfo::relabel(&mut moves, |b| keys.button(b));
+        // the menu stops a recording (what was recorded stays)
+        if let Some(t) = m.training.as_mut() {
+            t.stop_recording();
+        }
+        let start =
+            crate::keylabel::Labels::new(&self.config.input, 0, self.input.devices()[0]).start();
         let training = m.training.as_ref().map(|t| crate::uiscreen::TrainingInfo {
             cfg: t.cfg.clone(),
+            slots: t.slot_frames(),
+            start: start.clone(),
             fighters: [0, 1].map(|i| {
                 let w = &m.world;
                 w.players
@@ -923,7 +933,10 @@ impl Shell {
         if let (Screen::Ui(u), Some(g)) = (&mut self.screen, self.gpu.as_mut())
             && !matches!(
                 t,
-                Transition::Controls(_) | Transition::Resume | Transition::Restart
+                Transition::Controls(_)
+                    | Transition::Resume
+                    | Transition::Restart
+                    | Transition::Training(_)
             )
         {
             u.release_gpu(&mut g.renderer);
@@ -997,6 +1010,15 @@ impl Shell {
             Transition::Resume => {
                 self.drop_pause();
                 self.fade = 0.0;
+            }
+            Transition::Training(cmd) => {
+                self.drop_pause();
+                self.fade = 0.0;
+                if let Screen::Match(m) = &mut self.screen
+                    && let Some(t) = m.training.as_mut()
+                {
+                    t.command(cmd);
+                }
             }
             Transition::Restart => {
                 self.drop_pause();
@@ -1769,10 +1791,9 @@ impl Shell {
             Screen::Match(m) => {
                 // START, Esc or a pad's Select/Back opens the pause menu in
                 // local matches (S is the fighters' button: power charge, taunts)
-                let pause_req = start_side.or(pad_pause);
-                if start_side.is_some() {
-                    m.start_pressed();
-                }
+                // START ending a training recording does nothing else
+                let used = start_side.is_some() && m.start_pressed();
+                let pause_req = if used { None } else { start_side.or(pad_pause) };
                 if let Some(side) = pause_req
                     && !m.is_net()
                     && !m.is_tutorial()

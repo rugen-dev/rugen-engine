@@ -318,10 +318,38 @@ pub struct TrainingInfo {
     pub cfg: crate::training::TrainingCfg,
     /// Display names of P1 and the dummy (P2).
     pub fighters: [String; 2],
+    /// Frames recorded in each slot.
+    pub slots: [usize; crate::training::SLOTS],
+    /// What P1 presses for START (it stops a recording).
+    pub start: String,
+}
+
+impl TrainingInfo {
+    /// The DUMMY panel's recorder block.
+    fn rec_json(&self) -> Value {
+        use crate::training::{RECORD_FRAMES, SLOTS};
+        let slot = self.cfg.slot.min(SLOTS - 1);
+        let n = self.slots[slot];
+        let line = if n == 0 {
+            "EMPTY · UP TO 10 S".to_string()
+        } else {
+            format!("{:.1} S OF 10 S · {n} FRAMES", n as f32 / 60.0)
+        };
+        json!({
+            "title": format!("RECORDING · SLOT {} OF {SLOTS}", slot + 1),
+            "pct": format!("{:.1}", n as f32 * 100.0 / RECORD_FRAMES as f32),
+            "line": line,
+            "help": format!(
+                "RECORD GIVES YOU CONTROL OF THE DUMMY. PRESS {} TO STOP.",
+                self.start.to_uppercase()
+            ),
+            "has": n > 0,
+        })
+    }
 }
 
 /// Panels of the training pause menu (beside the menu, instead of the move list).
-const TRAINING_PANELS: [&str; 1] = ["display"];
+const TRAINING_PANELS: [&str; 2] = ["dummy", "display"];
 
 /// A fighter for the title's feature panel.
 struct Featured {
@@ -1124,7 +1152,10 @@ impl UiScreen {
                     "training": training.is_some(),
                     "show_moves": panel == "moves",
                     "show_display": panel == "display",
+                    "show_dummy": panel == "dummy",
                     "display": training.map_or(json!([]), |t| t.cfg.display_json()),
+                    "dummy": training.map_or(json!([]), |t| t.cfg.dummy_json()),
+                    "rec": training.map_or(json!({}), TrainingInfo::rec_json),
                     "who": who,
                     "name": name,
                     // the header shrinks for long names so it never reaches the page count
@@ -1708,6 +1739,20 @@ impl UiScreen {
                 if t.cfg.action(a) {
                     self.refresh_data(sys);
                     return None;
+                }
+                let cmd = match a {
+                    "rec:record" => Some(crate::training::Command::Record),
+                    "rec:play" => Some(crate::training::Command::Play),
+                    "rec:loop" => Some(crate::training::Command::Loop),
+                    _ => None,
+                };
+                if let Some(c) = cmd {
+                    let empty = t.slots[t.cfg.slot.min(crate::training::SLOTS - 1)] == 0;
+                    // nothing to play yet: stay in the menu
+                    if empty && c != crate::training::Command::Record {
+                        return None;
+                    }
+                    return Some(Transition::Training(c));
                 }
                 if let Some(id) = a.strip_prefix("panel:")
                     && let Some(&id) = TRAINING_PANELS.iter().find(|p| **p == id)
@@ -2517,6 +2562,27 @@ impl Painter for Host<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The DUMMY panel's recorder line follows the chosen slot.
+    #[test]
+    fn training_recorder_line() {
+        let mut t = TrainingInfo {
+            cfg: Default::default(),
+            fighters: ["A".into(), "B".into()],
+            slots: [0, 228, 600],
+            start: "p".into(),
+        };
+        let r = t.rec_json();
+        assert_eq!(r["title"], "RECORDING · SLOT 1 OF 3");
+        assert_eq!(r["line"], "EMPTY · UP TO 10 S");
+        assert_eq!(r["has"], false);
+        assert!(r["help"].as_str().unwrap().contains("PRESS P TO STOP"));
+        t.cfg.slot = 1;
+        let r = t.rec_json();
+        assert_eq!(r["title"], "RECORDING · SLOT 2 OF 3");
+        assert_eq!(r["line"], "3.8 S OF 10 S · 228 FRAMES");
+        assert_eq!(r["pct"], "38.0");
+    }
 
     #[test]
     fn menu_hints_follow_the_device() {

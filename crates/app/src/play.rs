@@ -701,6 +701,15 @@ impl Match {
                 None => self.leave = true,
             }
         }
+        // TRAINING: the dummy's inputs (recording, playback, guard); never
+        // while a replay plays (it holds what this produced)
+        if self.playback.is_none()
+            && self.net.is_none()
+            && let Some(t) = self.training.as_mut()
+            && let Some(view) = crate::training::DummyView::of(&self.world)
+        {
+            inputs = t.inputs_for(inputs, view);
+        }
         if let Some(rec) = self.record.as_mut() {
             rec.inputs.push([inputs[0].bits(), inputs[1].bits()]);
         }
@@ -828,7 +837,11 @@ impl Match {
     /// A player pressed START (not a fighter button): skips a tutorial
     /// step / leaves a finished tutorial, skips the win pose and the
     /// early-end linger.
-    pub fn start_pressed(&mut self) {
+    /// Returns true when START was used up (it ended a training recording).
+    pub fn start_pressed(&mut self) -> bool {
+        if self.training.as_mut().is_some_and(|t| t.stop_recording()) {
+            return true;
+        }
         if let Some(t) = self.tutorial.as_mut() {
             if t.finished {
                 self.leave = true;
@@ -842,6 +855,7 @@ impl Match {
         if self.early.as_ref().is_some_and(|(_, t)| *t > 60) {
             self.leave = true;
         }
+        false
     }
 
     pub fn setup(&self) -> &FightSetup {

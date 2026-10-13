@@ -2,10 +2,11 @@
 # Coordinates are 1280x720. The fight stays visible, dimmed; the menu sits
 # on the left, the move list of the fighter who paused on a washi sheet.
 # Data: scene/has_scene (the frozen fight), menu[] {id label action left
-# right}, who, training, show_moves / show_display, display[] {id
-# label options sel left right press}, panel_open, name, title, title_big,
-# col1[] / col2[] rows {group label | name cost parts[] {text cap}}, has_moves, no_moves, empty, source, facing, paged,
-# keys {start}.
+# right}, who, training, show_moves / show_display / show_dummy,
+# display[] / dummy[] {id label options sel left right press}, rec {title
+# pct line help has}, panel_open, name, title, title_big, col1[] / col2[]
+# rows {group label | name cost parts[] {text cap}}, has_moves, no_moves,
+# empty, source, facing, paged, keys {start}.
 background = [0.078, 0.051, 0.043, 1.0]
 exit_time = 6
 
@@ -464,6 +465,227 @@ visible = "show_moves"
   bank = 17
   visible = "source"
 
+# --------------------------------------------------- training: DUMMY panel
+# TRAINING only (show_dummy): what the dummy (P2) does, and the recorder.
+# Data: dummy[] rows like display[], rec {title pct line help has}.
+[[node]]
+kind = "panel"
+dock = "right"
+x = 420
+y = 40
+w = 812
+h = 616
+enter = "right"
+enter_time = 12
+group = "dummy"
+visible = "show_dummy"
+
+  [[node.children]]
+  kind = "panel"
+  w = 812
+  h = 616
+  image = "ui/sheet9.webp"
+  nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  text = "DUMMY"
+  x = 32
+  y = 22
+  font = 3
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "WHAT THE DUMMY DOES"
+  anchor = "tr"
+  x = 32
+  y = 34
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "panel"
+  x = 22
+  y = 76
+  w = 768
+  h = 2
+  color = [0.341, 0.2, 0.122, 1.0]
+
+  [[node.children]]
+  kind = "vbox"
+  id = "dummy"
+  x = 22
+  y = 78
+  w = 768
+  items = "dummy"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "row"
+    w = 768
+    h = 52
+    on_press = "{item.press}"
+    on_left = "{item.left}"
+    on_right = "{item.right}"
+    on_pick = "pick:{item.id}:{value}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = "100%"
+      h = "100%"
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 8
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      anchor = "bl"
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      anchor = "left"
+      x = 22
+      font = 6
+      bank = 12
+
+      [[node.children.children.children]]
+      kind = "choice"
+      anchor = "right"
+      x = 16
+      h = 32
+      pad = 9
+      border = 2
+      border_color = [0.341, 0.2, 0.122, 1.0]
+      color = [0.976, 0.945, 0.871, 1.0]
+      color2 = [0.706, 0.188, 0.102, 1.0]
+      font = 2
+      bank = 12
+      bank_focus = 14
+      options = "item.options"
+      value = "item.sel"
+
+  [[node.children]]
+  kind = "text"
+  text = "{rec.title}"
+  x = 32
+  y = 306
+  font = 6
+  bank = 12
+
+  [[node.children]]
+  kind = "button"
+  id = "rec_record"
+  x = 32
+  y = 344
+  w = 236
+  h = 50
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "● RECORD"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  on_press = "rec:record"
+
+  [[node.children]]
+  kind = "button"
+  id = "rec_play"
+  x = 284
+  y = 344
+  w = 236
+  h = 50
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "PLAY"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  on_press = "rec:play"
+
+  [[node.children]]
+  kind = "button"
+  id = "rec_loop"
+  x = 536
+  y = 344
+  w = 236
+  h = 50
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "LOOP"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  on_press = "rec:loop"
+
+  # how much of the 10 s the slot holds
+  [[node.children]]
+  kind = "panel"
+  x = 32
+  y = 416
+  w = 748
+  h = 28
+  color = [0.976, 0.945, 0.871, 1.0]
+  outline = [0.341, 0.2, 0.122, 1.0]
+  outline_w = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    w = "{rec.pct}%"
+    h = 28
+    color = [0.89, 0.702, 0.298, 0.55]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = "{rec.pct}%"
+    w = 3
+    h = 28
+    color = [0.706, 0.188, 0.102, 1.0]
+    visible = "rec.has"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{rec.line}"
+    anchor = "right"
+    x = 10
+    font = 2
+    bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "{rec.help}"
+  x = 32
+  y = 466
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "PLAYBACK REPEATS THE SAME INPUTS FRAME FOR FRAME."
+  x = 32
+  y = 490
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "REVERSAL SLOT PLAYS IT WHEN THE DUMMY RECOVERS FROM A BLOCK OR A HIT."
+  x = 32
+  y = 514
+  font = 2
+  bank = 17
+
 # ------------------------------------------------- training: DISPLAY panel
 # TRAINING only (show_display): the training tools that draw over the fight,
 # one row each; left / right change a row, B goes back to the menu.
@@ -476,6 +698,7 @@ w = 812
 h = 616
 enter = "right"
 enter_time = 12
+group = "display"
 visible = "show_display"
 
   [[node.children]]

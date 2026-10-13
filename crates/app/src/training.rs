@@ -18,7 +18,41 @@ pub struct TrainingCfg {
     pub frame_data: bool,
     /// A column per fighter with its inputs and how long each was held.
     pub inputs: bool,
+    /// What the dummy (P2) holds when nothing else drives it.
+    pub stance: Stance,
+    /// When the dummy guards.
+    pub block: Block,
+    /// AFTER BLOCK / HIT: play the recording slot as a reversal.
+    pub reversal: bool,
+    /// Recording slot RECORD / PLAY / LOOP and the reversal use (0..SLOTS).
+    pub slot: usize,
 }
+
+/// The dummy's stance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Stance {
+    #[default]
+    Stand,
+    Crouch,
+    Jump,
+}
+
+/// When the dummy guards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Block {
+    #[default]
+    None,
+    All,
+    /// Takes the first hit, then guards until it has been left alone a moment.
+    AfterFirstHit,
+    /// Guards each attack or not, at random.
+    Random,
+}
+
+/// Recording slots.
+pub const SLOTS: usize = 3;
+/// Longest recording: 10 s.
+pub const RECORD_FRAMES: usize = 600;
 
 /// One adjustable row of a training panel: `(id, label, options, selected)`.
 type Row = (&'static str, &'static str, Vec<&'static str>, usize);
@@ -26,6 +60,30 @@ type Row = (&'static str, &'static str, Vec<&'static str>, usize);
 const ON_OFF: [&str; 2] = ["OFF", "ON"];
 
 impl TrainingCfg {
+    fn dummy_rows(&self) -> Vec<Row> {
+        vec![
+            (
+                "stance",
+                "STANCE",
+                vec!["STAND", "CROUCH", "JUMP"],
+                self.stance as usize,
+            ),
+            (
+                "block",
+                "BLOCK",
+                vec!["NONE", "ALL", "AFTER FIRST HIT", "RANDOM"],
+                self.block as usize,
+            ),
+            (
+                "reversal",
+                "AFTER BLOCK / HIT",
+                vec!["NOTHING", "REVERSAL SLOT"],
+                usize::from(self.reversal),
+            ),
+            ("slot", "RECORDING SLOT", vec!["1", "2", "3"], self.slot),
+        ]
+    }
+
     fn display_rows(&self) -> Vec<Row> {
         vec![
             (
@@ -55,13 +113,23 @@ impl TrainingCfg {
             "hitboxes" => self.hitboxes = index % 2 == 1,
             "frame_data" => self.frame_data = index % 2 == 1,
             "inputs" => self.inputs = index % 2 == 1,
+            "stance" => self.stance = [Stance::Stand, Stance::Crouch, Stance::Jump][index.min(2)],
+            "block" => {
+                self.block =
+                    [Block::None, Block::All, Block::AfterFirstHit, Block::Random][index.min(3)]
+            }
+            "reversal" => self.reversal = index % 2 == 1,
+            "slot" => self.slot = index.min(SLOTS - 1),
             _ => return false,
         }
         true
     }
 
     fn row(&self, id: &str) -> Option<Row> {
-        self.display_rows().into_iter().find(|r| r.0 == id)
+        self.display_rows()
+            .into_iter()
+            .chain(self.dummy_rows())
+            .find(|r| r.0 == id)
     }
 
     /// Pause menu actions: `tr:<row>:<±1>` steps a row, `pick:<row>:<option
@@ -91,6 +159,11 @@ impl TrainingCfg {
             return self.set(id, i);
         }
         false
+    }
+
+    /// The DUMMY panel's rows for the pause screen.
+    pub fn dummy_json(&self) -> Value {
+        Value::Array(self.dummy_rows().into_iter().map(row_json).collect())
     }
 
     /// The DISPLAY panel's rows for the pause screen.
@@ -381,12 +454,120 @@ pub struct Training {
     pub inputs: [InputLog; 2],
     /// What each player presses for A B C X Y Z S (their own keys or pad).
     pub labels: [[String; 7]; 2],
+    /// What P1 presses for START (it ends a recording).
+    pub start: String,
+    /// The dummy's recordings: P2 inputs with forward as right (see [`mirror`]).
+    pub slots: [Vec<u16>; SLOTS],
+    pub rec: Rec,
+    dummy: DummyMind,
+}
+
+/// What the recorder is doing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rec {
+    #[default]
+    Idle,
+    /// P1's controls drive the dummy; its inputs go into the slot.
+    Recording,
+    /// The slot drives the dummy, frame by frame.
+    Playing { at: usize, looping: bool },
+}
+
+/// The pause menu's recorder buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Command {
+    Record,
+    Play,
+    Loop,
+}
+
+/// The dummy's memory between ticks (all of it outside the sim).
+#[derive(Clone, Debug, Default)]
+struct DummyMind {
+    /// The other side was attacking last tick.
+    threat: bool,
+    /// Guard the current attack (BLOCK = RANDOM decides it per attack).
+    guard: bool,
+    /// AFTER FIRST HIT: hit once, guarding until left alone.
+    armed: bool,
+    /// Ticks with nothing happening (disarms AFTER FIRST HIT).
+    calm: u32,
+    /// Hit or guarding last tick (a reversal fires when that ends).
+    hurt: bool,
+    /// xorshift state for BLOCK = RANDOM (never the sim's random numbers).
+    rng: u32,
+}
+
+/// Ticks of calm after which AFTER FIRST HIT lets the next first hit through.
+const CALM_TICKS: u32 = 40;
+
+/// Swap left and right: recordings keep forward as right whichever way the
+/// dummy faced, so they play back the same from either side.
+pub fn mirror(b: rugen_sim::Buttons) -> rugen_sim::Buttons {
+    rugen_sim::Buttons {
+        l: b.r,
+        r: b.l,
+        ..b
+    }
+}
+
+/// What the dummy's side of the world looks like this tick.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DummyView {
+    /// The dummy faces right.
+    pub facing_right: bool,
+    /// P1 (or a helper or projectile of P1) is attacking.
+    pub threat: bool,
+    /// The attack must be guarded low (`guardflag` L without H) / high (H without L).
+    pub low: bool,
+    pub high: bool,
+    /// The dummy is in a hit or guard state; `hit`: a get-hit state (not guarding).
+    pub hurt: bool,
+    pub hit: bool,
+    pub ctrl: bool,
+}
+
+impl DummyView {
+    pub fn of(world: &rugen_sim::World) -> Option<Self> {
+        use rugen_cns::state::MoveType;
+        use rugen_sim::hit::hf;
+        let d = world.players.get(1)?;
+        let mut v = DummyView {
+            facing_right: d.facing >= 0.0,
+            hurt: d.move_type == MoveType::H,
+            hit: d.move_type == MoveType::H && d.state_no >= 5000,
+            ctrl: d.ctrl,
+            ..Default::default()
+        };
+        let mut flags = 0;
+        for p in world.players.iter().filter(|p| p.root == 0 && !p.removed) {
+            if p.move_type == MoveType::A {
+                v.threat = true;
+                if let Some(h) = &p.hitdef {
+                    flags |= h.guardflag;
+                }
+            }
+        }
+        for pr in world.projs.iter().filter(|p| !p.removed) {
+            if world.players.get(pr.owner).is_some_and(|o| o.root == 0) {
+                v.threat = true;
+                flags |= pr.hitdef.guardflag;
+            }
+        }
+        v.low = flags & hf::L != 0 && flags & hf::H == 0;
+        v.high = flags & hf::H != 0 && flags & hf::L == 0;
+        Some(v)
+    }
 }
 
 impl Training {
     pub fn new(cfg: TrainingCfg) -> Self {
         Self {
             cfg,
+            dummy: DummyMind {
+                rng: 0x2545_f491,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -403,11 +584,146 @@ impl Training {
         }
     }
 
+    /// The inputs the world steps with this tick: P1's own, and the dummy's
+    /// (recording, playback, stance and guard, else P2's own). Input only:
+    /// the replay records what this returns.
+    pub fn inputs_for(
+        &mut self,
+        live: [rugen_sim::Buttons; 2],
+        view: DummyView,
+    ) -> [rugen_sim::Buttons; 2] {
+        use rugen_sim::Buttons;
+        let to_world = |b: Buttons| if view.facing_right { b } else { mirror(b) };
+        let slot = self.cfg.slot.min(SLOTS - 1);
+        let mind = &mut self.dummy;
+        let was_hurt = std::mem::replace(&mut mind.hurt, view.hurt);
+        match self.rec {
+            Rec::Recording => {
+                // P1's controls play the dummy; P1 stands still
+                let buf = &mut self.slots[slot];
+                buf.push(to_world(live[0]).bits());
+                if buf.len() >= RECORD_FRAMES {
+                    self.rec = Rec::Idle;
+                }
+                return [Buttons::default(), live[0]];
+            }
+            Rec::Playing { at, looping } => {
+                let buf = &self.slots[slot];
+                if let Some(&f) = buf.get(at) {
+                    self.rec = if at + 1 < buf.len() {
+                        Rec::Playing {
+                            at: at + 1,
+                            looping,
+                        }
+                    } else if looping {
+                        Rec::Playing { at: 0, looping }
+                    } else {
+                        Rec::Idle
+                    };
+                    return [live[0], to_world(Buttons::from_bits(f))];
+                }
+                self.rec = Rec::Idle;
+            }
+            Rec::Idle => {}
+        }
+        // AFTER BLOCK / HIT: the slot as a reversal, once the dummy can act again
+        if self.cfg.reversal && was_hurt && !view.hurt && view.ctrl && !self.slots[slot].is_empty()
+        {
+            self.rec = Rec::Playing {
+                at: 1,
+                looping: false,
+            };
+            let f = Buttons::from_bits(self.slots[slot][0]);
+            if self.slots[slot].len() == 1 {
+                self.rec = Rec::Idle;
+            }
+            return [live[0], to_world(f)];
+        }
+        // guard: hold back (and down for a low), per BLOCK
+        if view.threat && !mind.threat {
+            mind.rng ^= mind.rng << 13;
+            mind.rng ^= mind.rng >> 17;
+            mind.rng ^= mind.rng << 5;
+            mind.guard = mind.rng & 1 == 1;
+        }
+        mind.threat = view.threat;
+        if view.hit {
+            mind.armed = true;
+        }
+        mind.calm = if view.threat || view.hurt {
+            0
+        } else {
+            mind.calm.saturating_add(1)
+        };
+        if mind.calm > CALM_TICKS {
+            mind.armed = false;
+        }
+        let guard = view.threat
+            && match self.cfg.block {
+                Block::None => false,
+                Block::All => true,
+                Block::AfterFirstHit => mind.armed,
+                Block::Random => mind.guard,
+            };
+        let mut b = Buttons::default();
+        match self.cfg.stance {
+            Stance::Stand => {}
+            Stance::Crouch => b.d = true,
+            Stance::Jump => b.u = true,
+        }
+        if guard {
+            b.u = false;
+            // back, as seen from the dummy (to_world turns it around when it faces left)
+            b.l = true;
+            if view.low {
+                b.d = true;
+            } else if view.high {
+                b.d = false;
+            }
+        }
+        let own = Buttons::from_bits(to_world(b).bits() | live[1].bits());
+        [live[0], own]
+    }
+
+    /// A recorder button from the pause menu. False when there is nothing to play.
+    pub fn command(&mut self, c: Command) -> bool {
+        let slot = self.cfg.slot.min(SLOTS - 1);
+        match c {
+            Command::Record => {
+                self.slots[slot].clear();
+                self.rec = Rec::Recording;
+            }
+            Command::Play | Command::Loop if self.slots[slot].is_empty() => return false,
+            Command::Play | Command::Loop => {
+                self.rec = Rec::Playing {
+                    at: 0,
+                    looping: c == Command::Loop,
+                };
+            }
+        }
+        true
+    }
+
+    /// START during a recording ends it (true: START was used up).
+    pub fn stop_recording(&mut self) -> bool {
+        if self.rec == Rec::Recording {
+            self.rec = Rec::Idle;
+            return true;
+        }
+        false
+    }
+
+    /// Recorded frames per slot (the pause menu shows them).
+    pub fn slot_frames(&self) -> [usize; SLOTS] {
+        std::array::from_fn(|i| self.slots[i].len())
+    }
+
     /// Button names as each player presses them (`J`, a pad's `A`...).
     pub fn set_labels(&mut self, labels: [&crate::keylabel::Labels; 2]) {
         for (out, l) in self.labels.iter_mut().zip(labels) {
             *out = std::array::from_fn(|i| l.text(4 + i));
         }
+        self.start = labels[0].start().to_uppercase();
     }
 }
 
@@ -485,6 +801,54 @@ impl Training {
         if self.cfg.inputs {
             self.draw_inputs(r, hud);
         }
+        self.draw_recorder(r, hud);
+    }
+
+    /// While recording or playing: a tag under the clock.
+    fn draw_recorder(&self, r: &mut Renderer, hud: &Hud) {
+        let k = (hud.screen_h / 240.0).max(0.5);
+        let slot = self.cfg.slot.min(SLOTS - 1);
+        let (text, color) = match self.rec {
+            Rec::Idle => return,
+            Rec::Recording => (
+                format!(
+                    "REC SLOT {}  {:.1} S / 10 S  {} STOPS",
+                    slot + 1,
+                    self.slots[slot].len() as f32 / 60.0,
+                    if self.start.is_empty() {
+                        "START"
+                    } else {
+                        &self.start
+                    }
+                ),
+                [1.0, 0.25, 0.25, 1.0],
+            ),
+            Rec::Playing { looping, .. } => (
+                format!(
+                    "{} SLOT {}",
+                    if looping { "LOOP" } else { "PLAY" },
+                    slot + 1
+                ),
+                [0.5, 1.0, 0.6, 1.0],
+            ),
+        };
+        let px = k;
+        let w = text.chars().count() as f32 * 4.0 * px + 14.0 * k;
+        let (top, h) = (50.0 * k, 11.0 * k);
+        let x0 = hud.screen_w / 2.0 - w / 2.0;
+        r.rect(
+            (hud.at)(x0, top),
+            (hud.at)(x0 + w, top + h),
+            [0.0, 0.0, 0.0, 0.7],
+        );
+        // the dot: solid while recording, a play mark otherwise
+        r.rect(
+            (hud.at)(x0 + 4.0 * k, top + 3.0 * k),
+            (hud.at)(x0 + 9.0 * k, top + 8.0 * k),
+            color,
+        );
+        let p = (hud.at)(x0 + 12.0 * k, top + 3.0 * k);
+        text_at(r, &text, p[0], p[1], px * hud.u, false, color);
     }
 
     /// INPUT DISPLAY: a column per fighter at the screen edge, newest on top.
@@ -831,6 +1195,157 @@ mod tests {
             tick(&mut buf, &mut log, false, false, false);
         }
         assert_eq!(log.lines.len(), INPUT_LINES, "a fixed number of lines");
+    }
+
+    fn press(f: impl Fn(&mut rugen_sim::Buttons)) -> rugen_sim::Buttons {
+        let mut b = rugen_sim::Buttons::default();
+        f(&mut b);
+        b
+    }
+
+    fn view(facing_right: bool) -> DummyView {
+        DummyView {
+            facing_right,
+            ctrl: true,
+            ..Default::default()
+        }
+    }
+
+    /// RECORD takes P1's controls for the dummy (P1 stands still), stores
+    /// them with forward as right, and PLAY gives them back frame for frame,
+    /// turned around when the dummy faces the other way.
+    #[test]
+    fn record_then_play_and_loop() {
+        let mut t = Training::new(TrainingCfg::default());
+        let none = rugen_sim::Buttons::default();
+        assert!(!t.command(Command::Play), "nothing recorded yet");
+        assert!(t.command(Command::Record));
+        let left = press(|b| b.l = true);
+        let punch = press(|b| b.a = true);
+        // the dummy faces left: P1 walking left walks it forward
+        let out = t.inputs_for([left, none], view(false));
+        assert_eq!(out, [none, left], "P1 still, the dummy moves");
+        t.inputs_for([punch, none], view(false));
+        assert!(t.stop_recording());
+        assert!(!t.stop_recording(), "only once");
+        assert_eq!(t.slots[0].len(), 2);
+        assert_eq!(
+            rugen_sim::Buttons::from_bits(t.slots[0][0]),
+            press(|b| b.r = true),
+            "stored as forward"
+        );
+        // played facing right: forward is right
+        assert!(t.command(Command::Play));
+        let out = t.inputs_for([none, none], view(true));
+        assert_eq!(out[1], press(|b| b.r = true));
+        assert_eq!(t.inputs_for([none, none], view(true))[1], punch);
+        assert_eq!(t.rec, Rec::Idle, "PLAY stops at the end");
+        assert_eq!(t.inputs_for([none, none], view(true))[1], none);
+        // LOOP starts over
+        assert!(t.command(Command::Loop));
+        for _ in 0..5 {
+            t.inputs_for([none, none], view(true));
+        }
+        assert!(matches!(t.rec, Rec::Playing { looping: true, .. }));
+        // a recording stops by itself after 10 s
+        t.cfg.slot = 2;
+        assert!(t.command(Command::Record));
+        for _ in 0..RECORD_FRAMES + 30 {
+            t.inputs_for([left, none], view(true));
+        }
+        assert_eq!(t.slots[2].len(), RECORD_FRAMES);
+        assert_eq!(t.rec, Rec::Idle);
+        assert_eq!(t.slot_frames(), [2, 0, RECORD_FRAMES]);
+    }
+
+    /// BLOCK: none, all (back, down for a low), after the first hit.
+    #[test]
+    fn the_dummy_guards_as_set() {
+        let none = rugen_sim::Buttons::default();
+        let threat = |facing_right: bool| DummyView {
+            threat: true,
+            ..view(facing_right)
+        };
+        let mut t = Training::new(TrainingCfg::default());
+        assert_eq!(t.inputs_for([none, none], threat(true))[1], none, "NONE");
+        t.cfg.block = Block::All;
+        assert_eq!(
+            t.inputs_for([none, none], threat(true))[1],
+            press(|b| b.l = true),
+            "back is left when facing right"
+        );
+        assert_eq!(
+            t.inputs_for([none, none], threat(false))[1],
+            press(|b| b.r = true)
+        );
+        let low = DummyView {
+            low: true,
+            ..threat(true)
+        };
+        assert_eq!(
+            t.inputs_for([none, none], low)[1],
+            press(|b| {
+                b.l = true;
+                b.d = true
+            })
+        );
+        assert_eq!(t.inputs_for([none, none], view(true))[1], none, "no attack");
+        // crouching: down held, guard crouching unless the attack is an overhead
+        t.cfg.stance = Stance::Crouch;
+        assert_eq!(
+            t.inputs_for([none, none], view(true))[1],
+            press(|b| b.d = true)
+        );
+        let high = DummyView {
+            high: true,
+            ..threat(true)
+        };
+        assert_eq!(t.inputs_for([none, none], high)[1], press(|b| b.l = true));
+        // AFTER FIRST HIT: the first attack lands, then it guards
+        let mut t = Training::new(TrainingCfg {
+            block: Block::AfterFirstHit,
+            ..Default::default()
+        });
+        assert_eq!(t.inputs_for([none, none], threat(true))[1], none);
+        let hit = DummyView {
+            hurt: true,
+            hit: true,
+            ctrl: false,
+            ..threat(true)
+        };
+        t.inputs_for([none, none], hit);
+        assert_eq!(
+            t.inputs_for([none, none], threat(true))[1],
+            press(|b| b.l = true)
+        );
+        // left alone a while: the next first hit lands again
+        for _ in 0..CALM_TICKS + 2 {
+            t.inputs_for([none, none], view(true));
+        }
+        assert_eq!(t.inputs_for([none, none], threat(true))[1], none);
+    }
+
+    /// AFTER BLOCK / HIT = REVERSAL SLOT: the slot plays the tick the dummy
+    /// can act again.
+    #[test]
+    fn a_reversal_plays_when_the_dummy_recovers() {
+        let none = rugen_sim::Buttons::default();
+        let mut t = Training::new(TrainingCfg {
+            reversal: true,
+            ..Default::default()
+        });
+        let up = press(|b| b.u = true);
+        t.slots[0] = vec![up.bits(), up.bits()];
+        let hurt = DummyView {
+            hurt: true,
+            ctrl: false,
+            ..view(true)
+        };
+        assert_eq!(t.inputs_for([none, none], hurt)[1], none);
+        assert_eq!(t.inputs_for([none, none], view(true))[1], up, "recovered");
+        assert_eq!(t.inputs_for([none, none], view(true))[1], up);
+        assert_eq!(t.rec, Rec::Idle);
+        assert_eq!(t.inputs_for([none, none], view(true))[1], none);
     }
 
     #[test]
