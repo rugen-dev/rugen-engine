@@ -433,6 +433,19 @@ impl World {
         self.stage.width / self.data[d].localcoord[0] * zoom
     }
 
+    /// Stage units per fightfx unit for an effect owned by player `owner`:
+    /// fightfx's localcoord, zoomed by the owner's FIGHTER SIZE so hit
+    /// sparks and dust match the fighter that made them. Drawing only.
+    pub fn fx_scale(&self, owner: usize) -> f32 {
+        let zoom = self
+            .players
+            .get(owner)
+            .and_then(|p| self.data_zoom.get(p.data))
+            .copied()
+            .unwrap_or(1.0);
+        self.stage.width / self.fx.as_ref().map_or(320.0, |f| f.localcoord[0]) * zoom
+    }
+
     /// Does `i` act this tick, given a running Pause / SuperPause?
     fn compute_pause_bool(&self, i: usize) -> bool {
         let p = &self.players[i];
@@ -5038,6 +5051,9 @@ mod tests {
         let mut none = World::new(Stage::default(), 1);
         none.add_player(d, 0, 1);
         assert_eq!(none.data_zoom, vec![1.0]);
+        // fightfx sparks and dust follow their owner's size
+        assert!((chibi.fx_scale(0) - plain.fx_scale(0) * f).abs() < 1e-5);
+        assert_eq!(none.fx_scale(0), plain.fx_scale(0));
     }
 
     /// Two fighters of different localcoord keep positions in their own

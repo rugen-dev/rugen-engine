@@ -1270,7 +1270,6 @@ impl Match {
     }
 
     fn collect_items(&mut self, r: &mut Renderer) -> Vec<Item> {
-        let stage = self.world.stage.clone();
         let all_pfx = self.world.allpalfx.sample();
         let mut items: Vec<Item> = Vec::new();
         for i in 0..self.world.players.len() {
@@ -1370,10 +1369,7 @@ impl Match {
         for e in explods {
             let (src, scale) = match e.src {
                 AnimSrc::Player(d) => (Some(d), self.world.data_scale(d)),
-                AnimSrc::Fx => (
-                    None,
-                    stage.width / self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
-                ),
+                AnimSrc::Fx => (None, self.world.fx_scale(e.owner)),
             };
             let Some(frame) = e
                 .air(&self.world)
