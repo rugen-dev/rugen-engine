@@ -184,8 +184,8 @@ pub struct Harness {
     pub script2: Option<Vec<Buttons>>,
     /// Write a replay of every match here (quick play) or into `replays/`.
     pub record: Option<PathBuf>,
-    /// Raw keys to press: `(tick, key name)` (`--keys 90:Enter,120:k`).
-    pub keys: Vec<(u32, String)>,
+    /// Raw keys to press: `(tick, key name, ticks held)` (`--keys 90:Enter,120:k*40`).
+    pub keys: Vec<(u32, String, u32)>,
     /// Mouse actions at ticks (`--mouse 60:640,360,90:click`), window pixels.
     pub mouse: Vec<(u32, MouseAct)>,
     /// Online runs: scripts and `--frames` count only once the fight is on
@@ -233,12 +233,17 @@ pub fn parse_mouse(s: &str) -> Vec<(u32, MouseAct)> {
     out
 }
 
-/// `--keys "90:Enter,120:k"`: raw key presses at shell ticks (released 3 ticks later).
-pub fn parse_keys(s: &str) -> Vec<(u32, String)> {
+/// `--keys "90:Enter,120:k*40"`: raw key presses at shell ticks, released
+/// 3 ticks later (or after `*n` ticks: a held key).
+pub fn parse_keys(s: &str) -> Vec<(u32, String, u32)> {
     s.split(',')
         .filter_map(|t| {
             let (n, k) = t.trim().split_once(':')?;
-            Some((n.trim().parse().ok()?, k.trim().to_string()))
+            let (k, hold) = match k.rsplit_once('*') {
+                Some((k, h)) => (k, h.trim().parse().ok()?),
+                None => (k, 3),
+            };
+            Some((n.trim().parse().ok()?, k.trim().to_string(), hold))
         })
         .collect()
 }
@@ -300,6 +305,8 @@ pub struct Shell {
     mouse: crate::mouse::MouseGate,
     /// Scripted mouse button releases (`--mouse` clicks).
     mouse_releases: Vec<u32>,
+    /// Held menu directions per player (see [`crate::repeat`]).
+    menu_repeat: [crate::repeat::Repeat; 2],
     /// Stats of the match being played (read-only observer).
     match_stats: crate::screeninfo::MatchStats,
     /// The settings as rugen.toml holds them: the options screens preview
@@ -416,6 +423,7 @@ impl Shell {
             key_releases: Vec::new(),
             mouse: crate::mouse::MouseGate::default(),
             mouse_releases: Vec::new(),
+            menu_repeat: Default::default(),
             match_stats: Default::default(),
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
@@ -1478,17 +1486,17 @@ impl Shell {
         }
         self.input.poll();
         self.key_ticks += 1;
-        let due: Vec<String> = self
+        let due: Vec<(String, u32)> = self
             .harness
             .keys
             .iter()
-            .filter(|(t, _)| *t == self.key_ticks)
-            .map(|(_, k)| k.clone())
+            .filter(|(t, _, _)| *t == self.key_ticks)
+            .map(|(_, k, hold)| (k.clone(), *hold))
             .collect();
-        for name in due {
+        for (name, hold) in due {
             let key = crate::input::parse_key(&name);
             self.key(&key, true);
-            self.key_releases.push((self.key_ticks + 3, key));
+            self.key_releases.push((self.key_ticks + hold.max(1), key));
         }
         let t = self.key_ticks;
         let (up, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.key_releases)
@@ -1572,7 +1580,7 @@ impl Shell {
         ];
         self.prev_start = start_now;
         let start_side = start_pressed.iter().position(|&p| p);
-        let pressed = [
+        let mut pressed = [
             Buttons::from_bits(now[0].bits() & !self.prev[0].bits()),
             Buttons::from_bits(now[1].bits() & !self.prev[1].bits()),
         ];
@@ -1580,6 +1588,18 @@ impl Shell {
         // a pad (or a mapped key) pressed: the mouse lets go of the focus
         if pressed.iter().any(|b| b.bits() != 0) || start_pressed.iter().any(|&p| p) {
             self.mouse_yields();
+        }
+        // held directions repeat in menus (the stage strip runs its own,
+        // faster one)
+        let strip = matches!(&self.screen, Screen::Ui(u) if u.kind == UiKind::Stages);
+        let repeats = self.in_menu() && !strip;
+        for (i, r) in self.menu_repeat.iter_mut().enumerate() {
+            if repeats {
+                let rep = r.tick(now[i]);
+                pressed[i] = Buttons::from_bits(pressed[i].bits() | rep.bits());
+            } else {
+                r.clear();
+            }
         }
         let mut sfx_queue: Vec<Option<(i32, i32)>> = Vec::new();
         let mut next: Option<Transition> = None;

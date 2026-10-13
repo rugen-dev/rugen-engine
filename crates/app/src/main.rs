@@ -19,7 +19,7 @@
 //!   --watch                                                     both sides computer controlled
 //!   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
-//!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
+//!   --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
 //! rugen fontgen --roles [--motif motif] [--out dir]             regenerate the motif's role fonts
@@ -63,6 +63,7 @@ mod online;
 mod options;
 mod pixelize;
 mod play;
+mod repeat;
 mod replay;
 mod roster;
 mod screeninfo;
@@ -137,7 +138,7 @@ rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboa
   --watch                                                     both sides computer controlled
   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
-  --keys 90:Enter,120:k                                       harness: raw key presses at ticks
+  --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
 rugen list [--root dir]                                       list chars/ and stages/
 rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
 rugen fontgen --roles [--motif motif] [--out dir]             regenerate the motif's role fonts

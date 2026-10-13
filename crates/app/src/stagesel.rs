@@ -37,12 +37,14 @@ const THUMB_UPLOADS: usize = 4;
 const THUMB_QUEUE: usize = 12;
 /// Ticks the cursor rests before the preview loads (fast scrolling loads nothing).
 const PREVIEW_SETTLE: u32 = 8;
-/// Held ←/→: first repeat after this many ticks, then every `REPEAT_SLOW`
-/// ticks, every `REPEAT_FAST` once held for `REPEAT_RAMP` ticks.
-const REPEAT_DELAY: u32 = 16;
-const REPEAT_SLOW: u32 = 5;
-const REPEAT_FAST: u32 = 2;
-const REPEAT_RAMP: u32 = 30;
+/// Held ←/→ on the strip: sooner than the menus' repeat, and faster once
+/// held for half a second (long lists).
+const STRIP_REPEAT: crate::repeat::Rate = crate::repeat::Rate {
+    delay: 16,
+    every: 5,
+    ramp: 31,
+    fast: 2,
+};
 
 /// One installed stage. Everything but the arena flag comes from the manifest.
 pub struct StageItem {
@@ -208,9 +210,8 @@ pub struct StageSel {
     /// Strip offset in slots (eased toward the selection).
     scroll: f32,
     strip_w: f32,
-    /// Held direction (-1 / 1) and how long it has been held.
-    rep_dir: i32,
-    rep_ticks: u32,
+    /// Held ←/→ auto-repeat.
+    repeat: crate::repeat::Repeat,
     // thumbnails: worker in/out, decoded waiting for upload, alive textures
     thumb_tx: Option<Sender<(usize, PathBuf)>>,
     thumb_rx: Receiver<(usize, Option<crate::uiscreen::MemImage>)>,
@@ -305,8 +306,7 @@ impl StageSel {
             sel: 0,
             scroll: 0.0,
             strip_w: 1184.0,
-            rep_dir: 0,
-            rep_ticks: 0,
+            repeat: crate::repeat::Repeat::new(STRIP_REPEAT),
             thumb_tx: Some(thumb_tx),
             thumb_rx,
             thumb_pending: HashSet::new(),
@@ -489,21 +489,12 @@ impl StageSel {
         self.ticks += 1;
         let mut moved = false;
         // ←/→ with auto-repeat that speeds up the longer it is held
-        let dir = i32::from(held.r) - i32::from(held.l);
-        if dir != 0 && dir == self.rep_dir {
-            self.rep_ticks += 1;
-            let t = self.rep_ticks;
-            let every = if t >= REPEAT_RAMP {
-                REPEAT_FAST
-            } else {
-                REPEAT_SLOW
-            };
-            if t >= REPEAT_DELAY && (t - REPEAT_DELAY) % every == 0 {
-                moved |= self.step(dir as i64);
-            }
-        } else {
-            self.rep_dir = dir;
-            self.rep_ticks = 0;
+        let rep = self.repeat.tick(held);
+        if rep.l {
+            moved |= self.step(-1);
+        }
+        if rep.r {
+            moved |= self.step(1);
         }
         if pressed.l {
             moved |= self.step(-1);
