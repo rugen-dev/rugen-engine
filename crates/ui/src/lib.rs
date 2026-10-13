@@ -193,6 +193,9 @@ pub enum Kind {
     Keycap,
     /// One built-in glyph (`glyph = "up"`, ...) in `color`.
     Icon,
+    /// Host-drawn content in the node's rectangle, in draw order (`id`
+    /// names it: a live stage preview, ...). See [`Painter::draw_slot`].
+    Slot,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -622,6 +625,8 @@ pub trait Painter {
         clip: Option<Rect>,
     );
     fn draw_rect(&mut self, dst: Rect, color: [f32; 4], skew: f32, clip: Option<Rect>);
+    /// A `slot` node: whatever the host draws under that name.
+    fn draw_slot(&mut self, _id: &str, _dst: Rect, _alpha: f32, _clip: Option<Rect>) {}
     fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32;
     /// Height of one text line for the font.
     fn text_height(&mut self, font: i32, scale: f32) -> f32;
@@ -2597,6 +2602,10 @@ impl Ui {
         }
         let skew = n.skew.unwrap_or(0.0);
         let clip = inst.clip;
+        if n.kind == Kind::Slot {
+            p.draw_slot(n.id.as_deref().unwrap_or(""), rect, alpha, clip);
+            return;
+        }
         if n.kind == Kind::Particles {
             self.particles(p, n, rect, alpha, clip);
             return;

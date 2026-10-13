@@ -129,8 +129,14 @@ pub struct TextureId(usize);
 pub struct PaletteId(usize);
 
 enum Kind {
-    Indexed { view: wgpu::TextureView },
-    Rgba { bind: wgpu::BindGroup },
+    Indexed {
+        view: wgpu::TextureView,
+    },
+    Rgba {
+        bind: wgpu::BindGroup,
+    },
+    /// Freed slot, reused by the next upload; draws with it are skipped.
+    Free,
 }
 
 struct Tex {
@@ -216,6 +222,8 @@ pub struct Renderer {
     uploads: std::cell::Cell<(u64, u64)>,
     /// Draw calls and quads of the last frame sent to the GPU.
     last_frame: (usize, usize),
+    /// Freed texture slots ([`Renderer::free_texture`]).
+    free_slots: Vec<usize>,
 }
 
 /// Counters for frame profiling (`RUGEN_FRAMESTATS`).
@@ -470,6 +478,7 @@ impl Renderer {
             acquired: None,
             uploads: std::cell::Cell::new((0, 0)),
             last_frame: (0, 0),
+            free_slots: Vec::new(),
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
@@ -575,12 +584,45 @@ impl Renderer {
     pub fn add_indexed(&mut self, w: u32, h: u32, indices: &[u8]) -> TextureId {
         let tex = self.make_texture(w, h, wgpu::TextureFormat::R8Uint, 1, indices);
         let view = tex.create_view(&Default::default());
-        self.textures.push(Tex {
+        self.store(Tex {
             kind: Kind::Indexed { view },
             width: w,
             height: h,
-        });
-        TextureId(self.textures.len() - 1)
+        })
+    }
+
+    /// Keep a texture in a freed slot or a new one.
+    fn store(&mut self, t: Tex) -> TextureId {
+        match self.free_slots.pop() {
+            Some(i) => {
+                self.textures[i] = t;
+                TextureId(i)
+            }
+            None => {
+                self.textures.push(t);
+                TextureId(self.textures.len() - 1)
+            }
+        }
+    }
+
+    /// Release a texture's GPU memory; its id may be handed out again by the
+    /// next upload, so the caller must forget it.
+    pub fn free_texture(&mut self, id: TextureId) {
+        if id == self.white
+            || matches!(
+                self.textures.get(id.0).map(|t| &t.kind),
+                None | Some(Kind::Free)
+            )
+        {
+            return;
+        }
+        self.textures[id.0] = Tex {
+            kind: Kind::Free,
+            width: 1,
+            height: 1,
+        };
+        self.indexed_binds.retain(|&(t, _), _| t != id.0);
+        self.free_slots.push(id.0);
     }
 
     /// Upload straight RGBA8 (`w*h*4` bytes).
@@ -601,12 +643,11 @@ impl Renderer {
                 },
             ],
         });
-        self.textures.push(Tex {
+        self.store(Tex {
             kind: Kind::Rgba { bind },
             width: w,
             height: h,
-        });
-        TextureId(self.textures.len() - 1)
+        })
     }
 
     /// Upload a palette (up to 256 RGBA entries; shorter ones are zero-padded).
@@ -628,7 +669,7 @@ impl Renderer {
             upload_bytes,
             draws: self.last_frame.0,
             quads: self.last_frame.1,
-            textures: self.textures.len(),
+            textures: self.textures.len() - self.free_slots.len(),
         }
     }
 
@@ -894,7 +935,7 @@ impl Renderer {
                     pass.set_pipeline(&self.rgba_pipes[bi]);
                     pass.set_bind_group(1, bind, &[]);
                 }
-                (Kind::Indexed { .. }, None) => continue,
+                (Kind::Indexed { .. }, None) | (Kind::Free, _) => continue,
             }
             pass.draw(start..end, 0..1);
         }
