@@ -1,6 +1,6 @@
 [package]
 name = "rugen-content"
-description = "Content library: chars/stages kept as archives, extracted and optimized into a cache on launch"
+description = "Content library: chars/stages as .rgc / .rgs content files, imported from archives and folders on launch, exported back to MUGEN folders"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

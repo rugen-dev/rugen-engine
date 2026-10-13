@@ -206,7 +206,7 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let t = Instant::now();
-    // the verdict is about the original files, never the optimised cache
+    // the verdict is about the text files, never precompiled logic
     let loaded = catch_unwind(AssertUnwindSafe(|| CharData::load_original(def, data_dir)));
     stats.load_ms = t.elapsed().as_millis();
     let data = match loaded {
@@ -346,7 +346,7 @@ pub fn sparring_partner(lib: &Library) -> Option<PathBuf> {
         return Some(p);
     }
     let e = lib.find_char("kfm")?;
-    lib.prepare_char(&e).ok().map(|(d, m)| d.join(m.def))
+    lib.prepare_char(&e).ok().map(|(d, m)| m.def_path(&d))
 }
 
 /// Prepare a character and make sure its manifest carries a verdict from
@@ -365,7 +365,7 @@ pub fn prepare_verified(
     }
     log::info!("verifying {} ...", entry.id);
     let sparring = sparring_partner(lib);
-    let def = dir.join(&m.def);
+    let def = m.def_path(&dir);
     let report = verify(&def, &lib.data_dir(), sparring.as_deref());
     log::info!(
         "{}: {} ({} issues)",

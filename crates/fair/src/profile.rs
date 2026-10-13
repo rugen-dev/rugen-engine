@@ -83,7 +83,9 @@ pub fn analyze(files: &ContentFiles) -> Result<FairnessProfile> {
     let def_entry = files
         .get(&files.def.to_ascii_lowercase())
         .ok_or_else(|| Error::Content("def missing from the file set".into()))?;
-    let def = Def::parse(&decode(&std::fs::read(&def_entry.source)?));
+    let def = Def::parse(&decode(
+        &rugen_formats::vfs::read(&def_entry.source).map_err(|e| Error::Content(e.to_string()))?,
+    ));
     let root = def_entry.source.parent().unwrap_or(Path::new("."));
     let read = |name: &str| -> Option<String> {
         let canon = crate::files::canon(name);
@@ -91,7 +93,7 @@ pub fn analyze(files: &ContentFiles) -> Result<FairnessProfile> {
             .get(&canon)
             .map(|e| e.source.clone())
             .or_else(|| resolve(root, name))
-            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|p| rugen_formats::vfs::read(&p).ok())
             .map(|b| decode(&b))
     };
     let f = def

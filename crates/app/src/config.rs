@@ -13,6 +13,26 @@ pub struct Config {
     pub input: Input,
     pub net: Net,
     pub game: GameCfg,
+    pub content: ContentCfg,
+}
+
+/// `[content]`: how `chars/` and `stages/` are imported.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContentCfg {
+    /// After an archive (.zip / .rar) is converted to `.rgc` / `.rgs` and the
+    /// new file reads back with the same fingerprint, move the archive to
+    /// `chars/originals/` (`stages/originals/`). `false` deletes it instead.
+    /// Folders are never moved or deleted.
+    pub keep_originals: bool,
+}
+
+impl Default for ContentCfg {
+    fn default() -> Self {
+        Self {
+            keep_originals: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -18,13 +18,15 @@
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
 //!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
 //! rugen list [--root dir]                                       list chars/ and stages/
+//! rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
+//! rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
 //!   (play refuses `broken` characters unless --force)
 //! rugen replay <file.json>                                      play back a recorded match
 //!   (quick play records to --record file.json, menu matches to replays/)
 //!
-//! `<char>` is an id from chars/ (file stem of a .zip/.rar/folder) or a path.
+//! `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 //! ```
 
 #![forbid(unsafe_code)]
@@ -68,6 +70,40 @@ mod uiscreen;
 mod verify;
 mod versus;
 mod viewer;
+
+/// The content library with the `[content]` settings of its `rugen.toml`.
+fn library(root: Option<&str>) -> rugen_content::Library {
+    let mut lib = rugen_content::Library::discover(root.map(std::path::Path::new));
+    lib.keep_originals = config::Config::load(&lib.root).content.keep_originals;
+    lib
+}
+
+/// A recorded def path, or the same character / stage found again by id when
+/// the path is gone (`cache/chars/<id>-<hash>/x.def` of older versions).
+fn relocate(
+    lib: &rugen_content::Library,
+    def: &std::path::Path,
+    stage: bool,
+) -> std::path::PathBuf {
+    if rugen_formats::vfs::exists(def) {
+        return def.to_path_buf();
+    }
+    let id = def
+        .parent()
+        .and_then(|d| d.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .map(|n| n.rsplit_once('-').map_or(n.clone(), |(a, _)| a.to_string()))
+        .unwrap_or_default();
+    let found = if stage {
+        lib.stages()
+            .into_iter()
+            .find(|e| e.id.eq_ignore_ascii_case(&id))
+            .and_then(|e| lib.prepare_stage(&e).ok())
+    } else {
+        lib.find_char(&id).and_then(|e| lib.prepare_char(&e).ok())
+    };
+    found.map_or_else(|| def.to_path_buf(), |(d, m)| m.def_path(&d))
+}
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(
@@ -146,7 +182,7 @@ fn main() -> anyhow::Result<()> {
                     "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--server url --room CODE|new [--spectate] [--guest]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
                 )
             })?;
-            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let lib = library(root.as_deref());
             let resolve = |name: &str| -> anyhow::Result<std::path::PathBuf> {
                 let entry = lib.find_char(name).ok_or_else(|| {
                     anyhow::anyhow!(
@@ -164,7 +200,7 @@ fn main() -> anyhow::Result<()> {
                             .unwrap_or_default()
                     );
                 }
-                Ok(dir.join(m.def))
+                Ok(m.def_path(&dir))
             };
             let config = config::Config::load(&lib.root);
             // online: the ONLINE screen drives the room and the matchup
@@ -219,7 +255,7 @@ fn main() -> anyhow::Result<()> {
                         .find(|e| e.id.eq_ignore_ascii_case(&s))
                         .ok_or_else(|| anyhow::anyhow!("stage {s:?} not found"))?;
                     let (dir, m) = lib.prepare_stage(&entry)?;
-                    Ok(dir.join(m.def))
+                    Ok(m.def_path(&dir))
                 })
                 .transpose()?;
             let net_mode = if let Some(remote) = net {
@@ -474,7 +510,11 @@ fn main() -> anyhow::Result<()> {
                 record: None,
                 keys: Vec::new(),
             };
-            let setup = r.setup();
+            let mut setup = r.setup();
+            // recordings made before content files point into old cache folders
+            setup.p1 = relocate(&lib, &setup.p1, false);
+            setup.p2 = relocate(&lib, &setup.p2, false);
+            setup.stage = setup.stage.map(|s| relocate(&lib, &s, true));
             game::Shell::new(
                 config,
                 lib,
@@ -493,7 +533,7 @@ fn main() -> anyhow::Result<()> {
             };
             let root = opt("--root");
             let all = args.iter().any(|a| a == "--all");
-            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let lib = library(root.as_deref());
             let targets: Vec<rugen_content::Entry> = if all {
                 lib.chars()
             } else {
@@ -514,7 +554,7 @@ fn main() -> anyhow::Result<()> {
             for entry in targets {
                 let (dir, mut m) = lib.prepare_char(&entry)?;
                 let report =
-                    verify::verify(&dir.join(&m.def), &lib.data_dir(), sparring.as_deref());
+                    verify::verify(&m.def_path(&dir), &lib.data_dir(), sparring.as_deref());
                 report.print();
                 if report.verdict == verify::Verdict::Broken {
                     broken += 1;
@@ -539,13 +579,13 @@ fn main() -> anyhow::Result<()> {
                 .filter(|a| !a.starts_with("--"))
                 .find(|a| Some(*a) != root.as_ref())
                 .ok_or_else(|| anyhow::anyhow!("usage: rugen check <char> [--root dir]"))?;
-            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let lib = library(root.as_deref());
             let entry = lib
                 .find_char(name)
                 .ok_or_else(|| anyhow::anyhow!("character {name:?} not found"))?;
             let (dir, m) = lib.prepare_char(&entry)?;
             let t = std::time::Instant::now();
-            let data = rugen_sim::CharData::load_with_data(&dir.join(&m.def), &lib.data_dir())?;
+            let data = rugen_sim::CharData::load_with_data(&m.def_path(&dir), &lib.data_dir())?;
             println!(
                 "{} by {} — {} states, {} sprites, loaded in {:.2?}",
                 data.display_name,
@@ -575,6 +615,81 @@ fn main() -> anyhow::Result<()> {
             for w in &data.warnings {
                 println!("  {w}");
             }
+            Ok(())
+        }
+        Some("export") => {
+            let force = args.iter().any(|a| a == "--force");
+            let rest: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with("--")).collect();
+            let Some(file) = rest.first() else {
+                anyhow::bail!("usage: rugen export <file.rgc|file.rgs> [out_dir] [--force]");
+            };
+            let file = std::path::Path::new(file.as_str());
+            let out = rest
+                .get(1)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(
+                        file.file_stem()
+                            .map(|s| s.to_os_string())
+                            .unwrap_or_default(),
+                    )
+                });
+            let t = std::time::Instant::now();
+            let done = rugen_content::export::export(file, &out, force)?;
+            println!(
+                "wrote {} files ({:.1} MB) to {} in {:.1?}; main def: {}",
+                done.files,
+                done.bytes as f64 / 1e6,
+                out.display(),
+                t.elapsed(),
+                done.def
+            );
+            Ok(())
+        }
+        Some("convert") => {
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let root = opt("--root");
+            let stage = args.iter().any(|a| a == "--stage");
+            let rest: Vec<&String> = args[1..]
+                .iter()
+                .filter(|a| !a.starts_with("--") && Some(*a) != root.as_ref())
+                .collect();
+            let Some(src) = rest.first() else {
+                anyhow::bail!(
+                    "usage: rugen convert <folder|archive.zip|archive.rar> [out.rgc|out.rgs] [--stage] [--root dir]"
+                );
+            };
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            let src = std::path::Path::new(src.as_str());
+            let kind = if stage {
+                rugen_formats::rgc::Kind::Stage
+            } else {
+                rugen_formats::rgc::Kind::Char
+            };
+            let id = src
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let out = rest
+                .get(1)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(format!("{id}.{}", kind.ext())));
+            let report = rugen_content::convert::convert_path(src, &out, kind, &lib.data_dir())?;
+            println!(
+                "{} → {}: {}{}",
+                src.display(),
+                out.display(),
+                report.summary(),
+                report
+                    .fingerprint
+                    .as_deref()
+                    .map(|f| format!(", fingerprint {}", rugen_fair::short(f)))
+                    .unwrap_or_else(|| ", no fingerprint".into())
+            );
             Ok(())
         }
         Some("list") => {
@@ -620,7 +735,7 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!(
-                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]\n  rugen list [--root dir]\n  rugen check <char> [--root dir]",
+                "rugen {}\n\nusage:\n  rugen view <char.def|file.sff> [action] [--shot out.png]\n  rugen play <char> [char2] [--stage s] [--root dir] [--shot out.png]\n  rugen list [--root dir]\n  rugen check <char> [--root dir]\n  rugen convert <folder|archive> [out.rgc] [--stage]\n  rugen export <file.rgc|file.rgs> [out_dir] [--force]",
                 env!("CARGO_PKG_VERSION")
             );
             Ok(())

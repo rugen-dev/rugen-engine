@@ -1,16 +1,21 @@
-//! Loading a character from its optimised artefacts (sprite pack + compiled
-//! logic) must give the same game as loading the original files: same
-//! states, commands, animations and constants, same pixels where they are
-//! drawn, and bit-identical simulation (final checksum of an AI-vs-AI match
-//! with random inputs). Uses the bundled KFM; skipped when the reference
-//! tree is absent. `RUGEN_EQ_CHARS=/path/a.def,/path/b.def` checks more
-//! characters (their folder is copied first).
+//! A character converted to `.rgc` must give the same game as its original
+//! folder: same states, commands, animations and constants, the same
+//! pixels where they are drawn, and a bit-identical simulation (final
+//! checksum of an AI-vs-AI match fed pseudo-random inputs, both with the
+//! precompiled logic and compiling the text). The export of the `.rgc`
+//! converts back to the same fingerprint, with every sprite identical.
+//!
+//! Uses the bundled KFM (`reference/`, skipped when absent).
+//! `RUGEN_EQ_CHARS=/path/a.def,/path/b.def` checks more characters (their
+//! folders are converted, never modified).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rugen_content::convert::{self, Source};
+use rugen_formats::rgc;
 use rugen_formats::sff::{Pixels, Sff, Sprite};
-use rugen_sim::chardata::{self, CharData};
+use rugen_sim::chardata::CharData;
 use rugen_sim::headless::{MatchSpec, build_world, replay};
 use rugen_sim::world::Movement;
 
@@ -19,17 +24,11 @@ fn reference() -> Option<PathBuf> {
     root.join("chars/kfm/kfm.def").exists().then_some(root)
 }
 
-/// A private copy of a character folder (artefacts are written next to the def).
-fn copy_char(src: &Path, tag: &str) -> PathBuf {
-    let dst = std::env::temp_dir().join(format!("rugen-opt-eq-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dst);
-    std::fs::create_dir_all(&dst).unwrap();
-    for e in std::fs::read_dir(src).unwrap().flatten() {
-        if e.path().is_file() {
-            std::fs::copy(e.path(), dst.join(e.file_name())).unwrap();
-        }
-    }
-    dst
+fn scratch(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("rugen-rgc-eq-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
 }
 
 /// RGBA of the texel at `(x, y)` relative to the sprite axis (transparent outside).
@@ -51,16 +50,20 @@ fn texel(sff: &Sff, s: &Sprite, px: &Pixels, x: i32, y: i32) -> [u8; 4] {
     if c[3] == 0 { [0; 4] } else { c }
 }
 
+/// Every sprite draws the same texels (the `.rgc` view may be trimmed).
 fn assert_same_sprites(a: &Sff, b: &Sff) {
     assert_eq!(
         a.sprites.keys().collect::<Vec<_>>(),
         b.sprites.keys().collect::<Vec<_>>()
     );
+    assert_eq!(a.palettes, b.palettes);
     for (k, sa) in &a.sprites {
         let sb = &b.sprites[k];
         let (pa, pb) = (sa.decoded(), sb.decoded());
         assert!(matches!(pb.as_ref(), Pixels::Indexed(_) | Pixels::Rgba(_)));
-        // every texel of the original rectangle, relative to the axis
+        if matches!(pa.as_ref(), Pixels::Indexed(p) if p.is_empty()) {
+            continue;
+        }
         for y in -(sa.offset[1] as i32)..sa.height as i32 - sa.offset[1] as i32 {
             for x in -(sa.offset[0] as i32)..sa.width as i32 - sa.offset[0] as i32 {
                 assert_eq!(
@@ -82,8 +85,8 @@ fn assert_same_logic(a: &CharData, b: &CharData) {
     assert_eq!(format!("{:?}", a.air), format!("{:?}", b.air));
     assert_eq!(a.warnings, b.warnings);
     assert_eq!(
-        a.snd.as_ref().map(|s| s.sounds.len()),
-        b.snd.as_ref().map(|s| s.sounds.len())
+        a.snd.as_ref().map(|s| s.sounds.keys().collect::<Vec<_>>()),
+        b.snd.as_ref().map(|s| s.sounds.keys().collect::<Vec<_>>())
     );
 }
 
@@ -115,7 +118,7 @@ fn match_checksum(p1: &Path, p2: &Path, data: &Path, seed: u32) -> (u32, u64) {
 }
 
 #[test]
-fn optimised_kfm_plays_like_the_original() {
+fn rgc_characters_play_like_their_folders() {
     let Some(root) = reference() else {
         eprintln!("reference tree missing; skipping");
         return;
@@ -141,53 +144,50 @@ fn optimised_kfm_plays_like_the_original() {
 
 fn check(src_def: &Path, data: &Path) {
     let name = src_def.file_stem().unwrap().to_string_lossy().to_string();
-    let dir = copy_char(src_def.parent().unwrap(), &name);
-    let def = dir.join(src_def.file_name().unwrap());
-    let data = data.to_path_buf();
-    // original timings, before any artefact exists
-    let before = match_checksum(&def, &def, &data, 0xC0FFEE);
-    let original = CharData::load_original(&def, &data).unwrap();
+    let work = scratch(&name);
+    let folder = src_def.parent().unwrap();
+    let rgc_path = work.join(format!("{name}.rgc"));
+    let src = Source {
+        root: folder.to_path_buf(),
+        def: src_def.file_name().unwrap().to_string_lossy().to_string(),
+        kind: rgc::Kind::Char,
+        name: name.clone(),
+    };
+    let t = std::time::Instant::now();
+    let report = convert::convert(&src, &rgc_path, data, None).unwrap();
+    eprintln!("{name}: {} ({:?})", report.summary(), t.elapsed());
+    let fp = report.fingerprint.clone().expect("fingerprinted");
+    let def = rgc_path.join(&src.def);
 
-    let report = chardata::optimise(&def, &data, None).unwrap();
-    assert!(report.sprites.is_some() && report.logic, "{report:?}");
-    assert_eq!(chardata::opt_fresh(&def, &data), (true, true));
-    let again = chardata::optimise(&def, &data, None).unwrap();
+    // same game data
+    let original = CharData::load_original(src_def, data).unwrap();
+    let packed = CharData::load_with_data(&def, data).unwrap();
+    let compiled = CharData::load_original(&def, data).unwrap();
     assert!(
-        again.sprites.is_none() && !again.logic,
-        "second run is a no-op"
-    );
-
-    let optimised = CharData::load_with_data(&def, &data).unwrap();
-    assert!(
-        optimised
+        packed
             .sff
             .sprites
             .values()
-            .all(|s| matches!(s.pixels, Pixels::Packed(_))),
-        "{name}: sprites come from the pack"
+            .all(|s| matches!(s.pixels, Pixels::Packed(_) | Pixels::Indexed(_))),
+        "{name}: sprites come from the .rgc"
     );
-    assert_same_logic(&original, &optimised);
-    assert_same_sprites(&original.sff, &optimised.sff);
+    assert_same_logic(&original, &packed);
+    assert_same_logic(&original, &compiled);
+    assert_same_sprites(&original.sff, &packed.sff);
 
-    let after = match_checksum(&def, &def, &data, 0xC0FFEE);
+    // same simulation
+    let before = match_checksum(src_def, src_def, data, 0xC0FFEE);
+    let after = match_checksum(&def, &def, data, 0xC0FFEE);
     eprintln!(
-        "{name}: {} frames, checksum {:016x} (original) / {:016x} (optimised)",
+        "{name}: {} frames, checksum {:016x} (folder) / {:016x} (.rgc)",
         before.0, before.1, after.1
     );
     assert_eq!(before, after, "{name}: simulation diverged");
-
-    // a mixed match (one side optimised, the other original) agrees too
-    let world_mixed = {
+    // a mixed match (one side .rgc, the other the folder) agrees too
+    let mixed = |a: Arc<CharData>, b: Arc<CharData>| {
         let mut w = rugen_sim::World::new(rugen_sim::Stage::default(), 3);
-        w.add_player(Arc::clone(&optimised), 0, 1);
-        w.add_player(CharData::load_original(&def, &data).unwrap(), 1, 2);
-        w.start_round();
-        w
-    };
-    let world_orig = {
-        let mut w = rugen_sim::World::new(rugen_sim::Stage::default(), 3);
-        w.add_player(Arc::clone(&original), 0, 1);
-        w.add_player(CharData::load_original(&def, &data).unwrap(), 1, 2);
+        w.add_player(a, 0, 1);
+        w.add_player(b, 1, 2);
         w.start_round();
         w
     };
@@ -197,22 +197,43 @@ fn check(src_def: &Path, data: &Path) {
             [v as u8, (v >> 8) as u8, (v >> 3) as u8, (v >> 11) as u8]
         })
         .collect();
-    let (mut a, mut b) = (world_mixed, world_orig);
+    let mut a = mixed(Arc::clone(&packed), Arc::clone(&original));
+    let mut b = mixed(Arc::clone(&original), Arc::clone(&original));
     assert_eq!(replay(&mut a, &inputs, None), replay(&mut b, &inputs, None));
 
-    // an edited source makes the artefacts stale: the loader falls back
-    let air = std::fs::read_dir(&dir)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("air")))
-        .unwrap();
-    let text = std::fs::read(&air).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    std::fs::write(&air, [&text[..], b"\n"].concat()).unwrap();
-    assert_eq!(chardata::opt_fresh(&def, &data), (true, false));
-    let fallback = CharData::load_with_data(&def, &data).unwrap();
-    assert_same_logic(&original, &fallback);
+    // the fingerprint of the .rgc, recomputed from its content, is the folder's
+    let v = rugen_fair::package::verify(&rgc_path, u64::MAX).unwrap();
+    assert!(v.honest());
+    assert_eq!(v.fingerprint, fp);
+    let files = rugen_fair::files::char_files(src_def, Some(data)).unwrap();
+    assert_eq!(rugen_fair::fingerprint(&files).unwrap(), fp);
 
-    let _ = std::fs::remove_dir_all(&dir);
+    // export → convert again: same fingerprint, identical sprites
+    let out = work.join("exported");
+    let ex = rugen_content::export::export(&rgc_path, &out, false).unwrap();
+    let back = work.join("back.rgc");
+    let src2 = Source {
+        root: out.clone(),
+        def: ex.def.clone(),
+        kind: rgc::Kind::Char,
+        name: "exported".into(),
+    };
+    let r2 = convert::convert(&src2, &back, data, None).unwrap();
+    assert_eq!(
+        r2.fingerprint.as_deref(),
+        Some(fp.as_str()),
+        "{name}: export round trip"
+    );
+    let files = rugen_fair::files::char_files(&out.join(&ex.def), Some(data)).unwrap();
+    for e in files
+        .entries
+        .iter()
+        .filter(|e| e.role == rugen_fair::Role::Sprite)
+    {
+        let orig = Sff::open(folder.join(&e.path), true).unwrap();
+        let exported = Sff::open(&e.source, true).unwrap();
+        assert_eq!(orig.sprites, exported.sprites, "{name}: exported sprites");
+        assert_eq!(orig.palettes, exported.palettes);
+    }
+    let _ = std::fs::remove_dir_all(&work);
 }

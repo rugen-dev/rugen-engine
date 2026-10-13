@@ -90,12 +90,8 @@ impl StageVisual {
                 .map(Path::to_path_buf)
                 .with_context(|| format!("[{def_name}] needs spr="))?,
         };
-        // the prepared stage's sprite pack when it is fresh (see rugen-content)
-        let pack = rugen_sim::chardata::opt_dir(def_path).join(rugen_sim::chardata::SPRITES_FILE);
-        let sff = match rugen_sim::chardata::load_sprite_pack(&pack, &sff_path, false) {
-            Some(s) => s,
-            None => Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?,
-        };
+        // from the stage's .rgs when it is one (sprites decode on first draw)
+        let sff = Sff::open(&sff_path, false).with_context(|| sff_path.display().to_string())?;
         let clear_color =
             bgdef
                 .f32s("bgclearcolor")
@@ -109,7 +105,7 @@ impl StageVisual {
                     ]
                 });
         // animations live inside the def file itself
-        let text = rugen_formats::text::decode(&std::fs::read(def_path)?);
+        let text = rugen_formats::text::decode(&rugen_formats::vfs::read(def_path)?);
         let air = Air::parse(&text);
         let localcoord = def
             .section("stageinfo")

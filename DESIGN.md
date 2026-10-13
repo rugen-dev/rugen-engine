@@ -50,12 +50,15 @@ Cargo workspace:
 ```
 rugen/
   crates/
-    formats/    # .sff .air .snd .act .fnt parsers. Zero engine deps. Fuzzable.
+    formats/    # .sff .air .snd .act .fnt parsers, .rgc / .rgs content files (+ vfs). Fuzzable.
     cns/        # lexer, Pratt expression parser, bytecode compiler, VM
     sim/        # deterministic game simulation. No I/O, no floats-from-libm, no render.
     net/        # ggrs integration, transport, matchmaking client, desync detection
     render/     # wgpu renderer, camera, shaders, palette-on-GPU
     audio/      # kira
+    opus/       # safe Opus encoder / decoder (unsafe-libopus: libopus in Rust)
+    fair/       # content fingerprints, package verification, fairness analysis
+    content/    # chars/ + stages/: import, .rgc conversion, export, cache
     app/        # winit, gilrs, config, UI glue; the binary
   assets/
   docs/
@@ -150,7 +153,7 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
   confirmed frames and disputes (and re-simulates, when built with `resim`) on
   a mismatch, so a match it never saw is still verified.
 
-### Cross-platform stack (pure Rust, no C deps)
+### Cross-platform stack (no system libraries)
 
 | Need | Crate | Why |
 |------|-------|-----|
@@ -162,6 +165,29 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
 | Rollback | `ggrs` | |
 | Lexing | `logos` | |
 | Config | `serde` + `toml` | |
+| Compression | `zstd` | vendored C built by `cc` (no cmake / pkg-config) |
+| Opus | `unsafe-libopus` | libopus 1.3.1 translated to Rust: no C toolchain at all |
+| WebP | `image-webp` | pure Rust, lossless encode |
+
+### Content files (`.rgc` / `.rgs`)
+
+Characters and stages are played from rugen's own single-file format
+(spec: [docs/rgc-format.md](docs/rgc-format.md)): a header + TOC + sections
+read on demand. Sprites are stored pixel-exact (zero borders trimmed,
+identical blocks / palettes once, one zstd-19 frame per block for random
+access, decoded on first draw), sounds as Opus (next Opus rate, 32 kbit/s per
+channel at 48 kHz, exact length), loose PNGs as lossless WebP when smaller,
+everything else byte for byte, plus the logic compiled by the converting
+engine (recompiled into `cache/logic/` by an engine with another
+`LOGIC_SCHEMA`). Paths reach inside the file (`chars/x.rgc/x.def`) through
+`rugen_formats::vfs`, so every loader works the same on folders and content
+files. `Sff::write_exact` rebuilds the SFF for `rugen export`.
+
+The content fingerprint (`rugen-fp-2`) hashes the def's canonical file set:
+text and palettes by bytes, the sprite file by `Sff::canonical_hash` (what
+the parser yields: version, palette slots, keys, every sprite's key, size,
+axis, slot and pixels), sounds not at all. It is identical for a folder, an
+archive, its `.rgc` and the export of that `.rgc`, on any machine.
 
 CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal binary, notarized.
 
@@ -187,7 +213,7 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - Rounds, clock, win/lose, match flow; `fight.def` lifebars with MUGEN fonts; AI button jamming (`AILevel`).
 - Screenpack: `system.def` title menu, select grid with cached PNG portraits, VS screen.
 - Verified against community characters: `rugen check` reports zero unsupported controllers for the test set; 4000-frame AI soak clean.
-- Content library: `chars/` and `stages/` hold archives, `cache/` holds extracted + converted content keyed by hash (manifest v3).
+- Content library: `chars/` and `stages/` hold archives, `cache/` holds extracted + converted content keyed by hash (manifest v3; since manifest v7 everything plays from `.rgc` / `.rgs` content files, see Phase 4).
 
 ### Phase 3 — online (core ✅)
 - ✅ ggrs P2P over UDP (`--net ip:port [--port n] [--p2]`), input delay / prediction window from `rugen.toml`, desync detection, rollback-muted sound events, connection status HUD.
@@ -200,7 +226,8 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 ### Phase 4 — creator tools (started)
 - ✅ `rugen check <char>`: load time, unsupported controllers, compile warnings with file:line. F2 hitbox overlay, F1 debug title.
 - ✅ F3 overlay: state, state time, type/movetype, ctrl, anim/elem/animtime, pos/vel, life/power/hit count/juggle and the last inputs per player.
-- ✅ Hot reload: a character's source files are re-read in place when they change on disk.
+- ✅ Hot reload: a character's source files are re-read in place when they change on disk (a folder in `chars/` is reconverted into its `cache/rgc/` working copy, unchanged sections reused, then reloaded).
+- ✅ Content files: `.rgc` / `.rgs` replace the extracted copies and the `.rugen-opt` optimiser cache; archives are converted on launch (originals kept in `originals/` or deleted), folders are working copies, `rugen convert` / `rugen export` (back to a Fighter Factory folder, same fingerprint when converted again). Online packages are the content files (API 5).
 - ✅ Verification: `rugen verify` (load + inspection + two headless soaks) writes a `verified` / `warn` / `broken` verdict into the cache manifest, runs automatically on first use per engine version, select-screen badge, broken characters refused.
 - ✅ Content safety: `Limits` (helpers per root, explods, projectiles, sounds per tick), NaN/inf sanitizing, saturating life/power/counter math, `World::step_checked` crash isolation (offending player disabled, match continues), fuzz tests (random controllers, corrupted SFF/SND/AIR/DEF).
 - Open: CNS debugger (break on state, watch triggers), frame-advantage display.

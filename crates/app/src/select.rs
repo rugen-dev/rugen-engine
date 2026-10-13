@@ -150,7 +150,7 @@ impl SelectScreen {
         let pick = |me: &Self, side: usize| -> Option<PathBuf> {
             let i = me.random_pick[side]?;
             let c = me.cells.get(i)?;
-            Some(c.dir.join(&c.manifest.def))
+            Some(c.manifest.def_path(&c.dir))
         };
         let p1 = pick(self, 0)?;
         let p2 = pick(self, 1)?;
@@ -168,7 +168,7 @@ impl SelectScreen {
         let stage = stage.and_then(|e| {
             self.lib
                 .prepare_stage(&e)
-                .map(|(d, m)| d.join(m.def))
+                .map(|(d, m)| m.def_path(&d))
                 .map_err(|err| log::warn!("stage {}: {err}", e.id))
                 .ok()
         });

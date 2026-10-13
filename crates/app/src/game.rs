@@ -136,13 +136,8 @@ impl ResultSource for Match {
 
 /// Display name and big art for a prepared character .def (from its cache manifest).
 pub(crate) fn char_card(def: &std::path::Path) -> (String, Option<crate::uiscreen::MemImage>) {
-    let Some(dir) = def.parent() else {
-        return (String::new(), None);
-    };
-    let man = std::fs::read_to_string(dir.join("rugen.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok());
-    let Some(man) = man else {
+    let found = rugen_content::manifest_for(def);
+    let Some((dir, man)) = found else {
         return (
             def.file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -281,6 +276,22 @@ impl Shell {
         harness: Harness,
         replay: Option<crate::replay::Replay>,
     ) -> Self {
+        let mut lib = lib;
+        lib.keep_originals = config.content.keep_originals;
+        // convert what is new in chars/ and stages/ while the title shows
+        // (menus that need an entry first convert it themselves)
+        if !quick {
+            let l = lib.clone();
+            let _ = std::thread::Builder::new()
+                .name("import".into())
+                .spawn(move || {
+                    for i in l.import_new() {
+                        if let Err(e) = i.result {
+                            log::warn!("{}: {e}", i.id);
+                        }
+                    }
+                });
+        }
         let data_dir = lib.data_dir();
         let motif_dir = lib.motif_dir_for(&config.video.theme);
         let config_fullscreen = config.video.fullscreen;
@@ -595,11 +606,11 @@ impl Shell {
         }
         let pick = chars[(wins as usize * 7 + 3) % chars.len()].clone();
         let (dir, man) = self.lib.prepare_char(&pick).ok()?;
-        let p2 = dir.join(&man.def);
+        let p2 = man.def_path(&dir);
         let stages = self.lib.stages();
         let stage = stages
             .get((wins as usize) % stages.len().max(1))
-            .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| d.join(m.def)))
+            .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| m.def_path(&d)))
             .or_else(|| self.lib.default_stage());
         let side = |def: &PathBuf| {
             let (name, img) = char_card(def);
@@ -693,7 +704,7 @@ impl Shell {
                     let e = me.lib.find_char(id)?;
                     me.lib
                         .prepare_char(&e)
-                        .map(|(d, m)| d.join(m.def))
+                        .map(|(d, m)| m.def_path(&d))
                         .map_err(|err| log::error!("{id}: {err}"))
                         .ok()
                 };
@@ -720,7 +731,7 @@ impl Shell {
                     .into_iter()
                     .find(|e| e.id.eq_ignore_ascii_case(&n.stage))
                     .or_else(|| self.lib.stages().into_iter().next())
-                    .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| d.join(m.def)))
+                    .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| m.def_path(&d)))
                     .or_else(|| self.lib.default_stage());
                 self.transition(Transition::Fight(FightSetup {
                     p1,
@@ -1894,9 +1905,7 @@ fn lowercase(key: &Key) -> Key {
 
 /// Cache manifest id for a prepared character .def (empty when unknown).
 fn manifest_id(def: &std::path::Path) -> String {
-    def.parent()
-        .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
-        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok())
-        .map(|m| m.id)
+    rugen_content::manifest_for(def)
+        .map(|(_, m)| m.id)
         .unwrap_or_default()
 }

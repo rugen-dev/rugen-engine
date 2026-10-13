@@ -20,12 +20,26 @@ cargo build --release
 ./target/release/rugen play kfm kfm --net 5.6.7.8:7000 --port 7000 --p2  # joining side
 ./target/release/rugen check G6_Naruto      # which controllers a character uses that we lack
 ./target/release/rugen list
+./target/release/rugen convert MyChar/      # write MyChar.rgc (a shareable file), source untouched
+./target/release/rugen export G6_Naruto.rgc # back to a MUGEN folder (Fighter Factory opens it)
 ```
 
-Put characters (`.zip`, `.rar` or folders) in `chars/` and stages in `stages/`;
-they are extracted and converted into `cache/` on first use. `data/` holds the
-screenpack (`system.def`, `fight.def`, `common1.cns`, ...); without one the
-bundled MUGEN 1.1 data in `reference/` is used.
+Put characters (`.zip`, `.rar`, folders or `.rgc` files) in `chars/` and
+stages (`.zip`, `.rar`, folders or `.rgs`) in `stages/`. On launch everything
+new is converted into rugen's own content file, one per character (`.rgc`) or
+stage (`.rgs`), which the game plays in place: sprites pixel-exact, sounds as
+Opus, loose PNGs as lossless WebP, everything else byte for byte, plus the
+compiled logic. A 40 MB `.rar` character that used to take ~150 MB on disk
+(archive + extracted copy + optimiser cache) becomes a ~21 MB `.rgc`
+([numbers](docs/rgc-format.md#measurements)). Once the new file is written
+and reads back with the same fingerprint, the archive moves to
+`chars/originals/` (never scanned); set `[content] keep_originals = false` in
+`rugen.toml` to delete it instead. `.rgc` / `.rgs` files can be shared as they
+are: drop one in `chars/` and it plays. A folder is treated as a creator's
+working copy: it is never moved or deleted, only converted into `cache/`, again
+whenever one of its files changes (see below). `data/` holds the screenpack
+(`system.def`, `fight.def`, `common1.cns`, ...); without one the bundled MUGEN
+1.1 data in `reference/` is used. Format: [docs/rgc-format.md](docs/rgc-format.md).
 
 Keys live in `rugen.toml` (written on first run). Defaults: P1 `z q s d` to
 move, `j k l` = a b c, `u i o` = x y z, `m` = start (`p` is free); P2 arrows +
@@ -95,11 +109,14 @@ state -2, permanent invulnerability, setting the opponent's life, or a
 character that fails `rugen verify`: change fighter). The MATCHUP screen shows
 both cards (portrait, author, stats, community rating per character), the
 verdict stamp and its reasons, CONFIRM / CHANGE FIGHTER, the opponent's status
-and the transfers: from the moment you pick, your fighter's optimised package
-uploads in the background if the server does not have it yet (the server
-re-hashes and re-analyses it, so an edited character cannot pass as the
-original), and the opponent's downloads into `cache/net/` (instant when
-cached). Then VS and the fight. Packages on the server are temporary caches.
+and the transfers: from the moment you pick, your fighter's `.rgc` (and P1's
+stage `.rgs`) uploads in the background if the server does not have it yet
+(the server recomputes its fingerprint from the content and re-analyses it,
+so an edited character cannot pass as the original), and the opponent's
+downloads into `cache/net/` and plays from there (instant when cached).
+Fingerprints cover the gameplay text, palettes and decoded sprites, not the
+sounds or how the files are packed, so the same character has the same
+fingerprint whether it came as a `.zip`, a `.rar`, a folder or an `.rgc`. Then VS and the fight. Packages on the server are temporary caches.
 Command line: `rugen play kfm --server https://host --room new` (prints a
 code) / `rugen play G6_Naruto --server https://host --room CODE [--spectate]`;
 each side brings the character it names, confirms unless BLOCKED and quits
@@ -143,9 +160,16 @@ and prompts for making more. Drop any image into `motif/art/` and
 `rugen ui-gen` pixelizes it (`rugen pixelize in.png out.webp --width 640
 --dither` does one by hand); `rugen kit-import` re-exports the kit pieces.
 
-For character authors: editing a character's `.cns` / `.cmd` / `.air` while a
-match runs reloads it in place (checked once a second), and `rugen check`
-lists what the engine cannot run yet.
+For character authors: keep your character as a folder in `chars/` (a folder
+wins over an `.rgc` of the same name). It is converted into `cache/rgc/` and
+converted again whenever a file in it changes; unchanged sprites and sounds
+are reused, so a `.cns` edit takes a moment. Editing a `.cns` / `.cmd` /
+`.air` / `.sff` while a match runs reloads the character in place (checked
+once a second). `rugen convert MyChar/` writes the `.rgc` you share; `rugen
+export file.rgc` gives any `.rgc` back as a MUGEN folder (def, sff, snd, cns,
+cmd, air, act, ...: sprites identical, sounds as WAV decoded from Opus,
+images as PNG) that Fighter Factory opens. `rugen check` lists what the engine
+cannot run yet.
 
 Broken characters cannot ruin a match: every character is verified the first
 time it is used (`rugen verify <char>` / `--all` does it by hand): it is

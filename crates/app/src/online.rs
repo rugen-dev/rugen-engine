@@ -1087,6 +1087,21 @@ impl OnlineScreen {
 
     /// Pick a server: account (register on first use), presence socket, menu.
     fn connect(&mut self, server: &str) {
+        // fighters travel as .rgc files with rugen-fp-2 fingerprints since API 5
+        let api = self
+            .servers
+            .iter()
+            .find(|r| r.addr == server)
+            .and_then(|r| r.info.as_ref())
+            .map(|i| i.api);
+        if let Some(api) = api.filter(|&a| a < rugen_proto::API_VERSION) {
+            self.error = format!(
+                "{} RUNS AN OLDER VERSION (API {api}, THIS GAME NEEDS {}): IT CANNOT TAKE .RGC FIGHTERS",
+                server.to_uppercase(),
+                rugen_proto::API_VERSION
+            );
+            return;
+        }
         let (id, key) = account_for(&self.profile, &self.config, server);
         self.client = OnlineClient::new(server, (!key.is_empty()).then_some(key));
         self.me = None;
@@ -1871,7 +1886,7 @@ impl OnlineScreen {
         };
         let resolve = |lib: &Library, id: &str| -> Option<PathBuf> {
             let e = lib.find_char(id)?;
-            lib.prepare_char(&e).ok().map(|(d, man)| d.join(man.def))
+            lib.prepare_char(&e).ok().map(|(d, man)| man.def_path(&d))
         };
         let n = self.config.net.clone();
         let (Some(p1), Some(p2)) = (resolve(&self.lib, &n.p1), resolve(&self.lib, &n.p2)) else {
@@ -1886,7 +1901,7 @@ impl OnlineScreen {
             .stages()
             .into_iter()
             .find(|e| e.id.eq_ignore_ascii_case(&n.stage))
-            .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| d.join(m.def)))
+            .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| m.def_path(&d)))
             .or_else(|| self.lib.default_stage());
         log::info!("online: direct match as side {}", self.direct_side + 1);
         self.pending_fight = Some(FightSetup {

@@ -10,7 +10,9 @@
 //! sprites / sounds / palettes and anything else are not part of the set.
 //!
 //! Each entry has a package path (relative to the def's folder, original
-//! case) and a canonical path (lowercase, `/`) used by the fingerprint.
+//! case), a canonical path (lowercase, `/`) used by the fingerprint and the
+//! role the engine gives it. Files are found through `rugen_formats::vfs`,
+//! so a def inside an `.rgc` (`x.rgc/x.def`) works like one in a folder.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -39,6 +41,21 @@ impl Kind {
     }
 }
 
+/// What the engine does with a file of the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// The main def.
+    Def,
+    /// `[Files] sprite` / `[BGdef] spr`: fingerprinted by its pixels.
+    Sprite,
+    /// `[Files] sound`: not part of the fingerprint.
+    Sound,
+    /// `pal1`..`pal12`.
+    Palette,
+    /// cmd / cns / st* / stcommon / anim.
+    Text,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileEntry {
     /// Path inside the package, `/`-separated, original case.
@@ -46,6 +63,7 @@ pub struct FileEntry {
     /// Lowercase [`FileEntry::path`]: what the fingerprint hashes.
     pub canon: String,
     pub source: PathBuf,
+    pub role: Role,
 }
 
 #[derive(Clone, Debug)]
@@ -61,8 +79,7 @@ impl ContentFiles {
     pub fn total_size(&self) -> u64 {
         self.entries
             .iter()
-            .filter_map(|e| std::fs::metadata(&e.source).ok())
-            .map(|m| m.len())
+            .filter_map(|e| rugen_formats::vfs::len(&e.source))
             .sum()
     }
 
@@ -98,29 +115,13 @@ pub fn safe_rel(path: &str) -> bool {
             .all(|p| !p.is_empty() && p != "." && p != "..")
 }
 
-/// Case-insensitive lookup like the engine's loader.
+/// Case-insensitive lookup like the engine's loader (files only).
 pub fn resolve(dir: &Path, name: &str) -> Option<PathBuf> {
     let name = clean(name);
     if name.is_empty() {
         return None;
     }
-    let direct = dir.join(&name);
-    if direct.is_file() {
-        return Some(direct);
-    }
-    let mut cur = dir.to_path_buf();
-    for part in name.split('/') {
-        if part == ".." {
-            cur = cur.parent()?.to_path_buf();
-            continue;
-        }
-        cur = std::fs::read_dir(&cur)
-            .ok()?
-            .flatten()
-            .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))?
-            .path();
-    }
-    cur.is_file().then_some(cur)
+    rugen_formats::vfs::resolve(dir, &name).filter(|p| rugen_formats::vfs::is_file(p))
 }
 
 struct Builder {
@@ -142,11 +143,11 @@ impl Builder {
             root,
             entries: Vec::new(),
         };
-        b.push(name.clone(), def.to_path_buf())?;
+        b.push(name.clone(), def.to_path_buf(), Role::Def)?;
         Ok((b, name))
     }
 
-    fn push(&mut self, path: String, source: PathBuf) -> Result<()> {
+    fn push(&mut self, path: String, source: PathBuf, role: Role) -> Result<()> {
         if !safe_rel(&path) {
             return Err(Error::Content(format!(
                 "{path}: references a file outside the character folder"
@@ -158,13 +159,14 @@ impl Builder {
                 path,
                 canon,
                 source,
+                role,
             });
         }
         Ok(())
     }
 
     /// Add a file referenced as `name`; returns false when it does not exist.
-    fn add(&mut self, name: &str) -> Result<bool> {
+    fn add(&mut self, name: &str, role: Role) -> Result<bool> {
         let Some(found) = resolve(&self.root, name) else {
             return Ok(false);
         };
@@ -173,7 +175,7 @@ impl Builder {
             .map_err(|_| Error::Content(format!("{name}: references a file outside its folder")))?
             .to_string_lossy()
             .replace('\\', "/");
-        self.push(rel, found)?;
+        self.push(rel, found, role)?;
         Ok(true)
     }
 
@@ -205,7 +207,12 @@ pub fn char_files(def_path: &Path, data_dir: Option<&Path>) -> Result<ContentFil
     }
     for key in required {
         let name = files.raw(key).unwrap_or("").trim();
-        if name.is_empty() || !b.add(name)? {
+        let role = if key == "sprite" {
+            Role::Sprite
+        } else {
+            Role::Text
+        };
+        if name.is_empty() || !b.add(name, role)? {
             return Err(Error::Content(format!(
                 "{}: [Files] {key} = {name:?} not found",
                 def_path.display()
@@ -217,7 +224,12 @@ pub fn char_files(def_path: &Path, data_dir: Option<&Path>) -> Result<ContentFil
     optional.extend((1..=12).map(|i| format!("pal{i}")));
     for key in optional {
         if let Some(name) = files.raw(&key).map(str::trim).filter(|n| !n.is_empty()) {
-            let found = b.add(name)?;
+            let role = match key.as_str() {
+                "sound" => Role::Sound,
+                k if k.starts_with("pal") => Role::Palette,
+                _ => Role::Text,
+            };
+            let found = b.add(name, role)?;
             if !found && key.starts_with("st") {
                 return Err(Error::Content(format!(
                     "{}: [Files] {key} = {name:?} not found",
@@ -231,7 +243,7 @@ pub fn char_files(def_path: &Path, data_dir: Option<&Path>) -> Result<ContentFil
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("common1.cns");
-    if !b.add(common)? {
+    if !b.add(common, Role::Text)? {
         // engine data: carried at the referenced path so the package resolves it first
         let src = data_dir
             .and_then(|d| resolve(d, common))
@@ -242,7 +254,7 @@ pub fn char_files(def_path: &Path, data_dir: Option<&Path>) -> Result<ContentFil
                     def_path.display()
                 ))
             })?;
-        b.push(clean(common), src)?;
+        b.push(clean(common), src, Role::Text)?;
     }
     Ok(b.finish(Kind::Char, def_name))
 }
@@ -265,7 +277,7 @@ pub fn stage_files(def_path: &Path) -> Result<ContentFiles> {
         .and_then(|s| s.raw("spr"))
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        && !b.add(spr)?
+        && !b.add(spr, Role::Sprite)?
     {
         return Err(Error::Content(format!(
             "{}: [BGdef] spr = {spr:?} not found",

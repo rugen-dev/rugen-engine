@@ -17,7 +17,11 @@ pub use trust::*;
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: u32 = 4;
+/// Lobby API version. 5: fingerprints are `rugen-fp-2` (sprites by their
+/// pixels, sounds left out) and packages are `.rgc` / `.rgs` content files
+/// instead of RGPK archives; servers and clients of different versions
+/// cannot share fighters.
+pub const API_VERSION: u32 = 5;
 
 /// Rank band name for a rating.
 pub fn rank_name(rating: i32) -> &'static str {

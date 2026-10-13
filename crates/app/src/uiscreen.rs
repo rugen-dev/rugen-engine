@@ -471,7 +471,7 @@ impl UiScreen {
                     name: m.display_name.to_uppercase(),
                     art: dir.join(file).display().to_string(),
                     source,
-                    def: dir.join(&m.def),
+                    def: m.def_path(&dir),
                 },
             ));
         }
@@ -1232,12 +1232,8 @@ impl UiScreen {
     fn try_featured(&self) -> Option<Transition> {
         let f = self.featured.get(self.feature_at)?;
         let stage = self.try_stage.clone();
-        let id = f
-            .def
-            .parent()
-            .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
-            .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok())
-            .map(|m| m.id)
+        let id = rugen_content::manifest_for(&f.def)
+            .map(|(_, m)| m.id)
             .unwrap_or_default();
         Some(Transition::Fight(FightSetup {
             p1: f.def.clone(),
@@ -1553,10 +1549,9 @@ pub fn decode_webp(bytes: &[u8]) -> anyhow::Result<MemImage> {
 
 /// Stage display name and thumbnail path for a prepared stage .def.
 fn stage_card(def: &Path) -> (String, String) {
-    let dir = def.parent();
-    let man = dir
-        .and_then(|d| std::fs::read_to_string(d.join("rugen.json")).ok())
-        .and_then(|t| serde_json::from_str::<rugen_content::Manifest>(&t).ok());
+    let found = rugen_content::manifest_for(def);
+    let dir = found.as_ref().map(|(d, _)| d.as_path());
+    let man = found.as_ref().map(|(_, m)| m.clone());
     let name = man
         .as_ref()
         .map(|m| m.display_name.clone())

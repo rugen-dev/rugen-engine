@@ -94,7 +94,9 @@ impl Def {
     }
 
     pub fn open(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
-        Ok(Self::parse(&crate::text::decode(&std::fs::read(path)?)))
+        Ok(Self::parse(&crate::text::decode(&crate::vfs::read(
+            path.as_ref(),
+        )?)))
     }
 
     /// First section with this name (case-insensitive).

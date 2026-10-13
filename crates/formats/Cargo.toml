@@ -1,6 +1,6 @@
 [package]
 name = "rugen-formats"
-description = "Parsers for MUGEN file formats: .sff .air .snd .act .fnt .def"
+description = "Parsers for MUGEN file formats (.sff .air .snd .act .fnt .def) and rugen's own .rgc / .rgs content files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,13 @@ log.workspace = true
 bytemuck.workspace = true
 indexmap = { workspace = true, features = ["serde"] }
 serde.workspace = true
+serde_json = "1"
 png.workspace = true
-lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-encode", "safe-decode", "std"] }
+zstd = { version = "0.13", default-features = false }
+sha2 = "0.11"
+image-webp = "0.2"
+rugen-opus.workspace = true
+
 
 [lints]
 workspace = true

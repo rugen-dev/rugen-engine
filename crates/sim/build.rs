@@ -1,6 +1,7 @@
-//! `RUGEN_LOGIC_SCHEMA`: a hash of the sim, cns and formats sources. Cached
-//! compiled character logic (`.rugen-opt/*/logic.bin`) records it, so any
-//! change to the structures it serialises invalidates every cache entry.
+//! `RUGEN_LOGIC_SCHEMA`: a hash of the sim, cns and formats sources.
+//! Compiled character logic (stored in `.rgc` files and `cache/logic/`)
+//! records it, so any change to the structures it serialises makes the
+//! engine compile the text again.
 
 use std::path::{Path, PathBuf};
 

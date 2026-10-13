@@ -32,7 +32,7 @@ impl StageItem {
         let (Some(dir), Some(m)) = (&self.dir, &self.manifest) else {
             return false;
         };
-        std::fs::read(dir.join(&m.def)).is_ok_and(|b| {
+        rugen_formats::vfs::read(&m.def_path(dir)).is_ok_and(|b| {
             String::from_utf8_lossy(&b)
                 .lines()
                 .any(|l| l.trim().eq_ignore_ascii_case("[arena]"))
@@ -451,7 +451,7 @@ impl Roster {
         };
         let path = chosen.and_then(|i| {
             let s = self.stages.get(i)?;
-            Some(s.dir.as_ref()?.join(&s.manifest.as_ref()?.def))
+            Some(s.manifest.as_ref()?.def_path(s.dir.as_ref()?))
         });
         path.or_else(|| self.lib.default_stage())
     }
@@ -486,7 +486,7 @@ impl Roster {
         }
         let def = |me: &Self, side: usize| -> Option<(PathBuf, String)> {
             let c = me.cells.get(me.picks[side]?)?;
-            Some((c.dir.join(&c.manifest.def), c.manifest.id.clone()))
+            Some((c.manifest.def_path(&c.dir), c.manifest.id.clone()))
         };
         let (p1, id1) = def(self, 0)?;
         let (p2, id2) = def(self, 1)?;

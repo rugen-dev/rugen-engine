@@ -3,10 +3,12 @@
 //! returns the raw WAV bytes.
 //!
 //! Sounds are views into one shared copy of the file ([`Sound`]): loading is a
-//! single read, with no per-sound copy.
+//! single read, with no per-sound copy. Sounds from an `.rgc` sound section
+//! are Opus streams turned into WAV bytes the first time they are asked for
+//! ([`crate::rgc::sounds`]).
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use indexmap::IndexMap;
 
@@ -14,24 +16,66 @@ use crate::{Error, Result};
 
 const F: &str = "snd";
 
-/// One sound's WAV bytes: a range of the archive's shared buffer.
+/// One sound's WAV bytes.
 #[derive(Clone)]
-pub struct Sound {
-    buf: Arc<Vec<u8>>,
-    start: usize,
-    end: usize,
+pub struct Sound(Repr);
+
+#[derive(Clone)]
+enum Repr {
+    /// A range of the archive's shared buffer.
+    Range {
+        buf: Arc<Vec<u8>>,
+        start: usize,
+        end: usize,
+    },
+    /// Decoded on first use, then kept.
+    Lazy(Arc<Lazy>),
+}
+
+type Decode = Box<dyn Fn() -> Vec<u8> + Send + Sync>;
+
+struct Lazy {
+    decode: Decode,
+    wav: OnceLock<Vec<u8>>,
+}
+
+impl Sound {
+    /// A sound whose WAV bytes `decode` produces on first use.
+    pub(crate) fn lazy(decode: Decode) -> Self {
+        Sound(Repr::Lazy(Arc::new(Lazy {
+            decode,
+            wav: OnceLock::new(),
+        })))
+    }
+
+    /// Already decoded (or never needed decoding).
+    pub fn is_ready(&self) -> bool {
+        match &self.0 {
+            Repr::Range { .. } => true,
+            Repr::Lazy(l) => l.wav.get().is_some(),
+        }
+    }
 }
 
 impl std::ops::Deref for Sound {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        &self.buf[self.start..self.end]
+        match &self.0 {
+            Repr::Range { buf, start, end } => &buf[*start..*end],
+            Repr::Lazy(l) => l.wav.get_or_init(|| (l.decode)()),
+        }
     }
 }
 
 impl std::fmt::Debug for Sound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Sound({} bytes)", self.end - self.start)
+        match &self.0 {
+            Repr::Range { start, end, .. } => write!(f, "Sound({} bytes)", end - start),
+            Repr::Lazy(l) => match l.wav.get() {
+                Some(w) => write!(f, "Sound({} bytes, decoded)", w.len()),
+                None => write!(f, "Sound(not decoded yet)"),
+            },
+        }
     }
 }
 
@@ -93,11 +137,11 @@ impl Snd {
                 } else {
                     snd.sounds.insert(
                         key,
-                        Sound {
+                        Sound(Repr::Range {
                             buf: buf.clone(),
                             start,
                             end,
-                        },
+                        }),
                     );
                 }
             }
@@ -109,8 +153,57 @@ impl Snd {
         Ok(snd)
     }
 
+    /// Open an SND file, or the sound section standing for it inside an
+    /// `.rgc` / `.rgs` ([`crate::vfs`]).
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        Self::parse_shared(Arc::new(std::fs::read(path)?))
+        crate::vfs::open_snd(path.as_ref())
+    }
+
+    /// Decode every sound not decoded yet on a background thread, so the
+    /// first play of each needs no work (sounds from `.rgc` sections).
+    pub fn prefetch(&self) {
+        let pending: Vec<Sound> = self
+            .sounds
+            .values()
+            .filter(|s| !s.is_ready())
+            .cloned()
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        let _ = std::thread::Builder::new()
+            .name("snd-prefetch".into())
+            .spawn(move || {
+                for s in pending {
+                    let _ = s.len();
+                }
+            });
+    }
+
+    /// Serialize as an SND file (version kept, sounds in order, each as its
+    /// WAV bytes).
+    pub fn write(&self) -> Vec<u8> {
+        let mut out = vec![0u8; 512];
+        out[..12].copy_from_slice(b"ElecbyteSnd\0");
+        out[12..14].copy_from_slice(&self.version.0.to_le_bytes());
+        out[14..16].copy_from_slice(&self.version.1.to_le_bytes());
+        out[16..20].copy_from_slice(&(self.sounds.len() as u32).to_le_bytes());
+        out[20..24].copy_from_slice(&512u32.to_le_bytes());
+        let n = self.sounds.len();
+        for (i, (&(g, num), wav)) in self.sounds.iter().enumerate() {
+            let at = out.len();
+            let next = if i + 1 == n {
+                0
+            } else {
+                (at + 16 + wav.len()) as u32
+            };
+            out.extend_from_slice(&next.to_le_bytes());
+            out.extend_from_slice(&(wav.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(g as u32).to_le_bytes());
+            out.extend_from_slice(&(num as u32).to_le_bytes());
+            out.extend_from_slice(wav);
+        }
+        out
     }
 }
 

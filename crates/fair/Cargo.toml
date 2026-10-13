@@ -1,6 +1,6 @@
 [package]
 name = "rugen-fair"
-description = "Content fingerprints, optimised packages and fairness analysis of MUGEN characters (no GPU / audio)"
+description = "Content fingerprints, package verification and fairness analysis of MUGEN characters (no GPU / audio)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,6 @@ thiserror.workspace = true
 log.workspace = true
 libm.workspace = true
 sha2 = "0.11"
-zstd = { version = "0.13", default-features = false }
 # Ed25519 (already in the game through rustls; pure verification + signing)
 ring = "0.17"
 serde.workspace = true

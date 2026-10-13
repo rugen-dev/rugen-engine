@@ -1680,12 +1680,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
-name = "lz4_flex"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
-
-[[package]]
 name = "lzma-rust2"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1883,6 +1877,15 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -2630,6 +2633,7 @@ dependencies = [
  "kira",
  "libm",
  "log",
+ "rugen-formats",
  "thiserror 2.0.21",
 ]
 
@@ -2678,7 +2682,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.21",
  "zip",
- "zstd",
 ]
 
 [[package]]
@@ -2686,12 +2689,16 @@ name = "rugen-formats"
 version = "0.5.0"
 dependencies = [
  "bytemuck",
+ "image-webp",
  "indexmap",
  "log",
- "lz4_flex",
  "png",
+ "rugen-opus",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.21",
+ "zstd",
 ]
 
 [[package]]
@@ -2716,6 +2723,13 @@ dependencies = [
  "tungstenite",
  "ureq",
  "webpki-roots 1.0.9",
+]
+
+[[package]]
+name = "rugen-opus"
+version = "0.5.0"
+dependencies = [
+ "unsafe-libopus",
 ]
 
 [[package]]
@@ -3541,6 +3555,17 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "unsafe-libopus"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c757408e7256c910343c7b215c8c8b878948630eecc774baabcca0972376eb73"
+dependencies = [
+ "arrayref",
+ "num-complex",
+ "num-traits",
+]
 
 [[package]]
 name = "untrusted"
