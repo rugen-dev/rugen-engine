@@ -11,6 +11,7 @@ pub mod account;
 pub mod evidence;
 pub mod fair;
 pub mod relay;
+pub mod room_code;
 pub mod trust;
 
 pub use account::{AccountInfo, Session};
