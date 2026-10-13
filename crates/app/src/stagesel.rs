@@ -379,6 +379,37 @@ impl StageSel {
         self.select((self.sel as i64 + d).clamp(0, last) as usize)
     }
 
+    /// The mouse rests on strip tile `index` (0 = RANDOM): it becomes the
+    /// selection. True when it moved.
+    pub fn hover(&mut self, index: usize) -> bool {
+        self.select(index)
+    }
+
+    /// A click on strip tile `index`: picks it when it is the selection
+    /// (hover already made it one), else selects it.
+    pub fn click(&mut self, index: usize, lib: &Library) -> Option<Transition> {
+        if index == self.sel {
+            self.confirm(|| lib.default_stage())
+        } else {
+            self.select(index);
+            None
+        }
+    }
+
+    /// The wheel over the screen: one stage per notch (down = next). True
+    /// when the selection moved.
+    pub fn wheel(&mut self, lines: f32) -> bool {
+        if lines == 0.0 {
+            return false;
+        }
+        let notches = libm::roundf(-lines).clamp(-8.0, 8.0) as i64;
+        self.step(if notches == 0 {
+            -(lines.signum() as i64)
+        } else {
+            notches
+        })
+    }
+
     /// Page / Home / End / letter keys. True when the selection moved.
     pub fn key(&mut self, key: &winit::keyboard::Key) -> Option<bool> {
         use winit::keyboard::{Key, NamedKey};
@@ -798,6 +829,7 @@ impl StageSel {
                 };
                 json!({
                     "x": libm::roundf(t.x),
+                    "index": t.index,
                     "name": name,
                     "thumb": thumb,
                     "has_thumb": !thumb.is_empty(),
@@ -933,6 +965,25 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // the mouse: hover selects, a click on the selection picks, the wheel steps
+        let mut s = StageSel::new(
+            StagePlan::online("kfm".into(), false, ["A".into(), "B".into()]),
+            &lib,
+        );
+        assert!(s.hover(3));
+        assert_eq!(s.sel, 3);
+        assert!(s.click(5, &lib).is_none(), "a click elsewhere selects");
+        assert_eq!(s.sel, 5);
+        assert!(s.wheel(-1.0));
+        assert_eq!(s.sel, 6, "down = next");
+        assert!(s.wheel(2.0));
+        assert_eq!(s.sel, 4);
+        assert!(s.wheel(0.4), "a small notch still steps");
+        assert_eq!(s.sel, 3);
+        assert!(matches!(
+            s.click(3, &lib),
+            Some(Transition::OnlinePicked(..))
+        ));
         // online: the host's pick goes back to the matchup with the stage id
         let names = ["KFM".to_string(), "AYAME".to_string()];
         let mut s = StageSel::new(StagePlan::online("kfm".into(), false, names.clone()), &lib);

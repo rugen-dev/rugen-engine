@@ -3,6 +3,7 @@
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
 //!   --open online|profile|options|controls                      harness: start on that screen
+//!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -56,6 +57,7 @@ mod kit;
 mod latency;
 mod lifebar;
 mod matchup;
+mod mouse;
 mod official;
 mod online;
 mod options;
@@ -119,6 +121,7 @@ fn relocate(
 const USAGE: &str = "\
 rugen [--root dir]                                            full game: title, select, fight
   --open online|profile|options|controls                      harness: start on that screen
+  --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -296,6 +299,7 @@ fn main() -> anyhow::Result<()> {
                         .transpose()?,
                     script: script.as_deref().map(play::parse_script),
                     script2: script2.as_deref().map(play::parse_script),
+                    mouse: Vec::new(),
                     in_match: true,
                     ..Default::default()
                 };
@@ -389,6 +393,7 @@ fn main() -> anyhow::Result<()> {
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
                 keys: keys.as_deref().map(game::parse_keys).unwrap_or_default(),
+                mouse: Vec::new(),
                 in_match: false,
             };
             let shell = game::Shell::new(
@@ -617,6 +622,10 @@ fn main() -> anyhow::Result<()> {
                 script2: None,
                 record: None,
                 keys: Vec::new(),
+                mouse: opt("--mouse")
+                    .as_deref()
+                    .map(game::parse_mouse)
+                    .unwrap_or_default(),
                 in_match: false,
             };
             let mut setup = r.setup();
@@ -838,6 +847,10 @@ fn main() -> anyhow::Result<()> {
                 keys: opt("--keys")
                     .as_deref()
                     .map(game::parse_keys)
+                    .unwrap_or_default(),
+                mouse: opt("--mouse")
+                    .as_deref()
+                    .map(game::parse_mouse)
                     .unwrap_or_default(),
                 in_match: false,
             };

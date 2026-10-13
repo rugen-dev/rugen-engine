@@ -403,6 +403,8 @@ enter_time = 14
     on_press = "{item.press}"
     on_left = "{item.left}"
     on_right = "{item.right}"
+    # the mouse: a click on the pips / choice / slider picks under it
+    on_pick = "pick:{item.id}:{value}"
 
       [[node.children.children.children]]
       kind = "image"

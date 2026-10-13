@@ -4,7 +4,7 @@
 # a letter jumps by name; A / Enter fights, B / Esc goes back to the fighters.
 # Data: title, sub, go, p1, p2, cur {name author has_author tags[] {t} music
 # has_music width has_width random note}, preview_ready, preview_wait,
-# strip[] {x name thumb has_thumb placeholder random sel idle} (only the tiles
+# strip[] {x index name thumb has_thumb placeholder random sel idle} (only the tiles
 # on screen: the strip is virtualised), pos, track {x w scrolls}, keys.
 # `stage_preview` is a slot: the stage under the cursor, live, drawn by rugen.
 background = [0.078, 0.051, 0.043, 1.0]
@@ -274,6 +274,9 @@ enter_time = 14
   y = 0
   w = 184
   h = 118
+  # the mouse: hover selects, a click on the selection picks
+  focus = true
+  on_press = "tile:{item.index}"
 
     [[node.children.children]]
     kind = "panel"

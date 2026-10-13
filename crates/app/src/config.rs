@@ -405,7 +405,7 @@ impl Default for Input {
             gamepad_p1: 0,
             gamepad_p2: 1,
             deadzone: 0.5,
-            mouse: false,
+            mouse: true,
         }
     }
 }

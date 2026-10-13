@@ -186,10 +186,51 @@ pub struct Harness {
     pub record: Option<PathBuf>,
     /// Raw keys to press: `(tick, key name)` (`--keys 90:Enter,120:k`).
     pub keys: Vec<(u32, String)>,
+    /// Mouse actions at ticks (`--mouse 60:640,360,90:click`), window pixels.
+    pub mouse: Vec<(u32, MouseAct)>,
     /// Online runs: scripts and `--frames` count only once the fight is on
     /// screen (the matchup before it takes as long as it takes), and the
     /// end of a script never quits (leaving mid-match would be a flee).
     pub in_match: bool,
+}
+
+/// One scripted mouse action (`--mouse`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MouseAct {
+    Move(f32, f32),
+    /// Press, released 3 ticks later.
+    Click,
+    Wheel(f32),
+}
+
+/// `--mouse "60:640,360,90:click,120:wheel=-1"`: the cursor moves to window
+/// pixel `x,y`, clicks or turns the wheel at shell ticks.
+pub fn parse_mouse(s: &str) -> Vec<(u32, MouseAct)> {
+    let mut out = Vec::new();
+    let mut parts = s.split(',').map(str::trim).peekable();
+    while let Some(p) = parts.next() {
+        let Some((n, what)) = p.split_once(':') else {
+            continue;
+        };
+        let Ok(t) = n.trim().parse::<u32>() else {
+            continue;
+        };
+        let act = if what == "click" {
+            MouseAct::Click
+        } else if let Some(w) = what.strip_prefix("wheel=") {
+            match w.parse() {
+                Ok(v) => MouseAct::Wheel(v),
+                Err(_) => continue,
+            }
+        } else {
+            match (what.parse::<f32>(), parts.next().map(str::parse::<f32>)) {
+                (Ok(x), Some(Ok(y))) => MouseAct::Move(x, y),
+                _ => continue,
+            }
+        };
+        out.push((t, act));
+    }
+    out
 }
 
 /// `--keys "90:Enter,120:k"`: raw key presses at shell ticks (released 3 ticks later).
@@ -255,6 +296,10 @@ pub struct Shell {
     /// Shell ticks for `--keys`, and harness key releases due.
     key_ticks: u32,
     key_releases: Vec<(u32, Key)>,
+    /// The menu mouse beside the keyboard and pads (see [`crate::mouse`]).
+    mouse: crate::mouse::MouseGate,
+    /// Scripted mouse button releases (`--mouse` clicks).
+    mouse_releases: Vec<u32>,
     /// Stats of the match being played (read-only observer).
     match_stats: crate::screeninfo::MatchStats,
     /// The settings as rugen.toml holds them: the options screens preview
@@ -369,6 +414,8 @@ impl Shell {
             reopen_tab: None,
             key_ticks: 0,
             key_releases: Vec::new(),
+            mouse: crate::mouse::MouseGate::default(),
+            mouse_releases: Vec::new(),
             match_stats: Default::default(),
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
@@ -387,9 +434,13 @@ impl Shell {
         !matches!(self.screen, Screen::Match(_)) || self.pause.is_some()
     }
 
-    /// Show the mouse cursor only where it does something: menus with `[input] mouse` on.
+    /// Show the mouse cursor only where it does something: menus with
+    /// `[input] mouse` on, while the mouse (not a key or pad) drives them.
     fn update_cursor(&mut self) {
-        let want = self.config.input.mouse && self.in_menu() && self.harness.script.is_none();
+        let want = self.config.input.mouse
+            && self.in_menu()
+            && self.harness.script.is_none()
+            && self.mouse.visible();
         if self.cursor_shown == Some(want) {
             return;
         }
@@ -406,6 +457,54 @@ impl Shell {
             if let Some(p) = self.pause.as_mut() {
                 p.mouse(MouseEvent::Left);
             }
+        }
+    }
+
+    /// Hand a mouse event to the screen that takes it: the pause menu over
+    /// a match, a UI screen or the online screen.
+    fn mouse_to_screen(&mut self, ev: MouseEvent) {
+        match &mut self.screen {
+            Screen::Match(_) => {
+                if let Some(p) = self.pause.as_mut() {
+                    p.mouse(ev);
+                }
+            }
+            Screen::Ui(u) => u.mouse(ev),
+            Screen::Online(o) => o.mouse(ev),
+            _ => {}
+        }
+    }
+
+    /// The cursor moved (window pixels); it hovers only once it really moves.
+    fn mouse_moved(&mut self, x: f32, y: f32) {
+        if self.mouse.moved(x, y, u64::from(self.key_ticks)) {
+            self.mouse_to_screen(MouseEvent::Move(x, y));
+        }
+    }
+
+    /// A click or a wheel turn wakes the mouse where it rests.
+    fn mouse_wake(&mut self) {
+        if let Some((x, y)) = self.mouse.pressed(u64::from(self.key_ticks)) {
+            self.mouse_to_screen(MouseEvent::Move(x, y));
+        }
+    }
+
+    fn mouse_button(&mut self, down: bool) {
+        if down {
+            self.mouse_wake();
+        }
+        self.mouse_to_screen(MouseEvent::Button(down));
+    }
+
+    fn mouse_wheel(&mut self, lines: f32) {
+        self.mouse_wake();
+        self.mouse_to_screen(MouseEvent::Wheel(lines));
+    }
+
+    /// A key or pad press: the keyboard takes the focus back from the mouse.
+    fn mouse_yields(&mut self) {
+        if self.mouse.keyboard() {
+            self.mouse_to_screen(MouseEvent::Left);
         }
     }
 
@@ -1399,6 +1498,31 @@ impl Shell {
         for (_, key) in up {
             self.key(&key, false);
         }
+        // scripted mouse (`--mouse`)
+        let acts: Vec<MouseAct> = self
+            .harness
+            .mouse
+            .iter()
+            .filter(|(at, _)| *at == t)
+            .map(|(_, a)| *a)
+            .collect();
+        for a in acts {
+            match a {
+                MouseAct::Move(x, y) => self.mouse_moved(x, y),
+                MouseAct::Click => {
+                    self.mouse_button(true);
+                    self.mouse_releases.push(t + 3);
+                }
+                MouseAct::Wheel(l) => self.mouse_wheel(l),
+            }
+        }
+        if self.mouse_releases.contains(&t) {
+            self.mouse_releases.retain(|at| *at != t);
+            self.mouse_button(false);
+        }
+        if self.mouse.tick(u64::from(t)) {
+            self.mouse_to_screen(MouseEvent::Left);
+        }
         let raw = self.input.raw();
         let mut now = raw.map(Buttons::from_bits);
         // START: pause / menus, never a fighter input (see `input::START_BIT`)
@@ -1453,6 +1577,10 @@ impl Shell {
             Buttons::from_bits(now[1].bits() & !self.prev[1].bits()),
         ];
         self.prev = now;
+        // a pad (or a mapped key) pressed: the mouse lets go of the focus
+        if pressed.iter().any(|b| b.bits() != 0) || start_pressed.iter().any(|&p| p) {
+            self.mouse_yields();
+        }
         let mut sfx_queue: Vec<Option<(i32, i32)>> = Vec::new();
         let mut next: Option<Transition> = None;
         let mut advanced = true;
@@ -1809,6 +1937,15 @@ impl Shell {
     }
 
     fn key(&mut self, key: &Key, pressed: bool) {
+        // a key press takes the focus back from the mouse (modifiers alone do not)
+        if pressed
+            && !matches!(
+                key,
+                Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
+            )
+        {
+            self.mouse_yields();
+        }
         // a release always reaches the held-key state, whatever screen (text
         // capture, key listening, a page that owns the key) takes the press:
         // a lost release would leave the key held and eat its next press
@@ -2126,47 +2263,24 @@ impl ApplicationHandler for Shell {
             | WindowEvent::MouseInput { .. }
             | WindowEvent::MouseWheel { .. }
                 if self.harness.script.is_some() || !self.config.input.mouse => {}
-            WindowEvent::CursorMoved { position, .. } => match &mut self.screen {
-                Screen::Match(_) if self.pause.is_some() => {
-                    if let Some(p) = self.pause.as_mut() {
-                        p.mouse(MouseEvent::Move(position.x as f32, position.y as f32));
-                    }
-                }
-                Screen::Ui(u) => u.mouse(MouseEvent::Move(position.x as f32, position.y as f32)),
-                Screen::Online(o) => {
-                    o.mouse(MouseEvent::Move(position.x as f32, position.y as f32))
-                }
-                _ => {}
-            },
-            WindowEvent::CursorLeft { .. } => match &mut self.screen {
-                Screen::Ui(u) => u.mouse(MouseEvent::Left),
-                Screen::Online(o) => o.mouse(MouseEvent::Left),
-                _ => {}
-            },
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_moved(position.x as f32, position.y as f32);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.mouse.left();
+                self.mouse_to_screen(MouseEvent::Left);
+            }
             WindowEvent::MouseInput {
                 state,
                 button: winit::event::MouseButton::Left,
                 ..
-            } => match &mut self.screen {
-                Screen::Match(_) if self.pause.is_some() => {
-                    if let Some(p) = self.pause.as_mut() {
-                        p.mouse(MouseEvent::Button(state == ElementState::Pressed));
-                    }
-                }
-                Screen::Ui(u) => u.mouse(MouseEvent::Button(state == ElementState::Pressed)),
-                Screen::Online(o) => o.mouse(MouseEvent::Button(state == ElementState::Pressed)),
-                _ => {}
-            },
+            } => self.mouse_button(state == ElementState::Pressed),
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                match &mut self.screen {
-                    Screen::Ui(u) => u.mouse(MouseEvent::Wheel(lines)),
-                    Screen::Online(o) => o.mouse(MouseEvent::Wheel(lines)),
-                    _ => {}
-                }
+                self.mouse_wheel(lines);
             }
             _ => {}
         }

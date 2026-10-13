@@ -249,6 +249,11 @@ pub struct NodeDef {
     pub on_right: Option<String>,
     /// Input / slider: action fired with `{value}` replaced when the value changes.
     pub on_change: Option<String>,
+    /// A focusable row holding a `pips`, `choice` or `slider` part: a click
+    /// (or a drag, on a slider) on that part fires this with `{value}` = the
+    /// pips filled up to the cursor (1..), the choice index (0..) or the
+    /// slider fraction (0..1) under it, instead of `on_press`.
+    pub on_pick: Option<String>,
     /// Buttons/inputs/sliders/toggles are focusable by default; `focus = false` disables.
     pub focus: Option<bool>,
     /// Bind path; the node is skipped when the value is false/empty/0.
@@ -707,6 +712,7 @@ struct Instance {
     on_left: Option<String>,
     on_right: Option<String>,
     on_change: Option<String>,
+    on_pick: Option<String>,
     focusable: bool,
     /// Key of the enclosing list/grid, for wheel scrolling and keep-visible.
     scroll_owner: Option<String>,
@@ -755,6 +761,10 @@ pub struct Ui {
     /// Mouse position the hover focus was last taken from: a still cursor
     /// does not take the focus back from the keyboard.
     mouse_seen: Option<(f32, f32)>,
+    /// The focus the mouse gave and where the cursor was: a click from the
+    /// same spot activates it even when the new focus re-laid the screen
+    /// out from under the cursor (a focused item that grows).
+    mouse_focus: Option<(String, (f32, f32))>,
     wheel: f32,
     pending: Vec<Event>,
     /// Slanted clip / rotation of the subtree being laid out.
@@ -1087,6 +1097,7 @@ impl Ui {
             mouse_down: false,
             mouse_was_down: false,
             mouse_seen: None,
+            mouse_focus: None,
             wheel: 0.0,
             pending: Vec::new(),
             cur_quad: None,
@@ -1755,6 +1766,7 @@ impl Ui {
             (action(&n.on_press), action(&n.on_left), action(&n.on_right));
         // on_change keeps `{value}` for later substitution
         let on_change = n.on_change.clone().filter(|a| !a.is_empty());
+        let on_pick = n.on_pick.clone().filter(|a| !a.is_empty());
         let has_action = on_press.is_some()
             || on_left.is_some()
             || on_right.is_some()
@@ -1771,6 +1783,7 @@ impl Ui {
             on_left,
             on_right,
             on_change,
+            on_pick,
             focusable,
             scroll_owner: None,
             delay,
@@ -2101,6 +2114,27 @@ impl Ui {
     }
 
     /// Hit rectangle of an instance (the focused one grows by `hover_scale`).
+    /// The `pips` / `choice` / `slider` part of focusable row `row` under
+    /// `(mx, my)` (laid out after it, inside its rectangle).
+    fn part_at(&self, row: &Instance, mx: f32, my: f32) -> Option<&Instance> {
+        let start = self.instances.iter().position(|i| i.key == row.key)? + 1;
+        let r = row.rect;
+        self.instances[start..]
+            .iter()
+            .take_while(|i| {
+                i.rect.x >= r.x - 0.5
+                    && i.rect.y >= r.y - 0.5
+                    && i.rect.x + i.rect.w <= r.x + r.w + 0.5
+                    && i.rect.y + i.rect.h <= r.y + r.h + 0.5
+            })
+            .find(|i| {
+                matches!(
+                    self.defs[i.def].kind,
+                    Kind::Pips | Kind::Choice | Kind::Slider
+                ) && i.rect.contains(mx, my)
+            })
+    }
+
     fn hit_rect(&self, i: &Instance) -> Rect {
         let n = &self.defs[i.def];
         let focused = self.focus.as_deref() == Some(&i.key);
@@ -2169,13 +2203,37 @@ impl Ui {
                 })
                 .cloned();
             let click = self.mouse_down && !self.mouse_was_down;
+            // the cursor has not moved since it focused an item that then
+            // moved away from under it: it still points at that item
+            let hovered = hovered.or_else(|| {
+                let (key, at) = self.mouse_focus.as_ref()?;
+                (*at == (mx, my) && self.focus.as_ref() == Some(key))
+                    .then(|| self.find(key).cloned())
+                    .flatten()
+            });
             let moved = self.mouse_seen != Some((mx, my));
+            // a click on a row's pips / choice / slider part picks under the
+            // cursor (a slider part follows a drag too)
+            let picked = hovered
+                .as_ref()
+                .filter(|_| self.mouse_down)
+                .and_then(|h| Some((h, h.on_pick.as_ref()?)))
+                .and_then(|(h, a)| {
+                    let part = self.part_at(h, mx, my)?;
+                    let slider = self.defs[part.def].kind == Kind::Slider;
+                    if !(click || (slider && moved)) {
+                        return None;
+                    }
+                    let v = widgets::pick_value(&self.defs[part.def], &part.ctx, part.rect, mx, p)?;
+                    Some(interpolate(&a.replace("{value}", &v), &h.ctx))
+                });
             if let Some(h) = hovered.filter(|_| moved || self.mouse_down) {
                 if self.focus.as_deref() != Some(&h.key) {
                     self.focus = Some(h.key.clone());
                     self.focus_age = 0.0;
                     events.push(Event::Moved);
                 }
+                self.mouse_focus = Some((h.key.clone(), (mx, my)));
                 let kind = self.defs[h.def].kind;
                 match kind {
                     Kind::Slider if self.mouse_down => {
@@ -2187,6 +2245,10 @@ impl Ui {
                     Kind::Input if click => {
                         self.editing = Some(h.key.clone());
                     }
+                    _ if picked.is_some() => {
+                        events.extend(picked.map(Event::Action));
+                    }
+                    _ if click && h.on_pick.is_some() && self.part_at(&h, mx, my).is_some() => {}
                     _ if click => {
                         if let Some(a) = h.on_press.clone() {
                             events.push(Event::Action(a));
@@ -3252,6 +3314,132 @@ y = 20
         ui.mouse_button(true);
         let ev = ui.tick(Nav::default(), &mut p);
         assert_eq!(ev, vec![Event::Action("quit".into())]);
+    }
+
+    /// A click on a row's pips or slider part picks under the cursor; a
+    /// slider part follows the drag.
+    #[test]
+    fn mouse_picks_on_row_parts() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "button"
+id = "lvl"
+x = 0
+y = 0
+w = 300
+h = 30
+on_press = "cycle"
+on_pick = "pick:{id}:{value}"
+  [[node.children]]
+  kind = "pips"
+  x = 10
+  y = 5
+  h = 20
+  gap = 5
+  max = 4
+  value = "lvl"
+[[node]]
+kind = "button"
+id = "vol"
+x = 0
+y = 40
+w = 300
+h = 30
+on_press = "cycle"
+on_pick = "pick:vol:{value}"
+  [[node.children]]
+  kind = "slider"
+  x = 10
+  y = 10
+  w = 200
+  h = 10
+  min = 0
+  max = 1
+  value = "v"
+  focus = false
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, serde_json::json!({ "lvl": 1, "v": 0.2, "id": "lvl" }));
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        // third pip: x = 10 + 2 * 25 .. + 20
+        ui.mouse_move(Some((62.0, 12.0)));
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("pick:lvl:3".into())]);
+        ui.mouse_button(false);
+        ui.tick(Nav::default(), &mut p);
+        // off the part, a click is the row's own press
+        ui.mouse_move(Some((250.0, 12.0)));
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("cycle".into())]);
+        ui.mouse_button(false);
+        // the slider: press, then drag
+        ui.mouse_move(Some((110.0, 55.0)));
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("pick:vol:0.500".into())]);
+        ui.mouse_move(Some((160.0, 55.0)));
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("pick:vol:0.750".into())]);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert!(ev.is_empty(), "held still: nothing new");
+    }
+
+    /// The focus the mouse gives can move the item away from under the
+    /// cursor (a focused item that grows re-lays the screen out): a click
+    /// without moving still presses it.
+    #[test]
+    fn click_follows_the_item_the_mouse_focused() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "button"
+id = "a"
+x = 10
+y = 10
+w = 100
+h = 30
+on_press = "a"
+[[node]]
+kind = "button"
+id = "b"
+x = 10
+y = "{by}"
+w = 100
+h = 30
+on_press = "b"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, serde_json::json!({ "by": 100 }));
+        ui.set_focus(Some("a"));
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_move(Some((50.0, 110.0)));
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Moved]);
+        assert_eq!(ui.focused(), Some("b"));
+        // b moves away from the resting cursor
+        ui.set_data(serde_json::json!({ "by": 200 }));
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert_eq!(ev, vec![Event::Action("b".into())]);
+        ui.mouse_button(false);
+        ui.tick(Nav::default(), &mut p);
+        // once the keys move the focus, that spot means nothing
+        ui.set_focus(Some("a"));
+        ui.tick(Nav::default(), &mut p);
+        ui.mouse_button(true);
+        let ev = ui.tick(Nav::default(), &mut p);
+        assert!(ev.is_empty(), "{ev:?}");
     }
 
     #[test]

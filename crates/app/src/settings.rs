@@ -476,6 +476,56 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
     true
 }
 
+/// A mouse pick on row `id`'s widget (`pick:<id>:<value>`): `value` is the
+/// pips filled up to the cursor (1..), the choice index (0..) or the
+/// slider fraction (0..1). Sliders snap to their keyboard step. True when
+/// something changed.
+pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
+    let Ok(v) = value.trim().parse::<f32>() else {
+        return false;
+    };
+    if !v.is_finite() {
+        return false;
+    }
+    let i = v.max(0.0) as usize;
+    let before = c.clone();
+    let snap = |lo: f32, hi: f32, step_: f32| {
+        let x = lo + v.clamp(0.0, 1.0) * (hi - lo);
+        (libm::roundf(x / step_) * step_).clamp(lo, hi)
+    };
+    let on = i >= 1;
+    match id {
+        "master" => c.audio.master = snap(0.0, 1.0, 0.05),
+        "music" => c.audio.music = snap(0.0, 1.0, 0.05),
+        "zoom_out" => c.camera.zoom_out = snap(0.25, 1.0, 0.05),
+        "zoom_in" => c.camera.zoom_in = snap(0.6, 1.6, 0.05),
+        "ai" => c.game.ai_level = (i as i32).clamp(1, 8),
+        "fullscreen" => c.video.fullscreen = on,
+        "air_dash" => c.game.air_dash = on,
+        "fast_fall" => c.game.fast_fall = on,
+        "arena_ai" => c.game.arena_ai = on,
+        "mouse" => c.input.mouse = on,
+        "good_conn" => c.net.good_connections_only = on,
+        "direct" => c.net.direct = on,
+        "delay" => {
+            let max = crate::config::InputDelay::MAX;
+            c.net.input_delay = crate::config::InputDelay((i > 0).then(|| (i - 1).min(max)));
+        }
+        "fighter_size" => {
+            c.game.fighter_size = FighterSize::ALL[i.min(FighterSize::ALL.len() - 1)];
+        }
+        "air_jumps" => c.game.air_jumps = i.min(3) as i32,
+        "round_time" => c.game.round_time = ROUND_TIMES[i.min(ROUND_TIMES.len() - 1)],
+        "resolution" => {
+            let (w, h) = RESOLUTIONS[i.min(RESOLUTIONS.len() - 1)];
+            c.video.width = w;
+            c.video.height = h;
+        }
+        _ => return false,
+    }
+    *c != before
+}
+
 // ---------------------------------------------------------------- controls
 
 /// `(id, label, group)` in config order (Buttons order + START).
@@ -847,6 +897,30 @@ mod tests {
         adjust(&mut c, "zoom_out", 1, false);
         assert!((c.camera.zoom_out - 0.65).abs() < 1e-4);
         assert_eq!(c.game.fighter_size, FighterSize::Normal, "default");
+        // the mouse picks a segment, a pip or a slider position directly
+        let mut m = Config::default();
+        assert!(pick(&mut m, "fighter_size", "1"));
+        assert_eq!(m.game.fighter_size, FighterSize::Chibi);
+        assert!(!pick(&mut m, "fighter_size", "1"), "same pick, no change");
+        assert!(pick(&mut m, "ai", "7"));
+        assert_eq!(m.game.ai_level, 7);
+        assert!(pick(&mut m, "air_dash", "1"));
+        assert!(m.game.air_dash);
+        assert!(pick(&mut m, "air_dash", "0"));
+        assert!(!m.game.air_dash);
+        assert!(pick(&mut m, "zoom_out", "0.5"));
+        assert!(
+            (m.camera.zoom_out - 0.65).abs() < 1e-6,
+            "0.25 + 0.375 snaps to 0.65"
+        );
+        assert!(pick(&mut m, "master", "0.333"));
+        assert!((m.audio.master - 0.35).abs() < 1e-6);
+        assert!(pick(&mut m, "delay", "3"));
+        assert_eq!(m.net.input_delay.0, Some(2));
+        assert!(pick(&mut m, "delay", "0"));
+        assert_eq!(m.net.input_delay.0, None, "AUTO");
+        assert!(!pick(&mut m, "server", "1"), "not a widget row");
+        assert!(!pick(&mut m, "ai", "x"));
         adjust(&mut c, "fighter_size", 1, false);
         assert_eq!(
             c.game.fighter_size,

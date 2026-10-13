@@ -267,6 +267,44 @@ fn label(
     );
 }
 
+/// What a click at x `mx` on part `n` (laid out at `r`) picks: the pips
+/// filled up to it (1..), the choice segment index (0..) or the slider
+/// fraction (0..1, three decimals). `None` off the part.
+pub(crate) fn pick_value(
+    n: &NodeDef,
+    ctx: &Ctx,
+    r: Rect,
+    mx: f32,
+    p: &mut dyn Painter,
+) -> Option<String> {
+    use crate::Kind;
+    match n.kind {
+        Kind::Pips => {
+            let count = pip_count(n, ctx);
+            let pitch = r.h + n.gap.unwrap_or(5.0);
+            let i = libm::floorf((mx - r.x) / pitch.max(1.0));
+            (count > 0 && i >= 0.0).then(|| ((i as usize).min(count - 1) + 1).to_string())
+        }
+        Kind::Choice => {
+            let opts = choice_options(n, ctx);
+            let b = n.border.unwrap_or(3.0);
+            let mut x = r.x;
+            for (i, w) in segments(p, n, &opts, r.h).into_iter().enumerate() {
+                if mx >= x && mx < x + w {
+                    return Some(i.to_string());
+                }
+                x += w - b;
+            }
+            None
+        }
+        Kind::Slider => {
+            let f = ((mx - r.x) / r.w.max(1.0)).clamp(0.0, 1.0);
+            Some(format!("{:.3}", f))
+        }
+        _ => None,
+    }
+}
+
 /// `pips`: `max` (or `max_from`) squares, the first `value` filled.
 pub(crate) fn draw_pips(
     p: &mut dyn Painter,

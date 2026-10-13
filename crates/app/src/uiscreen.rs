@@ -259,6 +259,8 @@ pub struct UiScreen {
     stages: Option<crate::stagesel::StageSel>,
     /// Buttons held this tick (auto-repeat on the stage strip).
     held: [Buttons; 2],
+    /// Wheel turned over the stage select since the last tick.
+    stage_wheel: f32,
     room: String,
     /// VS screen: the fight to start and the ticks left.
     versus: Option<(FightSetup, i32)>,
@@ -818,6 +820,7 @@ impl UiScreen {
             },
             stages: None,
             held: [Buttons::default(); 2],
+            stage_wheel: 0.0,
             room: if kind == UiKind::Select(Mode::Online) {
                 "ONLINE".into()
             } else {
@@ -1494,6 +1497,8 @@ impl UiScreen {
                 self.ui.mouse_move(None);
             }
             MouseEvent::Button(down) => self.ui.mouse_button(down),
+            // the stage select's strip steps with the wheel anywhere on it
+            MouseEvent::Wheel(lines) if self.stages.is_some() => self.stage_wheel += lines,
             MouseEvent::Wheel(lines) => self.ui.mouse_wheel(lines),
         }
     }
@@ -1505,6 +1510,17 @@ impl UiScreen {
     }
 
     fn action(&mut self, a: &str, sys: &SystemData) -> Option<Transition> {
+        // a click on a stage strip tile
+        if let (Some(st), Some(lib), Some(i)) = (
+            self.stages.as_mut(),
+            self.lib.as_ref(),
+            a.strip_prefix("tile:")
+                .and_then(|i| i.parse::<usize>().ok()),
+        ) {
+            let t = st.click(i, lib);
+            self.refresh_data(sys);
+            return t;
+        }
         if let Some(r) = self.roster.as_mut() {
             if a == "search" {
                 self.ui.edit("search");
@@ -1626,6 +1642,14 @@ impl UiScreen {
             }
             "cycle" => {
                 self.adjust(arg, 1, true);
+                self.refresh_data(sys);
+                None
+            }
+            // a click (or drag) on a row's pips / choice / slider
+            "pick" => {
+                if crate::settings::pick(&mut self.config, arg, arg2) {
+                    self.dirty = true;
+                }
                 self.refresh_data(sys);
                 None
             }
@@ -1809,6 +1833,9 @@ impl UiScreen {
                             crate::stagesel::Sfx::Cancel => snd.cancel_snd,
                         })
                     });
+                    if st.wheel(std::mem::take(&mut self.stage_wheel)) {
+                        sfx(snd.stage_move_snd);
+                    }
                 }
             }
             nav = Nav::default();
@@ -1831,8 +1858,13 @@ impl UiScreen {
             })
         };
         let mut out = None;
+        // the stage select: its keys never reach the UI focus, so a focus
+        // move there is the mouse resting on a strip tile
+        let hovered_tile =
+            self.stages.is_some() && events.iter().any(|e| matches!(e, Event::Moved));
         for e in events {
             match e {
+                Event::Moved if self.stages.is_some() => {}
                 Event::Moved | Event::Moved2 => sfx(sys.title.move_snd),
                 Event::Back => {
                     let side = dual.then_some(0);
@@ -1877,6 +1909,17 @@ impl UiScreen {
         }
         if stage_out.is_some() {
             return stage_out;
+        }
+        if hovered_tile
+            && let Some(i) = self
+                .ui
+                .focused_action()
+                .and_then(|a| a.strip_prefix("tile:")?.parse::<usize>().ok())
+            && let Some(st) = self.stages.as_mut()
+            && st.hover(i)
+        {
+            sfx(sys.select.stage_move_snd);
+            self.refresh_data(sys);
         }
         // everyone picked: after a beat, on to the stage select / VS screen
         if out.is_none()
