@@ -46,29 +46,28 @@ fn def_files(def: &Path) -> Vec<(String, String)> {
     out
 }
 
+/// A text file from disk or from inside a `.rgc` content file (characters
+/// are loaded from `cache/rgc/chars/x.rgc/x.def`, never from a plain folder).
 fn read_lossy(p: &Path) -> std::io::Result<String> {
-    std::fs::read(p).map(|b| String::from_utf8_lossy(&b).into_owned())
+    rugen_formats::vfs::read(p)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
-/// Resolve a file named in a .def relative to the character folder (case-insensitive fallback).
+/// Resolve a file named in a .def relative to the character folder
+/// (case-insensitive, `\` accepted, inside content files too); a bare file
+/// name found anywhere in the folder is the last resort.
 fn resolve(def: &Path, name: &str) -> Option<PathBuf> {
     let dir = def.parent()?;
-    let direct = dir.join(name.replace('\\', "/"));
-    if direct.exists() {
-        return Some(direct);
+    if let Some(p) = rugen_formats::vfs::resolve(dir, name) {
+        return Some(p);
     }
-    let want = Path::new(name)
-        .file_name()?
-        .to_string_lossy()
-        .to_ascii_lowercase();
-    std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .is_some_and(|f| f.to_string_lossy().to_ascii_lowercase() == want)
-        })
+    let base = name.replace('\\', "/");
+    let want = base.rsplit('/').next()?;
+    rugen_formats::vfs::read_dir(dir)
+        .into_iter()
+        .find(|(n, is_dir)| !is_dir && n.eq_ignore_ascii_case(want))
+        .map(|(n, _)| dir.join(n))
 }
 
 /// The character's command file.
@@ -452,5 +451,34 @@ trigger1 = command = "a"
         assert!(m[0].super_move);
         assert_eq!(m[1].notation, "↓↘→ + X");
         assert!(!m[1].super_move);
+    }
+
+    const KFM_LIKE_DEF: &str = "[Files]\ncmd = Sub\\Tiny.CMD\n";
+    const KFM_LIKE_CMD: &str = "[Command]\nname = \"qcf_x\"\ncommand = ~D, DF, F, x\n[Statedef -1]\n[State -1, Fireball]\ntype = ChangeState\ntrigger1 = command = \"qcf_x\"\n";
+
+    #[test]
+    fn move_list_reads_inside_content_files() {
+        use rugen_formats::rgc::{self, Entry, Kind, SectionKind, Writer};
+        let dir = std::env::temp_dir().join(format!("rugen-moves-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = dir.join("Tiny.rgc");
+        let mut w = Writer::create(&p, Kind::Char).unwrap();
+        for (path, body) in [("Tiny.def", KFM_LIKE_DEF), ("sub/tiny.cmd", KFM_LIKE_CMD)] {
+            let mut e = Entry::new(SectionKind::File, path);
+            e.hash = rgc::sha256(body.as_bytes());
+            w.add(e, body.as_bytes(), 3).unwrap();
+        }
+        w.finish([0; 32]).unwrap();
+        let (file, moves) = move_list(&p.join("Tiny.def"));
+        assert_eq!(file, "tiny.cmd");
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].name, "FIREBALL");
+        // a plain folder with different case still works
+        let f = dir.join("folder");
+        std::fs::create_dir_all(f.join("Sub")).unwrap();
+        std::fs::write(f.join("tiny.def"), KFM_LIKE_DEF).unwrap();
+        std::fs::write(f.join("Sub/tiny.cmd"), KFM_LIKE_CMD).unwrap();
+        assert_eq!(move_list(&f.join("tiny.def")).1.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
