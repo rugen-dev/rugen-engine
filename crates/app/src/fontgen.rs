@@ -232,6 +232,11 @@ impl<'a> Generator<'a> {
                 cov[(yy * bw + x) as usize] = true;
             }
         });
+        let (cov, bw) = if c == '0' && self.style.italic == 0 {
+            slash_zero(cov, bw, h)
+        } else {
+            (cov, bw)
+        };
         let shear = (h - 1).checked_div(self.style.italic).unwrap_or(0);
         let w = bw + shear;
         let mut out = vec![false; (w * h) as usize];
@@ -423,6 +428,164 @@ impl<'a> Generator<'a> {
     }
 }
 
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// The font's own pixel size inside a rendered mask (2 for a 10 px pixel
+/// face drawn at 20 px): the GCD of every run of ink and of gaps between.
+fn grid_unit(mask: &[bool], w: u32, h: u32) -> u32 {
+    let mut g = 0;
+    let mut runs = |cells: &mut dyn Iterator<Item = bool>| {
+        let mut prev = None;
+        let mut len = 0;
+        let mut seen_ink = false;
+        for c in cells {
+            if Some(c) == prev {
+                len += 1;
+                continue;
+            }
+            // count interior runs only (leading blanks depend on the bounds)
+            if prev.is_some() && seen_ink {
+                g = gcd(g, len);
+            }
+            seen_ink |= c || prev == Some(true);
+            prev = Some(c);
+            len = 1;
+        }
+        if prev == Some(true) {
+            g = gcd(g, len);
+        }
+    };
+    for y in 0..h {
+        runs(&mut (0..w).map(|x| mask[(y * w + x) as usize]));
+    }
+    for x in 0..w {
+        runs(&mut (0..h).map(|y| mask[(y * w + x) as usize]));
+    }
+    g.max(1)
+}
+
+/// Draw a slash inside the counter of a zero so it never reads as `O`
+/// (works on the font's own pixel grid). A counter too narrow for a slash
+/// gets a new zero, four font pixels wide, slashed. Returns the mask and
+/// its width.
+fn slash_zero(mut mask: Vec<bool>, w: u32, h: u32) -> (Vec<bool>, u32) {
+    let u = grid_unit(&mask, w, h);
+    let ink: Vec<(u32, u32)> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| mask[(y * w + x) as usize])
+        .collect();
+    let (Some(x0), Some(y0)) = (ink.iter().map(|p| p.0).min(), ink.iter().map(|p| p.1).min())
+    else {
+        return (mask, w);
+    };
+    let x1 = ink.iter().map(|p| p.0).max().unwrap_or(x0);
+    let y1 = ink.iter().map(|p| p.1).max().unwrap_or(y0);
+    let (gw, gh) = ((x1 - x0) / u + 1, (y1 - y0) / u + 1);
+    let cell = |gx: u32, gy: u32| mask[((y0 + gy * u) * w + x0 + gx * u) as usize];
+    // outside = blank cells reachable from the border of the bounding box
+    let mut outside = vec![false; (gw * gh) as usize];
+    let mut stack: Vec<(u32, u32)> = Vec::new();
+    for gy in 0..gh {
+        for gx in 0..gw {
+            if (gx == 0 || gy == 0 || gx == gw - 1 || gy == gh - 1) && !cell(gx, gy) {
+                stack.push((gx, gy));
+            }
+        }
+    }
+    while let Some((gx, gy)) = stack.pop() {
+        let i = (gy * gw + gx) as usize;
+        if outside[i] || cell(gx, gy) {
+            continue;
+        }
+        outside[i] = true;
+        if gx > 0 {
+            stack.push((gx - 1, gy));
+        }
+        if gy > 0 {
+            stack.push((gx, gy - 1));
+        }
+        if gx + 1 < gw {
+            stack.push((gx + 1, gy));
+        }
+        if gy + 1 < gh {
+            stack.push((gx, gy + 1));
+        }
+    }
+    let inner: Vec<(u32, u32)> = (0..gh)
+        .flat_map(|gy| (0..gw).map(move |gx| (gx, gy)))
+        .filter(|&(gx, gy)| !cell(gx, gy) && !outside[(gy * gw + gx) as usize])
+        .collect();
+    let (Some(ix0), Some(iy0)) = (
+        inner.iter().map(|p| p.0).min(),
+        inner.iter().map(|p| p.1).min(),
+    ) else {
+        return (mask, w);
+    };
+    let ix1 = inner.iter().map(|p| p.0).max().unwrap_or(ix0);
+    let iy1 = inner.iter().map(|p| p.1).max().unwrap_or(iy0);
+    if ix1 == ix0 {
+        // one font pixel wide: redraw as a 4-wide slashed zero, same height
+        //  .XX.
+        //  X.XX
+        //  XX.X
+        //  X..X
+        //  .XX.
+        let nw = (x0 + 4 * u + 1).max(w);
+        let mut out = vec![false; (nw * h) as usize];
+        let last = gh - 1;
+        for gy in 0..gh {
+            for gx in 0..4u32 {
+                let edge_row = gy == 0 || gy == last;
+                let on = if edge_row {
+                    gx == 1 || gx == 2
+                } else if gx == 0 || gx == 3 {
+                    true
+                } else {
+                    // the slash: top-right inner cell down to bottom-left
+                    let t = gy - 1;
+                    (t == 0 && gx == 2) || (t == 1 && gx == 1)
+                };
+                if !on {
+                    continue;
+                }
+                for dy in 0..u {
+                    for dx in 0..u {
+                        let (x, y) = (x0 + gx * u + dx, y0 + gy * u + dy);
+                        if y < h {
+                            out[(y * nw + x) as usize] = true;
+                        }
+                    }
+                }
+            }
+        }
+        return (out, nw);
+    }
+    let mut fill: Vec<(u32, u32)> = Vec::new();
+    // bottom-left to top-right through the counter
+    let (iw, ih) = (ix1 - ix0, iy1 - iy0);
+    for gy in iy0..=iy1 {
+        let t = iy1 - gy;
+        let gx = ix0 + (t * iw + ih / 2).checked_div(ih).unwrap_or(0);
+        fill.push((gx.min(ix1), gy));
+    }
+    for (gx, gy) in fill {
+        if !inner.contains(&(gx, gy)) {
+            continue;
+        }
+        for dy in 0..u {
+            for dx in 0..u {
+                let (x, y) = (x0 + gx * u + dx, y0 + gy * u + dy);
+                if x < w && y < h {
+                    mask[(y * w + x) as usize] = true;
+                }
+            }
+        }
+    }
+    (mask, w)
+}
+
 /// Symbols every generated font carries beyond ASCII (see [`symbol_rows`]).
 pub const SYMBOLS: &str = "▶◀·⚠✓●←→↑↓↖↗↘↙";
 
@@ -521,9 +684,20 @@ pub struct Role {
     pub style: Style,
 }
 
-/// The four motif fonts: chunky display, menu, small body, HUD numbers.
-/// All OFL pixel fonts rendered at their native pixel size (crisp, no AA).
-pub fn roles() -> [Role; 4] {
+/// System font slot (`font5` in every theme's `system.def`) of
+/// [`CODE_FONT`]: big heavy type for room codes (`font = 5` in a screen).
+// screens name it in TOML (`font = 5`); Rust only checks the slot exists
+#[cfg_attr(not(test), allow(dead_code))]
+pub const CODE_FONT_SLOT: i32 = 5;
+/// The room-code font: Press Start 2P at four times its 8 px grid, no rim
+/// or highlight, slashed zero, `1` / `I`, `5` / `S`, `2` / `Z`, `8` / `B`
+/// drawn apart by the face itself.
+pub const CODE_FONT: &str = "rugen-code";
+
+/// The motif fonts: chunky display, menu, small body, HUD numbers and the
+/// room-code font. All OFL pixel fonts rendered at a whole multiple of their
+/// native pixel size (crisp, no AA); every zero is slashed.
+pub fn roles() -> [Role; 5] {
     let st = |size, italic, rim, highlight| Style {
         size,
         italic,
@@ -553,6 +727,11 @@ pub fn roles() -> [Role; 4] {
             name: "rugen-num",
             file: "PressStart2P-Regular.ttf",
             style: st(16, 0, true, true),
+        },
+        Role {
+            name: CODE_FONT,
+            file: "PressStart2P-Regular.ttf",
+            style: st(32, 0, false, false),
         },
     ]
 }
@@ -659,6 +838,49 @@ pub fn preview(generator: &Generator, bank: usize) -> (u32, u32, Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(g: &Generator, c: char) -> Vec<String> {
+        let (w, h, m) = g.mask(c).unwrap();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| if m[(y * w + x) as usize] { 'X' } else { '.' })
+                    .collect::<String>()
+            })
+            .filter(|r| r.contains('X'))
+            .collect()
+    }
+
+    #[test]
+    fn every_theme_has_the_code_font_slot() {
+        let themes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif/themes");
+        let want = format!("font{CODE_FONT_SLOT} = font/{CODE_FONT}.def");
+        for t in ["ink", "dojo"] {
+            let def = std::fs::read_to_string(themes.join(t).join("system.def")).unwrap();
+            assert!(def.lines().any(|l| l.trim() == want), "{t}: no {want}");
+        }
+        let flat = themes.join("../font").join(format!("{CODE_FONT}.def"));
+        assert!(flat.exists(), "{} missing", flat.display());
+    }
+
+    #[test]
+    fn zero_never_matches_the_letter_o() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif");
+        for role in roles() {
+            let ttf = role_ttf(&motif, &role, None).expect("role TTF in motif/font/src");
+            let g = Generator::new(&ttf, role.style).unwrap();
+            let zero = rows(&g, '0');
+            assert_ne!(zero, rows(&g, 'O'), "{}: 0 looks like O", role.name);
+            // the counter holds ink: a dot (three runs on a row) or a slash
+            // (a row that is not its own mirror image)
+            let marked = zero[1..zero.len() - 1].iter().any(|r| {
+                let r = r.trim_matches('.');
+                let runs = r.split('.').filter(|p| !p.is_empty()).count();
+                runs >= 3 || r.chars().rev().collect::<String>() != r
+            });
+            assert!(marked, "{}: 0 has an empty counter: {zero:?}", role.name);
+        }
+    }
 
     #[test]
     fn caption_font_keeps_letters_apart_and_red_plain() {

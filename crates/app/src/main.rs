@@ -19,6 +19,7 @@
 //!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
+//! rugen fontgen --roles [--motif motif] [--out dir]             regenerate the motif's role fonts
 //! rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
@@ -454,6 +455,18 @@ fn main() -> anyhow::Result<()> {
                     .position(|a| a == name)
                     .and_then(|i| args.get(i + 1).cloned())
             };
+            // the motif's role fonts only (menu, small, title, numbers, code)
+            if args.iter().any(|a| a == "--roles") {
+                let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+                let out = opt("--out").unwrap_or_else(|| format!("{motif}/font"));
+                fontgen::generate_roles_into(
+                    std::path::Path::new(&motif),
+                    std::path::Path::new(&out),
+                    None,
+                )?;
+                println!("wrote the role fonts to {out}/");
+                return Ok(());
+            }
             let ttf = args
                 .get(1)
                 .filter(|a| !a.starts_with("--"))

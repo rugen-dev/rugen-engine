@@ -616,6 +616,7 @@ font1 = font/rugen-small.def
 font2 = font/rugen-menu.def
 font3 = font/rugen-title.def
 font4 = font/rugen-num.def
+font5 = font/rugen-code.def
 
 [Music]
 title.bgm =
