@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
+//!   --open online|profile                                       harness: start on that screen
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -741,7 +742,13 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_default(),
                 in_match: false,
             };
-            game::Shell::new(config, lib, game::Transition::Title, false, harness, None).run()
+            // harness: start on another screen (`--open online|profile`)
+            let start = match opt("--open").as_deref() {
+                Some("online") => game::Transition::Online,
+                Some("profile") => game::Transition::Profile,
+                _ => game::Transition::Title,
+            };
+            game::Shell::new(config, lib, start, false, harness, None).run()
         }
         _ => {
             eprintln!(
