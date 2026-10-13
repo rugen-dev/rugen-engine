@@ -212,6 +212,23 @@ pub struct Renderer {
     timing: FrameTiming,
     /// Swapchain image acquired ahead of drawing ([`Renderer::acquire`]).
     acquired: Option<wgpu::SurfaceTexture>,
+    /// Texture uploads (count, bytes) since the last [`Renderer::take_stats`].
+    uploads: std::cell::Cell<(u64, u64)>,
+    /// Draw calls and quads of the last frame sent to the GPU.
+    last_frame: (usize, usize),
+}
+
+/// Counters for frame profiling (`RUGEN_FRAMESTATS`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderStats {
+    /// Texture uploads since the last call.
+    pub uploads: u64,
+    pub upload_bytes: u64,
+    /// Draw calls / quads of the last frame.
+    pub draws: usize,
+    pub quads: usize,
+    /// Textures alive (they are never freed).
+    pub textures: usize,
 }
 
 /// How frames reach the screen.
@@ -451,6 +468,8 @@ impl Renderer {
             runs: Vec::new(),
             timing: FrameTiming::default(),
             acquired: None,
+            uploads: std::cell::Cell::new((0, 0)),
+            last_frame: (0, 0),
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
@@ -531,6 +550,8 @@ impl Renderer {
             view_formats: &[],
         });
         if w > 0 && h > 0 && data.len() >= (w * h * bpp) as usize {
+            let (n, b) = self.uploads.get();
+            self.uploads.set((n + 1, b + (w * h * bpp) as u64));
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &tex,
@@ -597,6 +618,18 @@ impl Renderer {
         let tex = self.make_texture(256, 1, wgpu::TextureFormat::Rgba8Unorm, 4, &data);
         self.palettes.push(tex.create_view(&Default::default()));
         PaletteId(self.palettes.len() - 1)
+    }
+
+    /// Profiling counters; resets the upload count.
+    pub fn take_stats(&self) -> RenderStats {
+        let (uploads, upload_bytes) = self.uploads.replace((0, 0));
+        RenderStats {
+            uploads,
+            upload_bytes,
+            draws: self.last_frame.0,
+            quads: self.last_frame.1,
+            textures: self.textures.len(),
+        }
     }
 
     pub fn texture_size(&self, id: TextureId) -> (u32, u32) {
@@ -771,6 +804,7 @@ impl Renderer {
 
     /// Build bind groups for this frame's runs, upload camera, build vertex buffer.
     fn prepare(&mut self, cam: &Camera) -> wgpu::Buffer {
+        self.last_frame = (self.runs.len(), self.verts.len() / 6);
         for r in &self.runs {
             let (t, p) = (r.tex, r.pal);
             if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p) {

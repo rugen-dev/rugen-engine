@@ -41,6 +41,7 @@ mod clipboard;
 mod config;
 mod dojogen;
 mod fontgen;
+mod framestats;
 mod game;
 mod gpu;
 mod inkgen;

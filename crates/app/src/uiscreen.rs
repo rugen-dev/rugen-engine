@@ -737,6 +737,14 @@ impl UiScreen {
 
     /// Rebuild the data context the TOML binds to.
     fn refresh_data(&mut self, sys: &SystemData) {
+        let t = crate::framestats::enabled().then(std::time::Instant::now);
+        self.refresh_data_inner(sys);
+        if let Some(t) = t {
+            crate::framestats::add(crate::framestats::Phase::Data, t.elapsed());
+        }
+    }
+
+    fn refresh_data_inner(&mut self, sys: &SystemData) {
         let data = match self.kind {
             UiKind::Select(_) => match &self.roster {
                 Some(r) => {
@@ -1522,7 +1530,9 @@ impl UiScreen {
                 mem: Some(&self.mem),
                 rot: None,
             };
-            self.ui.tick2(nav, nav2, &mut host)
+            crate::framestats::time(crate::framestats::Phase::Layout, || {
+                self.ui.tick2(nav, nav2, &mut host)
+            })
         };
         let mut out = None;
         for e in events {

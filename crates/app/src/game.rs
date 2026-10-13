@@ -267,6 +267,8 @@ pub struct Shell {
     /// after the vsync wait (acquire, simulate, draw, present).
     vsync_paced: bool,
     last_redraw: Instant,
+    /// `RUGEN_FRAMESTATS=1`: per-phase frame timings.
+    frame_stats: crate::framestats::Reporter,
 }
 
 impl Shell {
@@ -365,6 +367,7 @@ impl Shell {
             latency: crate::latency::Probe::new(),
             vsync_paced: false,
             last_redraw: Instant::now(),
+            frame_stats: crate::framestats::Reporter::default(),
         }
     }
 
@@ -1146,6 +1149,9 @@ impl Shell {
     fn tick(&mut self) {
         let start = Instant::now();
         self.tick_inner();
+        if crate::framestats::enabled() {
+            crate::framestats::add(crate::framestats::Phase::Update, start.elapsed());
+        }
         self.dirty = true;
         self.latency
             .ticked(start, self.harness.script.is_some() && self.is_match());
@@ -1517,6 +1523,7 @@ impl Shell {
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
+        let build_start = Instant::now();
         r.begin();
         let (cam, clear) = match (&mut self.screen, self.system.as_mut()) {
             (Screen::Match(_), Some(sys)) if self.pause.is_some() => match self.pause.as_mut() {
@@ -1551,6 +1558,10 @@ impl Shell {
                 [0.0, 0.0, 0.0, self.fade.min(1.0)],
             );
         }
+        let profiling = crate::framestats::enabled();
+        if profiling {
+            crate::framestats::add(crate::framestats::Phase::Build, build_start.elapsed());
+        }
         if self.shot_armed
             && let Some(path) = self.harness.shot.take()
         {
@@ -1563,7 +1574,23 @@ impl Shell {
             self.quit = true;
             return;
         }
-        match r.end(&cam, clear) {
+        let submit_start = Instant::now();
+        let ended = r.end(&cam, clear);
+        if profiling {
+            crate::framestats::add(crate::framestats::Phase::Submit, submit_start.elapsed());
+            let name = match &self.screen {
+                Screen::Blank => "blank".to_string(),
+                Screen::Title(_) => "title(legacy)".into(),
+                Screen::Options(_) => "options(legacy)".into(),
+                Screen::Ui(u) => format!("{:?}", u.kind).to_lowercase(),
+                Screen::Online(_) => "online".into(),
+                Screen::Select(_) => "select(legacy)".into(),
+                Screen::Versus(_) => "versus(legacy)".into(),
+                Screen::Match(_) => "match".into(),
+            };
+            self.frame_stats.frame(&name, r);
+        }
+        match ended {
             Ok(()) => {
                 let t = r.timing();
                 if let Some(at) = t.presented {
