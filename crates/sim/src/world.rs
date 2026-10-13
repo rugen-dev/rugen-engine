@@ -320,12 +320,20 @@ impl Default for Limits {
     }
 }
 
+/// Smallest share of the screen height a fighter may shrink to on an arena
+/// stage when the camera pulls back (a tenth: 72 px in a 720 px window).
+pub const ARENA_MIN_FIGHTER: f32 = 0.1;
+
 #[derive(Clone)]
 pub struct World {
     pub data: Vec<Arc<CharData>>,
     /// FIGHTER SIZE zoom per `data` slot (1 = the art's own size), fixed when
     /// the player is added (see [`crate::scale`]).
     pub data_zoom: Vec<f32>,
+    /// Standing height per `data` slot in stage units, FIGHTER SIZE applied
+    /// (0 = unknown); the arena camera keeps fighters at least
+    /// [`ARENA_MIN_FIGHTER`] of the screen tall.
+    pub data_height: Vec<f32>,
     /// FIGHTER SIZE for players added from now on; `None` by default (tests, tools).
     pub fighter_size: crate::scale::FighterSize,
     pub fx: Option<Arc<FxData>>,
@@ -379,6 +387,7 @@ impl World {
         Self {
             data: Vec::new(),
             data_zoom: Vec::new(),
+            data_height: Vec::new(),
             fighter_size: crate::scale::FighterSize::None,
             fx: None,
             players: Vec::new(),
@@ -481,6 +490,10 @@ impl World {
         self.data.push(data.clone());
         self.data_zoom.resize(self.data.len() - 1, 1.0);
         self.data_zoom.push(zoom);
+        let h = crate::scale::standing_height(&data)
+            .map_or(0.0, |h| h * zoom * self.stage.width / 320.0);
+        self.data_height.resize(self.data.len() - 1, 0.0);
+        self.data_height.push(h);
         let x = x / self.data_scale(self.data.len() - 1);
         let mut p = Player::new(
             self.data.len() - 1,
@@ -3477,7 +3490,30 @@ impl World {
     /// MUGEN camera: the view only moves when a player crosses the tension
     /// zone near a screen edge; it zooms out (down to `zoomout`) when players
     /// drift apart and back in (up to `zoomin`) when they close.
+    /// The camera's zoom-out limit: the stage's, raised on arena stages
+    /// (no walls or a blast zone) so the shortest fighter stays at least
+    /// [`ARENA_MIN_FIGHTER`] of the screen tall, never above `zoom_in` or 1.
+    pub fn zoom_out_limit(&self) -> f32 {
+        let st = &self.stage;
+        if st.arena.walls && st.arena.blastzone.is_none() {
+            return st.zoom_out;
+        }
+        let shortest = self
+            .players
+            .iter()
+            .filter(|p| !p.removed && p.helper_index == 0 && p.player_type)
+            .filter_map(|p| self.data_height.get(p.data).copied())
+            .filter(|h| *h > 0.0)
+            .fold(f32::MAX, f32::min);
+        if shortest == f32::MAX {
+            return st.zoom_out;
+        }
+        let floor = ARENA_MIN_FIGHTER * st.height / shortest;
+        st.zoom_out.max(floor.min(st.zoom_in).min(1.0))
+    }
+
     pub(crate) fn update_camera(&mut self) {
+        let zoom_out = self.zoom_out_limit();
         let st = &self.stage;
         let (mut leftest, mut rightest, mut highest, mut lowest) =
             (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
@@ -3518,10 +3554,10 @@ impl World {
             tl = (old_left - diff).min((leftest - tension).max(min_left));
         }
         // too wide for the zoom-out limit: pull the edges back in
-        if half * 2.0 / (tr - tl) < st.zoom_out {
+        if half * 2.0 / (tr - tl) < zoom_out {
             let r_left = (tl + tension - leftest).max(0.0);
             let r_right = (rightest - (tr - tension)).max(0.0);
-            let mut diff = 2.0 * ((tr - tl) / 2.0 - half / st.zoom_out);
+            let mut diff = 2.0 * ((tr - tl) / 2.0 - half / zoom_out);
             if r_left > r_right {
                 let d2 = (r_left - r_right).min(diff);
                 tr -= d2;
@@ -3550,7 +3586,7 @@ impl World {
             tr += dr;
         }
         let target_x = (tl + tr) / 2.0;
-        let mut target_scale = (half * 2.0 / (tr - tl)).clamp(st.zoom_out, max_scale);
+        let mut target_scale = (half * 2.0 / (tr - tl)).clamp(zoom_out, max_scale);
         // vertical: zoom out when the highest player would leave the top even
         // with the camera raised to boundhigh, or the lowest one falls below the floor
         let vmargin = 40.0;
@@ -3562,7 +3598,7 @@ impl World {
         if lowest + vmargin > bottom_room {
             target_scale = target_scale.min(bottom_room / (lowest + vmargin));
         }
-        let target_scale = target_scale.max(st.zoom_out);
+        let target_scale = target_scale.max(zoom_out);
         // smooth zoom, immediate pan
         let new_scale = if (target_scale - scale).abs() < 0.0005 {
             target_scale
@@ -3572,7 +3608,7 @@ impl World {
         // easing must never leave a player off screen: a launched opponent
         // pulls the camera back at once
         let span = rightest - leftest + st.screen_left + st.screen_right;
-        let new_scale = new_scale.min(half * 2.0 / span.max(1.0)).max(st.zoom_out);
+        let new_scale = new_scale.min(half * 2.0 / span.max(1.0)).max(zoom_out);
         let hw = half / new_scale;
         self.cam_zoom = new_scale;
         self.cam_x = target_x.clamp(min_left + hw, (max_right - hw).max(min_left + hw));
@@ -4405,6 +4441,65 @@ mod tests {
             w.cam_zoom
         );
         assert!(w.cam_y < -20.0, "camera raised, y {}", w.cam_y);
+    }
+
+    /// Arena stages pull far back; the camera stops where the shortest
+    /// fighter would drop below a tenth of the screen height.
+    #[test]
+    fn arena_camera_keeps_fighters_a_minimum_size() {
+        use crate::scale::FighterSize;
+        let Some(d) = kfm() else { return };
+        let arena = |walls: bool| {
+            let mut st = Stage {
+                zoom_out: 0.25,
+                zoom_in: 1.15,
+                bound_left: -760.0,
+                bound_right: 760.0,
+                left_bound: -2000.0,
+                right_bound: 2000.0,
+                ..Default::default()
+            };
+            st.arena.walls = walls;
+            let mut w = World::new(st, 1);
+            w.fighter_size = FighterSize::Chibi;
+            w.add_player(d.clone(), 0, 1);
+            w.add_player(d.clone(), 1, 2);
+            w
+        };
+        let mut w = arena(false);
+        // chibi: kfm 105 / 1.9 = 55 units, so 24 / 55 = 0.43
+        let h = w.data_height[0];
+        assert!((h - 105.0 / 1.9).abs() < 2.0, "{h}");
+        let floor = ARENA_MIN_FIGHTER * w.stage.height / h;
+        assert!((w.zoom_out_limit() - floor).abs() < 1e-6);
+        assert!(floor > 0.4 && floor < 0.47, "{floor}");
+        // a walled stage keeps its own limit
+        assert_eq!(arena(true).zoom_out_limit(), 0.25);
+        let mut twin = w.clone();
+        let (left, right) = (
+            Buttons {
+                l: true,
+                ..Default::default()
+            },
+            Buttons {
+                r: true,
+                ..Default::default()
+            },
+        );
+        let mut lowest = f32::MAX;
+        for _ in 0..600 {
+            w.step(&[left, right]);
+            twin.step(&[left, right]);
+            lowest = lowest.min(w.cam_zoom);
+        }
+        let apart = w.rel_pos(0, 1)[0].abs() * w.local_scale(0);
+        assert!(apart > w.stage.width / floor, "walked apart: {apart}");
+        assert!(lowest >= floor - 1e-4, "zoom {lowest} below {floor}");
+        assert_eq!(
+            w.cam_zoom.to_bits(),
+            twin.cam_zoom.to_bits(),
+            "deterministic"
+        );
     }
 
     #[test]
