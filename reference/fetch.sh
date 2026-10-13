@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # Fetch reference material into reference/. Everything here is gitignored.
 # Re-run safely; skips what exists.
+#   reference/fetch.sh          everything
+#   reference/fetch.sh mugen    only MUGEN 1.1b1 (what the packages need)
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p dl
+command -v sha1sum >/dev/null || sha1sum() { shasum -a 1 "$@"; }
 
 # 1. Official MUGEN 1.1b1 (closed-source freeware, Elecbyte, 27 Jul 2013)
 if [ ! -d mugen-1.1b1 ]; then
   curl -sL -o dl/mugen-1.1b1.zip https://archive.org/download/mugen-1.1b1/mugen-1.1b1.zip
   echo "8ab8e69877aea6f0cad1b9fa2970ba509638745f  dl/mugen-1.1b1.zip" | sha1sum -c -
-  mkdir -p mugen-1.1b1 && unzip -qo dl/mugen-1.1b1.zip -d mugen-1.1b1
+  mkdir -p mugen-1.1b1
+  if command -v unzip >/dev/null; then unzip -qo dl/mugen-1.1b1.zip -d mugen-1.1b1; else 7z x -y -omugen-1.1b1 dl/mugen-1.1b1.zip >/dev/null; fi
   mv mugen-1.1b1/mugen-1.1b1/* mugen-1.1b1/ && rmdir mugen-1.1b1/mugen-1.1b1
 fi
+[ "${1:-}" = mugen ] && exit 0
 
 # 2. Official 1.1b1 HTML docs
 if [ ! -d mugen-docs ]; then

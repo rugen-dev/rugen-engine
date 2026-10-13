@@ -12,6 +12,7 @@
 # with Elecbyte's readme (license) and a notice. common1.cns must be exactly
 # the 1.1b1 file: it is part of every fighter's online fingerprint.
 set -euo pipefail
+command -v sha256sum >/dev/null || sha256sum() { shasum -a 256 "$@"; }
 cd "$(git rev-parse --show-toplevel)"
 src=reference/mugen-1.1b1
 out=dist/pkgdata

@@ -41,6 +41,13 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: reference/mugen-1.1b1
+          key: mugen-1.1b1
+      - name: MUGEN base data
+        shell: bash
+        run: reference/fetch.sh mugen && scripts/stage-data.sh
       - name: Build and package
         shell: bash
         run: |
@@ -53,6 +60,7 @@ jobs:
             cp -r motif $d/
             cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
             cp target/$target/release/rugen.exe $d/
+            cp -r dist/pkgdata $d/data
             (cd $d && 7z a ../rugen-$v-windows-$arch.zip . > /dev/null)
           done
       - uses: actions/upload-artifact@v4
@@ -61,7 +69,8 @@ jobs:
           path: rugen-*.zip
 
   linux:
-    runs-on: ubuntu-latest
+    # the oldest runner keeps the binary on an old glibc (2.34+ supported)
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - name: Official server key is set
@@ -73,8 +82,20 @@ jobs:
           ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: reference/mugen-1.1b1
+          key: mugen-1.1b1
+      - name: MUGEN base data
+        shell: bash
+        run: reference/fetch.sh mugen && scripts/stage-data.sh
       - run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
       - run: cargo build --release -p rugen --bin rugen
+      - name: Runs on glibc 2.34+
+        run: |
+          need=$(objdump -T target/release/rugen | grep -v ' w ' | grep -oE 'GLIBC_[0-9.]+' | sort -V | tail -1)
+          echo "needs $need"
+          [ "$(printf '%s\nGLIBC_2.34\n' "$need" | sort -V | tail -1)" = GLIBC_2.34 ]
       - name: Portable tarball
         run: |
           v=${TAG#v}
@@ -83,6 +104,7 @@ jobs:
           cp -r motif $d/
           cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
           cp target/release/rugen $d/
+          cp -r dist/pkgdata $d/data
           tar -czf $d.tar.gz $d
       - uses: taiki-e/install-action@v2
         with:
@@ -115,6 +137,13 @@ jobs:
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: reference/mugen-1.1b1
+          key: mugen-1.1b1
+      - name: MUGEN base data
+        shell: bash
+        run: reference/fetch.sh mugen && scripts/stage-data.sh
       - name: Build and package
         run: |
           v=${TAG#v}
@@ -126,6 +155,7 @@ jobs:
             cp -r motif $d/
             cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
             cp target/$target/release/rugen $d/
+            cp -r dist/pkgdata $d/data
             tar -czf $d.tar.gz $d
           done
       - uses: actions/upload-artifact@v4
