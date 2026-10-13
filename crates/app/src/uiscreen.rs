@@ -1723,6 +1723,10 @@ impl Painter for Host<'_> {
             .map_or(12.0 * scale, |f| f.font.size[1] as f32 * scale)
     }
 
+    fn text_center_dy(&mut self, font: i32, scale: f32) -> f32 {
+        self.fonts.get(&font).map_or(0.0, |f| f.center_dy(scale))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_text(
         &mut self,

@@ -192,16 +192,32 @@ pub struct FontGpu {
     /// Window pixels per drawing unit: upright glyphs start on whole window
     /// pixels so a fractionally scaled pixel font keeps even pixel columns.
     pub snap: Option<[f32; 2]>,
+    /// Font pixels the ink band sits below the cell centre when a label is
+    /// centred on `size[1]` (see [`FontGpu::center_dy`]).
+    ink_dy: f32,
 }
 
 impl FontGpu {
     pub fn new(font: Font) -> Self {
+        // draw_xf puts the cell top at baseline - h + 1 + offset; a centred
+        // label puts the baseline h / 2 under the centre
+        let h = font.size[1] as f32;
+        let ink_dy = font.ink_rows().map_or(0.0, |(t, b)| {
+            1.0 + font.offset[1] as f32 - h / 2.0 + (t as f32 + b as f32 + 1.0) / 2.0
+        });
         Self {
             font,
             glyphs: HashMap::new(),
             banks: Vec::new(),
             snap: None,
+            ink_dy,
         }
+    }
+
+    /// How far below a box's centre the visible text lands when centred on
+    /// the line height, at `scale`: subtract it to centre the ink.
+    pub fn center_dy(&self, scale: f32) -> f32 {
+        self.ink_dy * scale
     }
 
     fn init(&mut self, r: &mut Renderer) {

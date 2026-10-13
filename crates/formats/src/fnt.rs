@@ -55,6 +55,25 @@ impl Font {
         w
     }
 
+    /// First and last glyph rows holding ink over capitals and digits: the
+    /// visible band a label centres on (cells often pad above or below it).
+    pub fn ink_rows(&self) -> Option<(u16, u16)> {
+        let mut band: Option<(u16, u16)> = None;
+        for c in ('A'..='Z').chain('0'..='9') {
+            let Some(g) = self.glyphs.get(&c) else {
+                continue;
+            };
+            let w = g.width as usize;
+            for y in 0..g.height {
+                let row = &g.pixels[y as usize * w..(y as usize + 1) * w];
+                if row.iter().any(|&px| px != 0) {
+                    band = Some(band.map_or((y, y), |(t, b)| (t.min(y), b.max(y))));
+                }
+            }
+        }
+        band
+    }
+
     pub fn char_width(&self, c: char) -> i32 {
         match self.glyphs.get(&c) {
             Some(g) => g.width as i32,

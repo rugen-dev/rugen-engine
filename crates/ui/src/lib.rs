@@ -548,6 +548,9 @@ impl Painter for CutPainter<'_> {
     fn text_height(&mut self, font: i32, scale: f32) -> f32 {
         self.inner.text_height(font, scale)
     }
+    fn text_center_dy(&mut self, font: i32, scale: f32) -> f32 {
+        self.inner.text_center_dy(font, scale)
+    }
     fn draw_text(
         &mut self,
         font: i32,
@@ -601,6 +604,11 @@ pub trait Painter {
     fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32;
     /// Height of one text line for the font.
     fn text_height(&mut self, font: i32, scale: f32) -> f32;
+    /// How far below the centre the visible glyphs land when a line is
+    /// centred on [`text_height`](Self::text_height); centred labels move up by it.
+    fn text_center_dy(&mut self, _font: i32, _scale: f32) -> f32 {
+        0.0
+    }
     /// `align`: -1 right, 0 centre, 1 left; `(x, y)` is the text's bottom line / anchor.
     #[allow(clippy::too_many_arguments)]
     fn draw_text(
@@ -2248,11 +2256,12 @@ impl Ui {
                 None,
             );
             let th = p.text_height(font, scale);
+            let ink = p.text_center_dy(font, scale);
             p.draw_text(
                 font,
                 &text,
                 bg.x + bg.w / 2.0,
-                bg.y + (bg.h + th) / 2.0,
+                bg.y + (bg.h + th) / 2.0 - ink,
                 0,
                 0,
                 scale,
@@ -2570,7 +2579,8 @@ impl Ui {
                 _ => (1, rect.x + inset),
             };
             let th = p.text_height(font, scale);
-            let y = rect.y + (rect.h + th) / 2.0 + n.text_dy.unwrap_or(0.0);
+            let ink = p.text_center_dy(font, scale);
+            let y = rect.y + (rect.h + th) / 2.0 - ink + n.text_dy.unwrap_or(0.0);
             let text_clip = if (n.w.is_some() && n.kind == Kind::Text) || n.kind == Kind::Input {
                 Some(clip.map_or(rect, |c| c.intersect(&rect)))
             } else {
@@ -2580,7 +2590,7 @@ impl Ui {
                 let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
                 let step = th + n.line_gap.unwrap_or(th * 0.4);
                 let total = step * lines.len() as f32 - (step - th);
-                let top = rect.y + ((rect.h - total) / 2.0).max(0.0);
+                let top = rect.y + ((rect.h - total) / 2.0).max(0.0) - ink;
                 for (i, line) in lines.iter().enumerate() {
                     p.draw_text(
                         font,
@@ -2601,7 +2611,7 @@ impl Ui {
                 let lh = n.line_h.unwrap_or(th);
                 let top = rect.y + (rect.h - lh * lines.len() as f32) / 2.0;
                 for (i, line) in lines.iter().enumerate() {
-                    let ly = top + lh * i as f32 + (lh + th) / 2.0;
+                    let ly = top + lh * i as f32 + (lh + th) / 2.0 - ink;
                     p.draw_text(
                         font,
                         line,
