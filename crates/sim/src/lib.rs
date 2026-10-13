@@ -12,6 +12,7 @@
 // Transcendentals and mul_add are banned through clippy.toml `disallowed-methods`.
 
 pub mod anim;
+pub mod arena_ai;
 pub mod chardata;
 pub mod collision;
 pub mod command;

@@ -350,6 +350,9 @@ pub struct World {
     pub bgpalfx: PalFx,
     /// Engine movement options (config merged with the stage's `[Arena]`).
     pub movement: Movement,
+    /// Arena AI plugin for computer fighters on `[Arena]` stages (a match
+    /// rule, see [`crate::arena_ai`]).
+    pub arena_ai: bool,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -392,6 +395,7 @@ impl World {
             allpalfx: PalFx::default(),
             bgpalfx: PalFx::default(),
             movement: Movement::default(),
+            arena_ai: false,
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -889,7 +893,7 @@ impl World {
                 let mut ai = self.players[i].ai;
                 let b = ai.update(level, active, &mut self.rng);
                 self.players[i].ai = ai;
-                b
+                crate::arena_ai::filter(self, i, b)
             } else {
                 inputs.get(i).copied().unwrap_or_default()
             };
@@ -948,6 +952,7 @@ impl World {
             }
         }
         self.check_blastzone();
+        crate::arena_ai::observe(self);
 
         // 7. tick: animate, hit bookkeeping, get-hit state entry
         for i in 0..self.players.len() {
@@ -2061,6 +2066,9 @@ impl World {
                 let v = self.eval(i, value).to_i();
                 let a = anim.as_ref().map(|c| self.eval(i, c).to_i());
                 let c = ctrl.as_ref().map(|c| self.eval(i, c).to_b());
+                if !crate::arena_ai::allow_change(self, i, v) {
+                    return false;
+                }
                 self.change_state(i, v, a, c);
                 return true;
             }
