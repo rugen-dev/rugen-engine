@@ -35,6 +35,12 @@ pub const THUMB_CAP: usize = 64;
 const THUMB_UPLOADS: usize = 4;
 /// Thumbnails waiting on the decoder at most.
 const THUMB_QUEUE: usize = 12;
+/// Rendered strip thumbnail ("snapshot"): the stage at its starting camera,
+/// drawn once offscreen and kept in the stage's cache directory (which is
+/// keyed by its content, so a changed stage gets a new one).
+const SNAP_FILE: &str = "strip_preview.png";
+const SNAP_W: u32 = 344;
+const SNAP_H: u32 = 152;
 /// Ticks the cursor rests before the preview loads (fast scrolling loads nothing).
 const PREVIEW_SETTLE: u32 = 8;
 /// Held ←/→ on the strip: sooner than the menus' repeat, and faster once
@@ -76,9 +82,19 @@ impl StageItem {
             .unwrap_or_default()
     }
 
+    /// The strip thumbnail: the rendered snapshot once there is one, else
+    /// the first background sprite the import extracted.
     pub fn thumb(&self) -> Option<PathBuf> {
+        if let Some(p) = self.snapshot().filter(|p| p.is_file()) {
+            return Some(p);
+        }
         let t = self.manifest.as_ref()?.thumb.as_ref()?;
         Some(self.dir.as_ref()?.join(&t.file))
+    }
+
+    /// Where its rendered snapshot lives (see [`SNAP_FILE`]).
+    fn snapshot(&self) -> Option<PathBuf> {
+        Some(self.dir.as_ref()?.join(SNAP_FILE))
     }
 
     /// The stage def has an `[Arena]` section (blast zones, stocks, ring-out).
@@ -228,6 +244,11 @@ pub struct StageSel {
     preview_rx: Receiver<Loaded>,
     loading: Option<usize>,
     settle: u32,
+    // snapshots: one stage loads at a time, rendered offscreen when it arrives
+    snap_tx: Sender<Loaded>,
+    snap_rx: Receiver<Loaded>,
+    snap_loading: Option<usize>,
+    snap_tried: HashSet<usize>,
     seed: u32,
     ticks: u64,
 }
@@ -300,6 +321,7 @@ impl StageSel {
             })
             .ok();
         let (preview_tx, preview_rx) = channel();
+        let (snap_tx, snap_rx) = channel();
         let mut s = Self {
             plan: Some(plan),
             items,
@@ -320,6 +342,10 @@ impl StageSel {
             preview_rx,
             loading: None,
             settle: 0,
+            snap_tx,
+            snap_rx,
+            snap_loading: None,
+            snap_tried: HashSet::new(),
             seed: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0x2545_f491, |d| d.subsec_nanos() | 1),
@@ -633,6 +659,93 @@ impl StageSel {
             }
         }
         self.upkeep_preview(r);
+        self.upkeep_snapshots(r, textures, &wanted);
+    }
+
+    /// Visible stages without a rendered snapshot get one, one at a time
+    /// (nearest the cursor first): loaded off the main thread, drawn into a
+    /// small offscreen image, saved next to the stage's cache, then shown.
+    fn upkeep_snapshots(
+        &mut self,
+        r: &mut Renderer,
+        textures: &mut HashMap<String, crate::uiscreen::Cached>,
+        wanted: &[usize],
+    ) {
+        while let Ok((_, i, res)) = self.snap_rx.try_recv() {
+            self.snap_loading = None;
+            let Some(path) = self.items.get(i).and_then(StageItem::snapshot) else {
+                continue;
+            };
+            match res {
+                Ok((mut visual, size, start_x, _)) => {
+                    r.begin();
+                    let dst = Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: SNAP_W as f32,
+                        h: SNAP_H as f32,
+                    };
+                    draw_stage(r, &mut visual, size, start_x, dst);
+                    let cam = rugen_render::Camera {
+                        screen: [dst.w, dst.h],
+                        center: [dst.w / 2.0, dst.h / 2.0],
+                        zoom: 1.0,
+                    };
+                    let rgba = r.end_to_image(&cam, [0.0, 0.0, 0.0, 1.0], SNAP_W, SNAP_H);
+                    visual.free_gpu(r);
+                    match crate::play::write_png(&path, SNAP_W, SNAP_H, &rgba) {
+                        Ok(()) => {
+                            // show the new one: drop the old texture, decode again
+                            if let Some(tex) = self.thumbs.remove(&i) {
+                                textures.remove(&thumb_key(i));
+                                r.free_texture(tex);
+                            }
+                            self.thumb_failed.remove(&i);
+                            self.thumb_decoded.retain(|(k, _)| *k != i);
+                        }
+                        Err(e) => log::debug!("stage snapshot {}: {e:#}", path.display()),
+                    }
+                }
+                Err(e) => log::debug!("stage snapshot: {e:#}"),
+            }
+        }
+        if self.snap_loading.is_some() {
+            return;
+        }
+        let mut todo: Vec<usize> = wanted
+            .iter()
+            .copied()
+            .filter(|i| {
+                !self.snap_tried.contains(i)
+                    && self.items[*i].snapshot().is_some_and(|p| !p.is_file())
+            })
+            .collect();
+        todo.sort_by_key(|&i| (i as i64 + 1 - self.sel as i64).abs());
+        let Some(&i) = todo.first() else {
+            return;
+        };
+        self.snap_tried.insert(i);
+        let Some(def) = self.items[i].def() else {
+            return;
+        };
+        self.snap_loading = Some(i);
+        let tx = self.snap_tx.clone();
+        std::thread::Builder::new()
+            .name("stage-snapshot".into())
+            .spawn(move || {
+                let res = (|| {
+                    let visual = StageVisual::load(&def)?;
+                    let stage = rugen_sim::Stage::from_def(&rugen_formats::def::Def::open(&def)?);
+                    Ok((
+                        visual,
+                        [stage.width, stage.height],
+                        stage.start_x,
+                        Value::Null,
+                    ))
+                })();
+                let _ = tx.send((0, i, res));
+            })
+            .ok();
     }
 
     fn upkeep_preview(&mut self, r: &mut Renderer) {
@@ -716,33 +829,9 @@ impl StageSel {
 
     /// The live preview: the stage at its starting camera, fitted to `dst`'s height.
     pub fn draw_preview(&mut self, r: &mut Renderer, dst: Rect) {
-        let Some(p) = self.preview.as_mut() else {
-            return;
-        };
-        if p.size[1] <= 0.0 || dst.h <= 0.0 {
-            return;
+        if let Some(p) = self.preview.as_mut() {
+            draw_stage(r, &mut p.visual, p.size, p.start_x, dst);
         }
-        let k = dst.h / p.size[1];
-        let screen_w = dst.w / k;
-        let cam = [p.start_x, 0.0];
-        let view = View {
-            src: [cam[0] - screen_w / 2.0, 0.0],
-            k,
-            dst: [dst.x, dst.y, dst.w, dst.h],
-        };
-        let scale = p.size[0] / p.visual.localcoord[0];
-        r.rect(
-            [dst.x, dst.y],
-            [dst.x + dst.w, dst.y + dst.h],
-            [
-                p.visual.clear_color[0] as f32,
-                p.visual.clear_color[1] as f32,
-                p.visual.clear_color[2] as f32,
-                1.0,
-            ],
-        );
-        p.visual.draw_view(r, 0, cam, scale, view);
-        p.visual.draw_view(r, 1, cam, scale, view);
     }
 
     /// The data context `stages.toml` binds to.
@@ -857,6 +946,31 @@ impl StageSel {
     }
 }
 
+/// A stage at its starting camera, fitted to `dst`'s height (the live
+/// preview and the strip snapshots). `size` is the stage size in its units.
+fn draw_stage(r: &mut Renderer, visual: &mut StageVisual, size: [f32; 2], start_x: f32, dst: Rect) {
+    if size[1] <= 0.0 || dst.h <= 0.0 {
+        return;
+    }
+    let k = dst.h / size[1];
+    let screen_w = dst.w / k;
+    let cam = [start_x, 0.0];
+    let view = View {
+        src: [cam[0] - screen_w / 2.0, 0.0],
+        k,
+        dst: [dst.x, dst.y, dst.w, dst.h],
+    };
+    let scale = size[0] / visual.localcoord[0];
+    let c = visual.clear_color;
+    r.rect(
+        [dst.x, dst.y],
+        [dst.x + dst.w, dst.y + dst.h],
+        [c[0] as f32, c[1] as f32, c[2] as f32, 1.0],
+    );
+    visual.draw_view(r, 0, cam, scale, view);
+    visual.draw_view(r, 1, cam, scale, view);
+}
+
 /// Texture key of stage `i`'s thumbnail.
 fn thumb_key(i: usize) -> String {
     format!("stagethumb:{i}")
@@ -956,6 +1070,13 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // a rendered snapshot, once written, is the strip thumbnail
+        let item = &s.items[0];
+        let snap = item.snapshot().expect("prepared stages have a cache dir");
+        assert_ne!(item.thumb().as_ref(), Some(&snap));
+        std::fs::write(&snap, b"png").unwrap();
+        assert_eq!(item.thumb(), Some(snap.clone()));
+        std::fs::remove_file(&snap).unwrap();
         // the mouse: hover selects, a click on the selection picks, the wheel steps
         let mut s = StageSel::new(
             StagePlan::online("kfm".into(), false, ["A".into(), "B".into()]),
