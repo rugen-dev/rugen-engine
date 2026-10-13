@@ -152,7 +152,9 @@ fn main() -> anyhow::Result<()> {
             let frames = opt("--frames");
             let ai = opt("--ai");
             let record = opt("--record");
+            let keys = opt("--keys");
             let taken = [
+                keys.clone(),
                 stage.clone(),
                 shot.clone(),
                 root.clone(),
@@ -305,7 +307,7 @@ fn main() -> anyhow::Result<()> {
                 script: script.as_deref().map(play::parse_script),
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
-                keys: Vec::new(),
+                keys: keys.as_deref().map(game::parse_keys).unwrap_or_default(),
                 in_match: false,
             };
             let shell = game::Shell::new(
