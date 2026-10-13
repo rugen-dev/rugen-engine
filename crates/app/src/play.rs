@@ -209,6 +209,8 @@ const EARLY_LINGER: u32 = 300;
 
 pub struct Match {
     pub world: World,
+    /// Draw the fight without its HUD (the pause menu's frozen backdrop).
+    pub hud_hidden: bool,
     /// Online menu over the running match (see [`FleeMenu`]).
     pub flee_menu: Option<FleeMenu>,
     /// Online: the match ended early, and ticks since.
@@ -376,6 +378,7 @@ impl Match {
             step: false,
             zoom: 1.0,
             show_boxes: false,
+            hud_hidden: false,
             debug: true,
             banner: None,
             stage_visual: visual,
@@ -1558,7 +1561,8 @@ impl Match {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        if let Some(lb) = lifebar.as_mut() {
+        if self.hud_hidden {
+        } else if let Some(lb) = lifebar.as_mut() {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
             // never wider than the window: narrow windows shrink the HUD instead of cutting it

@@ -408,7 +408,10 @@ impl Shell {
             let r = &mut g.renderer;
             m.refresh_gpu(r);
             r.begin();
+            // the menu covers the fight, not the bars: freeze it without them
+            m.hud_hidden = true;
             let (cam, clear) = m.render(r);
+            m.hud_hidden = false;
             let (w, h) = r.size();
             (w, h, r.end_to_image(&cam, clear, w, h))
         });
@@ -699,6 +702,18 @@ impl Shell {
     fn transition(&mut self, t: Transition) {
         // every new screen fades in from black
         self.fade = 1.0;
+        // BUTTON CONFIG opened from the pause menu: leaving it goes straight
+        // back to the paused match, not through the options
+        let t = match t {
+            Transition::Options
+                if self.parked.is_some()
+                    && matches!(&self.screen, Screen::Ui(u) if u.kind == UiKind::Controls) =>
+            {
+                self.reopen_tab = None;
+                Transition::Title
+            }
+            t => t,
+        };
         match t {
             Transition::Quit => {
                 log::info!("quit requested");
@@ -1326,19 +1341,21 @@ impl Shell {
                     resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
-                    if resume.is_none() && (pressed[0].s || pressed[1].s || pad_pause.is_some()) {
+                    // Start / Enter accept in the menu (Enter is P2 Start);
+                    // Esc and a pad's Select / Back resume
+                    if resume.is_none() && pad_pause.is_some() {
                         resume = Some(Transition::Resume);
                     }
                 }
                 advanced = false;
                 match resume {
-                    Some(Transition::Options) => {
+                    Some(t @ (Transition::Options | Transition::Controls(_))) => {
                         if let Screen::Match(m) = std::mem::replace(&mut self.screen, Screen::Blank)
                         {
                             self.parked = Some(m);
                         }
                         self.pause = None;
-                        next = Some(Transition::Options);
+                        next = Some(t);
                     }
                     other => next = other,
                 }

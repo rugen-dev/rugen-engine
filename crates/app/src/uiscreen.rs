@@ -299,8 +299,98 @@ struct Featured {
     def: PathBuf,
 }
 
-/// Rows of the pause move list shown per page.
-const MOVES_PER_PAGE: usize = 9;
+/// Pause move list layout (virtual pixels): two columns this tall per page,
+/// a group label row and a move row.
+const MOVE_COL_H: f32 = 494.0;
+const MOVE_GROUP_H: f32 = 30.0;
+const MOVE_ROW_H: f32 = 38.0;
+/// A move whose name and notation do not fit one line: notation underneath.
+const MOVE_TALL_H: f32 = 62.0;
+const MOVE_COL_W: f32 = 358.0;
+
+/// The move list as pages of two columns of rows: group labels (repeated
+/// at the top of a column that continues a group) and moves. `width(font,
+/// text)` measures text (font 1 = small, 2 = caption).
+fn move_pages(
+    moves: &[crate::screeninfo::Move],
+    width: &dyn Fn(i32, &str) -> f32,
+) -> Vec<[Vec<Value>; 2]> {
+    // combos are the optional tail: left out when they alone need a page
+    let all = layout_moves(moves, width);
+    let core: Vec<crate::screeninfo::Move> = moves
+        .iter()
+        .filter(|m| m.group != crate::screeninfo::Group::Combo)
+        .cloned()
+        .collect();
+    if core.len() < moves.len() && !core.is_empty() {
+        let without = layout_moves(&core, width);
+        if without.len() < all.len() {
+            return without;
+        }
+    }
+    all
+}
+
+fn layout_moves(
+    moves: &[crate::screeninfo::Move],
+    width: &dyn Fn(i32, &str) -> f32,
+) -> Vec<[Vec<Value>; 2]> {
+    use crate::screeninfo::Part;
+    let mut cols: Vec<Vec<Value>> = vec![Vec::new()];
+    let mut used = 0.0f32;
+    let mut group = None;
+    for m in moves {
+        let new_group = group != Some(m.group);
+        // the row as pause.toml draws it: name, cost tag; notation pieces
+        // (key caps padded 7 px a side) 4 px apart
+        let cost_w = m.cost.as_deref().map_or(0.0, |c| width(1, c) + 10.0 + 8.0);
+        let notation_w: f32 = m
+            .parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => width(2, t),
+                Part::Button(b) => width(2, b) + 14.0,
+            })
+            .sum::<f32>()
+            + 4.0 * m.parts.len().saturating_sub(1) as f32;
+        let tall = width(2, &m.name) + cost_w + 16.0 + notation_w > MOVE_COL_W;
+        let row_h = if tall { MOVE_TALL_H } else { MOVE_ROW_H };
+        let need = row_h + if new_group { MOVE_GROUP_H } else { 0.0 };
+        if used + need > MOVE_COL_H && used > 0.0 {
+            cols.push(Vec::new());
+            used = 0.0;
+        }
+        let col = cols.last_mut().expect("one column");
+        if new_group || col.is_empty() {
+            col.push(json!({ "group": true, "label": m.group.label() }));
+            used += MOVE_GROUP_H;
+        }
+        let parts: Vec<Value> = m
+            .parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => json!({ "text": t, "cap": false }),
+                Part::Button(b) => json!({ "text": b, "cap": true }),
+            })
+            .collect();
+        col.push(json!({
+            "group": false,
+            "tall": tall,
+            "short": !tall,
+            "name": m.name,
+            "cost": m.cost.clone().unwrap_or_default(),
+            "parts": parts,
+        }));
+        used += row_h;
+        group = Some(m.group);
+    }
+    let mut pages = Vec::new();
+    let mut it = cols.into_iter();
+    while let Some(a) = it.next() {
+        pages.push([a, it.next().unwrap_or_default()]);
+    }
+    pages
+}
 /// Ticks each featured fighter stays on the title.
 const FEATURE_TICKS: u64 = 300;
 
@@ -712,40 +802,62 @@ impl UiScreen {
             UiKind::Pause => {
                 let info = self.pause.as_ref();
                 let moves = info.map(|p| p.moves.as_slice()).unwrap_or(&[]);
-                let pages = moves.len().div_ceil(MOVES_PER_PAGE).max(1);
-                let page = self.moves_page % pages;
-                let shown: Vec<Value> = moves
-                    .iter()
-                    .skip(page * MOVES_PER_PAGE)
-                    .take(MOVES_PER_PAGE)
-                    .map(|m| json!({ "name": m.name, "notation": m.notation, "super": m.super_move(), "group": m.group.label() }))
-                    .collect();
+                let width = |font: i32, t: &str| {
+                    sys.fonts
+                        .get(&font)
+                        .map_or(t.chars().count() as f32 * 9.0, |f| f.width(t, 1.0))
+                };
+                let pages = move_pages(moves, &width);
+                let count = pages.len().max(1);
+                let page = self.moves_page % count;
+                let [col1, col2] = pages.into_iter().nth(page).unwrap_or_default();
                 let mut menu = vec![
-                    json!({ "id": "resume", "label": "RESUME", "action": "resume", "style": "main" }),
-                    json!({ "id": "moves", "label": "MOVE LIST", "action": "moves", "style": "main" }),
-                    json!({ "id": "restart", "label": "RESTART ROUND", "action": "restart", "style": "main" }),
-                    json!({ "id": "options", "label": "OPTIONS", "action": "options", "style": "main" }),
+                    json!({ "id": "resume", "label": "RESUME", "action": "resume" }),
+                    json!({ "id": "moves", "label": "MOVE LIST", "action": "moves" }),
+                    json!({ "id": "restart", "label": "RESTART ROUND", "action": "restart" }),
+                    json!({ "id": "controls", "label": "BUTTON CONFIG", "action": "controls" }),
                 ];
                 if info.is_some_and(|p| p.mode.is_some()) {
-                    menu.push(json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select", "style": "main" }));
+                    menu.push(
+                        json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select" }),
+                    );
                 }
-                menu.push(json!({ "id": "quit", "label": "QUIT TO MENU", "action": "quit", "style": "paper", "paper": true }));
-                let cmd = info.map(|p| p.cmd.clone()).unwrap_or_default();
+                menu.push(json!({ "id": "quit", "label": "QUIT TO MENU", "action": "quit" }));
+                let cmd = info.map(|p| p.cmd.to_uppercase()).unwrap_or_default();
+                let name = info.map(|p| p.name.to_uppercase()).unwrap_or_default();
+                let title = format!("{name} · MOVE LIST");
+                let empty = if cmd.is_empty() {
+                    "THIS FIGHTER HAS NO COMMAND FILE".to_string()
+                } else {
+                    format!("NO SPECIAL MOVES FOUND IN {cmd}")
+                };
                 json!({
                     "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
                     "version": env!("CARGO_PKG_VERSION"),
                     "menu": menu,
-                    "side": format!("{}P", info.map_or(1, |p| p.side + 1)),
-                    "name": info.map(|p| p.name.to_uppercase()).unwrap_or_default(),
+                    "who": format!("P{} · {name}", info.map_or(1, |p| p.side + 1)),
+                    "name": name,
+                    // the header shrinks for long names so it never reaches the page count
+                    "title_big": title.chars().count() <= 20,
+                    "title": title,
                     "art": "mem:pauser",
                     "has_art": self.mem.contains_key("pauser"),
                     "scene": "mem:scene",
                     "has_scene": self.mem.contains_key("scene"),
-                    "moves": shown,
+                    "col1": col1,
+                    "col2": col2,
                     "has_moves": !moves.is_empty(),
                     "no_moves": moves.is_empty(),
-                    "source": if cmd.is_empty() { "NO COMMAND FILE".to_string() } else { format!("MOVE LIST · FROM {cmd}") },
-                    "page": if pages > 1 { format!("PAGE {} / {}", page + 1, pages) } else { String::new() },
+                    "empty": empty,
+                    "source": if cmd.is_empty() || moves.is_empty() { String::new() } else {
+                        format!("READ FROM {cmd} · COSTS FROM THE MOVE'S POWER CHECK")
+                    },
+                    "facing": if count > 1 {
+                        format!("FACING RIGHT · PAGE {} / {count}", page + 1)
+                    } else {
+                        "FACING RIGHT".to_string()
+                    },
+                    "paged": count > 1,
                     "keys": self.keys_json(),
                 })
             }
@@ -1157,11 +1269,24 @@ impl UiScreen {
                 "resume" | "back" => Some(Transition::Resume),
                 "options" => Some(Transition::Options),
                 "restart" => Some(Transition::Restart),
-                "moves" => {
-                    self.moves_page += 1;
+                "moves" | "page:1" | "page:-1" => {
+                    let width = |font: i32, t: &str| {
+                        sys.fonts
+                            .get(&font)
+                            .map_or(t.chars().count() as f32 * 9.0, |f| f.width(t, 1.0))
+                    };
+                    let count = self
+                        .pause
+                        .as_ref()
+                        .map_or(1, |p| move_pages(&p.moves, &width).len().max(1));
+                    let step = if a == "page:-1" { count - 1 } else { 1 };
+                    self.moves_page = (self.moves_page % count + step) % count;
                     self.refresh_data(sys);
                     None
                 }
+                "controls" => Some(Transition::Controls(
+                    self.pause.as_ref().map_or(0, |p| p.side),
+                )),
                 "select" => self
                     .pause
                     .as_ref()

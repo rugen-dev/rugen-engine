@@ -49,12 +49,6 @@ pub struct Move {
     pub cost: Option<String>,
 }
 
-impl Move {
-    pub fn super_move(&self) -> bool {
-        self.group == Group::Super
-    }
-}
-
 /// Strip a `;` comment and surrounding blanks.
 fn strip(line: &str) -> &str {
     line.split(';').next().unwrap_or("").trim()
@@ -901,10 +895,10 @@ trigger1 = command = "a"
         let m = parse_moves(cmd);
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].name, "TRIPLE KUNG FU PALM");
-        assert!(m[0].super_move());
+        assert_eq!(m[0].group, Group::Super);
         assert_eq!(m[0].cost.as_deref(), Some("1 BAR"));
         assert_eq!(m[1].notation, "↓↘→ X");
-        assert!(!m[1].super_move());
+        assert_eq!(m[1].group, Group::Special);
     }
 
     const KFM_LIKE_DEF: &str = "[Files]\ncmd = Sub\\Tiny.CMD\n";
