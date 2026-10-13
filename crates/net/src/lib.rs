@@ -26,7 +26,7 @@ pub use path::{LinkInfo, PathKind};
 pub use quality::{
     DelayPolicy, EventFilter, Mispredictions, Pacer, Quality, RttStats, TICK, auto_input_delay,
 };
-pub use relay::{RelaySocket, slot_addr};
+pub use relay::{Exit, RelaySocket, slot_addr};
 pub use socket::{Punched, Socket};
 
 use std::net::SocketAddr;
@@ -103,6 +103,24 @@ pub struct Options {
     /// ([`Pacer`], see [`Netplay::tick_duration`]) instead of freezing
     /// frames on ggrs' wait recommendation.
     pub time_dilation: bool,
+    /// Silence from the other player (on every path) after which it counts
+    /// as disconnected for good ([`PeerExit::Lost`]). Path failover takes
+    /// under a second, so this only ends matches whose every path is dead.
+    pub disconnect_timeout: std::time::Duration,
+}
+
+/// How long every path may stay silent before the other player is gone.
+pub const DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Why the other player is no longer in the match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerExit {
+    /// It sent a flee message (forfeit from its menu).
+    Fled,
+    /// The server announced its BYE without a flee message (it quit).
+    Left,
+    /// Nothing heard on any path for [`Options::disconnect_timeout`].
+    Lost,
 }
 
 impl Default for Options {
@@ -113,6 +131,7 @@ impl Default for Options {
             desync_interval: 30,
             fps: 60,
             time_dilation: true,
+            disconnect_timeout: DISCONNECT_TIMEOUT,
         }
     }
 }
@@ -216,6 +235,10 @@ pub struct Netplay {
     turn_meter: Option<std::sync::Arc<std::sync::Mutex<turn::TurnStats>>>,
     /// Path information of a relay-session socket.
     link: Option<std::sync::Arc<std::sync::Mutex<LinkInfo>>>,
+    /// Early-exit flags of a relay-session socket.
+    exit: Option<std::sync::Arc<Exit>>,
+    /// ggrs declared the other player disconnected.
+    peer_lost: bool,
 }
 
 impl Netplay {
@@ -276,9 +299,11 @@ impl Netplay {
         }
         let meter = socket.turn_meter();
         let link = socket.link();
+        let exit = socket.exit();
         let mut n = Self::start(socket, &players, local_handle, opts)?;
         n.turn_meter = meter;
         n.link = Some(link);
+        n.exit = Some(exit);
         Ok(n)
     }
 
@@ -311,6 +336,8 @@ impl Netplay {
             checks: Vec::new(),
             turn_meter: None,
             link: None,
+            exit: None,
+            peer_lost: false,
         }
     }
 
@@ -324,6 +351,7 @@ impl Netplay {
             .with_num_players(2)
             .with_input_delay(opts.input_delay)
             .with_max_prediction_window(opts.max_prediction)
+            .with_disconnect_timeout(opts.disconnect_timeout)
             .with_fps(opts.fps)?;
         if opts.desync_interval > 0 {
             b = b.with_desync_detection_mode(DesyncDetection::On {
@@ -413,6 +441,33 @@ impl Netplay {
         s
     }
 
+    /// Whether (and why) the other player left the match: its flee
+    /// message, its BYE as the server announced it, or silence on every
+    /// path for [`Options::disconnect_timeout`].
+    pub fn peer_exit(&self) -> Option<PeerExit> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if let Some(e) = &self.exit {
+            if e.peer_fled.load(Relaxed) {
+                return Some(PeerExit::Fled);
+            }
+            if e.peer_left.load(Relaxed) {
+                return Some(PeerExit::Left);
+            }
+        }
+        self.peer_lost.then_some(PeerExit::Lost)
+    }
+
+    /// Forfeit: tell the other player on every path (a few times, over
+    /// the next polls) before the session is dropped. Blocks ~50 ms.
+    pub fn flee(&mut self) {
+        let Some(e) = &self.exit else { return };
+        e.flee.store(true, std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..3 {
+            self.poll();
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
     /// Path information of an online (relay session) match.
     pub fn link(&self) -> Option<LinkInfo> {
         self.link.as_ref().and_then(|l| l.lock().ok().map(|l| *l))
@@ -459,6 +514,7 @@ impl Netplay {
                         GgrsEvent::Disconnected { addr } => {
                             self.stats.synchronized = false;
                             self.quality.interrupted = true;
+                            self.peer_lost = true;
                             out.notices.push(format!("{addr} disconnected"));
                         }
                         GgrsEvent::NetworkInterrupted {

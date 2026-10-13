@@ -177,6 +177,10 @@ pub struct Harness {
     pub record: Option<PathBuf>,
     /// Raw keys to press: `(tick, key name)` (`--keys 90:Enter,120:k`).
     pub keys: Vec<(u32, String)>,
+    /// Online runs: scripts and `--frames` count only once the fight is on
+    /// screen (the matchup before it takes as long as it takes), and the
+    /// end of a script never quits (leaving mid-match would be a flee).
+    pub in_match: bool,
 }
 
 /// `--keys "90:Enter,120:k"`: raw key presses at shell ticks (released 3 ticks later).
@@ -1057,6 +1061,9 @@ impl Shell {
                         if let Some(a) = self.audio.as_mut() {
                             a.play_music(m.bgm.as_deref(), 1.0, true);
                         }
+                        if setup.net.is_some() {
+                            m.ranked = self.online_match.as_ref().map(|om| om.ranked);
+                        }
                         if setup.net.is_none() {
                             m.record = Some(crate::replay::Replay::new(&setup));
                         }
@@ -1170,10 +1177,11 @@ impl Shell {
         self.input.end_tick();
         let menu_taps = std::mem::take(&mut self.menu_taps);
         let pad_pause = self.input.take_pause();
-        if let Some(script) = self.harness.script.as_mut() {
+        let scripting = !self.harness.in_match || self.is_match();
+        if let Some(script) = self.harness.script.as_mut().filter(|_| scripting) {
             if script.is_empty() {
                 self.harness.script = None;
-                if self.harness.frames.is_none() {
+                if self.harness.frames.is_none() && !self.harness.in_match {
                     self.shot_armed = true;
                     if self.harness.shot.is_none() {
                         self.quit = true;
@@ -1183,7 +1191,7 @@ impl Shell {
                 now[0] = script.remove(0);
             }
         }
-        if let Some(script) = self.harness.script2.as_mut() {
+        if let Some(script) = self.harness.script2.as_mut().filter(|_| scripting) {
             if script.is_empty() {
                 self.harness.script2 = None;
             } else {
@@ -1264,7 +1272,8 @@ impl Shell {
             }
             Screen::Online(o) => {
                 // `rugen play --server --shot`: the matchup screen is the picture
-                let auto_shot = self.harness.shot.is_some() && o.is_auto();
+                let auto_shot =
+                    self.harness.shot.is_some() && self.harness.frames.is_none() && o.is_auto();
                 o.hold_for_shot = auto_shot;
                 if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
                     next = o.tick(pressed, sys, &mut g.renderer, &mut |snd| {
@@ -1327,25 +1336,32 @@ impl Shell {
                 {
                     open_pause = Some(side);
                 }
-                // netplay: one local fighter, every local control drives it,
-                // whichever seat the server gave us
-                let now = if m.is_netplay_seat() {
-                    crate::input::seat_inputs(now)
-                } else {
-                    now
-                };
+                // netplay: Select/Back opens the online menu instead (the
+                // match keeps running under it)
+                if pad_pause.is_some() && m.is_netplay_seat() {
+                    m.toggle_flee_menu();
+                }
+                let mut now = now;
+                if m.is_netplay_seat() {
+                    // one local fighter: every local control drives it,
+                    // whichever seat the server gave us
+                    now = crate::input::seat_inputs(now);
+                    harness_flee(m);
+                    if m.flee_menu.is_some() {
+                        m.flee_menu_input(crate::input::seat_inputs(pressed)[0]);
+                        // the menu has the controls: the fighter stands still
+                        now = [Buttons::default(); 2];
+                    }
+                }
                 advanced = m.tick(now, &mut self.audio);
                 if advanced {
                     self.match_stats.observe(&m.world);
                 }
                 if m.leave {
                     if let Some(om) = self.online_match.take() {
-                        let wins = m.world.round.wins;
-                        let winner = if m.world.round.match_over && wins[0] != wins[1] {
-                            Some(usize::from(wins[1] > wins[0]))
-                        } else {
-                            None
-                        };
+                        // a match played out, or ended early by a flee /
+                        // disconnect (`Match::winner` knows both)
+                        let winner = m.winner();
                         let won = winner == Some(om.my_side);
                         if let Some(p) = crate::online::report_result(
                             &self.lib.root,
@@ -1438,7 +1454,8 @@ impl Shell {
         }
         // a pause menu holds the match but still counts toward `--frames`
         // (so a harness run can screenshot it)
-        if advanced || self.pause.is_some() {
+        let counted = !self.harness.in_match || self.is_match();
+        if (advanced || self.pause.is_some()) && counted {
             self.ticks += 1;
             if let Some(n) = self.harness.frames
                 && self.ticks >= n
@@ -1675,6 +1692,15 @@ impl Shell {
                 let _ = m;
                 self.pause = None;
             }
+            // netplay: the online menu (RESUME / FLEE); once the match is
+            // over, Esc leaves the normal way (the result is reported)
+            Screen::Match(ref mut m) if m.is_netplay_seat() => {
+                if m.world.round.match_over || m.early_end().is_some() {
+                    m.leave = true;
+                } else {
+                    m.toggle_flee_menu();
+                }
+            }
             Screen::Match(ref m)
                 if !m.is_net()
                     && !m.is_tutorial()
@@ -1875,6 +1901,27 @@ impl ApplicationHandler for Shell {
                 event_loop.set_control_flow(ControlFlow::Poll);
             }
         }
+    }
+}
+
+/// Harness: `RUGEN_HARNESS_FLEE_MENU=n` opens the online menu at match
+/// frame `n` (`nc`: straight on its flee question); `RUGEN_HARNESS_FLEE=n`
+/// flees at frame `n`.
+fn harness_flee(m: &mut Match) {
+    let frame = m.world.frame;
+    let var = |name: &str| std::env::var(name).ok();
+    if let Some(v) = var("RUGEN_HARNESS_FLEE_MENU") {
+        let confirm = v.ends_with('c');
+        if v.trim_end_matches('c').parse::<u32>().ok() == Some(frame) && m.flee_menu.is_none() {
+            m.toggle_flee_menu();
+            if confirm && let Some(menu) = m.flee_menu.as_mut() {
+                menu.confirm = true;
+                menu.sel = 1;
+            }
+        }
+    }
+    if var("RUGEN_HARNESS_FLEE").and_then(|v| v.parse::<u32>().ok()) == Some(frame) {
+        m.flee();
     }
 }
 

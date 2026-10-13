@@ -152,6 +152,20 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
   a world checksum every 60 frames; the server compares both reports on the
   confirmed frames and disputes (and re-simulates, when built with `resim`) on
   a mismatch, so a match it never saw is still verified.
+- Ending early: an online match cannot pause, so Esc / a pad's Select opens
+  a RESUME / FLEE menu over the running fight (the local fighter stands
+  still while it is open). FLEE sends a flee message on every path and a
+  forfeit report (the other player wins, `ending = "flee"`), which the
+  server settles at once: a normal loss, no extra penalty. The player left
+  behind sees the flee message, or the relay's announcement of the other
+  slot's BYE (a quit), or silence on every path for 8 s
+  (`rugen_net::DISCONNECT_TIMEOUT`; path failover takes < 1 s, so only a
+  dead connection gets there), and wins: "YOUR OPPONENT FLED" / "OPPONENT
+  DISCONNECTED", then a report claiming the win. The server never takes that
+  claim on trust: it waits 15 s for the other report (agreement or a
+  dispute decide then), then settles only if its own relay session saw the
+  other slot say BYE or go silent for 10 s while the claimant was still
+  heard 2 s later (players HELLO the relay every 2 s on every path).
 - Netplay seat: the local fighter reads every local control (both keyboard
   layouts, both gamepad slots), whichever side the server assigned.
 

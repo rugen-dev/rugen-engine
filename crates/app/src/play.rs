@@ -122,8 +122,99 @@ fn tint(p: PalFxOut) -> Tint {
     }
 }
 
+/// The online match menu (Esc / a pad's Select): RESUME or FLEE, with a
+/// confirmation. The simulation keeps running under it (an online match
+/// cannot pause); the local fighter gets neutral input while it is open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FleeMenu {
+    /// Focused row: 0 = RESUME / NO, 1 = FLEE / YES.
+    pub sel: u8,
+    /// Showing the "flee the match?" question.
+    pub confirm: bool,
+}
+
+/// What a menu input did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuAction {
+    Stay,
+    Close,
+    Flee,
+}
+
+impl FleeMenu {
+    /// One tick of newly pressed buttons (the local player's).
+    pub fn input(&mut self, p: Buttons) -> MenuAction {
+        if p.u || p.d {
+            self.sel ^= 1;
+        }
+        if p.b {
+            if self.confirm {
+                *self = FleeMenu::default();
+                return MenuAction::Stay;
+            }
+            return MenuAction::Close;
+        }
+        if p.a || p.c || p.x || p.s {
+            return match (self.confirm, self.sel) {
+                (false, 0) => MenuAction::Close,
+                (false, _) => {
+                    // FLEE asks first, focused on NO
+                    *self = FleeMenu {
+                        sel: 0,
+                        confirm: true,
+                    };
+                    MenuAction::Stay
+                }
+                (true, 0) => {
+                    *self = FleeMenu::default();
+                    MenuAction::Stay
+                }
+                (true, _) => MenuAction::Flee,
+            };
+        }
+        MenuAction::Stay
+    }
+}
+
+/// An online match that ended before its last round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EarlyEnd {
+    /// We fled (forfeit): a loss.
+    Fled,
+    /// The other player fled, quit or lost its connection: a win.
+    PeerGone(rugen_net::PeerExit),
+}
+
+impl EarlyEnd {
+    /// The `ending` a result report carries.
+    pub fn ending(self) -> rugen_proto::Ending {
+        match self {
+            EarlyEnd::PeerGone(rugen_net::PeerExit::Lost) => rugen_proto::Ending::Disconnect,
+            _ => rugen_proto::Ending::Flee,
+        }
+    }
+
+    /// The line the winner reads.
+    pub fn message(self) -> &'static str {
+        match self {
+            EarlyEnd::Fled => "YOU FLED THE MATCH",
+            EarlyEnd::PeerGone(rugen_net::PeerExit::Lost) => "OPPONENT DISCONNECTED",
+            EarlyEnd::PeerGone(_) => "YOUR OPPONENT FLED",
+        }
+    }
+}
+
+/// Ticks the "opponent fled" victory stays up (skippable after a second).
+const EARLY_LINGER: u32 = 300;
+
 pub struct Match {
     pub world: World,
+    /// Online menu over the running match (see [`FleeMenu`]).
+    pub flee_menu: Option<FleeMenu>,
+    /// Online: the match ended early, and ticks since.
+    early: Option<(EarlyEnd, u32)>,
+    /// Online: the match is ranked (the flee question says what it costs).
+    pub ranked: Option<bool>,
     /// One per `world.data`, plus one for fightfx at the end (filled by `init_gpu`).
     chars: Vec<CharGpu>,
     net: Option<Netplay>,
@@ -274,6 +365,9 @@ impl Match {
         };
         Ok(Self {
             world,
+            flee_menu: None,
+            early: None,
+            ranked: None,
             chars: Vec::new(),
             net,
             net_status: String::new(),
@@ -431,6 +525,15 @@ impl Match {
             return false;
         }
         self.step = false;
+        // the other player left: the victory over the frozen fight, then out
+        if let Some((_, t)) = self.early.as_mut() {
+            *t += 1;
+            let skip = inputs.iter().any(|b| b.a || b.s);
+            if *t > EARLY_LINGER || (*t > 60 && skip) {
+                self.leave = true;
+            }
+            return true;
+        }
         self.check_reload();
         let mut inputs = inputs;
         if let Some((frames, cursor)) = self.playback.as_mut() {
@@ -477,7 +580,20 @@ impl Match {
                             );
                         }
                         let moved = adv.new_frames > 0;
+                        let gone = net.peer_exit();
                         self.handle_events(adv.events, audio);
+                        if let Some(e) = gone {
+                            if self.world.round.match_over {
+                                // it left after the end: nothing to wait for
+                                self.over_ticks = self.over_ticks.max(150);
+                                self.leave = true;
+                            } else if self.can_flee() {
+                                log::info!("netplay: the other player is gone ({e:?})");
+                                self.flee_menu = None;
+                                self.early = Some((EarlyEnd::PeerGone(e), 0));
+                                self.net_status.clear();
+                            }
+                        }
                         moved
                     }
                     Err(e) => {
@@ -569,6 +685,51 @@ impl Match {
             .is_some_and(|n| !n.is_synctest() && !n.is_spectator())
     }
 
+    /// The online menu may open / a flee may happen: a netplay seat in a
+    /// match still being fought.
+    pub fn can_flee(&self) -> bool {
+        self.is_netplay_seat() && !self.world.round.match_over && self.early.is_none()
+    }
+
+    /// Esc / pad Select in a netplay match: open or close the menu.
+    pub fn toggle_flee_menu(&mut self) {
+        self.flee_menu = match self.flee_menu {
+            None if self.can_flee() => Some(FleeMenu::default()),
+            _ => None,
+        };
+    }
+
+    /// Newly pressed buttons of the local player while the menu is open.
+    pub fn flee_menu_input(&mut self, pressed: Buttons) {
+        let Some(menu) = self.flee_menu.as_mut() else {
+            return;
+        };
+        match menu.input(pressed) {
+            MenuAction::Stay => {}
+            MenuAction::Close => self.flee_menu = None,
+            MenuAction::Flee => self.flee(),
+        }
+    }
+
+    /// Forfeit: tell the other player (every path), then leave at once.
+    pub fn flee(&mut self) {
+        if !self.can_flee() {
+            return;
+        }
+        if let Some(net) = self.net.as_mut() {
+            net.flee();
+        }
+        log::info!("netplay: fled the match at frame {}", self.world.frame);
+        self.flee_menu = None;
+        self.early = Some((EarlyEnd::Fled, 0));
+        self.leave = true;
+    }
+
+    /// How the match ended early, if it did.
+    pub fn early_end(&self) -> Option<EarlyEnd> {
+        self.early.map(|(e, _)| e)
+    }
+
     /// Length of the next tick (online: stretched while ahead of the peer).
     pub fn tick_duration(&self) -> std::time::Duration {
         self.net
@@ -597,7 +758,113 @@ impl Match {
             turn_bytes: turn
                 .filter(|s| s.tx_packets > 0)
                 .map(|s| (s.rx_wire, s.tx_wire)),
+            ending: self.early.map(|(e, _)| e.ending()),
         }
+    }
+
+    /// The online menu (RESUME / FLEE, then the question) or the victory
+    /// over a fight the other player left. fight.def fonts when it has
+    /// them, else the built-in 3x5 font.
+    fn draw_flee_overlay(
+        &self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        screen_w: f32,
+        screen_h: f32,
+        mut lifebar: Option<&mut crate::lifebar::Lifebar>,
+    ) {
+        let won = match self.early {
+            Some((e @ EarlyEnd::PeerGone(_), _)) => Some(e),
+            _ => None,
+        };
+        if self.flee_menu.is_none() && won.is_none() {
+            return;
+        }
+        let cx = screen_w / 2.0;
+        let (w, h) = (210.0, if won.is_some() { 76.0 } else { 92.0 });
+        let top = screen_h * 0.5 - h / 2.0;
+        // one line centred on `y` (HUD units), shrunk to fit the panel
+        let mut text = |r: &mut Renderer, line: &str, y: f32, kind: usize, col: [f32; 4]| {
+            // (fight.def font, bank, 3x5 pixel size) per kind: title, row, small
+            let (index, bank, px) = [(4, 0, 2.0), (3, 1, 1.4), (1, 5, 1.0)][kind];
+            let room = w - 16.0;
+            if let Some(lb) = lifebar.as_deref_mut()
+                && let Some([tw, th]) = lb.text_size(index, line)
+            {
+                let k = if tw > room { room / tw } else { 1.0 };
+                lb.text_at(r, index, line, hud(cx, y + th * k / 2.0), bank, 0, u * k);
+                return;
+            }
+            let tw = line.chars().count() as f32 * 4.0 * px;
+            let px = if tw > room { px * room / tw } else { px };
+            draw_text(r, line, hud(cx, y - 2.5 * px), px * u, col);
+        };
+        // dim the fight, an ink panel with a hard red shadow
+        r.rect(hud(0.0, 0.0), hud(screen_w, screen_h), [0.0, 0.0, 0.0, 0.5]);
+        r.rect(
+            hud(cx - w / 2.0 + 5.0, top + 5.0),
+            hud(cx + w / 2.0 + 5.0, top + h + 5.0),
+            [0.86, 0.12, 0.12, 1.0],
+        );
+        r.rect(
+            hud(cx - w / 2.0, top),
+            hud(cx + w / 2.0, top + h),
+            [0.04, 0.04, 0.05, 0.96],
+        );
+        r.rect_outline(
+            hud(cx - w / 2.0, top),
+            hud(cx + w / 2.0, top + h),
+            1.5 * u,
+            [0.95, 0.94, 0.89, 1.0],
+        );
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let grey = [0.7, 0.7, 0.72, 1.0];
+        let red = [1.0, 0.3, 0.25, 1.0];
+        if let Some(e) = won {
+            text(r, "YOU WIN", top + 20.0, 0, [1.0, 0.85, 0.3, 1.0]);
+            text(r, e.message(), top + 42.0, 1, white);
+            if self.early.is_some_and(|(_, t)| t > 60) {
+                text(r, "PRESS START", top + 62.0, 2, grey);
+            }
+            return;
+        }
+        let Some(menu) = self.flee_menu else { return };
+        let (title, rows, note) = if menu.confirm {
+            let note = match self.ranked {
+                Some(true) => "RANKED: YOU LOSE RATING",
+                Some(false) => "CASUAL: RECORDED AS A FLEE",
+                None => "IT COUNTS AS A LOSS",
+            };
+            ("FLEE THE MATCH?", ["NO", "YES, FLEE"], note)
+        } else {
+            ("MATCH MENU", ["RESUME", "FLEE"], "THE FIGHT GOES ON")
+        };
+        text(r, title, top + 15.0, 1, white);
+        r.rect(
+            hud(cx - w / 2.0 + 10.0, top + 26.0),
+            hud(cx + w / 2.0 - 10.0, top + 27.0),
+            [0.95, 0.94, 0.89, 0.5],
+        );
+        for (i, row) in rows.iter().enumerate() {
+            let y = top + 41.0 + i as f32 * 18.0;
+            let on = menu.sel as usize == i;
+            if on {
+                r.rect(
+                    hud(cx - 64.0, y - 8.0),
+                    hud(cx + 64.0, y + 8.0),
+                    [0.86, 0.12, 0.12, 1.0],
+                );
+            }
+            text(r, row, y, 1, if on { white } else { grey });
+        }
+        text(
+            r,
+            note,
+            top + h - 11.0,
+            2,
+            if menu.confirm { red } else { grey },
+        );
     }
 
     /// Tiny connection indicator for online matches: 1-4 bars from the
@@ -658,6 +925,10 @@ impl Match {
 
     /// Winning side (0/1) once the match is over, None for a draw or unfinished match.
     pub fn winner(&self) -> Option<usize> {
+        if let (Some(e), Some(net)) = (self.early_end(), self.net.as_ref()) {
+            let me = net.local_handle().min(1);
+            return Some(if e == EarlyEnd::Fled { 1 - me } else { me });
+        }
         let w = self.world.round.wins;
         if !self.world.round.match_over || w[0] == w[1] {
             None
@@ -672,6 +943,10 @@ impl Match {
             return false;
         }
         match key.as_ref() {
+            // a netplay match cannot pause (the peer would stall)
+            Key::Named(NamedKey::Space) | Key::Character(".") if self.net.is_some() => {
+                return false;
+            }
             Key::Named(NamedKey::Space) => self.paused = !self.paused,
             Key::Character(".") => self.step = true,
             Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
@@ -1275,6 +1550,7 @@ impl Match {
                 }
             }
         }
+        self.draw_flee_overlay(r, &hud, u, screen_w, stage.height, lifebar.as_mut());
         if brightness < 1.0 {
             r.rect(
                 [-4000.0, -4000.0],
@@ -1661,4 +1937,62 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
         v.push(rugen_net::direct::DEFAULT_STUN.to_string());
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(f: impl Fn(&mut Buttons)) -> Buttons {
+        let mut b = Buttons::default();
+        f(&mut b);
+        b
+    }
+
+    #[test]
+    fn fleeing_takes_a_confirmation() {
+        let (down, ok, back) = (
+            press(|b| b.d = true),
+            press(|b| b.a = true),
+            press(|b| b.b = true),
+        );
+        let mut m = FleeMenu::default();
+        assert_eq!(m.input(ok), MenuAction::Close, "RESUME first");
+        assert_eq!(m.input(down), MenuAction::Stay);
+        assert_eq!(m.input(ok), MenuAction::Stay, "FLEE asks");
+        assert!(m.confirm && m.sel == 0, "focused on NO");
+        assert_eq!(m.input(ok), MenuAction::Stay, "NO goes back");
+        assert!(!m.confirm);
+        m.input(down);
+        m.input(ok);
+        assert_eq!(m.input(back), MenuAction::Stay, "back leaves the question");
+        assert!(!m.confirm);
+        assert_eq!(m.input(back), MenuAction::Close);
+        m.input(down);
+        m.input(ok);
+        m.input(down);
+        assert_eq!(
+            m.input(press(|b| b.s = true)),
+            MenuAction::Flee,
+            "YES, FLEE"
+        );
+    }
+
+    #[test]
+    fn early_endings_report_what_happened() {
+        use rugen_net::PeerExit;
+        assert_eq!(EarlyEnd::Fled.ending(), rugen_proto::Ending::Flee);
+        assert_eq!(
+            EarlyEnd::PeerGone(PeerExit::Left).ending(),
+            rugen_proto::Ending::Flee
+        );
+        assert_eq!(
+            EarlyEnd::PeerGone(PeerExit::Lost).ending(),
+            rugen_proto::Ending::Disconnect
+        );
+        assert_eq!(
+            EarlyEnd::PeerGone(PeerExit::Fled).message(),
+            "YOUR OPPONENT FLED"
+        );
+    }
 }

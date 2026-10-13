@@ -80,6 +80,8 @@ pub struct LastResult {
     pub me: u64,
     pub ranked: bool,
     pub won: bool,
+    /// The match ended early (a flee or a disconnect).
+    pub ending: Option<rugen_proto::Ending>,
     pub ack: Option<ResultAck>,
 }
 
@@ -493,7 +495,13 @@ impl OnlineScreen {
             return String::new();
         };
         let what = if r.ranked { "RANKED" } else { "MATCH" };
-        let outcome = if r.won { "WIN" } else { "LOSS" };
+        let outcome = match (r.won, r.ending) {
+            (true, Some(rugen_proto::Ending::Disconnect)) => "WIN (OPPONENT DISCONNECTED)",
+            (true, Some(_)) => "WIN (OPPONENT FLED)",
+            (false, Some(_)) => "LOSS (YOU FLED)",
+            (true, None) => "WIN",
+            (false, None) => "LOSS",
+        };
         match &r.ack {
             None => format!("LAST {what}: {outcome} - REPORTING..."),
             Some(a) if a.disputed => format!("LAST {what}: {outcome} - DISPUTED, NOT COUNTED"),
@@ -2542,6 +2550,7 @@ pub fn report_result(
             me: m.players[m.my_side],
             ranked: m.ranked,
             won: winner_side == m.my_side,
+            ending: evidence.ending,
             ack: None,
         });
     }

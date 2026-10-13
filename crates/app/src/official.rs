@@ -403,6 +403,8 @@ mod tests {
             delta: Some(delta),
             disputed: false,
             signed: Some(signer.sign(purpose::RESULT, &st).unwrap()),
+            ending: None,
+            fled: None,
         };
         assert_eq!(
             result_stamp(&ack(&SigningKey::dev(), 16), 3, 7),

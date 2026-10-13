@@ -16,6 +16,7 @@
 //! HTTP-only tunnel such as Cloudflare's).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use ggrs::NonBlockingSocket;
@@ -37,6 +38,8 @@ const T_PONG: u8 = 2;
 /// round trip measured like the other paths', during the match).
 const T_RPING: u8 = 9;
 const T_RPONG: u8 = 10;
+/// The sender forfeits the match ([`Exit`]): sent on every path at once.
+const T_FLEE: u8 = 11;
 
 /// The address ggrs uses for relay slot `slot` (class E, never routed).
 pub fn slot_addr(slot: u8) -> SocketAddr {
@@ -85,6 +88,23 @@ pub struct RelaySocket {
     /// What the HUD shows; stays readable after the socket moved into ggrs.
     link: std::sync::Arc<std::sync::Mutex<LinkInfo>>,
     hooks: std::sync::Arc<Hooks>,
+    exit: std::sync::Arc<Exit>,
+    /// Flee messages still to send (a few, on every path).
+    flee_left: u8,
+}
+
+/// How the match ends early, shared with the socket after it moved into a
+/// ggrs session: our forfeit to send, the other player's to notice.
+#[derive(Debug, Default)]
+pub struct Exit {
+    /// We flee: tell the other player on every path (set by
+    /// [`crate::Netplay::flee`]).
+    pub flee: std::sync::atomic::AtomicBool,
+    /// The other player sent a flee message.
+    pub peer_fled: std::sync::atomic::AtomicBool,
+    /// The server announced that the other player left the session (its
+    /// BYE): the relay's own view, not the other player's word.
+    pub peer_left: std::sync::atomic::AtomicBool,
 }
 
 /// Test hooks that still reach the socket after it moved into a ggrs
@@ -159,6 +179,8 @@ impl RelaySocket {
             last_select: Instant::now(),
             link: Default::default(),
             hooks: Default::default(),
+            exit: Default::default(),
+            flee_left: 3,
         })
     }
 
@@ -291,6 +313,33 @@ impl RelaySocket {
         self.link.clone()
     }
 
+    /// Early-exit flags ([`Exit`]) that stay reachable after the socket
+    /// moved into a ggrs session.
+    pub fn exit(&self) -> std::sync::Arc<Exit> {
+        self.exit.clone()
+    }
+
+    /// Send our flee message to the other player on every path we have
+    /// (direct, TURN and the relay): whichever still works carries it.
+    fn send_flee(&mut self) {
+        if self.slot >= 2 {
+            return;
+        }
+        let peer = 1 - self.slot;
+        let p = [T_FLEE];
+        if let Some(d) = self.direct.as_mut()
+            && d.carries(peer)
+        {
+            d.send(&p);
+        }
+        if let Some(t) = self.turn.as_mut()
+            && t.carries(peer)
+        {
+            t.send(&p);
+        }
+        self.send_frame(wire::DATA, peer, &p);
+    }
+
     /// Why the direct path is not used (when known).
     pub fn direct_off(&self) -> Option<crate::direct::Off> {
         self.direct.as_ref().and_then(|d| d.off())
@@ -302,7 +351,6 @@ impl RelaySocket {
     }
 
     fn apply_hooks(&mut self) {
-        use std::sync::atomic::Ordering;
         if self.hooks.sever_direct.swap(false, Ordering::Relaxed) {
             self.sever_direct();
         }
@@ -469,6 +517,14 @@ impl RelaySocket {
             match h.kind {
                 wire::ACK | wire::PEERS => {
                     if let Some(&m) = p.first() {
+                        // the other player was connected and is gone: the
+                        // server saw its BYE (it left the session)
+                        if self.slot < 2 {
+                            let bit = 1u8 << (1 - self.slot);
+                            if self.connected & bit != 0 && m & bit == 0 {
+                                self.exit.peer_left.store(true, Ordering::Relaxed);
+                            }
+                        }
                         self.connected = m;
                     }
                 }
@@ -567,6 +623,10 @@ impl RelaySocket {
                 {
                     d.on_signal(&p[1..]);
                 }
+                None
+            }
+            T_FLEE if h.from < 2 && h.from != self.slot => {
+                self.exit.peer_fled.store(true, Ordering::Relaxed);
                 None
             }
             T_RPING if p.len() == 9 => {
@@ -861,6 +921,10 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
             let usage = self.turn_usage_payload();
             self.send_frame(wire::HELLO, 0, &usage);
             self.last_hello = Instant::now();
+        }
+        if self.exit.flee.load(Ordering::Relaxed) && self.flee_left > 0 {
+            self.flee_left -= 1;
+            self.send_flee();
         }
         let mut out = std::mem::take(&mut self.early);
         if let Some(d) = self.direct.as_mut()

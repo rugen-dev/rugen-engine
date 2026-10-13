@@ -395,6 +395,46 @@ pub struct ResultAck {
     /// [`ResultStatement`] signed by the server once the result is settled (API 4).
     #[serde(default)]
     pub signed: Option<SignedBlob>,
+    /// How the match ended when it ended early, as the server settled it:
+    /// [`Ending::as_str`] (`"flee"`, `"disconnect"`); absent for a match
+    /// played to the end and from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ending: Option<String>,
+    /// The account that fled or disconnected (with `ending`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fled: Option<u64>,
+}
+
+/// How a match ended early (the `ending` of a result report).
+///
+/// The player who leaves reports [`Ending::Flee`] with the other player as
+/// the winner (a forfeit); the player left behind reports itself as the
+/// winner with [`Ending::Flee`] (a flee message or the relay's announcement
+/// of the other player's BYE) or [`Ending::Disconnect`] (silence on every
+/// path). A server only settles the second kind on its own view of the
+/// relay session (the other slot said BYE or went silent first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Ending {
+    Flee,
+    Disconnect,
+}
+
+impl Ending {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Ending::Flee => "flee",
+            Ending::Disconnect => "disconnect",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "flee" => Some(Ending::Flee),
+            "disconnect" => Some(Ending::Disconnect),
+            _ => None,
+        }
+    }
 }
 
 /// A stored ranked replay (`GET /replay/{match_id}`).
