@@ -389,10 +389,18 @@ pub fn options_data(
         "Press enter to open the controls page: one row per action, presets and a live test pad."
             .to_string()
     } else {
-        format!(
-            "{}. Up and down pick a category, right or enter goes into it.",
-            TABS[tab].2
-        )
+        // what the tab holds (its subtitle already says what it is for)
+        let inside = match TABS[tab].0 {
+            "gameplay" => "Computer level, round clock, movement, fighter size and camera.",
+            "video" => "Fullscreen, window size and the mouse.",
+            "audio" => "Master and music volume.",
+            "online" => "Input delay, direct connections and the server.",
+            "interface" => "Pick a theme for every screen.",
+            _ => "",
+        };
+        format!("{inside} Up and down pick a category, right or enter goes into it.")
+            .trim_start()
+            .to_string()
     };
     // directions read as arrows outside the controls page
     let (left, left_glyph) = (String::new(), "left");
@@ -888,6 +896,18 @@ mod tests {
         assert_eq!(c.input.p1.left, "");
         let d = ctl.data(&c, 0);
         assert_eq!(d["binds"][2]["cap"], "-");
+    }
+
+    /// A tab's help line never repeats the panel subtitle.
+    #[test]
+    fn tab_help_does_not_repeat_the_subtitle() {
+        let c = Config::default();
+        for (i, (_, _, subtitle)) in TABS.iter().enumerate() {
+            let d = options_data(i, &c, &[], Path::new("."), Some(&format!("tabs[{i}]")));
+            let help = d["help"].as_str().unwrap_or_default().to_string();
+            assert!(!help.is_empty(), "tab {i}");
+            assert!(!help.contains(subtitle), "tab {i}: {help}");
+        }
     }
 
     #[test]
