@@ -1021,14 +1021,6 @@ enter_time = 14
   bank = 9
 
   [[node.children]]
-  kind = "text"
-  text = "START"
-  x = 520
-  y = 394
-  font = 2
-  bank = 9
-
-  [[node.children]]
   kind = "keycap"
   x = 336
   y = 386
@@ -1053,20 +1045,34 @@ enter_time = 14
   w = 56
   h = 22
 
+  # START: its key (as wide as its name) then the label
   [[node.children]]
-  kind = "keycap"
+  kind = "hbox"
   x = 468
   y = 386
-  w = 44
+  w = 160
   h = 32
-  text = "{pad.start.cap}"
-  glyph = "{pad.start.glyph}"
-  selected = "pad.start.lit"
-  color_focus = [0.878, 0.125, 0.125, 1.0]
-  text_color_focus = [1.0, 1.0, 1.0, 1.0]
-  font = 2
-  bank = 9
-  bank_focus = 11
+  gap = 8
+  align = "center"
+
+    [[node.children.children]]
+    kind = "keycap"
+    w = 44
+    h = 32
+    text = "{pad.start.cap}"
+    glyph = "{pad.start.glyph}"
+    selected = "pad.start.lit"
+    color_focus = [0.878, 0.125, 0.125, 1.0]
+    text_color_focus = [1.0, 1.0, 1.0, 1.0]
+    font = 2
+    bank = 9
+    bank_focus = 11
+
+    [[node.children.children]]
+    kind = "text"
+    text = "START"
+    font = 2
+    bank = 9
 
 # ---------------------------------------------------------------- presets
 [[node]]
