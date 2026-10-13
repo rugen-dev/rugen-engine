@@ -2569,11 +2569,12 @@ impl Ui {
         } else {
             let s = (rect.w / iwf).min(rect.h / ihf);
             let (w, h) = (iwf * s, ihf * s);
+            // the slack is split on whole units so the picture sits square in its box
             (
                 None,
                 Rect {
-                    x: rect.x + (rect.w - w) * fx,
-                    y: rect.y + (rect.h - h) * fy,
+                    x: rect.x + libm::roundf((rect.w - w) * fx),
+                    y: rect.y + libm::roundf((rect.h - h) * fy),
                     w,
                     h,
                 },

@@ -285,6 +285,8 @@ enter_time = 16
     h = 210
     fit = "contain"
     fit_y = 1
+    # hug the frame side: a narrow portrait must not float off-centre
+    fit_x = 0
     visible = "card1.present"
 
     # the cursor rests on an empty slot / the random cell
@@ -454,6 +456,8 @@ enter_time = 16
     h = 210
     fit = "contain"
     fit_y = 1
+    # hug the frame side: a narrow portrait must not float off-centre
+    fit_x = 1
     flip = true
     visible = "card2.present"
 

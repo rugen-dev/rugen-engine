@@ -1795,6 +1795,29 @@ impl Host<'_> {
         c.map(|c| [c.x, c.y, c.x + c.w, c.y + c.h])
     }
 
+    /// Window pixels per virtual unit (1.25 at 1600x900, 1.5 at 1080p).
+    fn px_scale(&self) -> [f32; 2] {
+        let win = self.r.size();
+        let (vw, vh) = viewport(win);
+        [win.0 as f32 / vw, win.1 as f32 / vh]
+    }
+
+    /// `r` with its edges on whole window pixels. At fractional scales a
+    /// frame and the picture inside it otherwise round to different pixels
+    /// (a picture a pixel too high / off-centre in its frame).
+    fn snap(&self, r: Rect) -> Rect {
+        let k = self.px_scale();
+        let edge = |v: f32, k: f32| libm::roundf(v * k) / k;
+        let (x0, y0) = (edge(r.x, k[0]), edge(r.y, k[1]));
+        let (x1, y1) = (edge(r.x + r.w, k[0]), edge(r.y + r.h, k[1]));
+        Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        }
+    }
+
     /// Rotate `d` around the current subtree pivot, keeping its unrotated placement.
     fn apply_rot(&self, d: &mut Draw) {
         let Some(rot) = self.rot else {
@@ -1859,6 +1882,12 @@ impl Painter for Host<'_> {
         if sw == 0 || sh == 0 {
             return;
         }
+        // upright pictures land on whole pixels (rotated / slanted ones keep their maths)
+        let (dst, clip) = if self.rot.is_none() && fx.skew == 0.0 {
+            (self.snap(dst), clip.map(|c| self.snap(c)))
+        } else {
+            (dst, clip)
+        };
         let mut d = Draw::new(tex, pal, [dst.x, dst.y], [0.0, 0.0]);
         d.src = src;
         d.scale = [dst.w / sw as f32, dst.h / sh as f32];
@@ -1881,6 +1910,11 @@ impl Painter for Host<'_> {
     }
 
     fn draw_rect(&mut self, dst: Rect, color: [f32; 4], skew: f32, clip: Option<Rect>) {
+        let (dst, clip) = if self.rot.is_none() && skew == 0.0 {
+            (self.snap(dst), clip.map(|c| self.snap(c)))
+        } else {
+            (dst, clip)
+        };
         let tex = self.r.white();
         let mut d = Draw::new(tex, None, [dst.x, dst.y], [0.0, 0.0]);
         d.scale = [dst.w, dst.h];
