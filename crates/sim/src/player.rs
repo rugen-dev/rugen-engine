@@ -227,6 +227,8 @@ pub struct Player {
     /// 0 = human, 1..=8 = computer controlled (`AILevel`).
     pub ai_level: i32,
     pub ai: AiInput,
+    /// Arena AI plugin memory (see [`crate::arena_ai`]).
+    pub arena: crate::arena_ai::ArenaAiState,
     // ---- drawing
     /// `Trans` controller for this tick (reset every tick).
     pub trans: Trans,
@@ -430,6 +432,7 @@ impl Player {
             ground: 0.0,
             ai_level: 0,
             ai: AiInput::default(),
+            arena: Default::default(),
             trans: Trans::Default,
             alpha: [255, 0],
             angle: 0.0,

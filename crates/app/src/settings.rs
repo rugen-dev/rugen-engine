@@ -117,6 +117,13 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 "Hold down while falling to drop faster.",
             ),
             row(
+                "arena_ai",
+                "ARENA AI",
+                on_off(c.game.arena_ai),
+                String::new(),
+                "Computer fighters on arena stages stay on the island, recover and use the platforms.",
+            ),
+            row(
                 "fighter_size",
                 "FIGHTER SIZE",
                 Widget::Choice(
@@ -428,6 +435,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
         "air_dash" => c.game.air_dash = !c.game.air_dash,
         "fast_fall" => c.game.fast_fall = !c.game.fast_fall,
+        "arena_ai" => c.game.arena_ai = !c.game.arena_ai,
         "mouse" => c.input.mouse = !c.input.mouse,
         "ai" => {
             c.game.ai_level = if wrap && c.game.ai_level + dir > 8 {
@@ -856,14 +864,14 @@ mod tests {
         assert_eq!(c.game.round_time, 0, "clamped at the end");
         adjust(&mut c, "round_time", 1, true);
         assert_eq!(c.game.round_time, 30, "enter wraps");
-        let d = options_data(0, &c, &[], Path::new("."), Some("rows[5].row"));
+        let d = options_data(0, &c, &[], Path::new("."), Some("rows[6].row"));
         assert!(
             d["help"]
                 .as_str()
                 .unwrap()
                 .starts_with("Normal: fighters already")
         );
-        let d = options_data(0, &c, &[], Path::new("."), Some("rows[6].row"));
+        let d = options_data(0, &c, &[], Path::new("."), Some("rows[7].row"));
         assert_eq!(d["rows"][1]["sel"], 0);
         assert!(
             d["help"]
