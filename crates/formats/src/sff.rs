@@ -240,7 +240,7 @@ fn parse_v1(r: &mut R, is_char: bool) -> Result<Sff> {
         if !sff.sprites.contains_key(&(group, number)) {
             sff.sprites.insert((group, number), spr.clone());
         } else {
-            log::warn!("sff: duplicate sprite {group},{number} (index {i} ignored)");
+            log::debug!("sff: duplicate sprite {group},{number} (index {i} ignored)");
         }
         list.push(spr);
         shofs = next;
@@ -399,7 +399,7 @@ fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
         let ofs = u32_(r)? as u64;
         let len = u32_(r)?;
         let pal = if let Some(&old) = unique.get(&key) {
-            log::warn!("sff: duplicate palette {},{} (index {i})", key.0, key.1);
+            log::debug!("sff: duplicate palette {},{} (index {i})", key.0, key.1);
             sff.palettes[old].clone()
         } else if len == 0 {
             sff.palettes
@@ -461,7 +461,7 @@ fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
             match read_v2_pixels(r, data, len, format, depth, width, height) {
                 Ok(px) => spr.pixels = px,
                 Err(e) => {
-                    log::warn!("sff: sprite {group},{number}: {e}");
+                    log::debug!("sff: sprite {group},{number}: {e}");
                     spr.pixels = Pixels::Indexed(vec![0; width as usize * height as usize]);
                 }
             }
@@ -472,7 +472,7 @@ fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
         if !sff.sprites.contains_key(&(group, number)) {
             sff.sprites.insert((group, number), spr.clone());
         } else {
-            log::warn!("sff: duplicate sprite {group},{number} (index {i} ignored)");
+            log::debug!("sff: duplicate sprite {group},{number} (index {i} ignored)");
         }
         list.push(spr);
     }

@@ -307,7 +307,7 @@ fn controller(sec: &Section) -> Result<Controller> {
         .position(Vec::is_empty)
         .unwrap_or(groups.len());
     if contiguous < groups.len() {
-        log::warn!(
+        log::debug!(
             "line {}: trigger{} missing, later triggers ignored",
             sec.line,
             contiguous + 1

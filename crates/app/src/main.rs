@@ -115,11 +115,62 @@ fn relocate(
     found.map_or_else(|| def.to_path_buf(), |(d, m)| m.def_path(&d))
 }
 
+/// `rugen --help` (the usage above).
+const USAGE: &str = "\
+rugen [--root dir]                                            full game: title, select, fight
+  --open online|profile|options|controls                      harness: start on that screen
+rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
+rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
+rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
+  --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
+  --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (direct peer
+                                                              to peer, else TURN / relayed; [net] direct
+                                                              = false never shares the IP; `new` creates a room):
+                                                              brings <char>, shows the matchup, confirms
+                                                              unless BLOCKED, syncs files, fights, quits;
+                                                              with --shot: picture of the matchup screen
+  --synctest                                                  local match that verifies determinism
+  --ai n                                                      P2 computer level (default 4, 0 = human)
+  --watch                                                     both sides computer controlled
+  --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
+  --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
+  --keys 90:Enter,120:k                                       harness: raw key presses at ticks
+rugen list [--root dir]                                       list chars/ and stages/
+rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
+rugen fontgen --roles [--motif motif] [--out dir]             regenerate the motif's role fonts
+rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
+rugen check <char> [--root dir]                               report unsupported controllers
+rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
+  (play refuses `broken` characters unless --force)
+rugen replay <file.json>                                      play back a recorded match
+  (quick play records to --record file.json, menu matches to replays/)
+
+`<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
+";
+
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,wgpu_hal=warn,wgpu_core=warn,naga=warn"),
-    )
-    .init();
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(
+        argv.first().map(String::as_str),
+        Some("--help" | "-h" | "help")
+    ) {
+        print!("{USAGE}");
+        return Ok(());
+    }
+    if matches!(argv.first().map(String::as_str), Some("--version" | "-V")) {
+        println!("rugen {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    // quiet dependencies by default, also under an explicit RUST_LOG=info
+    // (later directives win, so RUST_LOG can still raise any of them):
+    // wgpu reports harmless driver details as warnings, arboard every
+    // compositor without the clipboard protocol it prefers
+    let user = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into());
+    env_logger::Builder::new()
+        .parse_filters(&format!(
+            "info,wgpu_hal=error,wgpu_core=warn,naga=warn,arboard=error,{user}"
+        ))
+        .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // a leading option (`rugen --frames 30`) means the full game
     let first = args.first().map(String::as_str);

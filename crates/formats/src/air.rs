@@ -135,7 +135,7 @@ impl Parser<'_> {
         let mut order: Vec<(i32, Parsed)> = Vec::new();
         while let Some((no, parsed)) = self.next_action() {
             if order.iter().any(|(n, _)| *n == no) {
-                log::warn!("{}: duplicate action {no} ignored", self.file);
+                log::debug!("{}: duplicate action {no} ignored", self.file);
                 continue;
             }
             order.push((no, parsed));
@@ -147,7 +147,7 @@ impl Parser<'_> {
             i -= 1;
             let empty = matches!(&order[i].1, Parsed::Frames(a) if a.frames.is_empty());
             if empty {
-                log::warn!("{}: action {} has no valid frames", self.file, order[i].0);
+                log::debug!("{}: action {} has no valid frames", self.file, order[i].0);
                 if let Some(next) = order[i + 1..].iter().find(|(_, p)| match p {
                     Parsed::Frames(a) => !a.frames.is_empty(),
                     Parsed::Copy(_) => true,
@@ -187,7 +187,7 @@ impl Parser<'_> {
                 Parsed::Frames(a) if ok => {
                     air.actions.insert(*no, a.clone());
                 }
-                _ => log::warn!("{}: action {no}: unresolved Copy Action", self.file),
+                _ => log::debug!("{}: action {no}: unresolved Copy Action", self.file),
             }
         }
         air
@@ -256,7 +256,7 @@ impl Parser<'_> {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    log::warn!("{}: action {no} line {}: {e}", self.file, self.i);
+                    log::debug!("{}: action {no} line {}: {e}", self.file, self.i);
                     continue;
                 }
             }
@@ -346,7 +346,7 @@ impl Parser<'_> {
                         continue;
                     };
                     if let Some(r) = requested {
-                        log::warn!(
+                        log::debug!(
                             "{}: action {no} line {header_line}: Clsn{}[{r}] duplicate or out of range, placed in [{free}]",
                             self.file,
                             kind as char
@@ -365,7 +365,7 @@ impl Parser<'_> {
             self.i += 1;
         }
         if count != size {
-            log::warn!(
+            log::debug!(
                 "{}: action {no} line {header_line}: Clsn{} declared {size} boxes, found {count}",
                 self.file,
                 kind as char

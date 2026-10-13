@@ -140,7 +140,7 @@ fn encode_one(key: (i32, i32), bytes: &[u8]) -> Encoded {
             }
         }
         Err(e) => {
-            log::warn!("sound {},{}: {e}; kept as WAV", key.0, key.1);
+            log::debug!("sound {},{}: {e}; kept as WAV", key.0, key.1);
             raw(bytes)
         }
     }
