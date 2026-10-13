@@ -330,7 +330,7 @@ h = 60
 
     [[node.children.children]]
     kind = "text"
-    text = "ENTER"
+    text = "{hint.ok}"
     h = 32
     pad = 10
     image = "ui/key9.webp"
@@ -347,7 +347,7 @@ h = 60
 
     [[node.children.children]]
     kind = "text"
-    text = "ESC"
+    text = "{hint.back}"
     h = 32
     pad = 10
     image = "ui/key9.webp"

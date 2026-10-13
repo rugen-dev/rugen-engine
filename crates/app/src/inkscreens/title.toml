@@ -348,7 +348,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
     [[node.children.children]]
     kind = "text"
-    text = "ENTER"
+    text = "{hint.ok}"
     h = 36
     pad = 10
     image = "ui/key9.webp"
@@ -365,7 +365,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
     [[node.children.children]]
     kind = "text"
-    text = "ESC"
+    text = "{hint.back}"
     h = 36
     pad = 10
     image = "ui/key9.webp"

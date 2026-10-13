@@ -261,6 +261,9 @@ pub struct UiScreen {
     held: [Buttons; 2],
     /// Wheel turned over the stage select since the last tick.
     stage_wheel: f32,
+    /// What each player last pressed with: the hints name its keys or the
+    /// pad's buttons.
+    devices: [crate::input::Device; 2],
     room: String,
     /// VS screen: the fight to start and the ticks left.
     versus: Option<(FightSetup, i32)>,
@@ -413,9 +416,16 @@ fn layout_moves(
 /// Ticks each featured fighter stays on the title.
 const FEATURE_TICKS: u64 = 300;
 
-/// Short key label for a bound key name (`ArrowUp` → `↑`, `j` → `J`).
-fn key_label(k: &str) -> String {
-    crate::keylabel::key_cap(k).plain()
+/// Menu confirm / back key names for a device: Enter / Esc, or the pad's
+/// South / East buttons by its family's names.
+fn menu_hints(device: crate::input::Device) -> (String, String) {
+    match device {
+        crate::input::Device::Pad(kind) => (
+            crate::keylabel::pad_cap(kind, 4).plain(),
+            crate::keylabel::pad_cap(kind, 5).plain(),
+        ),
+        crate::input::Device::Keyboard => ("ENTER".into(), "ESC".into()),
+    }
 }
 
 /// One-line description of a title menu entry.
@@ -731,16 +741,40 @@ impl UiScreen {
         }
     }
 
+    /// The players' last input devices (keyboard or a pad family): hints
+    /// follow them, as fight overlays do.
+    pub fn set_devices(&mut self, devices: [crate::input::Device; 2], sys: &SystemData) {
+        if devices != self.devices {
+            self.devices = devices;
+            self.refresh_data(sys);
+        }
+    }
+
+    /// What `player` presses for binding `slot` (keys or pad buttons).
+    fn hint_cap(&self, player: usize, slot: usize) -> String {
+        crate::keylabel::cap(&self.config.input, player, slot, self.devices[player]).plain()
+    }
+
     /// Key labels of P1's bindings for hint keycaps.
     fn keys_json(&self) -> Value {
-        let k = &self.config.input.p1;
         json!({
-            "a": key_label(&k.a),
-            "b": key_label(&k.b),
-            "c": key_label(&k.c),
-            "x": key_label(&k.x),
-            "s": key_label(&k.s),
-            "start": key_label(&k.start),
+            "a": self.hint_cap(0, 4),
+            "b": self.hint_cap(0, 5),
+            "c": self.hint_cap(0, 6),
+            "x": self.hint_cap(0, 7),
+            "s": self.hint_cap(0, 10),
+            "start": self.hint_cap(0, crate::keylabel::START),
+        })
+    }
+
+    /// Menu confirm / back hints (`hint.ok`, `hint.back`): Enter and Esc on
+    /// the keyboard, the pad's A and B (by its family's names) on a pad.
+    fn hint_json(&self) -> Value {
+        let (ok, back) = menu_hints(self.devices[0]);
+        json!({
+            "ok": ok,
+            "back": back,
+            "pad": matches!(self.devices[0], crate::input::Device::Pad(_)),
         })
     }
 
@@ -821,6 +855,7 @@ impl UiScreen {
             stages: None,
             held: [Buttons::default(); 2],
             stage_wheel: 0.0,
+            devices: [crate::input::Device::Keyboard; 2],
             room: if kind == UiKind::Select(Mode::Online) {
                 "ONLINE".into()
             } else {
@@ -880,16 +915,12 @@ impl UiScreen {
                     // the pick hint names the key of whoever picks now: both
                     // players' while two cursors pick at once, none when done
                     let open = r.open_picks();
-                    let label = |k: &crate::config::PlayerKeys| key_label(&k.a);
+                    let label = |p: usize| self.hint_cap(p, 4);
                     let pick = match (r.dual(), open) {
                         (_, [false, false]) => String::new(),
-                        (true, [true, true]) => format!(
-                            "{} / {}",
-                            label(&self.config.input.p1),
-                            label(&self.config.input.p2)
-                        ),
-                        (true, [false, true]) => label(&self.config.input.p2),
-                        _ => label(&self.config.input.p1),
+                        (true, [true, true]) => format!("{} / {}", label(0), label(1)),
+                        (true, [false, true]) => label(1),
+                        _ => label(0),
                     };
                     d["pick_key"] = Value::from(pick);
                     d["searching"] = json!(self.ui.text_focused());
@@ -1159,6 +1190,10 @@ impl UiScreen {
                 d
             }
         };
+        let mut data = data;
+        if let Value::Object(m) = &mut data {
+            m.insert("hint".into(), self.hint_json());
+        }
         self.ui.set_data(data);
     }
 
@@ -2350,6 +2385,19 @@ impl Painter for Host<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_hints_follow_the_device() {
+        use crate::input::{Device, PadKind};
+        let h = |d| menu_hints(d);
+        assert_eq!(h(Device::Keyboard), ("ENTER".into(), "ESC".into()));
+        assert_eq!(h(Device::Pad(PadKind::Xbox)), ("A".into(), "B".into()));
+        assert_eq!(
+            h(Device::Pad(PadKind::PlayStation)),
+            ("X".into(), "O".into())
+        );
+        assert_eq!(h(Device::Pad(PadKind::Nintendo)), ("B".into(), "A".into()));
+    }
 
     /// A group running into the next column is marked as continued, not repeated.
     #[test]

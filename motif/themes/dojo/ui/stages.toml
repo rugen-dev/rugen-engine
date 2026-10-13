@@ -402,7 +402,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "ENTER"
+  text = "{hint.ok}"
   h = 36
   pad = 10
   image = "ui/key9.webp"
@@ -419,7 +419,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "ESC"
+  text = "{hint.back}"
   h = 36
   pad = 10
   image = "ui/key9.webp"

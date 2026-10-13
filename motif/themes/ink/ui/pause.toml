@@ -512,7 +512,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "ENTER"
+  text = "{hint.ok}"
   h = 26
   pad = 8
   color = [1.0, 1.0, 1.0, 1.0]
@@ -528,7 +528,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "ESC"
+  text = "{hint.back}"
   h = 26
   pad = 8
   color = [1.0, 1.0, 1.0, 1.0]

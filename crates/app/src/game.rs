@@ -1629,6 +1629,9 @@ impl Shell {
                     u.set_pads(self.input.pads(), sys);
                 }
                 u.set_held(self.prev);
+                if let Some(sys) = self.system.as_ref() {
+                    u.set_devices(self.input.devices(), sys);
+                }
                 if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
                     next = u.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
@@ -1698,6 +1701,7 @@ impl Shell {
                 if let (Some(p), Some(sys), Some(g)) =
                     (self.pause.as_mut(), self.system.as_mut(), self.gpu.as_mut())
                 {
+                    p.set_devices(self.input.devices(), sys);
                     resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });

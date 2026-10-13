@@ -656,7 +656,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "ESC"
+  text = "{hint.back}"
   h = 32
   pad = 10
   image = "ui/key9.webp"
