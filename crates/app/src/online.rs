@@ -2235,6 +2235,8 @@ impl OnlineScreen {
             "online": info.map_or("--".into(), |i| i.online.to_string()),
             "rooms": info.map_or("--".into(), |i| i.rooms.to_string()),
             "ping": if r.error { "--".into() } else { r.ping.map_or("--".into(), |p| p.to_string()) },
+            "rated": rating != "--",
+            "unrated": rating == "--",
             "rating": rating,
             "tier": tier,
             "usable": usable,
@@ -2261,7 +2263,8 @@ impl OnlineScreen {
                     .get(addr)
                     .and_then(|v| v.info.as_ref())
                     .map(|a| &a.profile);
-                let offline = self.servers[i].error;
+                let problem = self.row_problem(i);
+                let offline = problem.is_some();
                 let (status, side, ok) = match self.acct_state(i) {
                     AcctState::Named(n) => (
                         match profile {
@@ -2278,7 +2281,11 @@ impl OnlineScreen {
                     ),
                     AcctState::Anonymous => ("NO USERNAME YET".into(), "CLAIM ▶", false),
                     AcctState::Checking => ("CHECKING...".into(), "", false),
-                    _ if offline => ("SERVER OFFLINE".into(), "--", false),
+                    _ if offline => (
+                        problem.map(|(_, line)| line).unwrap_or_default(),
+                        "--",
+                        false,
+                    ),
                     AcctState::None if self.has_accounts(addr) => {
                         ("NO ACCOUNT YET".into(), "SET UP ▶", false)
                     }
@@ -2311,7 +2318,8 @@ impl OnlineScreen {
         let profile = info.map(|a| &a.profile);
         let state = self.acct_state(i);
         let supported = self.has_accounts(&addr);
-        let offline = self.servers.get(i).is_some_and(|r| r.error);
+        let problem = self.row_problem(i);
+        let offline = problem.is_some();
         let kind = self.acct_form;
         let named = matches!(state, AcctState::Named(_));
         let form = kind == AcctForm::Password
@@ -2331,9 +2339,13 @@ impl OnlineScreen {
             .unwrap_or_default();
         let devices = info.map_or(0, |a| a.sessions);
         let note = match &state {
-            _ if offline && !named => {
-                "THIS SERVER IS OFFLINE. TRY AGAIN WHEN IT IS BACK.".to_string()
-            }
+            _ if offline && !named => match &problem {
+                Some(_) if self.servers.get(i).is_some_and(|r| r.error) => {
+                    "THIS SERVER IS OFFLINE. TRY AGAIN WHEN IT IS BACK.".to_string()
+                }
+                Some((_, line)) => format!("{line}: NO ACCOUNT CAN BE MADE THERE FROM THIS GAME."),
+                None => String::new(),
+            },
             AcctState::Checking => "CHECKING YOUR ACCOUNT...".into(),
             _ if !supported => {
                 "THIS SERVER HAS NO USERNAMES YET: YOU PLAY THERE ANONYMOUSLY. JUST ENTER IT."
@@ -3640,6 +3652,11 @@ impl OnlineScreen {
                     self.jobs
                         .push(Job::Done(Pending::spawn(move || c.leave_room(&code))));
                 }
+            }
+            State::Profile if self.acct_form == AcctForm::Password => {
+                // back to the account, not out of PROFILE
+                self.action("acct:cancel_password");
+                return;
             }
             State::Profile => {
                 self.clear_form();
