@@ -138,7 +138,9 @@ Everything else lives on **[rugen.dev](https://rugen.dev)**:
 
 ## Contributing
 
-Read the [contributing guide](https://rugen.dev/engine/contributing/), then
+Read [CONTRIBUTING.md](CONTRIBUTING.md) (licence of contributions, commit
+format, checks, no copyrighted content) and the
+[contributing guide](https://rugen.dev/engine/contributing/), then
 [DESIGN.md](DESIGN.md) for the architecture and the rules the code follows.
 [BUILDING.md](BUILDING.md) has the system dependencies and the checks CI runs.
 
