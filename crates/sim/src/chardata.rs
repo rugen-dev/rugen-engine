@@ -716,56 +716,108 @@ pub fn load_consts(def: &Def, localcoord_w: f32) -> IndexMap<String, f32> {
         .collect();
     for sec in ["data", "size", "velocity", "movement"] {
         let Some(s) = def.section(sec) else { continue };
-        for (key, raw) in &s.entries {
-            let vals: Vec<f32> = raw
-                .split(',')
-                .map(|v| rugen_formats::text::atof(v).unwrap_or(0.0))
-                .collect();
-            if vals.is_empty() {
-                continue;
+        // Ikemen: run jumps and air jumps default to the regular jump's
+        // velocities, read before their own keys
+        let late = |k: &str| k.starts_with("runjump.") || k.starts_with("airjump.");
+        for pass in 0..2 {
+            if sec == "velocity" && pass == 1 {
+                let g = |m: &IndexMap<String, f32>, k: &str| m.get(k).copied().unwrap_or(0.0);
+                let (nx, ny) = (g(&m, "velocity.jump.neu.x"), g(&m, "velocity.jump.y"));
+                let (bx, fx) = (g(&m, "velocity.jump.back.x"), g(&m, "velocity.jump.fwd.x"));
+                for (k, v) in [
+                    ("velocity.runjump.back.x", bx),
+                    ("velocity.runjump.back.y", ny),
+                    ("velocity.runjump.fwd.x", fx),
+                    ("velocity.runjump.fwd.y", ny),
+                    ("velocity.airjump.neu.x", nx),
+                    ("velocity.airjump.y", ny),
+                    ("velocity.airjump.back.x", bx),
+                    ("velocity.airjump.fwd.x", fx),
+                ] {
+                    m.insert(k.into(), v);
+                }
             }
-            let base = format!("{sec}.{key}");
-            // keys that are documented as x/y pairs get .x/.y; scalars keep the bare name,
-            // but velocity scalars are also exposed as .x (velocity.walk.fwd.x)
-            let pair = matches!(
-                key.as_str(),
-                "head.pos"
-                    | "mid.pos"
-                    | "draw.offset"
-                    | "run.fwd"
-                    | "run.back"
-                    | "jump.neu"
-                    | "runjump.back"
-                    | "runjump.fwd"
-                    | "airjump.neu"
-                    | "air.gethit.groundrecover"
-                    | "air.gethit.airrecover.mul"
-                    | "air.gethit.airrecover.add"
-                    | "down.bounce.offset"
-            );
-            if pair {
-                m.insert(format!("{base}.x"), vals[0]);
-                m.insert(format!("{base}.y"), vals.get(1).copied().unwrap_or(0.0));
-                if key == "jump.neu" {
-                    m.insert(
-                        "velocity.jump.y".into(),
-                        vals.get(1).copied().unwrap_or(0.0),
-                    );
+            for (key, raw) in &s.entries {
+                if (sec == "velocity" && late(key)) != (pass == 1) {
+                    continue;
                 }
-                if key == "airjump.neu" {
-                    m.insert(
-                        "velocity.airjump.y".into(),
-                        vals.get(1).copied().unwrap_or(0.0),
-                    );
+                // a missing or empty component keeps its default (Ikemen `ReadF32`)
+                let vals: Vec<Option<f32>> =
+                    raw.split(',').map(rugen_formats::text::atof).collect();
+                if vals.is_empty() {
+                    continue;
                 }
-            } else if sec == "velocity" && !key.contains("airrecover.") {
-                m.insert(format!("{base}.x"), vals[0]);
-            } else {
-                m.insert(base, vals[0]);
+                let mut put = |k: String, v: Option<f32>| {
+                    if let Some(v) = v {
+                        m.insert(k, v);
+                    } else {
+                        m.entry(k).or_insert(0.0);
+                    }
+                };
+                let x = vals[0];
+                let y = vals.get(1).copied().flatten();
+                let base = format!("{sec}.{key}");
+                // keys that are documented as x/y pairs get .x/.y; scalars keep the bare name,
+                // but velocity scalars are also exposed as .x (velocity.walk.fwd.x)
+                let pair = matches!(
+                    key.as_str(),
+                    "head.pos"
+                        | "mid.pos"
+                        | "draw.offset"
+                        | "run.fwd"
+                        | "run.back"
+                        | "jump.neu"
+                        | "runjump.back"
+                        | "runjump.fwd"
+                        | "airjump.neu"
+                        | "air.gethit.groundrecover"
+                        | "air.gethit.airrecover.mul"
+                        | "air.gethit.airrecover.add"
+                        | "down.bounce.offset"
+                );
+                if pair {
+                    put(format!("{base}.x"), x);
+                    put(format!("{base}.y"), y);
+                    if key == "jump.neu" {
+                        put("velocity.jump.y".into(), y);
+                    }
+                    if key == "airjump.neu" {
+                        put("velocity.airjump.y".into(), y);
+                    }
+                } else if sec == "velocity" && !key.contains("airrecover.") {
+                    put(format!("{base}.x"), x);
+                } else {
+                    put(base, x);
+                }
             }
         }
     }
     let f = m.get("data.fall.defence_up").copied().unwrap_or(50.0);
     m.insert("data.fall.defence_mul".into(), 100.0 / (f + 100.0));
     m
+}
+
+#[cfg(test)]
+mod const_tests {
+    use super::*;
+
+    /// Ikemen `ReadF32`: `airjump.neu = 0` sets x only; y keeps its default,
+    /// which is the regular jump's (Goku's air jumps went nowhere before).
+    #[test]
+    fn one_value_pairs_keep_their_default_y() {
+        let def = Def::parse(
+            "[Velocity]\njump.neu = 0,-9\njump.fwd = 4\nairjump.neu = 0\nairjump.fwd = 0\n",
+        );
+        let m = load_consts(&def, 320.0);
+        assert_eq!(m["velocity.jump.y"], -9.0);
+        assert_eq!(m["velocity.airjump.y"], -9.0, "y defaults to jump.neu y");
+        assert_eq!(m["velocity.airjump.fwd.x"], 0.0);
+        assert_eq!(m["velocity.runjump.fwd.x"], 4.0, "runjump defaults to jump");
+        assert_eq!(m["velocity.runjump.fwd.y"], -9.0);
+        // both values given: used as is
+        let def = Def::parse("[Velocity]\nairjump.neu = 1,-6\n");
+        let m = load_consts(&def, 320.0);
+        assert_eq!(m["velocity.airjump.neu.x"], 1.0);
+        assert_eq!(m["velocity.airjump.y"], -6.0);
+    }
 }
