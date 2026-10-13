@@ -7,11 +7,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod evidence;
 pub mod fair;
 pub mod relay;
 pub mod trust;
 
+pub use account::{AccountInfo, Session};
 pub use fair::*;
 pub use trust::*;
 
@@ -71,6 +73,15 @@ pub struct ProfileInfo {
     pub wins: u32,
     pub losses: u32,
     pub rank: String,
+    /// `name` is the account's username (API 5 named account, unique on
+    /// the server): clients show a badge. Free-form names of anonymous
+    /// accounts never carry it, so a username cannot be impersonated.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub verified: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,6 +207,10 @@ pub struct ServerInfo {
     /// only.
     #[serde(default)]
     pub api_min: u32,
+    /// The server offers named accounts ([`account`]: username + password,
+    /// API 5). False from older servers: anonymous accounts only.
+    #[serde(default)]
+    pub accounts: bool,
 }
 
 impl ServerInfo {
@@ -286,6 +301,9 @@ pub struct RoomSummary {
     /// only players of the same API can join. 0 when the server does not say.
     #[serde(default)]
     pub api: u32,
+    /// `host` is a username ([`ProfileInfo::verified`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub host_verified: bool,
 }
 
 impl RoomSummary {
@@ -525,6 +543,28 @@ mod tests {
         assert_eq!(s, r#"{"t":"ping"}"#);
         let p: ServerMsg = serde_json::from_str(r#"{"t":"pong"}"#).unwrap();
         assert_eq!(p, ServerMsg::Pong);
+    }
+
+    #[test]
+    fn verified_flags_are_additive() {
+        // older payloads (and API 4 servers) carry no flag: not verified
+        let p: ProfileInfo = serde_json::from_str(
+            r#"{"id":1,"name":"x","avatar":0,"rating":1200,"best_rating":1200,"wins":0,"losses":0,"rank":"SILVER"}"#,
+        )
+        .unwrap();
+        assert!(!p.verified);
+        // an anonymous profile serializes exactly as before
+        assert!(!serde_json::to_string(&p).unwrap().contains("verified"));
+        let v = ProfileInfo {
+            verified: true,
+            ..p
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains(r#""verified":true"#));
+        assert_eq!(serde_json::from_str::<ProfileInfo>(&json).unwrap(), v);
+        let i: ServerInfo =
+            serde_json::from_str(r#"{"api":5,"name":"x","online":0,"queued":0}"#).unwrap();
+        assert!(!i.accounts);
     }
 
     #[test]
