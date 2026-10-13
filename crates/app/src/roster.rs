@@ -283,6 +283,11 @@ impl Roster {
             .unwrap_or(2)
     }
 
+    /// Sides whose fighter is still to be picked on this screen.
+    pub fn open_picks(&self) -> [bool; 2] {
+        [0, 1].map(|s| self.chooses[s] && self.picks[s].is_none())
+    }
+
     /// Both humans pick at the same time (each with their own cursor).
     pub fn dual(&self) -> bool {
         self.human[0] && self.human[1]

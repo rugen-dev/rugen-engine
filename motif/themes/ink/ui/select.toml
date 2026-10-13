@@ -701,7 +701,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "{keys.a}"
+  text = "{pick_key}"
   h = 36
   pad = 10
   image = "ui/key9.webp"
@@ -709,12 +709,14 @@ align = "center"
   font = 1
   scale = 2
   bank = 9
+  visible = "pick_key"
 
   [[node.children]]
   kind = "text"
   text = "PICK  "
   font = 2
   bank = 9
+  visible = "pick_key"
 
   [[node.children]]
   kind = "text"

@@ -742,6 +742,21 @@ impl UiScreen {
                 Some(r) => {
                     let mut d = r.data(&self.profile, &self.room);
                     d["keys"] = self.keys_json();
+                    // the pick hint names the key of whoever picks now: both
+                    // players' while two cursors pick at once, none when done
+                    let open = r.open_picks();
+                    let label = |k: &crate::config::PlayerKeys| key_label(&k.a);
+                    let pick = match (r.dual(), open) {
+                        (_, [false, false]) => String::new(),
+                        (true, [true, true]) => format!(
+                            "{} / {}",
+                            label(&self.config.input.p1),
+                            label(&self.config.input.p2)
+                        ),
+                        (true, [false, true]) => label(&self.config.input.p2),
+                        _ => label(&self.config.input.p1),
+                    };
+                    d["pick_key"] = Value::from(pick);
                     d["searching"] = json!(self.ui.text_focused());
                     d
                 }
