@@ -204,7 +204,7 @@ order; each item is one branch, with tests, docs (rugen.dev page plus README
 box) and screenshots.
 
 ### Training lab
-- [ ] **Hitbox display.** Toggle in the Training pause menu and on a key
+- [x] **Hitbox display.** (3af85f0) Toggle in the Training pause menu and on a key
   (F1). Draw Clsn1 red and Clsn2 blue from the sim's current frame, after the
   sprite, with the fighter-size zoom applied. Off in every other mode.
 - [ ] **Frame data.** For the last move, show startup / active / recovery and
