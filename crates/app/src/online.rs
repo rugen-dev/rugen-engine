@@ -18,6 +18,16 @@
 //! 4. Matches are **relayed by the server** (UDP fast path, WebSocket
 //!    fallback): no player ever learns another's address.
 //!
+//! 5. **PROFILE** (from the home menu or the server list): the account on
+//!    every server, official first. Offline play needs none; rooms, ranked
+//!    and the leaderboard need one on that server: a username (unique
+//!    there) and a password, created or logged into here, or an anonymous
+//!    account of an older version **claimed** (it keeps its id, rating and
+//!    history). Entering a server without an account opens this page
+//!    instead of registering silently (servers without named accounts, and
+//!    the `rugen play --server` harness, still register anonymously).
+//!    Only the account key is stored (`profile.json`), never the password.
+//!
 //! DIRECT MATCH (LAN / IP) stays available without any server: each player
 //! types the other's address (explicit opt-in).
 //!
@@ -30,9 +40,9 @@ use std::sync::Mutex;
 use anyhow::Context as _;
 use rugen_content::Library;
 use rugen_net::online::{
-    Evidence, Leaderboard, MatchInfo, OnlineClient, OnlineResult, Pending, Presence, ProfileInfo,
-    QueueStatus, Registered, ResultAck, RoomInfo, RoomOptions, RoomSummary, Rules, ServerInfo,
-    ServerMsg, base_url, ping_bars, rank_name,
+    AccountInfo, Evidence, Leaderboard, MatchInfo, OnlineClient, OnlineResult, Pending, Presence,
+    ProfileInfo, QueueStatus, Registered, ResultAck, RoomInfo, RoomOptions, RoomSummary, Rules,
+    ServerInfo, ServerMsg, Session, base_url, ping_bars, rank_name,
 };
 use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
@@ -146,10 +156,129 @@ enum State {
     Direct,
     /// Bring-your-own-character matchup before a match.
     Matchup,
+    /// PROFILE: the account on every server.
+    Profile,
+    /// One server's account: status and actions.
+    Account,
+    /// Typing a username / password ([`AcctForm`]).
+    AccountForm,
+}
+
+/// What the account form does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcctForm {
+    Create,
+    Login,
+    /// Give this device's anonymous account a username and password.
+    Claim,
+    Password,
+}
+
+impl AcctForm {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Create => "CREATE ACCOUNT",
+            Self::Login => "LOG IN",
+            Self::Claim => "CLAIM THIS ACCOUNT",
+            Self::Password => "CHANGE PASSWORD",
+        }
+    }
+
+    fn submit(self) -> &'static str {
+        match self {
+            Self::Create => "CREATE",
+            Self::Login => "LOG IN",
+            Self::Claim => "CLAIM",
+            Self::Password => "CHANGE",
+        }
+    }
+}
+
+/// Why the account form cannot be sent yet (checked again by the server).
+fn form_error(kind: AcctForm, user: &str, pass: &str, new: &str) -> Option<&'static str> {
+    use rugen_proto::account::{password_error, username_error};
+    match kind {
+        AcctForm::Login if user.is_empty() || pass.is_empty() => {
+            Some("TYPE YOUR USERNAME AND PASSWORD")
+        }
+        AcctForm::Login => None,
+        AcctForm::Create | AcctForm::Claim => username_error(user).or_else(|| password_error(pass)),
+        AcctForm::Password if pass.is_empty() => Some("TYPE YOUR CURRENT PASSWORD"),
+        AcctForm::Password => password_error(new),
+    }
+}
+
+/// What we know about this device's account on one server.
+#[derive(Clone, Debug, Default)]
+struct AcctView {
+    checking: bool,
+    info: Option<AccountInfo>,
+    /// The server has no named accounts (older server): anonymous only.
+    unsupported: bool,
+    error: String,
+}
+
+/// The account on a server, as the PROFILE page shows it.
+#[derive(Clone, Debug, PartialEq)]
+enum AcctState {
+    /// No key on this device.
+    None,
+    Checking,
+    /// A key without a username (claimable).
+    Anonymous,
+    /// Logged in as this username.
+    Named(String),
+}
+
+/// Keep a session's key (and username) for `server`. The password never
+/// reaches the profile.
+fn remember_session(profile: &mut Profile, server: &str, s: &Session) {
+    profile
+        .online_accounts
+        .insert(server.to_string(), (s.id, s.key.clone()));
+    if s.username.is_empty() {
+        profile.online_names.remove(server);
+    } else {
+        profile
+            .online_names
+            .insert(server.to_string(), s.username.clone());
+    }
+}
+
+/// Forget this device's account on `server` (logged out, or its key was
+/// revoked), including the legacy single key when it belongs there.
+fn forget_session(profile: &mut Profile, config: &Config, server: &str) {
+    profile
+        .online_accounts
+        .retain(|k, _| !official::same_server(k, server));
+    profile
+        .online_names
+        .retain(|k, _| !official::same_server(k, server));
+    let legacy = if config.net.server.trim().is_empty() {
+        official::server()
+    } else {
+        config.net.server.trim()
+    };
+    if official::same_server(server, legacy) {
+        profile.online_key.clear();
+        profile.online_id = 0;
+    }
+}
+
+/// A name with the verified badge when it is a username.
+fn badge_name(p: &ProfileInfo) -> String {
+    let n = p.name.to_uppercase();
+    if p.verified { format!("{n} ✓") } else { n }
 }
 
 enum Job {
     Register(Pending<Registered>),
+    /// Account status of a server (PROFILE).
+    Account(String, Pending<AccountInfo>),
+    /// Account form sent to a server.
+    Session(String, AcctForm, Pending<Session>),
+    /// Log out (`true`: everywhere) on a server.
+    Logout(String, bool, Pending<()>),
     Info(usize, Pending<(ServerInfo, u32, Option<SignedBlob>)>),
     /// The official truth feed (from the official server or a mirror).
     Truth(Pending<SignedBlob>),
@@ -294,6 +423,22 @@ pub struct OnlineScreen {
     confirm_focused: bool,
     /// Server row to focus once the list is laid out (the default server).
     pending_focus: Option<usize>,
+    /// PROFILE: this device's account per server address.
+    accounts: HashMap<String, AcctView>,
+    /// The server (row) the account page and form act on.
+    acct_server: usize,
+    acct_form: AcctForm,
+    acct_user: String,
+    /// Typed passwords: only sent, never stored; cleared with the form.
+    acct_pass: String,
+    acct_new: String,
+    acct_show: bool,
+    acct_error: String,
+    /// PROFILE was opened from the home menu (BACK returns there).
+    profile_from_title: bool,
+    /// The account page opened because a server needs an account: go on
+    /// into that server once logged in.
+    connect_after: bool,
 }
 
 /// Account (id, key) for `server`; the legacy single key belongs to `[net] server`.
@@ -401,6 +546,16 @@ impl OnlineScreen {
             hold_for_shot: false,
             confirm_focused: false,
             pending_focus: None,
+            accounts: HashMap::new(),
+            acct_server: 0,
+            acct_form: AcctForm::Create,
+            acct_user: String::new(),
+            acct_pass: String::new(),
+            acct_new: String::new(),
+            acct_show: false,
+            acct_error: String::new(),
+            profile_from_title: false,
+            connect_after: false,
             direct_side: 0,
             addr: String::new(),
             local_ip: rugen_net::socket::lan_ip()
@@ -551,6 +706,197 @@ impl OnlineScreen {
         s.connect(&server);
         s.refresh();
         Ok(s)
+    }
+
+    /// PROFILE straight from the home menu.
+    pub fn load_profile(
+        motif: &Path,
+        root: &Path,
+        lib: &Library,
+        config: &Config,
+    ) -> anyhow::Result<Self> {
+        if let Ok(mut r) = RESUME.lock() {
+            *r = None;
+        }
+        let mut s = Self::load(motif, root, lib, config)?;
+        s.profile_from_title = true;
+        s.open_profile();
+        s.refresh();
+        Ok(s)
+    }
+
+    // ---- PROFILE: accounts
+
+    /// The PROFILE page: every server's account, checked again.
+    fn open_profile(&mut self) {
+        self.state = State::Profile;
+        self.ui.set_focus(None);
+        self.connect_after = false;
+        self.clear_form();
+        self.error.clear();
+        self.status = "PICK A SERVER TO CREATE AN ACCOUNT OR LOG IN".into();
+        self.check_accounts();
+    }
+
+    /// Ask every server we hold a key for who that key is.
+    fn check_accounts(&mut self) {
+        for row in &self.servers {
+            let (_, key) = account_for(&self.profile, &self.config, &row.addr);
+            let view = self.accounts.entry(row.addr.clone()).or_default();
+            if key.is_empty() {
+                view.info = None;
+                view.checking = false;
+                continue;
+            }
+            view.checking = true;
+            let c = OnlineClient::new(&row.addr, Some(key));
+            self.jobs.push(Job::Account(
+                row.addr.clone(),
+                Pending::spawn(move || c.account()),
+            ));
+        }
+    }
+
+    /// Whether `addr` offers named accounts (unknown yet: assume it does).
+    fn has_accounts(&self, addr: &str) -> bool {
+        let row = self.servers.iter().find(|r| r.addr == addr);
+        let unsupported = self.accounts.get(addr).is_some_and(|v| v.unsupported);
+        !unsupported && row.and_then(|r| r.info.as_ref()).is_none_or(|i| i.accounts)
+    }
+
+    /// This device's account on server row `i`.
+    fn acct_state(&self, i: usize) -> AcctState {
+        let Some(row) = self.servers.get(i) else {
+            return AcctState::None;
+        };
+        let (_, key) = account_for(&self.profile, &self.config, &row.addr);
+        if key.is_empty() {
+            return AcctState::None;
+        }
+        let view = self.accounts.get(&row.addr);
+        match view.and_then(|v| v.info.as_ref()) {
+            Some(info) if info.named() => AcctState::Named(info.username.clone()),
+            Some(_) => AcctState::Anonymous,
+            None if view.is_some_and(|v| v.checking) => AcctState::Checking,
+            // offline: what we last knew
+            None => match self.profile.online_names.get(&row.addr) {
+                Some(n) => AcctState::Named(n.clone()),
+                None => AcctState::Anonymous,
+            },
+        }
+    }
+
+    /// One server's account page.
+    fn open_account(&mut self, i: usize) {
+        if i >= self.servers.len() {
+            return;
+        }
+        self.acct_server = i;
+        self.state = State::Account;
+        self.ui.set_focus(None);
+        self.clear_form();
+        self.error.clear();
+        let addr = self.servers[i].addr.clone();
+        self.status = match self.acct_state(i) {
+            AcctState::Named(n) => format!("LOGGED IN AS {}", n.to_uppercase()),
+            AcctState::Anonymous => "THIS ACCOUNT HAS NO USERNAME YET".into(),
+            _ if !self.has_accounts(&addr) => "THIS SERVER HAS NO USERNAMES".into(),
+            _ => "NOT LOGGED IN".into(),
+        };
+    }
+
+    fn clear_form(&mut self) {
+        self.acct_user.clear();
+        self.acct_pass.clear();
+        self.acct_new.clear();
+        self.acct_show = false;
+        self.acct_error.clear();
+        for id in ["acct_user", "acct_pass", "acct_new"] {
+            self.ui.set_input(id, "");
+        }
+    }
+
+    fn open_form(&mut self, kind: AcctForm) {
+        self.clear_form();
+        self.acct_form = kind;
+        self.state = State::AccountForm;
+        self.error.clear();
+        self.status = kind.title().into();
+        self.refresh();
+        self.ui.edit(if kind == AcctForm::Password {
+            "acct_pass"
+        } else {
+            "acct_user"
+        });
+    }
+
+    fn acct_addr(&self) -> String {
+        self.servers
+            .get(self.acct_server)
+            .map(|r| r.addr.clone())
+            .unwrap_or_default()
+    }
+
+    fn submit_form(&mut self) {
+        let kind = self.acct_form;
+        let (user, pass, new) = (
+            self.acct_user.trim().to_string(),
+            self.acct_pass.clone(),
+            self.acct_new.clone(),
+        );
+        if let Some(e) = form_error(kind, &user, &pass, &new) {
+            self.acct_error = e.into();
+            return;
+        }
+        if self.jobs.iter().any(|j| matches!(j, Job::Session(..))) {
+            return;
+        }
+        let addr = self.acct_addr();
+        let (_, key) = account_for(&self.profile, &self.config, &addr);
+        let mut c = OnlineClient::new(&addr, (!key.is_empty()).then_some(key));
+        self.acct_error.clear();
+        self.status = "SENDING...".into();
+        let job = Pending::spawn(move || match kind {
+            AcctForm::Create => c.create_account(&user, &pass),
+            AcctForm::Login => c.login(&user, &pass),
+            AcctForm::Claim => c.claim(&user, &pass),
+            AcctForm::Password => c.change_password(&pass, &new),
+        });
+        self.jobs.push(Job::Session(addr, kind, job));
+    }
+
+    fn logout(&mut self, everywhere: bool) {
+        let addr = self.acct_addr();
+        let (_, key) = account_for(&self.profile, &self.config, &addr);
+        if key.is_empty() {
+            return;
+        }
+        let c = OnlineClient::new(&addr, Some(key));
+        self.status = "LOGGING OUT...".into();
+        self.jobs.push(Job::Logout(
+            addr,
+            everywhere,
+            Pending::spawn(move || c.logout(everywhere)),
+        ));
+    }
+
+    /// A server's account changed (`key`: the device's key now, empty when
+    /// logged out): the connected client follows.
+    fn account_changed(&mut self, addr: &str, key: &str) {
+        if !official::same_server(&self.client.server, addr) {
+            return;
+        }
+        self.presence = None;
+        if key.is_empty() {
+            self.client = OnlineClient::new("", None);
+            self.me = None;
+        } else {
+            self.client.key = Some(key.to_string());
+            self.presence = Presence::spawn(&self.client).ok();
+            let (c, id) = (self.client.clone(), self.my_id());
+            self.jobs
+                .push(Job::Me(Pending::spawn(move || c.profile(id))));
+        }
     }
 
     /// Auto mode: once registered, create or join the room.
@@ -1179,6 +1525,20 @@ impl OnlineScreen {
             return;
         }
         let (id, key) = account_for(&self.profile, &self.config, server);
+        // a server with named accounts: create one or log in first (the
+        // `rugen play --server` harness keeps registering anonymously)
+        if key.is_empty()
+            && self.auto.is_none()
+            && self.has_accounts(server)
+            && let Some(i) = self.servers.iter().position(|r| r.addr == server)
+        {
+            self.presence = None;
+            self.client = OnlineClient::new("", None);
+            self.open_account(i);
+            self.connect_after = true;
+            self.status = "THIS SERVER NEEDS AN ACCOUNT: CREATE ONE OR LOG IN".into();
+            return;
+        }
         self.client = OnlineClient::new(server, (!key.is_empty()).then_some(key));
         self.me = None;
         self.state = State::Menu;
@@ -1286,6 +1646,132 @@ impl OnlineScreen {
         })
     }
 
+    /// Display name of server row `i`.
+    fn row_name(&self, i: usize) -> String {
+        self.servers
+            .get(i)
+            .map(|r| {
+                r.info
+                    .as_ref()
+                    .map_or(official::host_label(&r.addr).to_string(), |i| {
+                        i.name.clone()
+                    })
+            })
+            .unwrap_or_default()
+            .to_uppercase()
+    }
+
+    /// The account card (account page and form).
+    fn acct_json(&self) -> Value {
+        let i = self.acct_server;
+        let addr = self.acct_addr();
+        let official = self
+            .servers
+            .get(i)
+            .is_some_and(|r| r.official && r.trust != Trust::Impostor);
+        let view = self.accounts.get(&addr);
+        let profile = view.and_then(|v| v.info.as_ref()).map(|a| &a.profile);
+        let state = self.acct_state(i);
+        let supported = self.has_accounts(&addr);
+        let title = match &state {
+            AcctState::Named(n) => format!("{} ✓", n.to_uppercase()),
+            AcctState::Anonymous => "NO USERNAME YET".into(),
+            AcctState::Checking => "CHECKING...".into(),
+            AcctState::None => "NOT LOGGED IN".into(),
+        };
+        let rating = profile
+            .map(|p| format!("{} {}   BEST {}", p.rank, p.rating, p.best_rating))
+            .unwrap_or_default();
+        let record = profile
+            .map(|p| {
+                let devices = view.and_then(|v| v.info.as_ref()).map_or(0, |a| a.sessions);
+                let mut line = format!("{}W {}L", p.wins, p.losses);
+                if matches!(state, AcctState::Named(_)) && devices > 0 {
+                    line.push_str(&format!(
+                        "   LOGGED IN ON {devices} DEVICE{}",
+                        if devices == 1 { "" } else { "S" }
+                    ));
+                }
+                line
+            })
+            .unwrap_or_default();
+        let hint = match &state {
+            _ if !supported => "THIS SERVER HAS NO USERNAMES YET: YOU PLAY THERE ANONYMOUSLY.",
+            AcctState::Named(_) => {
+                "LOG IN WITH THIS USERNAME AND PASSWORD ON YOUR OTHER DEVICES. CHANGING THE PASSWORD LOGS THEM OUT."
+            }
+            AcctState::Anonymous => {
+                "THIS DEVICE PLAYS ON AN ACCOUNT WITHOUT A USERNAME. CLAIM IT TO KEEP ITS RATING AND PLAY FROM OTHER DEVICES."
+            }
+            AcctState::Checking => "",
+            AcctState::None => {
+                "ONLINE ROOMS, RANKED AND THE LEADERBOARD NEED AN ACCOUNT ON THIS SERVER. OFFLINE PLAY NEEDS NONE."
+            }
+        };
+        let kind = self.acct_form;
+        let error = if self.acct_error.is_empty() {
+            view.map(|v| v.error.clone()).unwrap_or_default()
+        } else {
+            self.acct_error.clone()
+        };
+        json!({
+            "server": self.row_name(i),
+            "scope": if official { "OFFICIAL SERVER · GLOBAL RANKING" } else { "COMMUNITY SERVER" },
+            "official": official,
+            "title": title,
+            "rating": rating,
+            "record": record,
+            "hint": hint,
+            "note": "NO EMAIL: KEEP YOUR PASSWORD SAFE",
+            "form_title": format!("{} · {}", kind.title(), self.row_name(i).chars().take(18).collect::<String>()),
+            "user": self.acct_user,
+            "pass": self.acct_pass,
+            "new": self.acct_new,
+            "masked": !self.acct_show,
+            "show_label": if self.acct_show { "HIDE" } else { "SHOW" },
+            "has_user": kind != AcctForm::Password,
+            "has_new": kind == AcctForm::Password,
+            "pass_label": if kind == AcctForm::Password { "CURRENT PASSWORD" } else { "PASSWORD" },
+            "rules": match kind {
+                AcctForm::Create | AcctForm::Claim => "3-16 LETTERS, DIGITS, _ OR -   PASSWORD: 6+ CHARACTERS",
+                AcctForm::Login => "USERNAMES IGNORE CASE",
+                AcctForm::Password => "6+ CHARACTERS. YOUR OTHER DEVICES GET LOGGED OUT.",
+            },
+            "submit": kind.submit(),
+            "error": error,
+            "has_error": !error.is_empty(),
+        })
+    }
+
+    /// PROFILE overview: one line per server.
+    fn accts_json(&self) -> Vec<Value> {
+        (0..self.servers.len())
+            .map(|i| {
+                let addr = &self.servers[i].addr;
+                let profile = self
+                    .accounts
+                    .get(addr)
+                    .and_then(|v| v.info.as_ref())
+                    .map(|a| &a.profile);
+                let status = match self.acct_state(i) {
+                    AcctState::Named(n) => match profile {
+                        Some(p) => format!("{} ✓  {} {}", n.to_uppercase(), p.rank, p.rating),
+                        None => format!("{} ✓", n.to_uppercase()),
+                    },
+                    AcctState::Anonymous => "NO USERNAME (CLAIM IT)".into(),
+                    AcctState::Checking => "CHECKING...".into(),
+                    AcctState::None if self.has_accounts(addr) => "NOT LOGGED IN".into(),
+                    AcctState::None => "ANONYMOUS ONLY".into(),
+                };
+                json!({
+                    "server": self.row_name(i).chars().take(18).collect::<String>(),
+                    "status": status,
+                    "named": matches!(self.acct_state(i), AcctState::Named(_)),
+                })
+            })
+            .collect()
+    }
+
     fn refresh(&mut self) {
         let mx = if self.state == State::Matchup {
             self.matchup_json()
@@ -1330,7 +1816,7 @@ impl OnlineScreen {
                         json!({
                             "scope": scope_short.clone(),
                             "pos": i + 1,
-                            "name": p.name,
+                            "name": badge_name(p),
                             "rating": p.rating,
                             "rank": p.rank,
                             "record": format!("{}W {}L", p.wins, p.losses),
@@ -1372,6 +1858,7 @@ impl OnlineScreen {
                         })
                     })
                     .collect();
+                m.push(json!({ "id": "profile", "label": "PROFILE / ACCOUNTS", "action": "online:profile" }));
                 m.push(json!({ "id": "add", "label": "ADD SERVER", "action": "online:add" }));
                 if self.servers.iter().any(|r| !r.official) {
                     m.push(json!({ "id": "remove", "label": "REMOVE SERVER", "action": "online:remove" }));
@@ -1405,6 +1892,60 @@ impl OnlineScreen {
                 m.push(json!({ "id": "back", "label": "CANCEL", "action": "back" }));
                 m
             }
+            State::Profile => {
+                let mut m: Vec<Value> = self
+                    .servers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| {
+                        let name = r
+                            .info
+                            .as_ref()
+                            .map_or(official::host_label(&r.addr).to_string(), |i| {
+                                i.name.clone()
+                            });
+                        let badge = match (r.official, &r.trust) {
+                            (_, Trust::Impostor) => "UNVERIFIED",
+                            (true, _) => "OFFICIAL",
+                            (false, _) => "COMMUNITY",
+                        };
+                        json!({
+                            "id": format!("acct{i}"),
+                            "label": name.to_uppercase().chars().take(18).collect::<String>(),
+                            "action": format!("acct:open:{i}"),
+                            "badge": badge, "has_badge": true,
+                            "official": badge == "OFFICIAL", "community": badge != "OFFICIAL",
+                        })
+                    })
+                    .collect();
+                m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
+                m
+            }
+            State::Account => {
+                let i = self.acct_server;
+                let addr = self.acct_addr();
+                let item = |id: &str, label: &str| json!({ "id": id, "label": label, "action": format!("acct:{id}") });
+                let mut m = match self.acct_state(i) {
+                    AcctState::Named(_) => vec![
+                        item("password", "CHANGE PASSWORD"),
+                        item("logout", "LOG OUT"),
+                        item("logout_all", "LOG OUT EVERYWHERE"),
+                    ],
+                    AcctState::Anonymous if self.has_accounts(&addr) => vec![
+                        item("claim", "CLAIM THIS ACCOUNT"),
+                        item("login", "LOG IN INSTEAD"),
+                    ],
+                    AcctState::None if self.has_accounts(&addr) => {
+                        vec![item("create", "CREATE ACCOUNT"), item("login", "LOG IN")]
+                    }
+                    _ => Vec::new(),
+                };
+                if self.connect_after && !matches!(self.acct_state(i), AcctState::None) {
+                    m.insert(0, item("enter", "ENTER SERVER"));
+                }
+                m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
+                m
+            }
             _ => vec![
                 json!({ "id": "lobby", "label": "LOBBY", "action": "online:lobby" }),
                 json!({ "id": "room", "label": "CREATE ROOM", "action": "online:create" }),
@@ -1416,6 +1957,8 @@ impl OnlineScreen {
                 json!({ "id": "back", "label": "BACK", "action": "back" }),
             ],
         };
+        let acct = self.acct_json();
+        let accts = self.accts_json();
         let lobby: Vec<Value> = self
             .rooms
             .iter()
@@ -1427,7 +1970,7 @@ impl OnlineScreen {
                         if r.locked { "[LOCKED] " } else { "" },
                         r.name.to_uppercase()
                     ),
-                    "host": r.host.to_uppercase(),
+                    "host": if r.host_verified { format!("{} ✓", r.host.to_uppercase()) } else { r.host.to_uppercase() },
                     "rules": rules_line(&r.rules),
                     "count": format!(
                         "{}/2  WATCHING {}/{}{}",
@@ -1446,7 +1989,7 @@ impl OnlineScreen {
                     .iter()
                     .map(|m| {
                         json!({
-                            "name": m.profile.name.to_uppercase(),
+                            "name": badge_name(&m.profile),
                             "role": role_name(m.role),
                             "ping": ping_text(m.rtt_ms),
                             "kick": format!("room:kick:{}", m.profile.id),
@@ -1456,7 +1999,13 @@ impl OnlineScreen {
                     .collect()
             })
             .unwrap_or_default();
-        let server_line = if matches!(self.state, State::Servers | State::RemoveServer) {
+        let accounts_page = matches!(
+            self.state,
+            State::Profile | State::Account | State::AccountForm
+        );
+        let server_line = if accounts_page {
+            "ACCOUNTS · ONE PER SERVER".to_string()
+        } else if matches!(self.state, State::Servers | State::RemoveServer) {
             if official::feed().is_some() {
                 "SERVERS  ·  OFFICIAL BLOCKLIST UP TO DATE".to_string()
             } else {
@@ -1487,7 +2036,12 @@ impl OnlineScreen {
         let f = &self.form;
         let data = json!({
             "menu": menu,
-            "is_menu": matches!(self.state, State::Menu | State::Servers | State::RemoveServer),
+            "is_menu": matches!(self.state, State::Menu | State::Servers | State::RemoveServer | State::Profile | State::Account),
+            "is_profile": self.state == State::Profile,
+            "is_account": matches!(self.state, State::Account | State::AccountForm),
+            "is_acct_form": self.state == State::AccountForm,
+            "acct": acct,
+            "accts": accts,
             "is_servers": matches!(self.state, State::Servers | State::RemoveServer),
             "is_add": self.state == State::AddServer,
             "is_lobby": self.state == State::Lobby,
@@ -1500,13 +2054,14 @@ impl OnlineScreen {
             "is_matchup": self.state == State::Matchup,
             "not_matchup": self.state != State::Matchup,
             "mx": mx,
-            "has_server": has_server && !matches!(self.state, State::Servers | State::RemoveServer | State::Matchup),
+            "has_server": has_server && !matches!(self.state, State::Servers | State::RemoveServer | State::Matchup | State::Profile | State::Account | State::AccountForm),
             "no_server": matches!(self.state, State::Servers | State::RemoveServer),
             "scope": scope,
             "ranked_official": ranked_official,
             "ranked_community": !ranked_official,
             "last_result": self.last_result_line(),
-            "has_last_result": !self.last_result_line().is_empty() && !matches!(self.state, State::Matchup),
+            "has_last_result": !self.last_result_line().is_empty() && !matches!(self.state, State::Matchup) && !accounts_page,
+            "title": if accounts_page { "PROFILE" } else { "ONLINE" },
             "server_line": server_line,
             "motd": motd,
             "lobby": lobby,
@@ -1545,7 +2100,7 @@ impl OnlineScreen {
                 } else {
                     format!("COMMUNITY RANKING · {}", self.server_name().to_uppercase().chars().take(14).collect::<String>())
                 },
-                "name": me.name,
+                "name": badge_name(&me),
                 "rating": me.rating,
                 "best": me.best_rating,
                 "rank": me.rank,
@@ -1567,7 +2122,7 @@ impl OnlineScreen {
             "password": self.password,
             "opponent": {
                 "scope": scope_short,
-                "name": opp.name,
+                "name": badge_name(&opp),
                 "rating": opp.rating,
                 "rank": opp.rank,
                 "record": format!("{}W {}L", opp.wins, opp.losses),
@@ -1621,7 +2176,7 @@ impl OnlineScreen {
         if k == rugen_ui::TextKey::Escape
             && matches!(
                 self.state,
-                State::Join | State::Direct | State::AddServer | State::Create
+                State::Join | State::Direct | State::AddServer | State::Create | State::AccountForm
             )
         {
             self.ui.text_key(k);
@@ -1686,10 +2241,61 @@ impl OnlineScreen {
         let (head, arg) = a.split_once(':').unwrap_or((a, ""));
         match (head, arg) {
             ("back", _) | ("title", _) => {
-                if self.state == State::Servers {
+                if self.leaves_screen() {
                     return Some(Transition::Title);
                 }
                 self.cancel();
+            }
+            ("online", "profile") => self.open_profile(),
+            ("acct", rest) => {
+                let (what, arg) = rest.split_once(':').unwrap_or((rest, ""));
+                match what {
+                    "open" => {
+                        if let Ok(i) = arg.parse::<usize>() {
+                            self.open_account(i);
+                        }
+                    }
+                    "create" => self.open_form(AcctForm::Create),
+                    "login" => self.open_form(AcctForm::Login),
+                    "claim" => self.open_form(AcctForm::Claim),
+                    "password" => self.open_form(AcctForm::Password),
+                    "logout" => self.logout(false),
+                    "logout_all" => self.logout(true),
+                    "show" => self.acct_show = !self.acct_show,
+                    "submit" => self.submit_form(),
+                    "next" => {
+                        // ENTER in a field: on to the next one, or send
+                        let next = match (self.acct_form, arg) {
+                            (AcctForm::Password, "pass") => Some("acct_new"),
+                            (AcctForm::Password, _) | (_, "pass") => None,
+                            _ => Some("acct_pass"),
+                        };
+                        match next {
+                            Some(id) => self.ui.edit(id),
+                            None => self.submit_form(),
+                        }
+                    }
+                    "enter" => {
+                        self.connect_after = false;
+                        let addr = self.acct_addr();
+                        self.connect(&addr);
+                    }
+                    _ => {}
+                }
+            }
+            ("acct_user", v) => {
+                self.acct_user = v
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+                    .take(rugen_proto::account::USERNAME_MAX)
+                    .collect();
+                self.ui.set_input("acct_user", &self.acct_user);
+            }
+            ("acct_pass", v) => {
+                self.acct_pass = v.chars().take(rugen_proto::account::PASSWORD_MAX).collect();
+            }
+            ("acct_new", v) => {
+                self.acct_new = v.chars().take(rugen_proto::account::PASSWORD_MAX).collect();
             }
             ("server", i) => {
                 if let Some(row) = i.parse::<usize>().ok().and_then(|i| self.servers.get(i)) {
@@ -1921,7 +2527,20 @@ impl OnlineScreen {
                 }
             }
             ("online", "quick") => self.enter_queue(false),
-            ("online", "ranked") => self.enter_queue(true),
+            ("online", "ranked") => {
+                // rankings belong to named accounts (servers that have them)
+                let named = self.me.as_ref().is_none_or(|m| m.verified);
+                let server = self.client.server.clone();
+                if !named && self.auto.is_none() && self.has_accounts(&server) {
+                    if let Some(i) = self.servers.iter().position(|r| r.addr == server) {
+                        self.open_account(i);
+                        self.check_accounts();
+                        self.status = "RANKED NEEDS A USERNAME: CLAIM THIS ACCOUNT".into();
+                    }
+                    return None;
+                }
+                self.enter_queue(true);
+            }
             ("online", "board") => {
                 let c = self.client.clone();
                 self.board = None;
@@ -2025,10 +2644,37 @@ impl OnlineScreen {
         });
     }
 
+    /// BACK leaves the ONLINE screen (to the home menu) from here.
+    fn leaves_screen(&self) -> bool {
+        self.state == State::Servers || (self.state == State::Profile && self.profile_from_title)
+    }
+
     fn cancel(&mut self) {
         if self.state == State::Matchup {
             self.leave_matchup("YOU LEFT THE MATCHUP");
             return;
+        }
+        match self.state {
+            State::AccountForm => {
+                let i = self.acct_server;
+                let after = self.connect_after;
+                self.open_account(i);
+                self.connect_after = after;
+                return;
+            }
+            State::Account if !self.connect_after => {
+                self.open_profile();
+                return;
+            }
+            State::Account | State::Profile => {
+                self.clear_form();
+                self.connect_after = false;
+                self.state = State::Servers;
+                self.status = "PICK A SERVER".into();
+                self.probe_servers();
+                return;
+            }
+            _ => {}
         }
         match self.state {
             State::Queue => {
@@ -2218,6 +2864,45 @@ impl OnlineScreen {
                     }
                     Some(Err(e)) => self.fail("register", e),
                 },
+                Job::Account(addr, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(r) => {
+                        let addr = addr.clone();
+                        self.account_status(&addr, r);
+                    }
+                },
+                Job::Session(addr, kind, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(r) => {
+                        let (addr, kind) = (addr.clone(), *kind);
+                        self.session_done(&addr, kind, r);
+                    }
+                },
+                Job::Logout(addr, everywhere, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(r) => {
+                        let (addr, everywhere) = (addr.clone(), *everywhere);
+                        match r {
+                            Ok(()) | Err(rugen_net::online::OnlineError::Server(_)) => {
+                                forget_session(&mut self.profile, &self.config, &addr);
+                                self.profile.save(&self.root);
+                                self.accounts.remove(&addr);
+                                self.account_changed(&addr, "");
+                                self.ui.set_focus(None);
+                                self.status = if everywhere {
+                                    "LOGGED OUT ON EVERY DEVICE".into()
+                                } else {
+                                    "LOGGED OUT".into()
+                                };
+                            }
+                            Err(e) => {
+                                log::warn!("online: logout: {e}");
+                                self.status.clear();
+                                self.acct_error = "CANNOT REACH THE SERVER".into();
+                            }
+                        }
+                    }
+                },
                 Job::Info(i, p) => match p.take() {
                     None => keep.push(j),
                     Some(r) => {
@@ -2281,7 +2966,7 @@ impl OnlineScreen {
                     None => keep.push(j),
                     Some(Ok(me)) => {
                         self.remember_rank(&me);
-                        if me.name != self.profile.name && self.me.is_none() {
+                        if me.name != self.profile.name && self.me.is_none() && !me.verified {
                             // first contact: push the local name to the server
                             let (c, name) = (self.client.clone(), self.profile.name.clone());
                             self.jobs
@@ -2362,6 +3047,125 @@ impl OnlineScreen {
             self.state = State::Servers;
             self.error = e;
         }
+    }
+
+    /// `GET /v1/account` answered for server `addr`.
+    fn account_status(&mut self, addr: &str, r: OnlineResult<AccountInfo>) {
+        use rugen_net::online::OnlineError;
+        let mut forget = false;
+        {
+            let view = self.accounts.entry(addr.to_string()).or_default();
+            view.checking = false;
+            match r {
+                Ok(info) => {
+                    view.error.clear();
+                    view.unsupported = false;
+                    view.info = Some(info);
+                }
+                Err(OnlineError::Server(e)) if e == "bad key" => {
+                    // revoked (password changed / logged out elsewhere)
+                    view.info = None;
+                    view.error = "LOGGED OUT: THE ACCOUNT WAS LOGGED OUT ON THIS DEVICE".into();
+                    forget = true;
+                }
+                Err(OnlineError::Server(e)) => {
+                    // older server: no account routes
+                    log::info!("online: {addr}: accounts: {e}");
+                    view.unsupported = true;
+                    view.error.clear();
+                }
+                Err(e) => {
+                    log::info!("online: {addr}: accounts: {e}");
+                    view.error = "SERVER OFFLINE".into();
+                }
+            }
+        }
+        let named = self
+            .accounts
+            .get(addr)
+            .and_then(|v| v.info.as_ref())
+            .map(|i| i.username.clone());
+        if forget {
+            forget_session(&mut self.profile, &self.config, addr);
+            self.profile.save(&self.root);
+            self.account_changed(addr, "");
+        } else if let Some(name) = named
+            && self.profile.online_names.get(addr).map(String::as_str) != Some(name.as_str())
+        {
+            if name.is_empty() {
+                self.profile.online_names.remove(addr);
+            } else {
+                self.profile.online_names.insert(addr.to_string(), name);
+            }
+            self.profile.save(&self.root);
+        }
+    }
+
+    /// The account form came back from server `addr`.
+    fn session_done(&mut self, addr: &str, kind: AcctForm, r: OnlineResult<Session>) {
+        use rugen_net::online::OnlineError;
+        match r {
+            Ok(s) => {
+                remember_session(&mut self.profile, addr, &s);
+                self.profile.save(&self.root);
+                let view = self.accounts.entry(addr.to_string()).or_default();
+                view.unsupported = false;
+                view.error.clear();
+                let sessions = view.info.as_ref().map_or(1, |i| i.sessions);
+                view.info = Some(AccountInfo {
+                    id: s.id,
+                    username: s.username.clone(),
+                    sessions: if kind == AcctForm::Password {
+                        1
+                    } else {
+                        sessions
+                    },
+                    profile: s.profile.clone(),
+                });
+                self.account_changed(addr, &s.key);
+                let after = self.connect_after;
+                if let Some(i) = self.servers.iter().position(|r| r.addr == addr) {
+                    self.open_account(i);
+                }
+                self.check_accounts();
+                let name = s.username.to_uppercase();
+                self.status = match kind {
+                    AcctForm::Create => format!("WELCOME, {name}! ACCOUNT CREATED"),
+                    AcctForm::Login => format!("LOGGED IN AS {name}"),
+                    AcctForm::Claim => format!("ACCOUNT CLAIMED: YOU ARE {name}"),
+                    AcctForm::Password => "PASSWORD CHANGED: OTHER DEVICES WERE LOGGED OUT".into(),
+                };
+                // the server asked for an account: straight in
+                if after && kind != AcctForm::Password {
+                    let status = self.status.clone();
+                    self.connect(addr);
+                    self.status = status;
+                }
+            }
+            Err(OnlineError::Server(e)) => {
+                self.status = kind.title().into();
+                self.acct_error = if e == "no such route" {
+                    // an older server: anonymous accounts only (entering it registers one)
+                    self.accounts
+                        .entry(addr.to_string())
+                        .or_default()
+                        .unsupported = true;
+                    "THIS SERVER HAS NO USERNAMES YET: GO BACK AND ENTER IT".into()
+                } else {
+                    e.to_uppercase()
+                };
+            }
+            Err(e) => {
+                log::warn!("online: account: {e}");
+                self.status = kind.title().into();
+                self.acct_error = "CANNOT REACH THE SERVER".into();
+            }
+        }
+        // typed passwords go as soon as they were sent
+        self.acct_pass.clear();
+        self.acct_new.clear();
+        self.ui.set_input("acct_pass", "");
+        self.ui.set_input("acct_new", "");
     }
 
     /// Keep the rating of this server in the profile (title screen rank card).
@@ -2485,7 +3289,7 @@ impl OnlineScreen {
             match e {
                 Event::Moved => sfx(sys.title.move_snd),
                 Event::Back => {
-                    if self.state == State::Servers {
+                    if self.leaves_screen() {
                         out = Some(Transition::Title);
                     } else {
                         self.cancel();
@@ -2499,6 +3303,9 @@ impl OnlineScreen {
                         "server_addr:",
                         "room_name:",
                         "room_password:",
+                        "acct_user:",
+                        "acct_pass:",
+                        "acct_new:",
                     ];
                     if !typing.iter().any(|t| a.starts_with(t)) {
                         sfx(sys.title.done_snd);
@@ -2516,7 +3323,7 @@ impl OnlineScreen {
 
     /// Esc from the shell: leave sub-states first, the screen second.
     pub fn back(&mut self) -> bool {
-        if self.state == State::Servers {
+        if self.leaves_screen() {
             return true;
         }
         self.cancel();
@@ -2703,6 +3510,95 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_forms_check_what_the_server_will() {
+        use AcctForm::*;
+        assert_eq!(form_error(Create, "axel", "simple", ""), None);
+        assert_eq!(
+            form_error(Create, "ab", "simple", ""),
+            Some("USERNAME: 3 TO 16 LETTERS, DIGITS, _ OR -")
+        );
+        assert_eq!(
+            form_error(Claim, "admin", "simple", ""),
+            Some("THIS USERNAME IS RESERVED")
+        );
+        assert_eq!(
+            form_error(Create, "axel", "12345", ""),
+            Some("PASSWORD: 6 TO 128 CHARACTERS")
+        );
+        // logins only need something typed (the server answers generically)
+        assert_eq!(form_error(Login, "x", "y", ""), None);
+        assert_eq!(
+            form_error(Login, "", "y", ""),
+            Some("TYPE YOUR USERNAME AND PASSWORD")
+        );
+        assert_eq!(
+            form_error(Password, "", "", "simple"),
+            Some("TYPE YOUR CURRENT PASSWORD")
+        );
+        assert_eq!(
+            form_error(Password, "", "old", "new"),
+            Some("PASSWORD: 6 TO 128 CHARACTERS")
+        );
+        assert_eq!(form_error(Password, "", "old", "newer!"), None);
+    }
+
+    #[test]
+    fn the_profile_keeps_keys_never_passwords() {
+        let password = "correct-horse-battery";
+        let mut p = Profile::default();
+        let server = "https://rugen.example.com";
+        let s = Session {
+            id: 42,
+            key: "k".repeat(64),
+            username: "Axel".into(),
+            profile: ProfileInfo {
+                id: 42,
+                name: "Axel".into(),
+                verified: true,
+                ..Default::default()
+            },
+        };
+        remember_session(&mut p, server, &s);
+        assert_eq!(p.online_accounts.get(server), Some(&(42, "k".repeat(64))));
+        assert_eq!(p.online_names.get(server).map(String::as_str), Some("Axel"));
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains(password));
+        assert!(
+            !json.to_lowercase().contains("password"),
+            "no password field at all"
+        );
+        // the Session a form returns carries no password either
+        assert!(!serde_json::to_string(&s).unwrap().contains("password"));
+        // logging out forgets the key (and the legacy single key of that server)
+        let mut cfg = Config::default();
+        cfg.net.server = server.into();
+        p.online_key = "l".repeat(64);
+        p.online_id = 7;
+        forget_session(&mut p, &cfg, "https://rugen.example.com/");
+        assert!(p.online_accounts.is_empty() && p.online_names.is_empty());
+        assert!(p.online_key.is_empty() && p.online_id == 0);
+        assert_eq!(account_for(&p, &cfg, server), (0, String::new()));
+        // an anonymous session (claim of an older client) keeps no name
+        let anon = Session {
+            username: String::new(),
+            ..s
+        };
+        remember_session(&mut p, server, &anon);
+        assert!(p.online_names.is_empty());
+    }
+
+    #[test]
+    fn usernames_wear_a_badge() {
+        let mut p = ProfileInfo {
+            name: "axel".into(),
+            ..Default::default()
+        };
+        assert_eq!(badge_name(&p), "AXEL");
+        p.verified = true;
+        assert_eq!(badge_name(&p), "AXEL ✓");
+    }
 
     fn info(api: u32, api_min: u32) -> ServerInfo {
         ServerInfo {

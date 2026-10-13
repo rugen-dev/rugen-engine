@@ -7,6 +7,9 @@
 # Official / community: menu[] items carry badge has_badge official community (server list),
 # scope (OFFICIAL | COMMUNITY · NAME), ranked_official, me.scope, opponent.scope, last_result,
 # has_last_result, mx.stamp stamp_official stamp_other, mx.left/right.official_block.
+# PROFILE / accounts: title (ONLINE | PROFILE), is_profile is_account is_acct_form, accts[] (server
+# status named), acct.* (scope server title rating record hint note form_title user pass new masked
+# show_label has_user has_new pass_label rules submit error has_error).
 background = [0.03, 0.04, 0.08, 1.0]
 
 [[node]]
@@ -19,7 +22,7 @@ h = "100%"
 [[node]]
 kind = "text"
 dock = "top"
-text = "ONLINE"
+text = "{title}"
 visible = "not_matchup"
 x = 0
 w = "100%"
@@ -782,6 +785,407 @@ enter_time = 16
   font = 1
   bank = 8
   scale = 2
+
+# ---- PROFILE: this device's account on every server (overview)
+[[node]]
+kind = "panel"
+dock = "right"
+visible = "is_profile"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+anchor = "tr"
+x = 40
+y = 150
+w = 640
+h = 440
+enter = "right"
+enter_time = 18
+
+  [[node.children]]
+  kind = "text"
+  text = "YOUR ACCOUNTS"
+  x = 24
+  y = 16
+  font = 2
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "OFFLINE PLAY NEEDS NONE. ONLINE PLAY NEEDS ONE PER SERVER."
+  x = 24
+  y = 58
+  w = 592
+  font = 1
+  bank = 7
+  scale = 2
+  wrap = true
+  line_gap = 4
+
+  [[node.children]]
+  kind = "list"
+  x = 24
+  y = 136
+  w = 592
+  h = 240
+  gap = 8
+  items = "accts"
+
+    [[node.children.children]]
+    kind = "panel"
+    h = 56
+    image = "ui/row.webp"
+    nine = [4, 4, 4, 4]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.server}"
+      x = 12
+      y = 6
+      font = 1
+      bank = 7
+      scale = 2
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.status}"
+      x = 12
+      y = 30
+      w = 568
+      font = 2
+      bank = 7
+      scale = 1
+
+  [[node.children]]
+  kind = "text"
+  text = "NO EMAIL: KEEP YOUR PASSWORD SAFE"
+  anchor = "bl"
+  x = 24
+  y = 20
+  font = 2
+  bank = 4
+  scale = 1
+
+# ---- one server's account (account page and form)
+[[node]]
+kind = "panel"
+dock = "right"
+visible = "is_account"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+anchor = "tr"
+x = 40
+y = 150
+w = 640
+h = 440
+enter = "right"
+enter_time = 18
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.scope}"
+  x = 24
+  y = 16
+  font = 2
+  bank = 4
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.server}"
+  x = 24
+  y = 40
+  w = 592
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.title}"
+  x = 24
+  y = 84
+  w = 592
+  font = 2
+  bank = 7
+  scale = 3
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.rating}"
+  x = 24
+  y = 290
+  font = 2
+  bank = 4
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.record}"
+  x = 24
+  y = 330
+  font = 1
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.hint}"
+  x = 24
+  y = 150
+  w = 592
+  font = 1
+  bank = 7
+  scale = 2
+  wrap = true
+  line_gap = 4
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.note}"
+  anchor = "bl"
+  x = 24
+  y = 20
+  font = 2
+  bank = 4
+  scale = 1
+
+# ---- account form: username / password
+[[node]]
+kind = "panel"
+dock = "left"
+visible = "is_acct_form"
+image = "ui/panel.webp"
+nine = [8, 8, 8, 8]
+x = 60
+y = 150
+w = 520
+h = 440
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.form_title}"
+  x = 30
+  y = 16
+  w = 460
+  font = 2
+  bank = 4
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  visible = "acct.has_user"
+  text = "USERNAME"
+  x = 30
+  y = 48
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.has_user"
+  x = 24
+  y = 76
+  w = 472
+  h = 48
+  color = [1.0, 1.0, 1.0, 0.06]
+  border = 2
+  border_color = [0.55, 0.6, 0.7, 1.0]
+
+  [[node.children]]
+  kind = "input"
+  id = "acct_user"
+  visible = "acct.has_user"
+  x = 30
+  y = 78
+  w = 460
+  h = 44
+  pad = 10
+  font = 2
+  bank = 7
+  scale = 2
+  max_len = 16
+  placeholder = "USERNAME"
+  value = "acct.user"
+  on_change = "acct_user:{value}"
+  on_press = "acct:next:user"
+
+  [[node.children]]
+  kind = "text"
+  visible = "acct.has_new"
+  text = "ACCOUNT"
+  x = 30
+  y = 48
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  visible = "acct.has_new"
+  text = "{acct.title}"
+  x = 30
+  y = 82
+  w = 460
+  font = 2
+  bank = 7
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.pass_label}"
+  x = 30
+  y = 134
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  x = 24
+  y = 158
+  w = 472
+  h = 48
+  color = [1.0, 1.0, 1.0, 0.06]
+  border = 2
+  border_color = [0.55, 0.6, 0.7, 1.0]
+
+  [[node.children]]
+  kind = "input"
+  id = "acct_pass"
+  x = 30
+  y = 160
+  w = 460
+  h = 44
+  pad = 10
+  font = 2
+  bank = 7
+  scale = 2
+  max_len = 128
+  placeholder = "PASSWORD"
+  mask = "acct.masked"
+  value = "acct.pass"
+  on_change = "acct_pass:{value}"
+  on_press = "acct:next:pass"
+
+  [[node.children]]
+  kind = "text"
+  visible = "acct.has_new"
+  text = "NEW PASSWORD"
+  x = 30
+  y = 214
+  font = 1
+  bank = 6
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.has_new"
+  x = 24
+  y = 238
+  w = 472
+  h = 48
+  color = [1.0, 1.0, 1.0, 0.06]
+  border = 2
+  border_color = [0.55, 0.6, 0.7, 1.0]
+
+  [[node.children]]
+  kind = "input"
+  id = "acct_new"
+  visible = "acct.has_new"
+  x = 30
+  y = 240
+  w = 460
+  h = 44
+  pad = 10
+  font = 2
+  bank = 7
+  scale = 2
+  max_len = 128
+  placeholder = "NEW PASSWORD"
+  mask = "acct.masked"
+  value = "acct.new"
+  on_change = "acct_new:{value}"
+  on_press = "acct:next:new"
+
+  [[node.children]]
+  kind = "text"
+  text = "{acct.rules}"
+  x = 30
+  y = 300
+  w = 460
+  font = 2
+  bank = 7
+  scale = 1
+  wrap = true
+  line_gap = 4
+
+  [[node.children]]
+  kind = "text"
+  visible = "acct.has_error"
+  text = "{acct.error}"
+  x = 30
+  y = 334
+  w = 460
+  font = 2
+  bank = 4
+  scale = 1
+  wrap = true
+  line_gap = 4
+
+  [[node.children]]
+  kind = "button"
+  id = "acct_show"
+  anchor = "bl"
+  x = 30
+  y = 24
+  w = 120
+  h = 48
+  image = "ui/button.webp"
+  image_focus = "ui/button_lit.webp"
+  text = "{acct.show_label}"
+  font = 2
+  bank = 7
+  bank_focus = 4
+  scale = 2
+  on_press = "acct:show"
+
+  [[node.children]]
+  kind = "button"
+  id = "acct_submit"
+  anchor = "bl"
+  x = 162
+  y = 24
+  w = 180
+  h = 48
+  image = "ui/button.webp"
+  image_focus = "ui/button_lit.webp"
+  text = "{acct.submit}"
+  font = 2
+  bank = 7
+  bank_focus = 4
+  scale = 2
+  on_press = "acct:submit"
+
+  [[node.children]]
+  kind = "button"
+  id = "acct_cancel"
+  anchor = "bl"
+  x = 354
+  y = 24
+  w = 136
+  h = 48
+  image = "ui/button.webp"
+  image_focus = "ui/button_lit.webp"
+  text = "CANCEL"
+  font = 2
+  bank = 7
+  bank_focus = 4
+  scale = 2
+  on_press = "online:cancel"
 
 # ---- lobby: public rooms of this server
 [[node]]

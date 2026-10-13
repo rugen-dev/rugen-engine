@@ -8,10 +8,10 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 pub use rugen_proto::{
-    CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo, MatchupView,
-    PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay, ResultAck, RoomInfo,
-    RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, SessionTicket, SignedBlob,
-    TruthFeed, Verdict, VerdictKind, b64_decode, ping_bars, rank_name,
+    AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo,
+    MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay,
+    ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, Session,
+    SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode, ping_bars, rank_name,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -193,6 +193,56 @@ impl OnlineClient {
         let r: Registered = Self::decode(self.call("POST", "/register", Some(json!({})))?)?;
         self.key = Some(r.key.clone());
         Ok(r)
+    }
+
+    /// Create a named account (API 5 servers with [`ServerInfo::accounts`]);
+    /// the new key is stored in the client. The password only travels in
+    /// this request's body (HTTPS) and is never kept.
+    pub fn create_account(&mut self, username: &str, password: &str) -> OnlineResult<Session> {
+        let b = json!({ "username": username, "password": password });
+        let s: Session = Self::decode(self.call("POST", "/v1/account/register", Some(b))?)?;
+        self.key = Some(s.key.clone());
+        Ok(s)
+    }
+
+    /// Log in to a named account: a new key for this device, stored in the client.
+    pub fn login(&mut self, username: &str, password: &str) -> OnlineResult<Session> {
+        let b = json!({ "username": username, "password": password });
+        let s: Session = Self::decode(self.call("POST", "/v1/account/login", Some(b))?)?;
+        self.key = Some(s.key.clone());
+        Ok(s)
+    }
+
+    /// Give this (anonymous) account a username and password; it keeps its
+    /// id, rating, history and key.
+    pub fn claim(&self, username: &str, password: &str) -> OnlineResult<Session> {
+        let b = self.with_key(json!({ "username": username, "password": password }))?;
+        Self::decode(self.call("POST", "/v1/account/claim", Some(b))?)
+    }
+
+    /// Who this key belongs to (username empty: anonymous).
+    pub fn account(&self) -> OnlineResult<AccountInfo> {
+        Self::decode(self.call("GET", &format!("/v1/account?key={}", self.key()?), None)?)
+    }
+
+    /// Change the password: every other device is logged out, this one
+    /// continues with the fresh key stored in the client.
+    pub fn change_password(&mut self, old: &str, new: &str) -> OnlineResult<Session> {
+        let b = self.with_key(json!({ "password": old, "new_password": new }))?;
+        let s: Session = Self::decode(self.call("POST", "/v1/account/password", Some(b))?)?;
+        self.key = Some(s.key.clone());
+        Ok(s)
+    }
+
+    /// Revoke this device's key (`everywhere`: every key of the account).
+    pub fn logout(&self, everywhere: bool) -> OnlineResult<()> {
+        let path = if everywhere {
+            "/v1/account/logout_all"
+        } else {
+            "/v1/account/logout"
+        };
+        self.call("POST", path, Some(self.with_key(json!({}))?))
+            .map(|_| ())
     }
 
     pub fn set_profile(&self, name: &str, avatar: u32) -> OnlineResult<ProfileInfo> {

@@ -24,7 +24,8 @@
 //! `align`, child `grow`); boxes with `items` give every element one slot in
 //! which the children overlap. Widgets: `panel image text button vbox hbox
 //! list grid input slider toggle particles pips choice keycap icon` (see
-//! `widgets.rs`). Two players can navigate at once
+//! `widgets.rs`); an input with `mask` (a bind path) draws `*` while it is
+//! truthy (passwords). Two players can navigate at once
 //! (`set_dual`): P2's focus uses the `*_focus2` visuals and fires
 //! [`Event::Action2`].
 //!
@@ -248,6 +249,8 @@ pub struct NodeDef {
     pub value: Option<String>,
     pub placeholder: Option<String>,
     pub max_len: Option<usize>,
+    /// Input: bind path; while truthy the text is drawn as `*` (passwords).
+    pub mask: Option<String>,
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub step: Option<f32>,
@@ -2537,6 +2540,9 @@ impl Ui {
             Kind::Input => {
                 let id = n.id.clone().unwrap_or_else(|| inst.key.clone());
                 let mut t = self.input_text(&id);
+                if n.mask.as_ref().is_some_and(|m| visible(&inst.ctx, m)) {
+                    t = "*".repeat(t.chars().count());
+                }
                 let editing = self.editing.as_deref() == Some(&inst.key);
                 if editing && (self.time as i64 / 20) % 2 == 0 {
                     t.push('_');
@@ -3123,6 +3129,44 @@ w = 840
         assert_eq!(r("right").y, 930.0);
         assert_eq!(r("band").y, 900.0);
         assert_eq!(window_to_virtual((1024, 768), 512.0, 384.0), (640.0, 480.0));
+    }
+
+    #[test]
+    fn masked_inputs_draw_stars() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "input"
+id = "pw"
+x = 0
+y = 0
+w = 200
+h = 40
+mask = "!show"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, serde_json::json!({ "show": false }));
+        ui.set_input("pw", "hunter2");
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert!(
+            p.drawn.contains(&"text:*******".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(!p.drawn.iter().any(|d| d.contains("hunter2")));
+        assert_eq!(ui.input_text("pw"), "hunter2", "only the drawing is masked");
+        ui.set_data(serde_json::json!({ "show": true }));
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert!(
+            p.drawn.contains(&"text:hunter2".to_string()),
+            "{:?}",
+            p.drawn
+        );
     }
 
     #[test]
