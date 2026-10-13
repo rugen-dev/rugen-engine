@@ -1630,6 +1630,14 @@ impl Shell {
                     u.set_pads(self.input.pads(), sys);
                 }
                 u.set_held(self.prev);
+                // the online fighter pick: the opponent card follows the matchup
+                if let (Some(o), Some(sys)) = (self.parked_online.as_mut(), self.system.as_ref())
+                    && u.kind == UiKind::Select(Mode::Online)
+                {
+                    o.refresh_snapshot();
+                    let (name, fighter) = o.opponent();
+                    u.set_online_foe(name, fighter, sys);
+                }
                 if let Some(sys) = self.system.as_ref() {
                     u.set_devices(self.input.devices(), sys);
                 }

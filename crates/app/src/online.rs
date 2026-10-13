@@ -1366,6 +1366,14 @@ impl OnlineScreen {
         }
     }
 
+    /// While the fighter pick is open over this (parked) screen: take the
+    /// matchup worker's latest view, so the pick's opponent card follows.
+    pub fn refresh_snapshot(&mut self) {
+        if let Some(mx) = self.mx.as_mut() {
+            mx.snap = mx.driver.snapshot();
+        }
+    }
+
     /// Follow the matchup worker: errors back to the room, VS once synced.
     fn poll_matchup(&mut self) {
         let Some(mx) = self.mx.as_mut() else { return };

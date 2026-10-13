@@ -350,6 +350,11 @@ impl Roster {
         self.foe = (name, fighter);
     }
 
+    /// Online: the opponent card's name and fighter.
+    pub fn foe(&self) -> (&String, &Option<String>) {
+        (&self.foe.0, &self.foe.1)
+    }
+
     /// Everyone picked: start (VS screen or straight into the fight).
     fn go(&mut self) -> Outcome {
         match self.setup() {
