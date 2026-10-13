@@ -233,7 +233,7 @@ impl StageSel {
     pub fn new(plan: StagePlan, lib: &Library) -> Self {
         let t = std::time::Instant::now();
         let items = load_stages(lib, plan.mode);
-        log::info!(
+        log::debug!(
             "stage select: {} stages listed in {:?}",
             items.len(),
             t.elapsed()
