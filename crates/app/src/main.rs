@@ -36,6 +36,7 @@
 
 use anyhow::Context;
 
+mod clipboard;
 mod config;
 mod fontgen;
 mod game;

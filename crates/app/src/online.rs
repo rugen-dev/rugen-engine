@@ -42,7 +42,7 @@ use rugen_content::Library;
 use rugen_net::online::{
     AccountInfo, Evidence, Leaderboard, MatchInfo, OnlineClient, OnlineResult, Pending, Presence,
     ProfileInfo, QueueStatus, Registered, ResultAck, RoomInfo, RoomOptions, RoomSummary, Rules,
-    ServerInfo, ServerMsg, Session, base_url, ping_bars, rank_name,
+    ServerInfo, ServerMsg, Session, base_url,
 };
 use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
@@ -141,11 +141,11 @@ struct Mx {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
+    /// The hub: server list on the left, the selected server's panel
+    /// (QUICK MATCH, RANKED, ROOMS, LEADERBOARD) on the right.
     Servers,
+    /// The hub with the ADD SERVER dialog over it.
     AddServer,
-    /// Picking a community server to remove.
-    RemoveServer,
-    Menu,
     Lobby,
     Create,
     Join,
@@ -156,13 +156,57 @@ enum State {
     Direct,
     /// Bring-your-own-character matchup before a match.
     Matchup,
-    /// PROFILE: the account on every server.
+    /// PROFILE: the account on every server (list) and the selected
+    /// server's account or form (panel).
     Profile,
-    /// One server's account: status and actions.
-    Account,
-    /// Typing a username / password ([`AcctForm`]).
-    AccountForm,
 }
+
+/// A short message in the corner: errors in plain words (RETRY / DISMISS)
+/// and notices. It never covers the buttons.
+#[derive(Clone, Debug)]
+struct Toast {
+    title: String,
+    body: String,
+    /// Action RETRY fires (none: DISMISS only).
+    retry: Option<String>,
+    error: bool,
+    /// Tick it appeared (it fades on its own after a while).
+    at: u32,
+}
+
+/// A centred dialog that keeps the focus: another version, REMOVE SERVER,
+/// ADD SERVER.
+#[derive(Clone, Debug, Default)]
+struct Dialog {
+    kicker: String,
+    title: String,
+    body: String,
+    /// Technical details behind DETAILS (API numbers).
+    details: String,
+    show_details: bool,
+    /// (label, action) of the main button and the other one.
+    primary: (String, String),
+    secondary: Option<(String, String)>,
+    /// ADD SERVER: an address box.
+    input: bool,
+}
+
+/// Keys that act on a screen without moving the focus. Each action takes
+/// the first of its keys that no player binding uses, so the hints always
+/// name a key that works.
+const HOTKEYS: &[(&str, &[&str])] = &[
+    ("profile", &["p", "f"]),
+    ("lan", &["d", "n", "h"]),
+    ("create", &["c", "n"]),
+    ("watch", &["w", "v"]),
+    ("kick", &["k", "x"]),
+    ("copy", &["c", "y"]),
+    ("retry", &["r", "t"]),
+];
+
+/// Ticks a notice / an error toast stays up.
+const TOAST_INFO: u32 = 240;
+const TOAST_ERROR: u32 = 900;
 
 /// What the account form does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,28 +227,30 @@ impl AcctForm {
             Self::Password => "CHANGE PASSWORD",
         }
     }
-
-    fn submit(self) -> &'static str {
-        match self {
-            Self::Create => "CREATE",
-            Self::Login => "LOG IN",
-            Self::Claim => "CLAIM",
-            Self::Password => "CHANGE",
-        }
-    }
 }
 
 /// Why the account form cannot be sent yet (checked again by the server).
-fn form_error(kind: AcctForm, user: &str, pass: &str, new: &str) -> Option<&'static str> {
+/// `again` is the new password typed a second time.
+fn form_error(
+    kind: AcctForm,
+    user: &str,
+    pass: &str,
+    new: &str,
+    again: &str,
+) -> Option<&'static str> {
     use rugen_proto::account::{password_error, username_error};
     match kind {
         AcctForm::Login if user.is_empty() || pass.is_empty() => {
             Some("TYPE YOUR USERNAME AND PASSWORD")
         }
         AcctForm::Login => None,
-        AcctForm::Create | AcctForm::Claim => username_error(user).or_else(|| password_error(pass)),
+        AcctForm::Create | AcctForm::Claim => username_error(user)
+            .or_else(|| password_error(pass))
+            .or_else(|| (again != pass).then_some("THE TWO PASSWORDS DIFFER")),
         AcctForm::Password if pass.is_empty() => Some("TYPE YOUR CURRENT PASSWORD"),
-        AcctForm::Password => password_error(new),
+        AcctForm::Password => {
+            password_error(new).or_else(|| (again != new).then_some("THE TWO PASSWORDS DIFFER"))
+        }
     }
 }
 
@@ -293,25 +339,26 @@ enum Job {
 }
 
 /// Why a server cannot be used by this game: too old for .rgc (API 4
-/// only), or newer than this game. `None` when it serves this API, which
-/// includes transition servers serving 0.5 players too (`api_min`).
-fn outdated_error(server: &str, info: &ServerInfo) -> Option<String> {
+/// only), or newer than this game, as (row tag, one line). `None` when it
+/// serves this API, which includes transition servers serving 0.5 players
+/// too (`api_min`).
+fn version_problem(info: &ServerInfo) -> Option<(String, String)> {
     let mine = rugen_proto::API_VERSION;
     if info.serves(mine) {
-        None
-    } else if info.api < mine {
-        Some(format!(
-            "{} RUNS AN OLDER VERSION (API {}, THIS GAME NEEDS {mine}): IT CANNOT TAKE .RGC FIGHTERS",
-            server.to_uppercase(),
-            info.api
-        ))
-    } else {
-        Some(format!(
-            "{} RUNS A NEWER VERSION (API {}, THIS GAME SPEAKS {mine}): UPDATE YOUR GAME",
-            server.to_uppercase(),
-            info.min_api()
-        ))
+        return None;
     }
+    let me = rugen_proto::release_of(mine).to_uppercase();
+    Some(if info.api < mine {
+        (
+            format!("NEEDS {}", rugen_proto::release_of(info.api).to_uppercase()),
+            format!("OLDER VERSION · CAN'T PLAY FROM {me}"),
+        )
+    } else {
+        (
+            "NEWER".into(),
+            "NEWER VERSION · UPDATE RUGEN TO PLAY".into(),
+        )
+    })
 }
 
 /// Why a lobby room cannot be joined by this game (its host runs another
@@ -421,8 +468,10 @@ pub struct OnlineScreen {
     pub hold_for_shot: bool,
     /// CONFIRM was visible last refresh (focus moves onto it when it appears).
     confirm_focused: bool,
-    /// Server row to focus once the list is laid out (the default server).
-    pending_focus: Option<usize>,
+    /// Node to focus on the next tick (it appears with the next layout).
+    pending_focus_key: Option<String>,
+    /// ... and start typing in it (an input).
+    pending_edit: bool,
     /// PROFILE: this device's account per server address.
     accounts: HashMap<String, AcctView>,
     /// The server (row) the account page and form act on.
@@ -439,6 +488,20 @@ pub struct OnlineScreen {
     /// The account page opened because a server needs an account: go on
     /// into that server once logged in.
     connect_after: bool,
+    /// Password typed again (create / claim / change).
+    acct_again: String,
+    /// Hub: the selected server row (the panel on the right shows it).
+    sel: usize,
+    /// Hub action waiting for the connection (`quick`, `ranked`, `lobby`, `board`).
+    pending_action: Option<String>,
+    toast: Option<Toast>,
+    dialog: Option<Dialog>,
+    /// Hotkey per action (see [`HOTKEYS`]); missing when every key is bound.
+    keys: HashMap<&'static str, String>,
+    /// JOIN BY CODE: the last typed character can never be in a code.
+    code_bad: Option<char>,
+    /// The system clipboard works (COPY CODE, paste).
+    clipboard: bool,
 }
 
 /// Account (id, key) for `server`; the legacy single key belongs to `[net] server`.
@@ -457,37 +520,124 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
     (0, String::new())
 }
 
-fn role_name(role: u8) -> &'static str {
-    match role {
-        0 => "HOST",
-        1 => "CHALLENGER",
-        _ => "SPECTATOR",
-    }
-}
-
 fn rules_line(r: &Rules) -> String {
-    format!(
-        "{} ROUNDS  {}  {}  {}",
-        r.rounds,
-        if r.round_time == 0 {
-            "NO TIMER".to_string()
-        } else {
-            format!("{} S", r.round_time)
-        },
-        r.mode.to_uppercase(),
-        if r.chars == "mirror" {
-            "MIRROR"
-        } else {
-            "FREE PICK"
-        },
-    )
+    rules_tags(r).join(" · ")
 }
 
 fn ping_text(ms: Option<u32>) -> String {
     match ms {
-        Some(ms) => format!("{ms} MS {}", "|".repeat(ping_bars(ms) as usize)),
-        None => "-- MS".into(),
+        Some(ms) => format!("{ms} MS"),
+        None => "—".into(),
     }
+}
+
+/// The hotkey of each [`HOTKEYS`] action: its first key no player binding uses.
+fn hotkeys(config: &Config) -> HashMap<&'static str, String> {
+    let bound: Vec<String> = [&config.input.p1, &config.input.p2]
+        .iter()
+        .flat_map(|k| {
+            [
+                &k.up, &k.down, &k.left, &k.right, &k.a, &k.b, &k.c, &k.x, &k.y, &k.z, &k.start,
+            ]
+        })
+        .map(|k| k.trim().to_lowercase())
+        .collect();
+    HOTKEYS
+        .iter()
+        .filter_map(|(action, keys)| {
+            keys.iter()
+                .find(|k| !bound.iter().any(|b| b == *k))
+                .map(|k| (*action, (*k).to_string()))
+        })
+        .collect()
+}
+
+/// `n THING` / `n THINGS`.
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// At most `max` characters, ending in `...` when cut (for labels the
+/// layout places next to a tag).
+fn fit(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max.saturating_sub(3)).collect();
+    format!("{}...", head.trim_end())
+}
+
+/// An error as players read it: a short title and one plain sentence.
+/// Raw OS / HTTP errors only reach the log.
+fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
+    let low = e.to_lowercase();
+    let unreachable = [
+        "refused",
+        "os error",
+        "timed out",
+        "timeout",
+        "unreachable",
+        "dns",
+        "lookup",
+        "resolve",
+        "connection",
+        "network",
+        "io:",
+    ]
+    .iter()
+    .any(|k| low.contains(k));
+    if unreachable {
+        return (
+            format!("CAN'T REACH {}", server.to_uppercase()),
+            "THE SERVER IS OFFLINE OR THE ADDRESS IS WRONG. CHECK YOUR INTERNET, THEN RETRY."
+                .into(),
+        );
+    }
+    if low.starts_with("bad reply") {
+        return (
+            format!("{} ANSWERED STRANGELY", server.to_uppercase()),
+            "IT SENT SOMETHING THIS GAME DOES NOT UNDERSTAND. IT MAY RUN ANOTHER VERSION.".into(),
+        );
+    }
+    let msg = e
+        .strip_prefix("server: ")
+        .unwrap_or(e)
+        .trim()
+        .to_uppercase();
+    let title = match what {
+        "room" => "COULDN'T OPEN THE ROOM",
+        "lobby" => "COULDN'T LOAD THE ROOMS",
+        "queue" => "COULDN'T JOIN THE QUEUE",
+        "leaderboard" => "COULDN'T LOAD THE LEADERBOARD",
+        "register" => "COULDN'T SIGN IN",
+        "match" | "matchup" => "THE MATCH COULDN'T START",
+        _ => "SOMETHING WENT WRONG",
+    };
+    let body = if msg.ends_with('.') || msg.ends_with('!') {
+        msg
+    } else {
+        format!("{msg}.")
+    };
+    (title.into(), body)
+}
+
+/// Rules as the header tags of a room: rounds, timer, fighters, mode.
+fn rules_tags(r: &Rules) -> Vec<String> {
+    vec![
+        plural(r.rounds as usize, "ROUND", "ROUNDS"),
+        if r.round_time == 0 {
+            "NO TIMER".into()
+        } else {
+            format!("{} S", r.round_time)
+        },
+        if r.chars == "mirror" {
+            "MIRROR".into()
+        } else {
+            "FREE PICK".into()
+        },
+        r.mode.to_uppercase(),
+    ]
 }
 
 impl OnlineScreen {
@@ -545,7 +695,8 @@ impl OnlineScreen {
             auto_quit_at: None,
             hold_for_shot: false,
             confirm_focused: false,
-            pending_focus: None,
+            pending_focus_key: None,
+            pending_edit: false,
             accounts: HashMap::new(),
             acct_server: 0,
             acct_form: AcctForm::Create,
@@ -556,13 +707,20 @@ impl OnlineScreen {
             acct_error: String::new(),
             profile_from_title: false,
             connect_after: false,
+            acct_again: String::new(),
+            sel: 0,
+            pending_action: None,
+            toast: None,
+            dialog: None,
+            keys: hotkeys(config),
+            code_bad: None,
+            clipboard: crate::clipboard::available(),
             direct_side: 0,
             addr: String::new(),
             local_ip: rugen_net::socket::lan_ip()
                 .map(|ip| ip.to_string())
                 .unwrap_or_else(|| "YOUR-IP".into()),
         };
-        s.status = "PICK A SERVER: OFFICIAL OR COMMUNITY".into();
         official::init(&lib.cache_dir());
         s.probe_servers();
         s.fetch_truth(None);
@@ -578,11 +736,12 @@ impl OnlineScreen {
                     .push(Job::Room(Pending::spawn(move || c.poll_room(&code))));
             }
         }
-        s.refresh();
         if s.state == State::Servers {
             let default = s.config.net.default_index(official::server());
-            s.pending_focus = (default > 0).then_some(default);
+            s.sel = default.min(s.servers.len().saturating_sub(1));
+            s.pending_focus_key = Some(format!("srv_list[{}].row", s.sel));
         }
+        s.refresh();
         Ok(s)
     }
 
@@ -631,13 +790,13 @@ impl OnlineScreen {
             .unwrap_or_default()
     }
 
-    /// Ranking scope of the connected server: `OFFICIAL` (global) or
-    /// `COMMUNITY · NAME` (local to that server).
-    fn scope(&self) -> String {
+    /// Ranking scope of the connected server: the official one ranks
+    /// everybody, a community server only its own players.
+    fn scope(&self) -> &'static str {
         match self.trust_of(&self.client.server) {
-            Trust::Official => "OFFICIAL".into(),
-            Trust::Impostor => format!("UNVERIFIED · {}", self.server_name().to_uppercase()),
-            _ => format!("COMMUNITY · {}", self.server_name().to_uppercase()),
+            Trust::Official => "GLOBAL RANKING",
+            Trust::Impostor => "UNVERIFIED SERVER",
+            _ => "THIS SERVER ONLY",
         }
     }
 
@@ -732,9 +891,13 @@ impl OnlineScreen {
         self.state = State::Profile;
         self.ui.set_focus(None);
         self.connect_after = false;
+        self.pending_action = None;
         self.clear_form();
         self.error.clear();
-        self.status = "PICK A SERVER TO CREATE AN ACCOUNT OR LOG IN".into();
+        if self.acct_server >= self.servers.len() {
+            self.acct_server = 0;
+        }
+        self.acct_form = self.default_form(self.acct_server);
         self.check_accounts();
     }
 
@@ -786,32 +949,55 @@ impl OnlineScreen {
         }
     }
 
-    /// One server's account page.
+    /// The form a server's panel opens with: claim an anonymous account,
+    /// else create one.
+    fn default_form(&self, i: usize) -> AcctForm {
+        match self.acct_state(i) {
+            AcctState::Anonymous => AcctForm::Claim,
+            _ => AcctForm::Create,
+        }
+    }
+
+    /// PROFILE with server row `i` selected (a server that needs an account).
     fn open_account(&mut self, i: usize) {
         if i >= self.servers.len() {
             return;
         }
+        let after = self.connect_after;
+        let pending = self.pending_action.clone();
+        self.open_profile();
+        self.connect_after = after;
+        self.pending_action = pending;
+        self.select_account(i);
+        // a server asked for an account: straight into its form
+        let form = self.has_accounts(&self.servers[i].addr)
+            && matches!(self.acct_state(i), AcctState::None | AcctState::Anonymous);
+        if self.connect_after && form {
+            self.pending_focus_key = Some(self.form_fields()[0].to_string());
+            self.pending_edit = true;
+        } else {
+            self.pending_focus_key = Some(format!("acct_list[{i}].card"));
+        }
+    }
+
+    /// The panel follows the server card the focus is on.
+    fn select_account(&mut self, i: usize) {
+        if i == self.acct_server && self.acct_form != AcctForm::Password {
+            return;
+        }
         self.acct_server = i;
-        self.state = State::Account;
-        self.ui.set_focus(None);
         self.clear_form();
-        self.error.clear();
-        let addr = self.servers[i].addr.clone();
-        self.status = match self.acct_state(i) {
-            AcctState::Named(n) => format!("LOGGED IN AS {}", n.to_uppercase()),
-            AcctState::Anonymous => "THIS ACCOUNT HAS NO USERNAME YET".into(),
-            _ if !self.has_accounts(&addr) => "THIS SERVER HAS NO USERNAMES".into(),
-            _ => "NOT LOGGED IN".into(),
-        };
+        self.acct_form = self.default_form(i);
     }
 
     fn clear_form(&mut self) {
         self.acct_user.clear();
         self.acct_pass.clear();
         self.acct_new.clear();
+        self.acct_again.clear();
         self.acct_show = false;
         self.acct_error.clear();
-        for id in ["acct_user", "acct_pass", "acct_new"] {
+        for id in ["acct_user", "acct_pass", "acct_new", "acct_again"] {
             self.ui.set_input(id, "");
         }
     }
@@ -819,15 +1005,33 @@ impl OnlineScreen {
     fn open_form(&mut self, kind: AcctForm) {
         self.clear_form();
         self.acct_form = kind;
-        self.state = State::AccountForm;
+        self.state = State::Profile;
         self.error.clear();
-        self.status = kind.title().into();
         self.refresh();
         self.ui.edit(if kind == AcctForm::Password {
             "acct_pass"
         } else {
             "acct_user"
         });
+    }
+
+    /// The form's fields in order (ENTER / TAB move on, the last one sends).
+    fn form_fields(&self) -> &'static [&'static str] {
+        match self.acct_form {
+            AcctForm::Login => &["acct_user", "acct_pass"],
+            AcctForm::Password => &["acct_pass", "acct_new", "acct_again"],
+            AcctForm::Create | AcctForm::Claim => &["acct_user", "acct_pass", "acct_again"],
+        }
+    }
+
+    /// ENTER / TAB in field `id`: the next field, or send the form after the last.
+    fn next_field(&mut self, id: &str, send: bool) {
+        let fields = self.form_fields();
+        match fields.iter().position(|f| *f == id) {
+            Some(n) if n + 1 < fields.len() => self.ui.edit(fields[n + 1]),
+            _ if send => self.submit_form(),
+            _ => self.ui.edit(fields[0]),
+        }
     }
 
     fn acct_addr(&self) -> String {
@@ -844,7 +1048,7 @@ impl OnlineScreen {
             self.acct_pass.clone(),
             self.acct_new.clone(),
         );
-        if let Some(e) = form_error(kind, &user, &pass, &new) {
+        if let Some(e) = form_error(kind, &user, &pass, &new, &self.acct_again) {
             self.acct_error = e.into();
             return;
         }
@@ -855,7 +1059,6 @@ impl OnlineScreen {
         let (_, key) = account_for(&self.profile, &self.config, &addr);
         let mut c = OnlineClient::new(&addr, (!key.is_empty()).then_some(key));
         self.acct_error.clear();
-        self.status = "SENDING...".into();
         let job = Pending::spawn(move || match kind {
             AcctForm::Create => c.create_account(&user, &pass),
             AcctForm::Login => c.login(&user, &pass),
@@ -872,7 +1075,6 @@ impl OnlineScreen {
             return;
         }
         let c = OnlineClient::new(&addr, Some(key));
-        self.status = "LOGGING OUT...".into();
         self.jobs.push(Job::Logout(
             addr,
             everywhere,
@@ -1083,7 +1285,7 @@ impl OnlineScreen {
             self.state = if mx.room.is_some() && self.room.is_some() {
                 State::Room
             } else {
-                State::Menu
+                State::Servers
             };
         }
     }
@@ -1114,17 +1316,17 @@ impl OnlineScreen {
             let mx = self.mx.take();
             let room = mx.as_ref().and_then(|m| m.room.clone());
             self.error = format!("MATCHUP: {e}").to_uppercase();
-            self.status = room
-                .as_ref()
-                .map(|c| format!("ROOM {c} - ASK FOR A REMATCH TO TRY AGAIN"))
-                .unwrap_or_default();
-            self.state = if room.is_some() && self.room.is_some() {
-                State::Room
-            } else if self.client.server.is_empty() {
-                State::Servers
+            log::warn!("online: matchup: {e}");
+            let (title, mut body) = plain_error("matchup", &self.server_name(), &e);
+            if room.is_some() {
+                body = format!("{body} ASK FOR A REMATCH TO TRY AGAIN.");
+            }
+            self.problem(title, body, None);
+            if room.is_some() && self.room.is_some() {
+                self.state = State::Room;
             } else {
-                State::Menu
-            };
+                self.open_hub();
+            }
             self.auto_exit(&format!("matchup failed: {e}"));
             return;
         }
@@ -1511,17 +1713,16 @@ impl OnlineScreen {
         }
     }
 
-    /// Pick a server: account (register on first use), presence socket, menu.
+    /// Use a server: account (register on first use, or the PROFILE page
+    /// when it has named accounts and we hold none), presence socket.
+    /// A hub action waiting in `pending_action` runs once connected.
     fn connect(&mut self, server: &str) {
         // fighters travel as .rgc files with rugen-fp-2 fingerprints since API 5
-        let outdated = self
-            .servers
-            .iter()
-            .find(|r| r.addr == server)
-            .and_then(|r| r.info.as_ref())
-            .and_then(|i| outdated_error(server, i));
-        if let Some(e) = outdated {
-            self.error = e;
+        if let Some(i) = self.servers.iter().position(|r| r.addr == server)
+            && let Some(d) = self.version_dialog(i)
+        {
+            self.pending_action = None;
+            self.dialog = Some(d);
             return;
         }
         let (id, key) = account_for(&self.profile, &self.config, server);
@@ -1534,14 +1735,16 @@ impl OnlineScreen {
         {
             self.presence = None;
             self.client = OnlineClient::new("", None);
-            self.open_account(i);
             self.connect_after = true;
-            self.status = "THIS SERVER NEEDS AN ACCOUNT: CREATE ONE OR LOG IN".into();
+            self.open_account(i);
+            return;
+        }
+        if official::same_server(&self.client.server, server) && self.client.key.is_some() {
+            self.run_pending();
             return;
         }
         self.client = OnlineClient::new(server, (!key.is_empty()).then_some(key));
         self.me = None;
-        self.state = State::Menu;
         self.error.clear();
         self.status = format!("CONNECTING TO {}", server.to_uppercase());
         // no official feed yet (official server unreachable): its mirror here
@@ -1557,7 +1760,124 @@ impl OnlineScreen {
             let c = self.client.clone();
             self.jobs
                 .push(Job::Me(Pending::spawn(move || c.profile(id))));
+            self.run_pending();
         }
+    }
+
+    /// The hub action that waited for the connection.
+    fn run_pending(&mut self) {
+        if let Some(a) = self.pending_action.take() {
+            self.run_action(&a);
+        }
+    }
+
+    /// QUICK MATCH / RANKED / ROOMS / LEADERBOARD on the connected server.
+    fn run_action(&mut self, a: &str) {
+        match a {
+            "quick" => self.enter_queue(false),
+            "ranked" => {
+                // rankings belong to named accounts (servers that have them)
+                let named = self.me.as_ref().is_none_or(|m| m.verified);
+                let server = self.client.server.clone();
+                if !named && self.auto.is_none() && self.has_accounts(&server) {
+                    if let Some(i) = self.servers.iter().position(|r| r.addr == server) {
+                        self.connect_after = true;
+                        self.pending_action = Some("ranked".into());
+                        self.open_account(i);
+                        self.notice(
+                            "RANKED NEEDS A USERNAME",
+                            "CLAIM THIS ACCOUNT: IT KEEPS ITS RATING AND HISTORY.",
+                        );
+                    }
+                    return;
+                }
+                self.enter_queue(true);
+            }
+            "lobby" => {
+                self.state = State::Lobby;
+                self.ui.set_focus(None);
+                let c = self.client.clone();
+                self.jobs
+                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
+            }
+            "board" => {
+                let c = self.client.clone();
+                self.board = None;
+                self.state = State::Board;
+                self.jobs
+                    .push(Job::Board(Pending::spawn(move || c.leaderboard())));
+            }
+            _ => log::warn!("online: unknown hub action {a:?}"),
+        }
+    }
+
+    /// Why server row `i` cannot be used by this game, as a dialog.
+    fn version_dialog(&self, i: usize) -> Option<Dialog> {
+        let r = self.servers.get(i)?;
+        let info = r.info.as_ref()?;
+        let mine = rugen_proto::API_VERSION;
+        if info.serves(mine) {
+            return None;
+        }
+        let me = rugen_proto::release_of(mine).to_uppercase();
+        let name = fit(&self.row_name(i), 22);
+        let (title, body) = if info.api < mine {
+            let old = rugen_proto::release_of(info.api).to_uppercase();
+            (
+                format!("{name} RUNS AN OLDER RUGEN ({old})"),
+                format!(
+                    "YOUR GAME IS {me}. FIGHTERS ARE SHARED IN A NEW FORMAT THAT {old} SERVERS DON'T UNDERSTAND. ASK THE SERVER OWNER TO UPDATE, OR PICK ANOTHER SERVER."
+                ),
+            )
+        } else {
+            (
+                format!("{name} RUNS A NEWER RUGEN"),
+                format!("YOUR GAME IS {me}. UPDATE RUGEN TO PLAY HERE, OR PICK ANOTHER SERVER."),
+            )
+        };
+        Some(Dialog {
+            kicker: "CAN'T PLAY ON THIS SERVER".into(),
+            title,
+            body,
+            details: format!(
+                "(SERVER API {}{}, THIS GAME API {mine})",
+                if info.api_min > 0 && info.api_min != info.api {
+                    format!("{}-{}", info.api_min, info.api)
+                } else {
+                    info.api.to_string()
+                },
+                if info.version.is_empty() {
+                    String::new()
+                } else {
+                    format!(", SERVER {}", info.version.to_uppercase())
+                },
+            ),
+            primary: ("OTHER SERVERS".into(), "dialog:close".into()),
+            secondary: Some(("DETAILS".into(), "dialog:details".into())),
+            ..Default::default()
+        })
+    }
+
+    /// A notice in the corner (no RETRY).
+    fn notice(&mut self, title: &str, body: &str) {
+        self.toast = Some(Toast {
+            title: title.into(),
+            body: body.into(),
+            retry: None,
+            error: false,
+            at: self.tick,
+        });
+    }
+
+    /// An error in the corner, with RETRY when `retry` is an action.
+    fn problem(&mut self, title: String, body: String, retry: Option<String>) {
+        self.toast = Some(Toast {
+            title,
+            body,
+            retry,
+            error: true,
+            at: self.tick,
+        });
     }
 
     fn server_name(&self) -> String {
@@ -1661,389 +1981,846 @@ impl OnlineScreen {
             .to_uppercase()
     }
 
-    /// The account card (account page and form).
-    fn acct_json(&self) -> Value {
-        let i = self.acct_server;
-        let addr = self.acct_addr();
-        let official = self
-            .servers
-            .get(i)
-            .is_some_and(|r| r.official && r.trust != Trust::Impostor);
-        let view = self.accounts.get(&addr);
-        let profile = view.and_then(|v| v.info.as_ref()).map(|a| &a.profile);
-        let state = self.acct_state(i);
-        let supported = self.has_accounts(&addr);
-        let title = match &state {
+    /// Why server row `i` cannot be played on: (row tag, one line), `None`
+    /// when it can (or is still being asked).
+    fn row_problem(&self, i: usize) -> Option<(String, String)> {
+        let r = self.servers.get(i)?;
+        if r.error {
+            return Some((String::new(), "OFFLINE · CAN'T REACH IT".into()));
+        }
+        version_problem(r.info.as_ref()?)
+    }
+
+    /// Server row `i` answered and runs this version.
+    fn row_usable(&self, i: usize) -> bool {
+        self.servers.get(i).is_some_and(|r| r.info.is_some()) && self.row_problem(i).is_none()
+    }
+
+    /// The tag a server wears: OFFICIAL (proven), UNVERIFIED (claims it
+    /// without the key), nothing for community servers.
+    fn row_tag(&self, i: usize) -> (&'static str, &'static str) {
+        match self.servers.get(i) {
+            Some(r) if r.trust == Trust::Impostor => ("UNVERIFIED", "amber"),
+            Some(r) if r.official => ("OFFICIAL", "red"),
+            _ => ("", ""),
+        }
+    }
+
+    /// This device's name and rank on server row `i` (header chip).
+    fn chip_text(&self, i: usize) -> String {
+        let Some(row) = self.servers.get(i) else {
+            return self.profile.name.to_uppercase();
+        };
+        let connected = official::same_server(&self.client.server, &row.addr);
+        let name = match self.acct_state(i) {
             AcctState::Named(n) => format!("{} ✓", n.to_uppercase()),
-            AcctState::Anonymous => "NO USERNAME YET".into(),
-            AcctState::Checking => "CHECKING...".into(),
-            AcctState::None => "NOT LOGGED IN".into(),
+            AcctState::None if self.has_accounts(&row.addr) => return "NOT LOGGED IN".into(),
+            _ => self.profile.name.to_uppercase(),
         };
-        let rating = profile
-            .map(|p| format!("{} {}   BEST {}", p.rank, p.rating, p.best_rating))
-            .unwrap_or_default();
-        let record = profile
-            .map(|p| {
-                let devices = view.and_then(|v| v.info.as_ref()).map_or(0, |a| a.sessions);
-                let mut line = format!("{}W {}L", p.wins, p.losses);
-                if matches!(state, AcctState::Named(_)) && devices > 0 {
-                    line.push_str(&format!(
-                        "   LOGGED IN ON {devices} DEVICE{}",
-                        if devices == 1 { "" } else { "S" }
-                    ));
+        let rank = match (&self.me, connected) {
+            (Some(me), true) => Some(format!("{} {}", me.rank, me.rating)),
+            _ => self
+                .profile
+                .online_ranks
+                .get(&row.addr)
+                .map(|r| format!("{} {}", r.rank, r.rating)),
+        };
+        match rank {
+            Some(r) => format!("{} · {r}", fit(&name, 16)),
+            None => fit(&name, 20),
+        }
+    }
+
+    /// Key hint caps for the footer: `(key, label)`.
+    fn hints(&self) -> Vec<(String, String)> {
+        let key = |a: &str| self.keys.get(a).map(|k| k.to_uppercase());
+        let mut h: Vec<(String, String)> = Vec::new();
+        let mut push = |k: Option<String>, label: &str| {
+            if let Some(k) = k {
+                h.push((k, label.to_string()));
+            }
+        };
+        let enter = Some("ENTER".to_string());
+        let esc = Some("ESC".to_string());
+        if self.dialog.is_some() {
+            push(enter, "OK");
+            push(esc, "CLOSE");
+            return h;
+        }
+        match self.state {
+            State::Servers | State::AddServer => {
+                push(enter, "SELECT");
+                if self.servers.get(self.sel).is_some_and(|r| !r.official) {
+                    push(Some("DEL".into()), "REMOVE");
                 }
-                line
+                push(key("profile"), "PROFILE");
+                push(esc, "BACK");
+            }
+            State::Lobby => {
+                push(enter, "JOIN");
+                push(key("watch"), "WATCH");
+                push(key("create"), "CREATE");
+                push(esc, "BACK");
+            }
+            State::Room => {
+                let r = self.room.as_ref();
+                let host = r.is_some_and(|r| r.side == 1);
+                if r.is_some_and(|r| r.opponent.is_some() && r.side <= 2) {
+                    push(enter, "REMATCH");
+                }
+                if host && r.is_some_and(|r| r.opponent.is_some()) {
+                    push(key("kick"), "KICK");
+                }
+                if self.clipboard && r.is_some() {
+                    push(key("copy"), "COPY CODE");
+                }
+                push(esc, "LEAVE");
+            }
+            State::Create => {
+                push(Some("@up".into()), "");
+                push(Some("@down".into()), "FIELD");
+                push(Some("@left".into()), "");
+                push(Some("@right".into()), "CHANGE");
+                push(enter, "CREATE");
+                push(esc, "BACK");
+            }
+            State::Join => {
+                push(Some("A-Z 0-9".into()), "TYPE");
+                push(Some("@back".into()), "ERASE");
+                if self.clipboard {
+                    push(Some("CTRL V".into()), "PASTE");
+                }
+                push(enter, "JOIN");
+                push(esc, "BACK");
+            }
+            State::Profile => {
+                if self.ui.text_focused() {
+                    push(Some("TAB".into()), "NEXT FIELD");
+                    push(Some("F2".into()), "SHOW PASSWORD");
+                    push(enter, "NEXT");
+                } else {
+                    push(enter, "SELECT");
+                }
+                push(esc, "BACK");
+            }
+            State::Board => push(esc, "BACK"),
+            State::Queue => push(esc, "CANCEL"),
+            State::Direct => {
+                push(Some("@left".into()), "");
+                push(Some("@right".into()), "HOST / JOIN");
+                push(enter, "START");
+                push(esc, "BACK");
+            }
+            State::Matchup => {}
+        }
+        if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) {
+            push(key("retry"), "RETRY");
+        }
+        h
+    }
+
+    /// Hub: one row per server, then `+ ADD SERVER`.
+    fn servers_json(&self) -> Vec<Value> {
+        let mut rows: Vec<Value> = (0..self.servers.len())
+            .map(|i| {
+                let r = &self.servers[i];
+                let (tag, tone) = self.row_tag(i);
+                let problem = self.row_problem(i);
+                let (tag, tone) = match &problem {
+                    Some((t, _)) if !t.is_empty() => (t.clone(), "grey"),
+                    _ => (tag.to_string(), tone),
+                };
+                let sub = match (&problem, &r.info) {
+                    (Some((_, line)), _) => line.clone(),
+                    (None, Some(info)) => format!(
+                        "{} · {}",
+                        plural(info.online, "PLAYER ONLINE", "ONLINE"),
+                        plural(info.rooms, "ROOM", "ROOMS")
+                    ),
+                    (None, None) => "CHECKING...".into(),
+                };
+                let off = problem.is_some();
+                json!({
+                    "is_server": true,
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 24 } else { 17 }),
+                    "tag": tag,
+                    "tag_red": tone == "red",
+                    "tag_amber": tone == "amber",
+                    "tag_grey": tone == "grey",
+                    "sub": sub,
+                    "ping": if off { "--".to_string() } else { r.ping.map_or("...".into(), |p| format!("{p} MS")) },
+                    "off": off,
+                    "on": !off,
+                    "selected": i == self.sel,
+                    "action": format!("server:{i}"),
+                })
             })
-            .unwrap_or_default();
-        let hint = match &state {
-            _ if !supported => "THIS SERVER HAS NO USERNAMES YET: YOU PLAY THERE ANONYMOUSLY.",
-            AcctState::Named(_) => {
-                "LOG IN WITH THIS USERNAME AND PASSWORD ON YOUR OTHER DEVICES. CHANGING THE PASSWORD LOGS THEM OUT."
-            }
-            AcctState::Anonymous => {
-                "THIS DEVICE PLAYS ON AN ACCOUNT WITHOUT A USERNAME. CLAIM IT TO KEEP ITS RATING AND PLAY FROM OTHER DEVICES."
-            }
-            AcctState::Checking => "",
-            AcctState::None => {
-                "ONLINE ROOMS, RANKED AND THE LEADERBOARD NEED AN ACCOUNT ON THIS SERVER. OFFLINE PLAY NEEDS NONE."
-            }
+            .collect();
+        rows.push(json!({ "is_add": true, "action": "online:add" }));
+        rows
+    }
+
+    /// Hub: the selected server's panel.
+    fn sel_json(&self) -> Value {
+        let i = self.sel;
+        let Some(r) = self.servers.get(i) else {
+            return json!({});
         };
-        let kind = self.acct_form;
-        let error = if self.acct_error.is_empty() {
-            view.map(|v| v.error.clone()).unwrap_or_default()
+        let info = r.info.as_ref();
+        let problem = self.row_problem(i);
+        let usable = self.row_usable(i);
+        let (tag, tone) = match (r.official, &r.trust) {
+            (_, Trust::Impostor) => ("UNVERIFIED", "amber"),
+            (_, Trust::Official) => ("VERIFIED", "green"),
+            (true, _) => ("OFFICIAL", "red"),
+            _ => ("COMMUNITY", "grey"),
+        };
+        let reason = match (&problem, info) {
+            (Some(_), _) if r.error => {
+                "CAN'T REACH THIS SERVER: IT IS OFFLINE OR THE ADDRESS IS WRONG.".to_string()
+            }
+            (Some((_, line)), _) => format!("{line}."),
+            (None, None) => "ASKING THE SERVER...".into(),
+            _ => String::new(),
+        };
+        let connected = official::same_server(&self.client.server, &r.addr);
+        let rank = match (&self.me, connected) {
+            (Some(me), true) => format!("{} {}", me.rank, me.rating),
+            _ => self
+                .profile
+                .online_ranks
+                .get(&r.addr)
+                .map_or("--".into(), |s| format!("{} {}", s.rank, s.rating)),
+        };
+        let last = LAST_RESULT
+            .lock()
+            .ok()
+            .and_then(|l| {
+                l.as_ref()
+                    .map(|l| official::same_server(&l.server, &r.addr))
+            })
+            .unwrap_or(false);
+        let last_line = if last {
+            self.last_result_line()
         } else {
-            self.acct_error.clone()
+            String::new()
         };
+        let motd = info
+            .map(|i| i.motd.trim().to_uppercase())
+            .unwrap_or_default();
         json!({
-            "server": self.row_name(i),
-            "scope": if official { "OFFICIAL SERVER · GLOBAL RANKING" } else { "COMMUNITY SERVER" },
-            "official": official,
-            "title": title,
-            "rating": rating,
-            "record": record,
-            "hint": hint,
-            "note": "NO EMAIL: KEEP YOUR PASSWORD SAFE",
-            "form_title": format!("{} · {}", kind.title(), self.row_name(i).chars().take(18).collect::<String>()),
-            "user": self.acct_user,
-            "pass": self.acct_pass,
-            "new": self.acct_new,
-            "masked": !self.acct_show,
-            "show_label": if self.acct_show { "HIDE" } else { "SHOW" },
-            "has_user": kind != AcctForm::Password,
-            "has_new": kind == AcctForm::Password,
-            "pass_label": if kind == AcctForm::Password { "CURRENT PASSWORD" } else { "PASSWORD" },
-            "rules": match kind {
-                AcctForm::Create | AcctForm::Claim => "3-16 LETTERS, DIGITS, _ OR -   PASSWORD: 6+ CHARACTERS",
-                AcctForm::Login => "USERNAMES IGNORE CASE",
-                AcctForm::Password => "6+ CHARACTERS. YOUR OTHER DEVICES GET LOGGED OUT.",
-            },
-            "submit": kind.submit(),
-            "error": error,
-            "has_error": !error.is_empty(),
+            "index": i,
+            "name": self.row_name(i),
+            "tag": tag,
+            "tag_red": tone == "red",
+            "tag_green": tone == "green",
+            "tag_amber": tone == "amber",
+            "tag_grey": tone == "grey",
+            "motd": if motd.is_empty() { String::new() } else { format!("\"{motd}\"") },
+            "has_motd": !motd.is_empty(),
+            "online": info.map_or("--".into(), |i| i.online.to_string()),
+            "rooms": info.map_or("--".into(), |i| i.rooms.to_string()),
+            "ping": if r.error { "--".into() } else { r.ping.map_or("--".into(), |p| p.to_string()) },
+            "rank": rank,
+            "usable": usable,
+            "unusable": !usable,
+            "reason": reason,
+            "has_reason": !reason.is_empty(),
+            "retry": r.error,
+            "versions": problem.is_some() && !r.error,
+            "last_result": last_line,
+            "has_last_result": !last_line.is_empty(),
+            "busy": self.pending_action.is_some(),
+            "busy_line": if self.pending_action.is_some() { format!("CONNECTING TO {}...", self.row_name(i)) } else { String::new() },
         })
     }
 
-    /// PROFILE overview: one line per server.
+    /// PROFILE list: one card per server.
     fn accts_json(&self) -> Vec<Value> {
         (0..self.servers.len())
             .map(|i| {
                 let addr = &self.servers[i].addr;
+                let (tag, tone) = self.row_tag(i);
                 let profile = self
                     .accounts
                     .get(addr)
                     .and_then(|v| v.info.as_ref())
                     .map(|a| &a.profile);
-                let status = match self.acct_state(i) {
-                    AcctState::Named(n) => match profile {
-                        Some(p) => format!("{} ✓  {} {}", n.to_uppercase(), p.rank, p.rating),
-                        None => format!("{} ✓", n.to_uppercase()),
-                    },
-                    AcctState::Anonymous => "NO USERNAME (CLAIM IT)".into(),
-                    AcctState::Checking => "CHECKING...".into(),
-                    AcctState::None if self.has_accounts(addr) => "NOT LOGGED IN".into(),
-                    AcctState::None => "ANONYMOUS ONLY".into(),
+                let offline = self.servers[i].error;
+                let (status, side, ok) = match self.acct_state(i) {
+                    AcctState::Named(n) => (
+                        match profile {
+                            Some(p) => format!(
+                                "{} ✓ · {} {}",
+                                fit(&n.to_uppercase(), 16),
+                                p.rank,
+                                p.rating
+                            ),
+                            None => format!("{} ✓", n.to_uppercase()),
+                        },
+                        "SIGNED IN",
+                        true,
+                    ),
+                    AcctState::Anonymous => ("NO USERNAME YET".into(), "CLAIM ▶", false),
+                    AcctState::Checking => ("CHECKING...".into(), "", false),
+                    _ if offline => ("SERVER OFFLINE".into(), "--", false),
+                    AcctState::None if self.has_accounts(addr) => {
+                        ("NO ACCOUNT YET".into(), "SET UP ▶", false)
+                    }
+                    AcctState::None => ("NO USERNAMES ON THIS SERVER".into(), "", false),
                 };
                 json!({
-                    "server": self.row_name(i).chars().take(18).collect::<String>(),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 22 } else { 15 }),
+                    "tag": tag,
+                    "tag_red": tone == "red",
+                    "tag_amber": tone == "amber",
                     "status": status,
-                    "named": matches!(self.acct_state(i), AcctState::Named(_)),
+                    "side": side,
+                    "side_ok": ok,
+                    "side_plain": !ok && !side.is_empty(),
+                    "off": offline,
+                    "on": !offline,
+                    "selected": i == self.acct_server,
+                    "action": format!("acct:open:{i}"),
                 })
             })
             .collect()
     }
 
+    /// PROFILE panel: the selected server's account, or its form.
+    fn acct_json(&self) -> Value {
+        let i = self.acct_server;
+        let addr = self.acct_addr();
+        let view = self.accounts.get(&addr);
+        let info = view.and_then(|v| v.info.as_ref());
+        let profile = info.map(|a| &a.profile);
+        let state = self.acct_state(i);
+        let supported = self.has_accounts(&addr);
+        let offline = self.servers.get(i).is_some_and(|r| r.error);
+        let kind = self.acct_form;
+        let named = matches!(state, AcctState::Named(_));
+        let form = kind == AcctForm::Password
+            || (supported && !offline && matches!(state, AcctState::None | AcctState::Anonymous));
+        let details = named && !form;
+        let name = match &state {
+            AcctState::Named(n) => n.to_uppercase(),
+            _ => String::new(),
+        };
+        let rating = profile
+            .map(|p| {
+                format!(
+                    "{} {} · BEST {} · {}W {}L",
+                    p.rank, p.rating, p.best_rating, p.wins, p.losses
+                )
+            })
+            .unwrap_or_default();
+        let devices = info.map_or(0, |a| a.sessions);
+        let note = match &state {
+            _ if offline && !named => {
+                "THIS SERVER IS OFFLINE. TRY AGAIN WHEN IT IS BACK.".to_string()
+            }
+            AcctState::Checking => "CHECKING YOUR ACCOUNT...".into(),
+            _ if !supported => {
+                "THIS SERVER HAS NO USERNAMES YET: YOU PLAY THERE ANONYMOUSLY. JUST ENTER IT."
+                    .into()
+            }
+            _ => String::new(),
+        };
+        let tabs: Vec<(&str, &str, AcctForm)> = match state {
+            AcctState::Anonymous => vec![
+                ("CLAIM THIS ACCOUNT", "acct:tab:claim", AcctForm::Claim),
+                ("LOG IN", "acct:tab:login", AcctForm::Login),
+            ],
+            _ if kind == AcctForm::Password => {
+                vec![("CHANGE PASSWORD", "acct:tab:password", AcctForm::Password)]
+            }
+            _ => vec![
+                ("CREATE ACCOUNT", "acct:tab:create", AcctForm::Create),
+                ("LOG IN", "acct:tab:login", AcctForm::Login),
+            ],
+        };
+        let tab = |n: usize| {
+            tabs.get(n).map_or(json!({ "show": false }), |(label, action, k)| {
+                json!({ "show": true, "label": label, "action": action, "on": *k == kind, "off": *k != kind })
+            })
+        };
+        let guest = match (&state, profile) {
+            (AcctState::Anonymous, Some(p)) if kind == AcctForm::Claim => format!(
+                "YOUR GUEST STATS HERE ({} {}, {}) MOVE TO THIS ACCOUNT.",
+                p.rank,
+                p.rating,
+                plural((p.wins + p.losses) as usize, "MATCH", "MATCHES")
+            ),
+            _ => String::new(),
+        };
+        let error = if self.acct_error.is_empty() {
+            view.map(|v| v.error.clone()).unwrap_or_default()
+        } else {
+            self.acct_error.clone()
+        };
+        let pass_rule = "AT LEAST 6 CHARACTERS. NO EMAIL IS ASKED, SO THERE IS NO RESET LINK: KEEP YOUR PASSWORD SAFE. THE SERVER ADMIN CAN RESET IT.";
+        json!({
+            "server": self.row_name(i),
+            "on_server": format!("ON {}", fit(&self.row_name(i), 18)),
+            "details": details,
+            "form": form,
+            "note": note,
+            "has_note": !details && !form && !note.is_empty(),
+            "name": name,
+            "rating": rating,
+            "devices": if named && devices > 0 { format!("LOGGED IN ON {}", plural(devices as usize, "DEVICE", "DEVICES")) } else { String::new() },
+            "hint": "LOG IN WITH THIS USERNAME AND PASSWORD ON YOUR OTHER DEVICES. CHANGING THE PASSWORD LOGS THEM OUT.",
+            "enter": self.connect_after && !matches!(state, AcctState::None | AcctState::Checking),
+            "tab0": tab(0),
+            "tab1": tab(1),
+            "has_user": kind != AcctForm::Password,
+            "has_again": kind != AcctForm::Login,
+            "has_new": kind == AcctForm::Password,
+            "pass_label": if kind == AcctForm::Password { "CURRENT PASSWORD" } else { "PASSWORD" },
+            "user_rule": match kind {
+                AcctForm::Create | AcctForm::Claim => "3-16 LETTERS, NUMBERS, _ OR -",
+                _ => "USERNAMES IGNORE CASE",
+            },
+            "rule": match kind {
+                AcctForm::Login => "NO EMAIL IS ASKED, SO THERE IS NO RESET LINK. THE SERVER ADMIN CAN RESET A PASSWORD.",
+                AcctForm::Password => "AT LEAST 6 CHARACTERS. YOUR OTHER DEVICES GET LOGGED OUT.",
+                _ => pass_rule,
+            },
+            "guest": guest,
+            "has_guest": !guest.is_empty(),
+            "masked": !self.acct_show,
+            "show_label": if self.acct_show { "HIDE" } else { "SHOW" },
+            "submit": kind.title(),
+            "error": error,
+            "has_error": !error.is_empty(),
+            "busy": self.jobs.iter().any(|j| matches!(j, Job::Session(..) | Job::Logout(..))),
+        })
+    }
+
+    fn lobby_json(&self) -> Value {
+        let rows: Vec<Value> = self
+            .rooms
+            .iter()
+            .map(|r| {
+                let off = room_error(r).is_some();
+                let full = r.players >= 2;
+                let tag = if off {
+                    rugen_proto::release_of(r.api).to_uppercase()
+                } else if r.locked {
+                    "PASSWORD".into()
+                } else {
+                    String::new()
+                };
+                let host = if r.host_verified {
+                    format!("{} ✓", fit(&r.host.to_uppercase(), 16))
+                } else {
+                    fit(&r.host.to_uppercase(), 18)
+                };
+                json!({
+                    "name": fit(&r.name.to_uppercase(), if tag.is_empty() { 17 } else { 11 }),
+                    "tag": tag,
+                    "has_tag": !tag.is_empty(),
+                    "host": host,
+                    "rules": if off {
+                        if r.api < rugen_proto::API_VERSION { "OLDER RUGEN · CAN'T JOIN".to_string() } else { "NEWER RUGEN · UPDATE TO JOIN".to_string() }
+                    } else {
+                        rules_line(&r.rules)
+                    },
+                    "seats": format!("{} / 2", r.players),
+                    "watching": format!("{} / {}", r.spectators, r.max_spectators),
+                    "live": r.in_match,
+                    "off": off,
+                    "on": !off,
+                    "full": full && !off,
+                    "open": !full && !off,
+                    "can_watch": !off && r.spectators < r.max_spectators,
+                    "action": if off || full { format!("lobby:watch:{}", r.code) } else { format!("lobby:join:{}", r.code) },
+                })
+            })
+            .collect();
+        let loading = self.jobs.iter().any(|j| matches!(j, Job::Rooms(_)));
+        json!({
+            "rows": rows,
+            "empty": self.rooms.is_empty() && !loading,
+            "loading": self.rooms.is_empty() && loading,
+            "count": plural(self.rooms.len(), "PUBLIC ROOM", "PUBLIC ROOMS"),
+        })
+    }
+
+    fn room_json(&self) -> Value {
+        let Some(r) = self.room.as_ref() else {
+            let joining = self.jobs.iter().any(|j| matches!(j, Job::Room(_)));
+            return json!({
+                "has": false,
+                "wait_line": if joining { self.status.clone() } else { String::new() },
+            });
+        };
+        let me = self.my_id();
+        let card = |role: u8| -> Value {
+            let Some(m) = r.members.iter().find(|m| m.role == role) else {
+                return json!({ "present": false });
+            };
+            let you = m.profile.id == me;
+            let tag = match (role, you) {
+                (0, true) => "HOST · YOU",
+                (0, false) => "HOST",
+                (_, true) => "CHALLENGER · YOU",
+                _ => "CHALLENGER",
+            };
+            let ping = m.rtt_ms;
+            json!({
+                "present": true,
+                "name": fit(&badge_name(&m.profile), 20),
+                "tag": tag,
+                "you": you,
+                "line": format!("{} {} · {}W {}L", m.profile.rank, m.profile.rating, m.profile.wins, m.profile.losses),
+                "ping": ping.map_or(String::new(), |p| format!("{p} MS")),
+                "has_ping": ping.is_some(),
+                "high_ping": ping.is_some_and(|p| p > HIGH_PING_MS),
+            })
+        };
+        let watchers: Vec<String> = r
+            .members
+            .iter()
+            .filter(|m| m.role >= 2)
+            .map(|m| badge_name(&m.profile))
+            .collect();
+        let spect = if r.max_spectators == 0 {
+            "SPECTATORS OFF".to_string()
+        } else if watchers.is_empty() {
+            format!(
+                "NOBODY WATCHING · {}",
+                plural(r.max_spectators as usize, "SEAT", "SEATS")
+            )
+        } else {
+            fit(
+                &format!("{} WATCHING: {}", watchers.len(), watchers.join(", ")),
+                60,
+            )
+        };
+        let mut tags = rules_tags(&r.rules);
+        if !r.public {
+            tags.push("PRIVATE".into());
+        }
+        let host = r.side == 1;
+        let player = r.side <= 2;
+        let opp = r.opponent.is_some();
+        json!({
+            "has": true,
+            "code": r.code,
+            "cells": r.code.chars().map(|c| json!({ "c": c.to_string() })).collect::<Vec<_>>(),
+            "name": r.name.to_uppercase(),
+            "tags": tags,
+            "host_card": card(0),
+            "chal_card": card(1),
+            "spect": spect,
+            "waiting": player && !opp,
+            "can_rematch": player && opp,
+            "can_kick": host && opp,
+            "watching": !player,
+            "copy": self.clipboard,
+            "note": if !player {
+                "YOU ARE WATCHING. THE NEXT MATCH SHOWS HERE.".to_string()
+            } else if !opp {
+                "THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.".to_string()
+            } else {
+                String::new()
+            },
+            "has_note": !player || !opp,
+        })
+    }
+
+    fn create_json(&self) -> Value {
+        let f = &self.form;
+        let host = self
+            .me
+            .as_ref()
+            .map(|m| format!("HOST {} · {} {}", fit(&badge_name(m), 18), m.rank, m.rating))
+            .unwrap_or_else(|| format!("HOST {}", fit(&self.profile.name.to_uppercase(), 18)));
+        let rounds = [1u8, 2, 3];
+        let times = [60u16, 99, 0];
+        let spect = [0u8, 2, 4, 6];
+        let note = match self.ui.focused() {
+            Some("cr_mode") if f.rules.mode == "arena" => {
+                "ARENA: PLATFORMS, PITS AND BLAST ZONES. KNOCK YOUR OPPONENT OUT OF THE STAGE."
+            }
+            Some("cr_mode") => "CLASSIC: ONE FLAT STAGE, ROUNDS WON ON LIFE OR TIME.",
+            Some("cr_join") if !f.public => {
+                "CODE ONLY: THE ROOM IS NOT LISTED. SEND THE CODE TO YOUR FRIEND."
+            }
+            Some("cr_join") => {
+                "ANYONE: THE ROOM IS LISTED IN ROOMS FOR EVERY PLAYER ON THIS SERVER."
+            }
+            Some("cr_spect") => "SPECTATORS WATCH THE MATCH LIVE. THEY NEVER SLOW IT DOWN.",
+            Some("cr_pass") => "OPTIONAL. PLAYERS TYPE IT TO JOIN, EVEN WITH THE CODE.",
+            _ if f.rules.chars == "mirror" => {
+                "MIRROR: THE CHALLENGER PLAYS THE HOST'S FIGHTER. NO MATCHUP QUESTIONS."
+            }
+            _ => {
+                "FREE PICK: ANY FIGHTER. THE SERVER CHECKS EACH MATCHUP; UNBALANCED ONES NEED BOTH PLAYERS TO AGREE."
+            }
+        };
+        let mut line = rules_tags(&f.rules);
+        if !f.public {
+            line.push("CODE ONLY".into());
+        }
+        if !f.password.is_empty() {
+            line.push("PASSWORD".into());
+        }
+        json!({
+            "count": format!("{} / 24", f.name.chars().count()),
+            "rounds": rounds.iter().map(|r| r.to_string()).collect::<Vec<_>>(),
+            "rounds_sel": rounds.iter().position(|r| *r == f.rules.rounds).unwrap_or(1),
+            "times": ["60 S", "99 S", "NO LIMIT"],
+            "times_sel": times.iter().position(|t| *t == f.rules.round_time).unwrap_or(1),
+            "modes": ["CLASSIC", "ARENA"],
+            "modes_sel": usize::from(f.rules.mode == "arena"),
+            "chars": ["FREE PICK", "MIRROR"],
+            "chars_sel": usize::from(f.rules.chars == "mirror"),
+            "joins": ["ANYONE", "CODE ONLY"],
+            "joins_sel": usize::from(!f.public),
+            "spects": ["OFF", "2", "4", "6"],
+            "spects_sel": spect.iter().position(|s| *s == f.spectators).unwrap_or(1),
+            "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.profile.name.to_uppercase()) } else { f.name.to_uppercase() },
+            "preview_host": host,
+            "preview_rules": line.join(" · "),
+            "note": note,
+        })
+    }
+
+    fn join_json(&self) -> Value {
+        let typed: Vec<char> = self.typed.chars().collect();
+        let editing = self.ui.text_focused() && self.ui.focused() == Some("code");
+        let cells: Vec<Value> = (0..rugen_proto::room_code::LEN)
+            .map(|i| {
+                let c = typed.get(i).map(|c| c.to_string()).unwrap_or_default();
+                let active = editing && i == typed.len();
+                json!({ "c": c, "active": active, "empty": c.is_empty() && !active, "filled": !c.is_empty() && !active })
+            })
+            .collect();
+        let locked = self.rooms.iter().any(|r| r.code == self.typed && r.locked);
+        json!({
+            "cells": cells,
+            "bad": self.code_bad.is_some(),
+            "hint": match self.code_bad {
+                Some(c) => format!("CODES NEVER USE {c}: 0, O, 1 AND I ARE LEFT OUT ON PURPOSE"),
+                None => "LETTERS AND NUMBERS · NO 0/O OR 1/I MIX-UPS: CODES NEVER USE THEM".into(),
+            },
+            "need_password": locked || !self.password.is_empty() || self.ui.focused() == Some("password"),
+        })
+    }
+
+    fn board_json(&self) -> Value {
+        let Some(b) = self.board.as_ref() else {
+            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false } });
+        };
+        let my = self.my_id();
+        let rows: Vec<Value> = b
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                json!({
+                    "pos": format!("#{}", i + 1),
+                    "top": i < 3,
+                    "name": fit(&p.name.to_uppercase(), 18),
+                    "verified": p.verified,
+                    "rating": p.rating,
+                    "record": format!("{} - {}", p.wins, p.losses),
+                    "tier": p.rank,
+                    "you": p.id == my,
+                })
+            })
+            .collect();
+        let me = b.me.as_ref().map_or(json!({ "show": false }), |(pos, p)| {
+            json!({
+                "show": true,
+                "pos": format!("#{pos}"),
+                "name": format!("{} (YOU)", fit(&p.name.to_uppercase(), 16)),
+                "rating": p.rating,
+                "record": format!("{} - {}", p.wins, p.losses),
+                "tier": p.rank,
+            })
+        });
+        json!({
+            "loading": false,
+            "rows": rows,
+            "empty": b.rows.is_empty(),
+            "me": me,
+            "scope": self.scope(),
+        })
+    }
+
+    fn queue_json(&self) -> Value {
+        let q = self.queue.as_ref();
+        let secs = q.map_or(0, |q| q.waiting_secs);
+        let found = q.and_then(|q| q.found.as_ref());
+        json!({
+            "time": format!("{}:{:02}", secs / 60, secs % 60),
+            "count": q.map_or("JOINING THE QUEUE...".to_string(), |q| {
+                format!("{} IN THE QUEUE", plural(q.players_in_queue, "PLAYER", "PLAYERS"))
+            }),
+            "found": found.is_some(),
+            "searching": found.is_none(),
+            "found_line": found.map(|m| format!(
+                "{} · {} {} · {}",
+                fit(&badge_name(&m.opponent), 18),
+                m.opponent.rank,
+                m.opponent.rating,
+                ping_text(m.est_ping_ms)
+            )).unwrap_or_default(),
+            "rule": if self.ranked {
+                "RANKED: ONLY FAIR MATCHUPS. WINS AND LOSSES MOVE YOUR RATING."
+            } else {
+                "QUICK MATCH: CASUAL. UNBALANCED MATCHUPS NEED BOTH PLAYERS TO AGREE."
+            },
+        })
+    }
+
+    fn direct_json(&self) -> Value {
+        let port = self.config.net.port;
+        json!({
+            "sides": ["HOST (1P)", "JOIN (2P)"],
+            "side": self.direct_side,
+            "mine": format!("{}:{port}", self.local_ip),
+            "fighters": format!(
+                "1P {}  VS  2P {} · STAGE {}",
+                fit(&self.config.net.p1.to_uppercase(), 14),
+                fit(&self.config.net.p2.to_uppercase(), 14),
+                if self.config.net.stage.trim().is_empty() { "AUTO".to_string() } else { fit(&self.config.net.stage.to_uppercase(), 14) },
+            ),
+            "netplay": !self.config.net.remote.trim().is_empty(),
+        })
+    }
+
+    /// Title and subtitle of the screen header.
+    fn header(&self) -> (String, String) {
+        let server = || {
+            let name = fit(&self.server_name().to_uppercase(), 24);
+            match self.server_ping() {
+                Some(p) => format!("{name} · {p} MS"),
+                None => name,
+            }
+        };
+        match self.state {
+            State::Servers | State::AddServer => ("ONLINE".into(), "PICK A SERVER".into()),
+            State::Lobby => ("ROOMS".into(), server()),
+            State::Create => (
+                "CREATE ROOM".into(),
+                fit(&self.server_name().to_uppercase(), 28),
+            ),
+            State::Join => (
+                "JOIN BY CODE".into(),
+                fit(&self.server_name().to_uppercase(), 28),
+            ),
+            State::Room => (
+                "ROOM".into(),
+                match &self.room {
+                    Some(r) => format!(
+                        "{} · {}",
+                        fit(&r.name.to_uppercase(), 20),
+                        fit(&self.server_name().to_uppercase(), 16)
+                    ),
+                    None => fit(&self.server_name().to_uppercase(), 28),
+                },
+            ),
+            State::Queue => (
+                if self.ranked { "RANKED" } else { "QUICK MATCH" }.into(),
+                server(),
+            ),
+            State::Board => {
+                let season = self
+                    .board
+                    .as_ref()
+                    .map(|b| format!(" · {}", b.season.name.to_uppercase()))
+                    .unwrap_or_default();
+                (
+                    "LEADERBOARD".into(),
+                    format!("{}{season}", fit(&self.server_name().to_uppercase(), 22)),
+                )
+            }
+            State::Direct => (
+                "LAN / DIRECT IP".into(),
+                "NO SERVER: TYPE EACH OTHER'S ADDRESS".into(),
+            ),
+            State::Profile => (
+                "PROFILE".into(),
+                if self.connect_after {
+                    format!(
+                        "{} NEEDS AN ACCOUNT",
+                        fit(&self.row_name(self.acct_server), 20)
+                    )
+                } else {
+                    "ONE ACCOUNT PER SERVER · OFFLINE NEEDS NONE".into()
+                },
+            ),
+            State::Matchup => (String::new(), String::new()),
+        }
+    }
+
     fn refresh(&mut self) {
+        // notices fade on their own; errors stay longer
+        if let Some(t) = &self.toast {
+            let ttl = if t.error { TOAST_ERROR } else { TOAST_INFO };
+            if self.tick.saturating_sub(t.at) > ttl {
+                self.toast = None;
+            }
+        }
         let mx = if self.state == State::Matchup {
             self.matchup_json()
         } else {
             json!({})
         };
-        let me = self.me.clone().unwrap_or_else(|| ProfileInfo {
-            id: self.my_id(),
-            name: self.profile.name.clone(),
-            rating: 1200,
-            best_rating: 1200,
-            rank: rank_name(1200).into(),
-            ..Default::default()
-        });
-        let room = self.room.as_ref();
-        let opp = room
-            .and_then(|r| r.opponent.clone())
-            .or_else(|| {
-                self.queue
-                    .as_ref()
-                    .and_then(|q| q.found.as_ref())
-                    .map(|m| m.opponent.clone())
-            })
-            .unwrap_or_default();
-        let opp_ping = self.est_ping();
-        let scope = self.scope();
-        let ranked_official = scope == "OFFICIAL";
-        let scope_short = if ranked_official {
-            "OFFICIAL"
-        } else {
-            "COMMUNITY"
-        }
-        .to_string();
-        let board_rows: Vec<Value> = self
-            .board
-            .as_ref()
-            .map(|b| {
-                b.rows
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        json!({
-                            "scope": scope_short.clone(),
-                            "pos": i + 1,
-                            "name": badge_name(p),
-                            "rating": p.rating,
-                            "rank": p.rank,
-                            "record": format!("{}W {}L", p.wins, p.losses),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let my_rank = self
-            .board
-            .as_ref()
-            .and_then(|b| b.me.as_ref())
-            .map(|(pos, _)| format!("YOUR {scope_short} RANK #{pos}"))
-            .unwrap_or_else(|| "UNRANKED - PLAY A RANKED MATCH".into());
-        let has_server = self.client.key.is_some() || self.state != State::Servers;
-        let menu: Vec<Value> = match self.state {
-            State::Servers => {
-                let mut m: Vec<Value> = self
-                    .servers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| {
-                        let name = |s: &str, n: usize| s.to_uppercase().chars().take(n).collect::<String>();
-                        let label = match (&r.info, r.error) {
-                            (Some(info), _) => format!("{}  {}", name(&info.name, 15), r.ping.map_or("--".into(), |p| format!("{p} MS"))),
-                            (None, true) => format!("{} OFFLINE", name(official::host_label(&r.addr), 12)),
-                            (None, false) => format!("{} ...", name(official::host_label(&r.addr), 17)),
-                        };
-                        let badge = match (r.official, &r.trust) {
-                            (_, Trust::Impostor) => "UNVERIFIED",
-                            (true, _) => "OFFICIAL",
-                            (false, _) => "COMMUNITY",
-                        };
-                        json!({
-                            "id": format!("srv{i}"), "label": label, "action": format!("server:{i}"),
-                            "badge": badge, "has_badge": true,
-                            "official": r.official && r.trust != Trust::Impostor,
-                            "community": !r.official || r.trust == Trust::Impostor,
-                        })
-                    })
-                    .collect();
-                m.push(json!({ "id": "profile", "label": "PROFILE / ACCOUNTS", "action": "online:profile" }));
-                m.push(json!({ "id": "add", "label": "ADD SERVER", "action": "online:add" }));
-                if self.servers.iter().any(|r| !r.official) {
-                    m.push(json!({ "id": "remove", "label": "REMOVE SERVER", "action": "online:remove" }));
-                }
-                m.extend([
-                    json!({ "id": "host", "label": "HOST DIRECT (LAN)", "action": "online:host" }),
-                    json!({ "id": "direct", "label": "JOIN DIRECT (LAN)", "action": "online:direct" }),
-                ]);
-                if !self.config.net.remote.trim().is_empty() {
-                    m.push(json!({ "id": "netplay", "label": "NETPLAY (RUGEN.TOML)", "action": "netplay" }));
-                }
-                m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
-                m
-            }
-            State::RemoveServer => {
-                let mut m: Vec<Value> = self
-                    .servers
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, r)| !r.official)
-                    .map(|(i, r)| {
-                        let name = r.info.as_ref().map_or(official::host_label(&r.addr).to_string(), |i| i.name.clone());
-                        json!({
-                            "id": format!("rm{i}"),
-                            "label": format!("REMOVE {}", name.to_uppercase().chars().take(16).collect::<String>()),
-                            "action": format!("server_remove:{i}"),
-                            "badge": "COMMUNITY", "has_badge": true, "community": true, "official": false,
-                        })
-                    })
-                    .collect();
-                m.push(json!({ "id": "back", "label": "CANCEL", "action": "back" }));
-                m
-            }
-            State::Profile => {
-                let mut m: Vec<Value> = self
-                    .servers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| {
-                        let name = r
-                            .info
-                            .as_ref()
-                            .map_or(official::host_label(&r.addr).to_string(), |i| {
-                                i.name.clone()
-                            });
-                        let badge = match (r.official, &r.trust) {
-                            (_, Trust::Impostor) => "UNVERIFIED",
-                            (true, _) => "OFFICIAL",
-                            (false, _) => "COMMUNITY",
-                        };
-                        json!({
-                            "id": format!("acct{i}"),
-                            "label": name.to_uppercase().chars().take(18).collect::<String>(),
-                            "action": format!("acct:open:{i}"),
-                            "badge": badge, "has_badge": true,
-                            "official": badge == "OFFICIAL", "community": badge != "OFFICIAL",
-                        })
-                    })
-                    .collect();
-                m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
-                m
-            }
-            State::Account => {
-                let i = self.acct_server;
-                let addr = self.acct_addr();
-                let item = |id: &str, label: &str| json!({ "id": id, "label": label, "action": format!("acct:{id}") });
-                let mut m = match self.acct_state(i) {
-                    AcctState::Named(_) => vec![
-                        item("password", "CHANGE PASSWORD"),
-                        item("logout", "LOG OUT"),
-                        item("logout_all", "LOG OUT EVERYWHERE"),
-                    ],
-                    AcctState::Anonymous if self.has_accounts(&addr) => vec![
-                        item("claim", "CLAIM THIS ACCOUNT"),
-                        item("login", "LOG IN INSTEAD"),
-                    ],
-                    AcctState::None if self.has_accounts(&addr) => {
-                        vec![item("create", "CREATE ACCOUNT"), item("login", "LOG IN")]
-                    }
-                    _ => Vec::new(),
-                };
-                if self.connect_after && !matches!(self.acct_state(i), AcctState::None) {
-                    m.insert(0, item("enter", "ENTER SERVER"));
-                }
-                m.push(json!({ "id": "back", "label": "BACK", "action": "back" }));
-                m
-            }
-            _ => vec![
-                json!({ "id": "lobby", "label": "LOBBY", "action": "online:lobby" }),
-                json!({ "id": "room", "label": "CREATE ROOM", "action": "online:create" }),
-                json!({ "id": "join", "label": "JOIN BY CODE", "action": "online:join" }),
-                json!({ "id": "quick", "label": "QUICK MATCH", "action": "online:quick" }),
-                json!({ "id": "ranked", "label": "RANKED", "action": "online:ranked" }),
-                json!({ "id": "board", "label": "LEADERBOARD", "action": "online:board" }),
-                json!({ "id": "servers", "label": "CHANGE SERVER", "action": "online:servers" }),
-                json!({ "id": "back", "label": "BACK", "action": "back" }),
-            ],
-        };
-        let acct = self.acct_json();
-        let accts = self.accts_json();
-        let lobby: Vec<Value> = self
-            .rooms
-            .iter()
-            .map(|r| {
+        let (title, sub) = self.header();
+        let hints: Vec<Value> = self
+            .hints()
+            .into_iter()
+            .map(|(k, label)| {
+                let glyph = k.strip_prefix('@').map(str::to_string);
                 json!({
-                    "name": format!(
-                        "{}{}{}",
-                        if r.joinable_by(rugen_proto::API_VERSION) { String::new() } else { format!("[{}] ", rugen_proto::release_of(r.api)) },
-                        if r.locked { "[LOCKED] " } else { "" },
-                        r.name.to_uppercase()
-                    ),
-                    "host": if r.host_verified { format!("{} ✓", r.host.to_uppercase()) } else { r.host.to_uppercase() },
-                    "rules": rules_line(&r.rules),
-                    "count": format!(
-                        "{}/2  WATCHING {}/{}{}",
-                        r.players, r.spectators, r.max_spectators,
-                        if r.in_match { "  LIVE" } else { "" }
-                    ),
-                    "join": format!("lobby:join:{}", r.code),
-                    "watch": format!("lobby:watch:{}", r.code),
+                    "key": if glyph.is_some() { String::new() } else { k.clone() },
+                    "glyph": glyph.clone().unwrap_or_default(),
+                    "is_glyph": glyph.is_some(),
+                    "is_text": glyph.is_none(),
+                    "label": label,
+                    "has_label": !label.is_empty(),
                 })
             })
             .collect();
-        let my_role = room.map_or(2, |r| r.side.saturating_sub(1));
-        let members: Vec<Value> = room
-            .map(|r| {
-                r.members
-                    .iter()
-                    .map(|m| {
-                        json!({
-                            "name": badge_name(&m.profile),
-                            "role": role_name(m.role),
-                            "ping": ping_text(m.rtt_ms),
-                            "kick": format!("room:kick:{}", m.profile.id),
-                            "can_kick": my_role == 0 && m.role != 0,
-                        })
-                    })
-                    .collect()
+        let hub = matches!(self.state, State::Servers | State::AddServer);
+        let toast = self.toast.as_ref().map_or(json!({ "show": false }), |t| {
+            json!({
+                "show": true,
+                "title": t.title,
+                "body": t.body,
+                "retry": t.retry.is_some(),
+                "retry_key": self.keys.get("retry").map(|k| k.to_uppercase()).unwrap_or_default(),
+                "error": t.error,
             })
-            .unwrap_or_default();
-        let accounts_page = matches!(
-            self.state,
-            State::Profile | State::Account | State::AccountForm
-        );
-        let server_line = if accounts_page {
-            "ACCOUNTS · ONE PER SERVER".to_string()
-        } else if matches!(self.state, State::Servers | State::RemoveServer) {
-            if official::feed().is_some() {
-                "SERVERS  ·  OFFICIAL BLOCKLIST UP TO DATE".to_string()
-            } else {
-                "SERVERS".to_string()
-            }
-        } else {
-            let info = self
-                .servers
-                .iter()
-                .find(|r| r.addr == self.client.server)
-                .and_then(|r| r.info.clone());
-            format!(
-                "{}   {} ONLINE   {} ROOMS   {}",
-                scope,
-                info.as_ref().map_or(0, |i| i.online),
-                info.as_ref().map_or(0, |i| i.rooms),
-                ping_text(self.server_ping()),
-            )
-        };
-        let motd = self
-            .servers
-            .iter()
-            .find(|r| r.addr == self.client.server)
-            .and_then(|r| r.info.as_ref())
-            .map(|i| i.motd.clone())
-            .unwrap_or_default();
-        let port = self.config.net.port;
-        let f = &self.form;
+        });
+        let dialog = self.dialog.as_ref().map_or(json!({ "show": false }), |d| {
+            json!({
+                "show": true,
+                "kicker": d.kicker,
+                "title": d.title,
+                "body": if d.show_details && !d.details.is_empty() { format!("{} {}", d.body, d.details) } else { d.body.clone() },
+                "primary": d.primary.0,
+                "primary_action": d.primary.1,
+                "secondary": d.secondary.as_ref().map(|s| s.0.clone()).unwrap_or_default(),
+                "secondary_action": d.secondary.as_ref().map(|s| s.1.clone()).unwrap_or_default(),
+                "has_secondary": d.secondary.is_some(),
+                "input": d.input,
+            })
+        });
         let data = json!({
-            "menu": menu,
-            "is_menu": matches!(self.state, State::Menu | State::Servers | State::RemoveServer | State::Profile | State::Account),
-            "is_profile": self.state == State::Profile,
-            "is_account": matches!(self.state, State::Account | State::AccountForm),
-            "is_acct_form": self.state == State::AccountForm,
-            "acct": acct,
-            "accts": accts,
-            "is_servers": matches!(self.state, State::Servers | State::RemoveServer),
-            "is_add": self.state == State::AddServer,
+            "title": title,
+            "sub": sub,
+            "hints": hints,
+            "chip": if hub { self.chip_text(self.sel) } else { String::new() },
+            "has_chip": hub,
+            "lan_key": self.keys.get("lan").map(|k| k.to_uppercase()).unwrap_or_default(),
+            "has_lan_key": self.keys.contains_key("lan"),
+            "is_hub": hub,
             "is_lobby": self.state == State::Lobby,
             "is_create": self.state == State::Create,
             "is_room": self.state == State::Room,
@@ -2051,100 +2828,23 @@ impl OnlineScreen {
             "is_queue": self.state == State::Queue,
             "is_board": self.state == State::Board,
             "is_direct": self.state == State::Direct,
+            "is_profile": self.state == State::Profile,
             "is_matchup": self.state == State::Matchup,
             "not_matchup": self.state != State::Matchup,
+            "servers": if hub { self.servers_json() } else { Vec::new() },
+            "sel": if hub { self.sel_json() } else { json!({}) },
+            "accts": if self.state == State::Profile { self.accts_json() } else { Vec::new() },
+            "acct": if self.state == State::Profile { self.acct_json() } else { json!({}) },
+            "lobby": if self.state == State::Lobby { self.lobby_json() } else { json!({}) },
+            "room": if self.state == State::Room { self.room_json() } else { json!({}) },
+            "create": if self.state == State::Create { self.create_json() } else { json!({}) },
+            "join": if self.state == State::Join { self.join_json() } else { json!({}) },
+            "board": if self.state == State::Board { self.board_json() } else { json!({}) },
+            "queue": if self.state == State::Queue { self.queue_json() } else { json!({}) },
+            "direct": if self.state == State::Direct { self.direct_json() } else { json!({}) },
+            "toast": toast,
+            "dialog": dialog,
             "mx": mx,
-            "has_server": has_server && !matches!(self.state, State::Servers | State::RemoveServer | State::Matchup | State::Profile | State::Account | State::AccountForm),
-            "no_server": matches!(self.state, State::Servers | State::RemoveServer),
-            "scope": scope,
-            "ranked_official": ranked_official,
-            "ranked_community": !ranked_official,
-            "last_result": self.last_result_line(),
-            "has_last_result": !self.last_result_line().is_empty() && !matches!(self.state, State::Matchup) && !accounts_page,
-            "title": if accounts_page { "PROFILE" } else { "ONLINE" },
-            "server_line": server_line,
-            "motd": motd,
-            "lobby": lobby,
-            "lobby_empty": self.rooms.is_empty(),
-            "create": {
-                "name": f.name,
-                "password": f.password,
-                "public": if f.public { "PUBLIC (LISTED)" } else { "PRIVATE (CODE ONLY)" },
-                "rounds": format!("ROUNDS: {}", f.rules.rounds),
-                "time": if f.rules.round_time == 0 { "TIMER: OFF".to_string() } else { format!("TIMER: {} S", f.rules.round_time) },
-                "mode": format!("MODE: {}", f.rules.mode.to_uppercase()),
-                "chars": if f.rules.chars == "mirror" { "FIGHTERS: MIRROR" } else { "FIGHTERS: FREE PICK" },
-                "spect": format!("SPECTATORS: {}", f.spectators),
-            },
-            "direct": {
-                "title": if self.direct_side == 0 { "HOST  -  YOU PLAY 1P" } else { "JOIN  -  YOU PLAY 2P" },
-                "addr": self.addr,
-                "mine": format!("{}:{port}", self.local_ip),
-                "fighters": format!(
-                    "1P {}  VS  2P {}   STAGE {}",
-                    self.config.net.p1.to_uppercase(),
-                    self.config.net.p2.to_uppercase(),
-                    if self.config.net.stage.trim().is_empty() { "AUTO".to_string() } else { self.config.net.stage.to_uppercase() },
-                ),
-            },
-            "status": self.status,
-            "error": self.error,
-            "has_error": !self.error.is_empty(),
-            "server": {
-                "name": self.server_name(),
-                "ping": ping_text(self.server_ping()),
-            },
-            "me": {
-                "scope": if ranked_official {
-                    "OFFICIAL RANKING · GLOBAL".to_string()
-                } else {
-                    format!("COMMUNITY RANKING · {}", self.server_name().to_uppercase().chars().take(14).collect::<String>())
-                },
-                "name": badge_name(&me),
-                "rating": me.rating,
-                "best": me.best_rating,
-                "rank": me.rank,
-                "wins": me.wins,
-                "losses": me.losses,
-                "char": self.my_char().to_uppercase(),
-            },
-            "room": {
-                "code": room.map(|r| r.code.clone()).unwrap_or_default(),
-                "name": room.map(|r| r.name.to_uppercase()).unwrap_or_default(),
-                "rules": room.map(|r| rules_line(&r.rules)).unwrap_or_default(),
-                "ready": room.is_some_and(|r| r.ready),
-                "waiting": room.is_some_and(|r| r.opponent.is_none() && r.side <= 2),
-                "rematch": room.is_some_and(|r| r.opponent.is_some() && r.side <= 2),
-                "members": members,
-                "role": role_name(my_role),
-            },
-            "typed": format!("{:<5}", self.typed).replace(' ', "_"),
-            "password": self.password,
-            "opponent": {
-                "scope": scope_short,
-                "name": badge_name(&opp),
-                "rating": opp.rating,
-                "rank": opp.rank,
-                "record": format!("{}W {}L", opp.wins, opp.losses),
-                "ping": ping_text(opp_ping),
-            },
-            "queue": {
-                "title": if self.ranked { format!("RANKED · {scope_short}") } else { "QUICK MATCH".to_string() },
-                "secs": self.queue.as_ref().map_or(0, |q| q.waiting_secs),
-                "count": self.queue.as_ref().map_or(0, |q| q.players_in_queue),
-                "found": self.queue.as_ref().is_some_and(|q| q.found.is_some()),
-            },
-            "board": board_rows,
-            "season": self.board.as_ref().map(|b| format!("{} · {}", scope, b.season.name.to_uppercase())).unwrap_or_default(),
-            "my_rank": my_rank,
-            "profile": serde_json::to_value(&self.profile).map(|mut v| {
-                // never hand account keys to the UI layer
-                if let Some(o) = v.as_object_mut() {
-                    o.remove("online_key");
-                    o.remove("online_accounts");
-                }
-                v
-            }).unwrap_or(Value::Null),
         });
         // CONFIRM appearing takes the focus (it is what the player wants next)
         let can_confirm = data["mx"]["can_confirm"].as_bool() == Some(true);
@@ -2161,23 +2861,40 @@ impl OnlineScreen {
     }
 
     pub fn raw_key(&mut self, key: &Key) -> bool {
+        use winit::keyboard::NamedKey;
         // up / down leave the text box and move on (the text stays)
-        if matches!(
-            key,
-            Key::Named(winit::keyboard::NamedKey::ArrowUp | winit::keyboard::NamedKey::ArrowDown)
-        ) && self.ui.text_focused()
+        if matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown))
+            && self.ui.text_focused()
         {
             self.ui.stop_edit();
             return false;
+        }
+        if self.state == State::Profile {
+            match key {
+                Key::Named(NamedKey::Tab) => {
+                    if let Some(id) = self.ui.focused().map(str::to_string) {
+                        self.ui.stop_edit();
+                        self.next_field(&id, false);
+                    }
+                    return true;
+                }
+                Key::Named(NamedKey::F2) => {
+                    self.acct_show = !self.acct_show;
+                    self.refresh();
+                    return true;
+                }
+                _ => {}
+            }
         }
         let Some(k) = crate::uiscreen::text_key(key) else {
             return self.ui.text_focused();
         };
         if k == rugen_ui::TextKey::Escape
-            && matches!(
-                self.state,
-                State::Join | State::Direct | State::AddServer | State::Create | State::AccountForm
-            )
+            && (self.dialog.is_some()
+                || matches!(
+                    self.state,
+                    State::Join | State::Direct | State::Create | State::Profile
+                ))
         {
             self.ui.text_key(k);
             self.cancel();
@@ -2185,6 +2902,82 @@ impl OnlineScreen {
             return true;
         }
         self.ui.text_key(k)
+    }
+
+    /// A key no player binding uses ([`HOTKEYS`]); true when it acted.
+    pub fn hotkey(&mut self, key: &Key) -> bool {
+        use winit::keyboard::NamedKey;
+        if self.ui.text_focused() {
+            return false;
+        }
+        let action = match key {
+            Key::Named(NamedKey::Delete) => "remove",
+            Key::Named(NamedKey::F2) => "show",
+            Key::Character(c) => match HOTKEYS
+                .iter()
+                .find(|(a, _)| self.keys.get(a).is_some_and(|k| k == &c.to_lowercase()))
+                .map(|(a, _)| *a)
+            {
+                Some(a) => a,
+                None => return false,
+            },
+            _ => return false,
+        };
+        let hub = self.state == State::Servers && self.dialog.is_none();
+        let act = match (action, self.state) {
+            ("retry", _) if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) => {
+                "toast:retry".to_string()
+            }
+            ("profile", State::Servers) if hub => "online:profile".into(),
+            ("lan", State::Servers) if hub => "online:lan".into(),
+            ("remove", State::Servers) if hub => "online:remove".into(),
+            ("create", State::Lobby) => "online:create".into(),
+            ("watch", State::Lobby) => {
+                let code = self.focused_room().map(|r| r.code.clone());
+                match code {
+                    Some(c) => format!("lobby:watch:{c}"),
+                    None => return false,
+                }
+            }
+            ("kick", State::Room) if self.room.as_ref().is_some_and(|r| r.side == 1) => {
+                "room:kick".into()
+            }
+            ("copy", State::Room) if self.clipboard => "room:copy".into(),
+            ("show", State::Profile) => "acct:show".into(),
+            _ => return false,
+        };
+        self.action(&act);
+        self.refresh();
+        true
+    }
+
+    /// Ctrl+V: a room code from the clipboard (JOIN BY CODE).
+    pub fn paste(&mut self) -> bool {
+        if self.state != State::Join || self.ui.focused() == Some("password") {
+            return false;
+        }
+        let Some(text) = crate::clipboard::paste() else {
+            return false;
+        };
+        let typed = format!("{}{}", self.typed, text.trim());
+        self.type_code(&typed);
+        if !self.ui.text_focused() {
+            self.ui.edit("code");
+        }
+        self.refresh();
+        true
+    }
+
+    /// The lobby row the focus is on.
+    fn focused_room(&self) -> Option<&RoomSummary> {
+        let f = self.ui.focused()?;
+        let i: usize = f
+            .strip_prefix("lobby_list[")?
+            .split(']')
+            .next()?
+            .parse()
+            .ok()?;
+        self.rooms.get(i)
     }
 
     pub fn mouse(&mut self, ev: MouseEvent) {
@@ -2246,39 +3039,95 @@ impl OnlineScreen {
                 }
                 self.cancel();
             }
+            ("dialog", "close") => {
+                self.dialog = None;
+                if self.state == State::AddServer {
+                    self.state = State::Servers;
+                }
+            }
+            ("dialog", "details") => {
+                if let Some(d) = self.dialog.as_mut() {
+                    d.show_details = !d.show_details;
+                }
+            }
+            ("toast", "dismiss") => self.toast = None,
+            ("toast", "retry") => {
+                if let Some(r) = self.toast.take().and_then(|t| t.retry) {
+                    return self.action(&r);
+                }
+            }
+            ("retry", "servers") => {
+                for r in &mut self.servers {
+                    r.error = false;
+                }
+                self.probe_servers();
+            }
+            ("retry", what) => {
+                if let Some(a) = what.strip_prefix("hub-") {
+                    let addr = self.servers.get(self.sel).map(|r| r.addr.clone());
+                    if let Some(addr) = addr {
+                        self.pending_action = Some(a.to_string());
+                        self.connect(&addr);
+                    }
+                }
+            }
             ("online", "profile") => self.open_profile(),
             ("acct", rest) => {
                 let (what, arg) = rest.split_once(':').unwrap_or((rest, ""));
                 match what {
                     "open" => {
                         if let Ok(i) = arg.parse::<usize>() {
-                            self.open_account(i);
+                            self.select_account(i);
+                            // ENTER on a card: into its form (or its buttons)
+                            let first = if self.acct_form == AcctForm::Password
+                                || matches!(
+                                    self.acct_state(i),
+                                    AcctState::None | AcctState::Anonymous
+                                ) && self.has_accounts(&self.acct_addr())
+                                    && !self.servers[i].error
+                            {
+                                self.form_fields()[0]
+                            } else {
+                                "acct_btn0"
+                            };
+                            self.refresh();
+                            if first.starts_with("acct_btn") {
+                                self.ui.set_focus(Some(first));
+                            } else {
+                                self.ui.edit(first);
+                            }
                         }
                     }
-                    "create" => self.open_form(AcctForm::Create),
-                    "login" => self.open_form(AcctForm::Login),
-                    "claim" => self.open_form(AcctForm::Claim),
+                    "tab" => match arg {
+                        "create" => self.open_form(AcctForm::Create),
+                        "login" => self.open_form(AcctForm::Login),
+                        "claim" => self.open_form(AcctForm::Claim),
+                        "password" => self.open_form(AcctForm::Password),
+                        _ => {}
+                    },
                     "password" => self.open_form(AcctForm::Password),
+                    "cancel_password" => {
+                        self.clear_form();
+                        self.acct_form = self.default_form(self.acct_server);
+                        self.ui.set_focus(Some("acct_btn0"));
+                    }
                     "logout" => self.logout(false),
                     "logout_all" => self.logout(true),
                     "show" => self.acct_show = !self.acct_show,
                     "submit" => self.submit_form(),
                     "next" => {
-                        // ENTER in a field: on to the next one, or send
-                        let next = match (self.acct_form, arg) {
-                            (AcctForm::Password, "pass") => Some("acct_new"),
-                            (AcctForm::Password, _) | (_, "pass") => None,
-                            _ => Some("acct_pass"),
-                        };
-                        match next {
-                            Some(id) => self.ui.edit(id),
-                            None => self.submit_form(),
-                        }
+                        let id = format!("acct_{arg}");
+                        self.next_field(&id, true);
                     }
                     "enter" => {
                         self.connect_after = false;
                         let addr = self.acct_addr();
+                        self.state = State::Servers;
+                        self.sel = self.acct_server;
                         self.connect(&addr);
+                        if self.state == State::Servers {
+                            self.pending_focus_key = Some(format!("srv_list[{}].row", self.sel));
+                        }
                     }
                     _ => {}
                 }
@@ -2297,41 +3146,85 @@ impl OnlineScreen {
             ("acct_new", v) => {
                 self.acct_new = v.chars().take(rugen_proto::account::PASSWORD_MAX).collect();
             }
+            ("acct_again", v) => {
+                self.acct_again = v.chars().take(rugen_proto::account::PASSWORD_MAX).collect();
+            }
             ("server", i) => {
-                if let Some(row) = i.parse::<usize>().ok().and_then(|i| self.servers.get(i)) {
-                    let addr = row.addr.clone();
-                    self.connect(&addr);
+                if let Ok(i) = i.parse::<usize>()
+                    && i < self.servers.len()
+                {
+                    self.sel = i;
+                    if let Some(d) = self.version_dialog(i) {
+                        self.dialog = Some(d);
+                    } else if self.servers[i].error {
+                        let name = self.row_name(i);
+                        self.problem(
+                            format!("CAN'T REACH {}", fit(&name, 20)),
+                            "THE SERVER IS OFFLINE OR THE ADDRESS IS WRONG. CHECK YOUR INTERNET, THEN RETRY.".into(),
+                            Some("retry:servers".into()),
+                        );
+                    } else if self.row_usable(i) {
+                        self.ui.set_focus(Some("hub_quick"));
+                    }
                 }
             }
-            ("online", "servers") => {
-                self.presence = None;
-                self.client = OnlineClient::new("", None);
-                self.state = State::Servers;
-                self.status = "PICK A SERVER".into();
-                self.probe_servers();
+            ("hub", what) => {
+                let row = self.servers.get(self.sel)?;
+                if !self.row_usable(self.sel) {
+                    return None;
+                }
+                let addr = row.addr.clone();
+                self.pending_action = Some(what.to_string());
+                self.connect(&addr);
             }
+            ("online", "servers") => self.open_hub(),
             ("online", "remove") => {
-                self.state = State::RemoveServer;
-                self.status = "PICK THE COMMUNITY SERVER TO REMOVE (THE OFFICIAL ONE STAYS)".into();
+                if let Some(r) = self.servers.get(self.sel).filter(|r| !r.official) {
+                    let _ = r;
+                    let name = fit(&self.row_name(self.sel), 22);
+                    self.dialog = Some(Dialog {
+                        kicker: "REMOVE SERVER".into(),
+                        title: format!("REMOVE {name}?"),
+                        body: "IT LEAVES YOUR LIST. YOUR ACCOUNT THERE STAYS: ADD IT AGAIN TO PLAY ON IT.".into(),
+                        primary: ("REMOVE".into(), format!("server_remove:{}", self.sel)),
+                        secondary: Some(("CANCEL".into(), "dialog:close".into())),
+                        ..Default::default()
+                    });
+                }
             }
             ("server_remove", i) => {
+                self.dialog = None;
                 if let Some(row) = i.parse::<usize>().ok().and_then(|i| self.servers.get(i))
                     && !row.official
                 {
                     let addr = row.addr.clone();
+                    let name = self.row_name(i.parse().unwrap_or(0));
                     self.config.net.remove_server(&addr, official::server());
                     self.servers.retain(|r| r.addr != addr);
                     self.save_config();
-                    self.status = format!("REMOVED {}", addr.to_uppercase());
+                    self.notice(
+                        &format!("REMOVED {}", fit(&name, 20)),
+                        "ADD IT AGAIN ANY TIME.",
+                    );
                 }
+                self.sel = self.sel.min(self.servers.len().saturating_sub(1));
                 self.state = State::Servers;
+                self.pending_focus_key = Some(format!("srv_list[{}].row", self.sel));
                 self.probe_servers();
             }
             ("online", "add") => {
                 self.addr.clear();
-                self.error.clear();
-                self.status = "TYPE A SERVER: HTTPS://HOST OR IP:PORT".into();
                 self.state = State::AddServer;
+                self.dialog = Some(Dialog {
+                    kicker: "ADD SERVER".into(),
+                    title: "TYPE THE SERVER'S ADDRESS".into(),
+                    body: "HTTPS://HOST OR IP:PORT. MATCHES GO THROUGH IT: NO PLAYER SEES YOUR IP."
+                        .into(),
+                    primary: ("ADD".into(), "server_add".into()),
+                    secondary: Some(("CANCEL".into(), "dialog:close".into())),
+                    input: true,
+                    ..Default::default()
+                });
                 self.ui.set_input("server_addr", "");
                 self.refresh();
                 self.ui.edit("server_addr");
@@ -2347,39 +3240,43 @@ impl OnlineScreen {
             ("server_add", _) => {
                 let addr = self.addr.trim().to_string();
                 if addr.is_empty() {
-                    self.status = "TYPE AN ADDRESS".into();
                     self.ui.edit("server_addr");
                     return None;
                 }
+                self.dialog = None;
+                self.state = State::Servers;
                 if official::is_official_addr(&addr) {
-                    self.state = State::Servers;
-                    self.status = "THE OFFICIAL SERVER IS ALWAYS LISTED".into();
+                    self.notice(
+                        "ALREADY LISTED",
+                        "THE OFFICIAL SERVER IS ALWAYS IN THE LIST.",
+                    );
                     return None;
                 }
-                if !self
+                match self
                     .servers
                     .iter()
-                    .any(|r| official::same_server(&r.addr, &addr))
+                    .position(|r| official::same_server(&r.addr, &addr))
                 {
-                    self.servers.push(ServerRow {
-                        addr: addr.clone(),
-                        official: false,
-                        ..Default::default()
-                    });
-                    self.config.net.servers.push(addr.clone());
-                    self.save_config();
+                    Some(i) => self.sel = i,
+                    None => {
+                        self.servers.push(ServerRow {
+                            addr: addr.clone(),
+                            official: false,
+                            ..Default::default()
+                        });
+                        self.config.net.servers.push(addr.clone());
+                        self.save_config();
+                        self.sel = self.servers.len() - 1;
+                        self.notice(
+                            &format!("SAVED {}", fit(&addr.to_uppercase(), 22)),
+                            "ASKING IT WHO IT IS...",
+                        );
+                    }
                 }
-                self.state = State::Servers;
-                self.status = format!("SAVED {}", addr.to_uppercase());
+                self.pending_focus_key = Some(format!("srv_list[{}].row", self.sel));
                 self.probe_servers();
             }
-            ("online", "lobby") => {
-                self.state = State::Lobby;
-                self.status = "LOADING ROOMS".into();
-                let c = self.client.clone();
-                self.jobs
-                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
-            }
+            ("online", "lobby") => self.run_action("lobby"),
             ("lobby", rest) => {
                 let (kind, code) = rest.split_once(':').unwrap_or(("join", rest));
                 // a host of another version: say so instead of trying
@@ -2389,15 +3286,21 @@ impl OnlineScreen {
                     .find(|r| r.code == code)
                     .and_then(room_error)
                 {
-                    self.error = e;
+                    self.dialog = Some(Dialog {
+                        kicker: "CAN'T JOIN THIS ROOM".into(),
+                        title: "ITS HOST PLAYS ANOTHER VERSION".into(),
+                        body: e,
+                        primary: ("OK".into(), "dialog:close".into()),
+                        ..Default::default()
+                    });
                     return None;
                 }
                 let locked = self.rooms.iter().any(|r| r.code == code && r.locked);
                 if locked && self.password.is_empty() {
                     // ask for the password first, then join
                     self.typed = code.to_string();
+                    self.code_bad = None;
                     self.state = State::Join;
-                    self.status = "THIS ROOM HAS A PASSWORD".into();
                     self.ui.set_input("code", &self.typed);
                     self.ui.set_input("password", "");
                     self.refresh();
@@ -2408,13 +3311,13 @@ impl OnlineScreen {
             }
             ("online", "create") => {
                 self.form = Form {
-                    name: format!("{}'S ROOM", self.profile.name.to_uppercase()),
+                    name: fit(&format!("{}'S ROOM", self.profile.name.to_uppercase()), 24),
                     ..Form::default()
                 };
                 self.state = State::Create;
-                self.status = "SET UP YOUR ROOM".into();
                 self.ui.set_input("room_name", &self.form.name);
                 self.ui.set_input("room_password", "");
+                self.ui.set_focus(Some("room_name"));
             }
             ("room_name", v) => {
                 self.form.name = v.chars().take(24).collect();
@@ -2425,35 +3328,40 @@ impl OnlineScreen {
                 self.ui.set_input("room_password", &self.form.password);
             }
             ("form", what) => {
+                let (what, dir) = what.split_once(':').unwrap_or((what, "+"));
+                let step = |opts: &[i64], cur: i64| -> i64 {
+                    let i = opts.iter().position(|o| *o == cur).unwrap_or(0) as i64;
+                    let n = opts.len() as i64;
+                    let j = if dir == "-" {
+                        (i - 1).max(0)
+                    } else {
+                        (i + 1).min(n - 1)
+                    };
+                    opts[j as usize]
+                };
                 let f = &mut self.form;
                 match what {
-                    "public" => f.public = !f.public,
-                    "rounds" => f.rules.rounds = f.rules.rounds % 3 + 1,
+                    "public" => f.public = dir == "-",
+                    "rounds" => f.rules.rounds = step(&[1, 2, 3], f.rules.rounds.into()) as u8,
                     "time" => {
-                        f.rules.round_time = match f.rules.round_time {
-                            99 => 60,
-                            60 => 0,
-                            _ => 99,
-                        }
+                        // 60 S, 99 S, NO LIMIT (0)
+                        let order = [60, 99, 0];
+                        f.rules.round_time = step(&order, f.rules.round_time.into()) as u16;
                     }
                     "mode" => {
-                        f.rules.mode = if f.rules.mode == "arena" {
-                            "classic".into()
-                        } else {
-                            "arena".into()
-                        }
+                        f.rules.mode = if dir == "-" { "classic" } else { "arena" }.into();
                     }
                     "chars" => {
-                        f.rules.chars = if f.rules.chars == "mirror" {
-                            "free".into()
-                        } else {
-                            "mirror".into()
-                        }
+                        f.rules.chars = if dir == "-" { "free" } else { "mirror" }.into();
                     }
-                    "spect" => f.spectators = (f.spectators + 1) % 5,
+                    "spect" => f.spectators = step(&[0, 2, 4, 6], f.spectators.into()) as u8,
                     "go" => {
                         let opts = RoomOptions {
-                            name: f.name.clone(),
+                            name: if f.name.trim().is_empty() {
+                                format!("{}'S ROOM", self.profile.name.to_uppercase())
+                            } else {
+                                f.name.trim().to_string()
+                            },
                             public: f.public,
                             password: f.password.clone(),
                             rules: Rules {
@@ -2465,101 +3373,78 @@ impl OnlineScreen {
                         let (c, ch) = (self.client.clone(), self.my_char());
                         self.room = None;
                         self.used_ticket = None;
-                        self.status = "CREATING ROOM".into();
+                        self.status = "CREATING THE ROOM...".into();
                         self.state = State::Room;
+                        self.ui.set_focus(None);
                         self.jobs
                             .push(Job::Room(Pending::spawn(move || c.create_room(&ch, &opts))));
                     }
                     _ => {}
                 }
             }
-            ("typed", v) => {
-                self.typed = v
-                    .chars()
-                    .filter(|c| c.is_ascii_alphanumeric())
-                    .map(|c| c.to_ascii_uppercase())
-                    .take(5)
-                    .collect();
-                self.ui.set_input("code", &self.typed);
-            }
+            ("typed", v) => self.type_code(v),
             ("pw", v) => {
                 self.password = v.chars().take(32).collect();
                 self.ui.set_input("password", &self.password);
             }
-            ("join", _) => {
-                if self.typed.len() == 5 {
-                    self.join(self.typed.clone(), false);
+            ("join", what) => {
+                if self.typed.chars().count() == rugen_proto::room_code::LEN {
+                    self.join(self.typed.clone(), what == "watch");
                 } else {
-                    self.status = "THE CODE HAS 5 LETTERS".into();
                     self.ui.edit("code");
                 }
             }
             ("online", "join") => {
                 self.typed.clear();
                 self.password.clear();
-                self.error.clear();
-                self.status = "TYPE THE 5-LETTER ROOM CODE".into();
+                self.code_bad = None;
                 self.state = State::Join;
                 self.ui.set_input("code", "");
                 self.ui.set_input("password", "");
                 self.refresh();
                 self.ui.edit("code");
                 // `[net] room` in rugen.toml pre-fills the code
-                let preset = self.config.net.room.trim().to_ascii_uppercase();
-                if preset.len() == 5 {
-                    self.typed = preset;
-                    self.ui.set_input("code", &self.typed);
+                let preset = rugen_proto::room_code::normalize(&self.config.net.room);
+                if preset.chars().count() == rugen_proto::room_code::LEN {
+                    self.type_code(&preset);
                 }
             }
             ("room", rest) => {
                 let code = self.room.as_ref().map(|r| r.code.clone())?;
                 let c = self.client.clone();
-                if let Some(id) = rest
-                    .strip_prefix("kick:")
-                    .and_then(|i| i.parse::<u64>().ok())
-                {
-                    self.jobs
-                        .push(Job::Room(Pending::spawn(move || c.kick(&code, id))));
+                if rest == "kick" {
+                    let target = self
+                        .room
+                        .as_ref()
+                        .and_then(|r| r.members.iter().find(|m| m.role == 1))
+                        .map(|m| m.profile.id);
+                    if let Some(id) = target {
+                        self.jobs
+                            .push(Job::Room(Pending::spawn(move || c.kick(&code, id))));
+                    }
                 } else if rest == "rematch" {
-                    self.status = "WAITING FOR YOUR OPPONENT TO ACCEPT".into();
+                    self.notice("REMATCH ASKED", "WAITING FOR YOUR OPPONENT TO ACCEPT.");
                     self.jobs
                         .push(Job::Room(Pending::spawn(move || c.rematch(&code))));
-                }
-            }
-            ("online", "quick") => self.enter_queue(false),
-            ("online", "ranked") => {
-                // rankings belong to named accounts (servers that have them)
-                let named = self.me.as_ref().is_none_or(|m| m.verified);
-                let server = self.client.server.clone();
-                if !named && self.auto.is_none() && self.has_accounts(&server) {
-                    if let Some(i) = self.servers.iter().position(|r| r.addr == server) {
-                        self.open_account(i);
-                        self.check_accounts();
-                        self.status = "RANKED NEEDS A USERNAME: CLAIM THIS ACCOUNT".into();
+                } else if rest == "copy" {
+                    if crate::clipboard::copy(&code) {
+                        self.notice(&format!("COPIED {code}"), "PASTE IT TO YOUR FRIEND.");
+                    } else {
+                        self.clipboard = false;
                     }
-                    return None;
                 }
-                self.enter_queue(true);
             }
-            ("online", "board") => {
-                let c = self.client.clone();
-                self.board = None;
-                self.error.clear();
-                self.status = "LOADING".into();
-                self.state = State::Board;
-                self.jobs
-                    .push(Job::Board(Pending::spawn(move || c.leaderboard())));
-            }
+            ("online", "quick") => self.run_action("quick"),
+            ("online", "ranked") => self.run_action("ranked"),
+            ("online", "board") => self.run_action("board"),
             ("online", "cancel") => self.cancel(),
-            ("online", "host") | ("online", "direct") => {
-                self.direct_side = usize::from(arg == "direct");
+            ("online", "lan") => {
                 self.error.clear();
-                self.status = "TYPE THE OTHER PLAYER'S ADDRESS AND PRESS ENTER".into();
                 self.state = State::Direct;
                 self.ui.set_input("addr", &self.addr);
-                self.refresh();
-                self.ui.edit("addr");
+                self.ui.set_focus(Some("direct_side"));
             }
+            ("direct_side", d) => self.direct_side = usize::from(d == "+"),
             ("addr", v) => {
                 self.addr = v
                     .chars()
@@ -2584,6 +3469,40 @@ impl OnlineScreen {
             _ => log::warn!("online: unknown action {a:?}"),
         }
         None
+    }
+
+    /// JOIN BY CODE: what was typed, upper-cased; characters no code ever
+    /// uses (0 O 1 I, punctuation) are refused with a hint.
+    fn type_code(&mut self, v: &str) {
+        self.code_bad = None;
+        let mut code = String::new();
+        for c in v.chars().filter(|c| !c.is_whitespace()) {
+            let c = c.to_ascii_uppercase();
+            if rugen_proto::room_code::valid_char(c) {
+                if code.chars().count() < rugen_proto::room_code::LEN {
+                    code.push(c);
+                }
+            } else {
+                self.code_bad = Some(c);
+            }
+        }
+        self.typed = code;
+        self.ui.set_input("code", &self.typed);
+    }
+
+    /// Back to the hub, on the server in use (or the selected one).
+    fn open_hub(&mut self) {
+        if let Some(i) = self
+            .servers
+            .iter()
+            .position(|r| official::same_server(&r.addr, &self.client.server))
+        {
+            self.sel = i;
+        }
+        self.state = State::Servers;
+        self.pending_action = None;
+        self.pending_focus_key = Some(format!("srv_list[{}].row", self.sel));
+        self.probe_servers();
     }
 
     /// Direct match: resolve the typed address and both `[net]` fighters, then fight.
@@ -2646,35 +3565,27 @@ impl OnlineScreen {
 
     /// BACK leaves the ONLINE screen (to the home menu) from here.
     fn leaves_screen(&self) -> bool {
-        self.state == State::Servers || (self.state == State::Profile && self.profile_from_title)
+        let overlay = self.dialog.is_some() || self.toast.as_ref().is_some_and(|t| t.error);
+        !overlay
+            && (self.state == State::Servers
+                || (self.state == State::Profile && self.profile_from_title))
     }
 
     fn cancel(&mut self) {
+        // a dialog, then an error toast, close before the screen
+        if self.dialog.take().is_some() {
+            if self.state == State::AddServer {
+                self.state = State::Servers;
+            }
+            return;
+        }
+        if self.toast.as_ref().is_some_and(|t| t.error) {
+            self.toast = None;
+            return;
+        }
         if self.state == State::Matchup {
             self.leave_matchup("YOU LEFT THE MATCHUP");
             return;
-        }
-        match self.state {
-            State::AccountForm => {
-                let i = self.acct_server;
-                let after = self.connect_after;
-                self.open_account(i);
-                self.connect_after = after;
-                return;
-            }
-            State::Account if !self.connect_after => {
-                self.open_profile();
-                return;
-            }
-            State::Account | State::Profile => {
-                self.clear_form();
-                self.connect_after = false;
-                self.state = State::Servers;
-                self.status = "PICK A SERVER".into();
-                self.probe_servers();
-                return;
-            }
-            _ => {}
         }
         match self.state {
             State::Queue => {
@@ -2689,41 +3600,71 @@ impl OnlineScreen {
                         .push(Job::Done(Pending::spawn(move || c.leave_room(&code))));
                 }
             }
+            State::Profile => {
+                self.clear_form();
+                self.connect_after = false;
+            }
             _ => {}
         }
+        let back_to_lobby = matches!(self.state, State::Room | State::Create | State::Join)
+            && !self.client.server.is_empty()
+            && self.client.key.is_some();
         self.room = None;
         self.queue = None;
         self.typed.clear();
         self.password.clear();
         self.status.clear();
-        self.state = if matches!(
-            self.state,
-            State::Servers | State::AddServer | State::RemoveServer | State::Direct
-        ) || self.client.server.is_empty()
-        {
-            State::Servers
+        self.code_bad = None;
+        if back_to_lobby {
+            self.run_action("lobby");
         } else {
-            State::Menu
-        };
+            self.open_hub();
+        }
     }
 
+    /// Something failed: a toast in plain words (the raw error goes to
+    /// the log), and back to a screen that still makes sense.
     fn fail(&mut self, what: &str, e: impl std::fmt::Display) {
         log::warn!("online: {what}: {e}");
         if let Some(mx) = self.mx.take() {
             mx.driver.leave();
         }
         self.auto_exit(&format!("{what}: {e}"));
+        let server = if self.client.server.is_empty() {
+            self.row_name(self.sel)
+        } else {
+            self.server_name()
+        };
+        let (title, body) = plain_error(what, &server, &e.to_string());
+        let retry = match what {
+            "lobby" => Some("retry:hub-lobby".to_string()),
+            "leaderboard" => Some("retry:hub-board".to_string()),
+            "queue" => Some(
+                if self.ranked {
+                    "retry:hub-ranked"
+                } else {
+                    "retry:hub-quick"
+                }
+                .to_string(),
+            ),
+            "register" => self
+                .pending_action
+                .clone()
+                .map(|a| format!("retry:hub-{a}")),
+            _ => None,
+        };
         self.error = format!("{what}: {e}").to_uppercase();
         self.status.clear();
-        if !matches!(
-            self.state,
-            State::Board | State::Servers | State::RemoveServer | State::Lobby
-        ) {
-            self.state = if self.client.server.is_empty() {
-                State::Servers
-            } else {
-                State::Menu
-            };
+        self.pending_action = None;
+        self.problem(title, body, retry);
+        match self.state {
+            State::Room | State::Create | State::Join
+                if what == "room" && self.client.key.is_some() =>
+            {
+                self.run_action("lobby");
+            }
+            State::Servers | State::AddServer | State::Profile | State::Direct => {}
+            _ => self.open_hub(),
         }
     }
 
@@ -2861,6 +3802,7 @@ impl OnlineScreen {
                         let (c, name) = (self.client.clone(), self.profile.name.clone());
                         self.jobs
                             .push(Job::Me(Pending::spawn(move || c.set_profile(&name, 0))));
+                        self.run_pending();
                     }
                     Some(Err(e)) => self.fail("register", e),
                 },
@@ -2889,11 +3831,15 @@ impl OnlineScreen {
                                 self.accounts.remove(&addr);
                                 self.account_changed(&addr, "");
                                 self.ui.set_focus(None);
-                                self.status = if everywhere {
-                                    "LOGGED OUT ON EVERY DEVICE".into()
+                                self.acct_form = self.default_form(self.acct_server);
+                                if everywhere {
+                                    self.notice(
+                                        "LOGGED OUT ON EVERY DEVICE",
+                                        "LOG IN AGAIN WITH YOUR USERNAME AND PASSWORD.",
+                                    );
                                 } else {
-                                    "LOGGED OUT".into()
-                                };
+                                    self.notice("LOGGED OUT", "YOUR ACCOUNT STAYS ON THE SERVER.");
+                                }
                             }
                             Err(e) => {
                                 log::warn!("online: logout: {e}");
@@ -2922,9 +3868,9 @@ impl OnlineScreen {
                                     // connected before the probe answered (resume, auto,
                                     // a quick pick): leave a server too old for .rgc
                                     if row.addr == self.client.server
-                                        && let Some(e) = outdated_error(&row.addr, &info)
+                                        && version_problem(&info).is_some()
                                     {
-                                        outdated = Some(e);
+                                        outdated = Some(i);
                                     }
                                     row.info = Some(info);
                                     row.ping = Some(ping);
@@ -3041,11 +3987,13 @@ impl OnlineScreen {
         }
         keep.append(&mut self.jobs);
         self.jobs = keep;
-        if let Some(e) = outdated {
+        if let Some(i) = outdated {
             self.presence = None;
             self.client = OnlineClient::new("", None);
             self.state = State::Servers;
-            self.error = e;
+            self.sel = i;
+            self.pending_action = None;
+            self.dialog = self.version_dialog(i);
         }
     }
 
@@ -3128,18 +4076,31 @@ impl OnlineScreen {
                     self.open_account(i);
                 }
                 self.check_accounts();
-                let name = s.username.to_uppercase();
-                self.status = match kind {
-                    AcctForm::Create => format!("WELCOME, {name}! ACCOUNT CREATED"),
-                    AcctForm::Login => format!("LOGGED IN AS {name}"),
-                    AcctForm::Claim => format!("ACCOUNT CLAIMED: YOU ARE {name}"),
-                    AcctForm::Password => "PASSWORD CHANGED: OTHER DEVICES WERE LOGGED OUT".into(),
+                let name = fit(&s.username.to_uppercase(), 16);
+                let (title, body) = match kind {
+                    AcctForm::Create => (format!("WELCOME, {name}!"), "YOUR ACCOUNT IS READY."),
+                    AcctForm::Login => (format!("LOGGED IN AS {name}"), "WELCOME BACK."),
+                    AcctForm::Claim => (
+                        format!("YOU ARE {name}"),
+                        "THE ACCOUNT KEPT ITS RATING AND HISTORY.",
+                    ),
+                    AcctForm::Password => (
+                        "PASSWORD CHANGED".to_string(),
+                        "YOUR OTHER DEVICES WERE LOGGED OUT.",
+                    ),
                 };
+                self.notice(&title, body);
+                self.acct_form = self.default_form(self.acct_server);
+                self.ui.set_focus(Some("acct_btn0"));
                 // the server asked for an account: straight in
                 if after && kind != AcctForm::Password {
-                    let status = self.status.clone();
+                    self.connect_after = false;
+                    self.state = State::Servers;
+                    if let Some(i) = self.servers.iter().position(|r| r.addr == addr) {
+                        self.sel = i;
+                    }
+                    self.pending_focus_key = Some(format!("srv_list[{}].row", self.sel));
                     self.connect(addr);
-                    self.status = status;
                 }
             }
             Err(OnlineError::Server(e)) => {
@@ -3209,7 +4170,7 @@ impl OnlineScreen {
                 self.jobs
                     .push(Job::Queue(Pending::spawn(move || c.poll_queue())));
             }
-            State::Menu if self.tick % 600 == 0 => self.poll_last_result(),
+            State::Servers if self.tick % 600 == 0 => self.poll_last_result(),
             State::Lobby if self.tick % 300 == 0 => {
                 let c = self.client.clone();
                 self.jobs
@@ -3264,6 +4225,13 @@ impl OnlineScreen {
                 back: any(|b| b.b),
             }
         };
+        if let Some(k) = self.pending_focus_key.take() {
+            if std::mem::take(&mut self.pending_edit) {
+                self.ui.edit(&k);
+            } else {
+                self.ui.set_focus(Some(&k));
+            }
+        }
         let events = {
             let mut host = Host {
                 r,
@@ -3276,13 +4244,24 @@ impl OnlineScreen {
             };
             self.ui.tick(nav, &mut host)
         };
-        // list items are keyed `<list>[i].<id>`: move from row 0 to the default row
-        if self.tick > 1
-            && let Some(i) = self.pending_focus.take()
-            && let Some(f) = self.ui.focused().filter(|f| f.contains("[0]."))
-        {
-            let key = f.replacen("[0].", &format!("[{i}]."), 1);
-            self.ui.set_focus(Some(&key));
+        // the panels follow the row the focus is on (list items are keyed
+        // `<list>[i].<id>`)
+        let row_of = |f: &str, list: &str| -> Option<usize> {
+            f.strip_prefix(list)?.split(']').next()?.parse().ok()
+        };
+        if let Some(f) = self.ui.focused().map(str::to_string) {
+            if matches!(self.state, State::Servers)
+                && let Some(i) = row_of(&f, "srv_list[")
+                && i < self.servers.len()
+            {
+                self.sel = i;
+            }
+            if self.state == State::Profile
+                && let Some(i) = row_of(&f, "acct_list[")
+                && i < self.servers.len()
+            {
+                self.select_account(i);
+            }
         }
         let mut out = None;
         for e in events {
@@ -3306,6 +4285,7 @@ impl OnlineScreen {
                         "acct_user:",
                         "acct_pass:",
                         "acct_new:",
+                        "acct_again:",
                     ];
                     if !typing.iter().any(|t| a.starts_with(t)) {
                         sfx(sys.title.done_snd);
@@ -3514,34 +4494,42 @@ mod tests {
     #[test]
     fn account_forms_check_what_the_server_will() {
         use AcctForm::*;
-        assert_eq!(form_error(Create, "axel", "simple", ""), None);
+        assert_eq!(form_error(Create, "axel", "simple", "", "simple"), None);
         assert_eq!(
-            form_error(Create, "ab", "simple", ""),
+            form_error(Create, "axel", "simple", "", "simplex"),
+            Some("THE TWO PASSWORDS DIFFER")
+        );
+        assert_eq!(
+            form_error(Create, "ab", "simple", "", "simple"),
             Some("USERNAME: 3 TO 16 LETTERS, DIGITS, _ OR -")
         );
         assert_eq!(
-            form_error(Claim, "admin", "simple", ""),
+            form_error(Claim, "admin", "simple", "", "simple"),
             Some("THIS USERNAME IS RESERVED")
         );
         assert_eq!(
-            form_error(Create, "axel", "12345", ""),
+            form_error(Create, "axel", "12345", "", "12345"),
             Some("PASSWORD: 6 TO 128 CHARACTERS")
         );
         // logins only need something typed (the server answers generically)
-        assert_eq!(form_error(Login, "x", "y", ""), None);
+        assert_eq!(form_error(Login, "x", "y", "", ""), None);
         assert_eq!(
-            form_error(Login, "", "y", ""),
+            form_error(Login, "", "y", "", ""),
             Some("TYPE YOUR USERNAME AND PASSWORD")
         );
         assert_eq!(
-            form_error(Password, "", "", "simple"),
+            form_error(Password, "", "", "simple", "simple"),
             Some("TYPE YOUR CURRENT PASSWORD")
         );
         assert_eq!(
-            form_error(Password, "", "old", "new"),
+            form_error(Password, "", "old", "new", "new"),
             Some("PASSWORD: 6 TO 128 CHARACTERS")
         );
-        assert_eq!(form_error(Password, "", "old", "newer!"), None);
+        assert_eq!(form_error(Password, "", "old", "newer!", "newer!"), None);
+        assert_eq!(
+            form_error(Password, "", "old", "newer!", "newer?"),
+            Some("THE TWO PASSWORDS DIFFER")
+        );
     }
 
     #[test]
@@ -3649,15 +4637,41 @@ mod tests {
 
     #[test]
     fn servers_of_other_versions_get_a_reason() {
-        // the 0.5-era server: too old for .rgc
-        let e = outdated_error("play.example", &info(4, 0)).unwrap();
-        assert!(e.contains("OLDER VERSION (API 4"), "{e}");
+        // the 0.5-era server: too old for .rgc, said in releases, not APIs
+        let (tag, line) = version_problem(&info(4, 0)).unwrap();
+        assert_eq!(tag, "NEEDS 0.5");
+        assert_eq!(line, "OLDER VERSION · CAN'T PLAY FROM 0.6");
         // a transition server serving 0.5 and 0.6 players: fine
-        assert!(outdated_error("play.example", &info(5, 4)).is_none());
-        assert!(outdated_error("play.example", &info(rugen_proto::API_VERSION, 0)).is_none());
+        assert!(version_problem(&info(5, 4)).is_none());
+        assert!(version_problem(&info(rugen_proto::API_VERSION, 0)).is_none());
         // a server that dropped this API: update
-        let e = outdated_error("play.example", &info(7, 6)).unwrap();
-        assert!(e.contains("UPDATE YOUR GAME"), "{e}");
+        let (_, line) = version_problem(&info(7, 6)).unwrap();
+        assert!(line.contains("UPDATE RUGEN"), "{line}");
+    }
+
+    #[test]
+    fn errors_read_as_plain_words() {
+        let (t, b) = plain_error(
+            "lobby",
+            "mg.example",
+            "io: Connection refused (os error 111)",
+        );
+        assert_eq!(t, "CAN'T REACH MG.EXAMPLE");
+        assert!(b.contains("OFFLINE OR THE ADDRESS IS WRONG"), "{b}");
+        assert!(!b.contains("111"));
+        let (t, b) = plain_error("room", "mg.example", "server: no such room");
+        assert_eq!(
+            (t.as_str(), b.as_str()),
+            ("COULDN'T OPEN THE ROOM", "NO SUCH ROOM.")
+        );
+    }
+
+    #[test]
+    fn counts_say_one_or_many() {
+        assert_eq!(plural(1, "ROOM", "ROOMS"), "1 ROOM");
+        assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
+        assert_eq!(fit("A VERY LONG SERVER NAME", 10), "A VERY...");
+        assert_eq!(fit("SHORT", 10), "SHORT");
     }
 
     #[test]

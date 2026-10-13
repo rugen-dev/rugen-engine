@@ -254,6 +254,8 @@ pub struct Shell {
     menu_keys: Buttons,
     /// Menu base keys pressed since the last tick (a quick tap still counts).
     menu_taps: Buttons,
+    /// Ctrl (or Cmd) held: Ctrl+V pastes a room code.
+    ctrl: bool,
     /// Mouse cursor visibility last applied to the window.
     cursor_shown: Option<bool>,
     /// Something changed since the last frame was drawn (a tick ran, a
@@ -357,6 +359,7 @@ impl Shell {
             save_due: None,
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
+            ctrl: false,
             cursor_shown: None,
             dirty: true,
             latency: crate::latency::Probe::new(),
@@ -1607,6 +1610,15 @@ impl Shell {
                 return;
             }
         }
+        // Ctrl+V: paste a room code
+        if pressed
+            && self.ctrl
+            && lowercase(key) == Key::Character("v".into())
+            && let Screen::Online(o) = &mut self.screen
+            && o.paste()
+        {
+            return;
+        }
         if let Screen::Online(o) = &mut self.screen
             && o.capturing()
             && (!pressed || o.raw_key(key))
@@ -1645,6 +1657,13 @@ impl Shell {
             && let Screen::Ui(u) = &mut self.screen
             && let Some(sys) = self.system.as_ref()
             && u.hotkey(key, sys)
+        {
+            return;
+        }
+        // ONLINE: letter keys no player binding uses (P PROFILE, W WATCH...)
+        if pressed
+            && let Screen::Online(o) = &mut self.screen
+            && o.hotkey(&lower)
         {
             return;
         }
@@ -1807,7 +1826,11 @@ impl ApplicationHandler for Shell {
             }
             // keys released while another window has the focus never send their
             // release here: forget them all instead of leaving them held
+            WindowEvent::ModifiersChanged(m) => {
+                self.ctrl = m.state().control_key() || m.state().super_key();
+            }
             WindowEvent::Focused(false) => {
+                self.ctrl = false;
                 self.input.release_all();
                 self.menu_keys = Buttons::default();
                 self.menu_taps = Buttons::default();
