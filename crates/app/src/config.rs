@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub video: Video,
@@ -17,7 +17,7 @@ pub struct Config {
 }
 
 /// `[content]`: how `chars/` and `stages/` are imported.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ContentCfg {
     /// After an archive (.zip / .rar) is converted to `.rgc` / `.rgs` and the
@@ -35,7 +35,7 @@ impl Default for ContentCfg {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameCfg {
     /// Computer opponent level 1..=8.
@@ -69,7 +69,7 @@ impl Default for GameCfg {
 
 /// Camera limits applied on top of every stage: players can separate until the
 /// view has pulled back to `zoom_out`, and the view closes in up to `zoom_in`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraCfg {
     /// Smallest scale (1 = never pull back, 0.5 = twice the width visible).
@@ -91,7 +91,7 @@ impl Default for CameraCfg {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioCfg {
     /// 0..1
@@ -108,7 +108,7 @@ impl Default for AudioCfg {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Video {
     pub width: u32,
@@ -122,7 +122,7 @@ pub struct Video {
     pub low_latency: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Input {
     pub p1: PlayerKeys,
@@ -138,7 +138,7 @@ pub struct Input {
 
 /// Keyboard mapping. Names are winit logical keys: single characters
 /// (`"a"`, `","`) or named keys (`"ArrowUp"`, `"Enter"`, `"Space"`, `"Shift"`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlayerKeys {
     pub up: String,
@@ -151,10 +151,17 @@ pub struct PlayerKeys {
     pub x: String,
     pub y: String,
     pub z: String,
+    /// MUGEN's seventh button `s`: a fighter button (power charge, taunts).
+    /// Missing in configs older than v0.6.1, where `start` was this button
+    /// (see [`PlayerKeys::migrate`]).
+    #[serde(default)]
+    pub s: String,
+    /// START: pause, menus, confirm. Never a fighter input (not sent online,
+    /// not recorded in replays).
     pub start: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Net {
     /// Local UDP port for `--host` / `--join`.
@@ -413,7 +420,8 @@ impl PlayerKeys {
             x: "u".into(),
             y: "i".into(),
             z: "o".into(),
-            start: "m".into(),
+            s: "m".into(),
+            start: "p".into(),
         }
     }
     /// Arrows + number keys (player 2 default).
@@ -429,10 +437,11 @@ impl PlayerKeys {
             x: "4".into(),
             y: "5".into(),
             z: "6".into(),
+            s: "7".into(),
             start: "Enter".into(),
         }
     }
-    /// Set the key for the button at `i` (Buttons order: u d l r a b c x y z s).
+    /// Set the key for the button at `i` (order: u d l r a b c x y z s start).
     pub fn set(&mut self, i: usize, name: &str) {
         let slot = match i {
             0 => &mut self.up,
@@ -445,13 +454,14 @@ impl PlayerKeys {
             7 => &mut self.x,
             8 => &mut self.y,
             9 => &mut self.z,
+            10 => &mut self.s,
             _ => &mut self.start,
         };
         *slot = name.to_string();
     }
 
-    /// Mapping in Buttons order: u d l r a b c x y z s.
-    pub fn names(&self) -> [&str; 11] {
+    /// Mapping in order: u d l r a b c x y z s start (Buttons order + START).
+    pub fn names(&self) -> [&str; 12] {
         [
             &self.up,
             &self.down,
@@ -463,8 +473,66 @@ impl PlayerKeys {
             &self.x,
             &self.y,
             &self.z,
+            &self.s,
             &self.start,
         ]
+    }
+
+    /// START keys tried, in order, for a config from before START had its
+    /// own binding: the new default first.
+    fn start_candidates(player: usize) -> &'static [&'static str] {
+        if player == 0 {
+            &["p", "m", "Space", "Tab"]
+        } else {
+            &["Enter", "0", "8", "9", "Backspace"]
+        }
+    }
+
+    /// The old default START key, which was also MUGEN's `s` button.
+    fn old_default_start(player: usize) -> &'static str {
+        if player == 0 { "m" } else { "Enter" }
+    }
+}
+
+impl Input {
+    /// Configs older than v0.6.1 had one `start` key for both MUGEN's `s`
+    /// button and the menus. Split it: a player still on the old default
+    /// gets the new default pair; a custom key stays the `s` button and START
+    /// takes the new default, or the next free candidate when that key is
+    /// already bound. True when anything changed.
+    pub fn migrate_start(&mut self) -> bool {
+        let mut changed = false;
+        for p in 0..2 {
+            let keys = if p == 0 { &self.p1 } else { &self.p2 };
+            if !keys.s.is_empty() {
+                continue;
+            }
+            let old = keys.start.clone();
+            let fresh = if p == 0 {
+                PlayerKeys::p1()
+            } else {
+                PlayerKeys::p2()
+            };
+            let (s, start) = if old.is_empty() || old == PlayerKeys::old_default_start(p) {
+                (fresh.s, fresh.start)
+            } else {
+                let taken = |k: &str| {
+                    [&self.p1, &self.p2]
+                        .iter()
+                        .any(|pk| pk.names().iter().any(|n| n.eq_ignore_ascii_case(k)))
+                };
+                let start = PlayerKeys::start_candidates(p)
+                    .iter()
+                    .find(|c| !c.eq_ignore_ascii_case(&old) && !taken(c))
+                    .map_or(String::new(), |c| c.to_string());
+                (old, start)
+            };
+            let keys = if p == 0 { &mut self.p1 } else { &mut self.p2 };
+            keys.s = s;
+            keys.start = start;
+            changed = true;
+        }
+        changed
     }
 }
 
@@ -504,6 +572,15 @@ impl Config {
         match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<Config>(&text) {
                 Ok(mut c) => {
+                    if c.input.migrate_start() {
+                        log::info!(
+                            "rugen.toml: START split from the S button (P1 S {:?} START {:?}, P2 S {:?} START {:?})",
+                            c.input.p1.s,
+                            c.input.p1.start,
+                            c.input.p2.s,
+                            c.input.p2.start
+                        );
+                    }
                     if c.camera.zoom_in == OLD_DEFAULT_ZOOM_IN {
                         c.camera.zoom_in = CameraCfg::default().zoom_in;
                     }
@@ -544,6 +621,41 @@ mod tests {
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.input.p1.up, "z");
         assert_eq!(back.net.port, 7000);
+    }
+
+    #[test]
+    fn old_start_binding_becomes_s_and_start_gets_its_own_key() {
+        let old = |p1: &str, p2: &str| {
+            let text = format!(
+                "[input.p1]\nup = \"z\"\ndown = \"s\"\nleft = \"q\"\nright = \"d\"\na = \"j\"\nb = \"k\"\nc = \"l\"\nx = \"u\"\ny = \"i\"\nz = \"o\"\nstart = \"{p1}\"\n\
+                 [input.p2]\nup = \"ArrowUp\"\ndown = \"ArrowDown\"\nleft = \"ArrowLeft\"\nright = \"ArrowRight\"\na = \"1\"\nb = \"2\"\nc = \"3\"\nx = \"4\"\ny = \"5\"\nz = \"6\"\nstart = \"{p2}\"\n"
+            );
+            toml::from_str::<Config>(&text).unwrap().input
+        };
+        // untouched old defaults: the new default pair
+        let mut i = old("m", "Enter");
+        assert!(i.migrate_start());
+        assert_eq!((i.p1.s.as_str(), i.p1.start.as_str()), ("m", "p"));
+        assert_eq!((i.p2.s.as_str(), i.p2.start.as_str()), ("7", "Enter"));
+        assert!(!i.migrate_start(), "idempotent");
+        // a custom key stays the S button; START takes the new default...
+        let mut i = old("h", "0");
+        i.migrate_start();
+        assert_eq!((i.p1.s.as_str(), i.p1.start.as_str()), ("h", "p"));
+        assert_eq!((i.p2.s.as_str(), i.p2.start.as_str()), ("0", "Enter"));
+        // ...or the next free key when the default is the old key itself
+        let mut i = old("p", "Enter");
+        i.migrate_start();
+        assert_eq!((i.p1.s.as_str(), i.p1.start.as_str()), ("p", "m"));
+        // a fresh config is left alone
+        let mut d = Input::default();
+        assert!(!d.migrate_start());
+        let names = |k: &PlayerKeys| k.names().map(str::to_lowercase);
+        let all: Vec<String> = names(&d.p1).into_iter().chain(names(&d.p2)).collect();
+        let mut uniq = all.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), all.len(), "default keys never overlap: {all:?}");
     }
 
     #[test]

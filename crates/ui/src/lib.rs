@@ -37,7 +37,10 @@
 //! subtree keeps the focus while it is shown, a `hug` box is as long as its
 //! children,
 //! `when = "focus"|"blur"|"focus2"` and `w_focus`/`h_focus`/`scale_focus`
-//! react to the focus of the node's scope, `top` draws over everything, and a
+//! react to the focus of the node's scope, `shadow_focus` / `border_focus`
+//! give the focused node a hard drop shadow and a thicker edge (a focused
+//! choice also fills its picked option with `color_focus`), `top` draws over
+//! everything, and a
 //! `paged` grid scrolls whole pages (publishing `pages.<id>`), with `bleed`
 //! letting cursor frames draw outside its clip.
 //!
@@ -291,6 +294,12 @@ pub struct NodeDef {
     pub border: Option<f32>,
     pub border_color: Option<[f32; 4]>,
     pub border_color_focus: Option<[f32; 4]>,
+    /// Border thickness while focused (default `border`).
+    pub border_focus: Option<f32>,
+    /// Hard drop shadow `[dx, dy]` drawn behind the node while it is focused
+    /// (or `selected`), in `shadow_color` (default ink).
+    pub shadow_focus: Option<[f32; 2]>,
+    pub shadow_color: Option<[f32; 4]>,
     /// Keycap: extra thickness of the bottom edge.
     pub depth: Option<f32>,
     /// Glyph colour on choices and keycaps (`@name` labels, `glyph`).
@@ -2618,6 +2627,18 @@ impl Ui {
             return;
         }
         let lit = lit || (n.inherit_focus && inside);
+        if lit
+            && n.kind != Kind::Choice
+            && let Some([dx, dy]) = n.shadow_focus
+        {
+            let c = n.shadow_color.unwrap_or(widgets::INK);
+            let r = Rect {
+                x: rect.x + dx,
+                y: rect.y + dy,
+                ..rect
+            };
+            p.draw_rect(r, [c[0], c[1], c[2], c[3] * alpha], skew, clip);
+        }
         match n.kind {
             Kind::Pips => {
                 widgets::draw_pips(p, n, &inst.ctx, rect, alpha, clip);
@@ -2700,6 +2721,7 @@ impl Ui {
             }
         }
         if let Some(b) = n.border {
+            let b = if lit { n.border_focus.unwrap_or(b) } else { b };
             let edge = if lit {
                 n.border_color_focus.or(n.border_color)
             } else {
@@ -3230,6 +3252,53 @@ y = 20
         ui.mouse_button(true);
         let ev = ui.tick(Nav::default(), &mut p);
         assert_eq!(ev, vec![Event::Action("quit".into())]);
+    }
+
+    #[test]
+    fn focus_shadow_follows_the_focus() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "vbox"
+x = 10
+y = 10
+w = 100
+gap = 20
+  [[node.children]]
+  kind = "button"
+  id = "a"
+  h = 30
+  color = [1.0, 1.0, 1.0, 1.0]
+  on_press = "a"
+  shadow_focus = [6, 6]
+  [[node.children]]
+  kind = "button"
+  id = "b"
+  h = 30
+  color = [1.0, 1.0, 1.0, 1.0]
+  on_press = "b"
+  shadow_focus = [6, 6]
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        ui.set_focus(Some("a"));
+        ui.tick(Nav::default(), &mut TestPainter::new());
+        assert_eq!(ui.focused(), Some("a"));
+        let mut p = TestPainter::new();
+        ui.draw(&mut p);
+        let shadows: Vec<_> = p.rects.iter().filter(|r| r.x == 16.0).collect();
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].y, 16.0);
+        // hovering the second button moves the focus and its shadow
+        ui.mouse_move(Some((50.0, 70.0)));
+        ui.tick(Nav::default(), &mut TestPainter::new());
+        assert_eq!(ui.focused(), Some("b"));
+        let mut p = TestPainter::new();
+        ui.draw(&mut p);
+        let shadows: Vec<_> = p.rects.iter().filter(|r| r.x == 16.0).collect();
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].y, 66.0);
     }
 
     #[test]

@@ -536,11 +536,7 @@ fn ping_text(ms: Option<u32>) -> String {
 fn hotkeys(config: &Config) -> HashMap<&'static str, String> {
     let bound: Vec<String> = [&config.input.p1, &config.input.p2]
         .iter()
-        .flat_map(|k| {
-            [
-                &k.up, &k.down, &k.left, &k.right, &k.a, &k.b, &k.c, &k.x, &k.y, &k.z, &k.start,
-            ]
-        })
+        .flat_map(|k| k.names())
         .map(|k| k.trim().to_lowercase())
         .collect();
     HOTKEYS

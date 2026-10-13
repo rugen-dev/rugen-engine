@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
-//!   --open online|profile                                       harness: start on that screen
+//!   --open online|profile|options|controls                      harness: start on that screen
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -47,6 +47,7 @@ mod gpu;
 mod inkgen;
 mod inkscreens;
 mod input;
+mod keylabel;
 mod kit;
 mod latency;
 mod lifebar;
@@ -785,6 +786,8 @@ fn main() -> anyhow::Result<()> {
             let start = match opt("--open").as_deref() {
                 Some("online") => game::Transition::Online,
                 Some("profile") => game::Transition::Profile,
+                Some("options") => game::Transition::Options,
+                Some("controls") => game::Transition::Controls(0),
                 _ => game::Transition::Title,
             };
             game::Shell::new(config, lib, start, false, harness, None).run()

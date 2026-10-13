@@ -88,6 +88,130 @@ group = "header"
   h = 12
   color = [0.976, 0.945, 0.871, 1.0]
 
+
+[[node]]
+kind = "button"
+id = "save"
+x = 640
+y = 22
+w = 210
+h = 40
+on_press = "save"
+dock = "top"
+group = "header"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.976, 0.945, 0.871, 1.0]
+  border = 3
+  border_color = [0.078, 0.051, 0.043, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.706, 0.188, 0.102, 1.0]
+  visible = "save.unsaved"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.706, 0.188, 0.102, 1.0]
+  border = 3
+  border_color = [0.89, 0.702, 0.298, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [0.976, 0.945, 0.871, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 12
+  when = "blur"
+  visible = "!save.unsaved"
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 14
+  when = "blur"
+  visible = "save.unsaved"
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 14
+  when = "focus"
+
+  [[node.children]]
+  kind = "keycap"
+  anchor = "right"
+  x = 10
+  h = 24
+  text = "F2"
+  font = 2
+  bank = 12
+
+[[node]]
+kind = "text"
+dock = "top"
+x = 866
+y = 36
+text = "ALL SAVED"
+font = 2
+bank = 14
+visible = "save.clean"
+
+[[node]]
+kind = "panel"
+dock = "top"
+x = 866
+y = 26
+w = 132
+h = 32
+color = [0.706, 0.188, 0.102, 1.0]
+border = 3
+border_color = [0.89, 0.702, 0.298, 1.0]
+visible = "save.unsaved"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  anchor = "left"
+  x = 12
+  w = 14
+  h = 14
+  color = [0.976, 0.945, 0.871, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "UNSAVED"
+  anchor = "left"
+  x = 36
+  font = 2
+  bank = 14
+
 # ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
@@ -495,6 +619,41 @@ enter_time = 14
   bank = 17
 
   [[node.children]]
+  kind = "text"
+  text = "S"
+  x = 312
+  y = 394
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "START"
+  x = 520
+  y = 394
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "keycap"
+  x = 336
+  y = 386
+  w = 44
+  h = 32
+  text = "{pad.s.cap}"
+  glyph = "{pad.s.glyph}"
+  selected = "pad.s.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
+
+  [[node.children]]
   kind = "image"
   image = "ui/pill.webp"
   image_focus = "ui/pill_lit.webp"
@@ -674,7 +833,7 @@ enter_time = 18
     [[node.children.children]]
     kind = "button"
     id = "row"
-    h = 38
+    h = 34
     on_press = "{item.press}"
 
       [[node.children.children.children]]
@@ -709,7 +868,7 @@ enter_time = 18
       [[node.children.children.children]]
       kind = "keycap"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       pad = 0
@@ -734,7 +893,7 @@ enter_time = 18
       image_focus = "ui/ring_lit.webp"
       selected = "item.hot"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       h = 24
       visible = "item.round"
@@ -743,7 +902,7 @@ enter_time = 18
       kind = "text"
       text = "{item.icon}"
       anchor = "left"
-      x = 14
+      x = 150
       w = 24
       align = "center"
       font = 1
@@ -756,7 +915,7 @@ enter_time = 18
       kind = "text"
       text = "{item.label}"
       anchor = "left"
-      x = 52
+      x = 186
       font = 2
       bank = 12
       bank_focus = 14
@@ -766,7 +925,7 @@ enter_time = 18
       kind = "text"
       text = "{item.group}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 12
       bank_focus = 14
@@ -777,7 +936,7 @@ enter_time = 18
       kind = "text"
       text = "{item.conflict_text}"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 13
       bank_focus = 14
@@ -788,7 +947,7 @@ enter_time = 18
       kind = "text"
       text = "PRESS A KEY - ESC CANCEL"
       anchor = "left"
-      x = 160
+      x = 290
       font = 2
       bank = 14
       blink = 40
@@ -796,9 +955,9 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
@@ -806,21 +965,23 @@ enter_time = 18
       border = 2
       border_color = [0.078, 0.051, 0.043, 1.0]
       text_color = [0.114, 0.09, 0.078, 1.0]
-      font = 2
+      font = 1
+      scale = 2
       bank = 12
       visible = "item.clean"
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
       color = [0.976, 0.945, 0.871, 1.0]
       border = 2
-      font = 2
+      font = 1
+      scale = 2
       bank = 13
       border_color = [0.706, 0.188, 0.102, 1.0]
       text_color = [0.706, 0.188, 0.102, 1.0]
@@ -828,16 +989,17 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "keycap"
-      anchor = "right"
+      anchor = "left"
       x = 12
-      w = 70
+      w = 124
       h = 30
       text = "..."
       color = [0.976, 0.945, 0.871, 1.0]
       border = 2
       border_color = [0.078, 0.051, 0.043, 1.0]
       text_color = [0.114, 0.09, 0.078, 1.0]
-      font = 2
+      font = 1
+      scale = 2
       bank = 12
       visible = "item.listening"
 
@@ -920,3 +1082,289 @@ align = "center"
   text = "1P/2P"
   font = 2
   bank = 14
+
+# ---------------------------------------------------------------- saved toast
+[[node]]
+kind = "panel"
+dock = "top"
+x = 470
+y = 88
+w = 340
+h = 44
+color = [0.706, 0.188, 0.102, 1.0]
+border = 3
+border_color = [0.89, 0.702, 0.298, 1.0]
+visible = "save.toast"
+top = true
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "check"
+  anchor = "left"
+  x = 18
+  w = 16
+  h = 16
+  color = [0.976, 0.945, 0.871, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVED TO RUGEN.TOML"
+  anchor = "left"
+  x = 46
+  font = 2
+  bank = 14
+
+# ---------------------------------------------------------------- leave dialog
+[[node]]
+kind = "panel"
+dock = "fill"
+w = "100%"
+h = "100%"
+color = [0.0, 0.0, 0.0, 0.6]
+visible = "save.confirm"
+modal = true
+top = true
+
+[[node]]
+kind = "panel"
+x = 336
+y = 216
+w = 620
+h = 300
+color = [0.078, 0.051, 0.043, 1.0]
+visible = "save.confirm"
+top = true
+
+[[node]]
+kind = "panel"
+x = 330
+y = 210
+w = 620
+h = 300
+color = [0.976, 0.945, 0.871, 1.0]
+border = 4
+border_color = [0.078, 0.051, 0.043, 1.0]
+visible = "save.confirm"
+modal = true
+top = true
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 0
+  w = 620
+  h = 56
+  color = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  x = 26
+  y = 20
+  w = 16
+  h = 16
+  color = [0.976, 0.945, 0.871, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "UNSAVED CHANGES"
+  x = 54
+  y = 14
+  font = 6
+  scale = 1
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "You changed settings that are not in rugen.toml yet. Save them before leaving?"
+  x = 30
+  y = 84
+  w = 560
+  h = 80
+  wrap = true
+  line_gap = 8
+  font = 2
+  bank = 12
+
+[[node]]
+kind = "button"
+id = "dlg_save"
+x = 360
+y = 420
+w = 172
+h = 56
+on_press = "leave:save"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.976, 0.945, 0.871, 1.0]
+  border = 3
+  border_color = [0.078, 0.051, 0.043, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.706, 0.188, 0.102, 1.0]
+  border = 3
+  border_color = [0.89, 0.702, 0.298, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [0.976, 0.945, 0.871, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 12
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 14
+  when = "focus"
+
+[[node]]
+kind = "button"
+id = "dlg_discard"
+x = 552
+y = 420
+w = 172
+h = 56
+on_press = "leave:discard"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.976, 0.945, 0.871, 1.0]
+  border = 3
+  border_color = [0.078, 0.051, 0.043, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.706, 0.188, 0.102, 1.0]
+  border = 3
+  border_color = [0.89, 0.702, 0.298, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [0.976, 0.945, 0.871, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "DISCARD"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 12
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "DISCARD"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 14
+  when = "focus"
+
+[[node]]
+kind = "button"
+id = "dlg_cancel"
+x = 744
+y = 420
+w = 172
+h = 56
+on_press = "leave:cancel"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.976, 0.945, 0.871, 1.0]
+  border = 3
+  border_color = [0.078, 0.051, 0.043, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.706, 0.188, 0.102, 1.0]
+  border = 3
+  border_color = [0.89, 0.702, 0.298, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [0.976, 0.945, 0.871, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "CANCEL"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 12
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "CANCEL"
+  anchor = "center"
+  font = 6
+  scale = 1
+  bank = 14
+  when = "focus"

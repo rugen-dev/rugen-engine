@@ -6,12 +6,12 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use rugen_sim::Buttons;
 use rugen_sim::scale::FighterSize;
 use serde_json::{Value, json};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::config::{Config, PlayerKeys};
+use crate::input::{Device, PadKind};
 
 /// `(id, tab label, subtitle)`; `controls` opens its own page.
 pub const TABS: [(&str, &str, &str); 6] = [
@@ -313,20 +313,6 @@ pub fn theme_label(id: &str) -> String {
     }
 }
 
-/// Key cap for a config key name: `(text, glyph)`.
-pub fn key_cap(name: &str) -> (String, &'static str) {
-    match name {
-        "" => ("-".into(), ""),
-        "ArrowUp" => (String::new(), "up"),
-        "ArrowDown" => (String::new(), "down"),
-        "ArrowLeft" => (String::new(), "left"),
-        "ArrowRight" => (String::new(), "right"),
-        "Backspace" => (String::new(), "back"),
-        "Control" => ("CTRL".into(), ""),
-        other => (other.to_uppercase(), ""),
-    }
-}
-
 /// Everything `options.toml` binds to.
 pub fn options_data(
     tab: usize,
@@ -401,8 +387,9 @@ pub fn options_data(
             TABS[tab].2
         )
     };
-    let (left, left_glyph) = key_cap(&c.input.p1.left);
-    let (right, right_glyph) = key_cap(&c.input.p1.right);
+    // directions read as arrows outside the controls page
+    let (left, left_glyph) = (String::new(), "left");
+    let (right, right_glyph) = (String::new(), "right");
     json!({
         "tabs": tabs,
         "tab": { "id": TABS[tab].0, "title": TABS[tab].1, "subtitle": TABS[tab].2, "index": tab },
@@ -483,8 +470,8 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
 
 // ---------------------------------------------------------------- controls
 
-/// `(id, label, group)` in config / Buttons order.
-pub const ACTIONS: [(&str, &str, &str); 11] = [
+/// `(id, label, group)` in config order (Buttons order + START).
+pub const ACTIONS: [(&str, &str, &str); 12] = [
     ("up", "UP", "MOVE"),
     ("down", "DOWN", "MOVE"),
     ("left", "LEFT", "MOVE"),
@@ -495,27 +482,13 @@ pub const ACTIONS: [(&str, &str, &str); 11] = [
     ("x", "X", "TOP ROW"),
     ("y", "Y", "TOP ROW"),
     ("z", "Z", "TOP ROW"),
-    ("start", "START", "MENU"),
-];
-
-/// Gamepad buttons per action (the fixed gilrs mapping in `input.rs`).
-const PAD_CAPS: [(&str, &str); 11] = [
-    ("", "up"),
-    ("", "down"),
-    ("", "left"),
-    ("", "right"),
-    ("A", ""),
-    ("B", ""),
-    ("RT", ""),
-    ("X", ""),
-    ("Y", ""),
-    ("RB", ""),
-    ("START", ""),
+    ("s", "S", "FIGHTER EXTRA"),
+    ("start", "START", "PAUSE / MENUS"),
 ];
 
 /// One-press layouts for a whole player.
 pub fn presets() -> [(&'static str, PlayerKeys); 3] {
-    let keys = |n: [&str; 11]| {
+    let keys = |n: [&str; 12]| {
         let mut k = PlayerKeys::p1();
         for (i, name) in n.iter().enumerate() {
             k.set(i, name);
@@ -526,7 +499,7 @@ pub fn presets() -> [(&'static str, PlayerKeys); 3] {
         ("AZERTY ZQSD", PlayerKeys::p1()),
         (
             "QWERTY WASD",
-            keys(["w", "s", "a", "d", "j", "k", "l", "u", "i", "o", "Enter"]),
+            keys(["w", "s", "a", "d", "j", "k", "l", "u", "i", "o", ";", "p"]),
         ),
         ("ARROWS + NUMPAD", PlayerKeys::p2()),
     ]
@@ -537,7 +510,7 @@ fn same_key(a: &str, b: &str) -> bool {
 }
 
 /// Per action of `player`: the conflict text ("ALSO B", "ALSO 2P A") if its key is used twice.
-pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 11] {
+pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 12] {
     let me = keys[player].names();
     let other = keys[1 - player].names();
     std::array::from_fn(|i| {
@@ -545,7 +518,7 @@ pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 11] 
         if let Some(j) = other.iter().position(|o| same_key(k, o)) {
             return Some(format!("ALSO {}P {}", 2 - player, ACTIONS[j].1));
         }
-        (0..11)
+        (0..12)
             .find(|&j| j != i && same_key(k, me[j]))
             .map(|j| format!("ALSO {}", ACTIONS[j].1))
     })
@@ -560,12 +533,12 @@ pub struct Controls {
     pub device: usize,
     pub listen: Option<usize>,
     held: HashSet<String>,
-    /// Connected gamepads: name and held buttons.
-    pub pads: Vec<(String, Buttons)>,
+    /// Connected gamepads: name, family and held raw mask (bit per slot).
+    pub pads: Vec<(String, PadKind, u16)>,
 }
 
-fn button(b: &Buttons, i: usize) -> bool {
-    [b.u, b.d, b.l, b.r, b.a, b.b, b.c, b.x, b.y, b.z, b.s][i]
+fn button(mask: u16, i: usize) -> bool {
+    mask & (1 << i) != 0
 }
 
 impl Controls {
@@ -584,7 +557,7 @@ impl Controls {
         }
     }
 
-    fn on_pad(&self) -> Option<&(String, Buttons)> {
+    fn on_pad(&self) -> Option<&(String, PadKind, u16)> {
         self.device.checked_sub(1).and_then(|i| self.pads.get(i))
     }
 
@@ -605,7 +578,7 @@ impl Controls {
             .and_then(|f| f.strip_prefix("binds["))
             .and_then(|r| r.split(']').next())
             .and_then(|i| i.parse::<usize>().ok())
-            .filter(|i| *i < 11);
+            .filter(|i| *i < 12);
         match key {
             Key::Named(NamedKey::Tab) => {
                 self.player = 1 - self.player;
@@ -660,7 +633,7 @@ impl Controls {
             }
             "listen" => {
                 if self.on_pad().is_none() {
-                    let i = arg.parse::<usize>().unwrap_or(0).min(10);
+                    let i = arg.parse::<usize>().unwrap_or(0).min(11);
                     self.listen = if self.listen == Some(i) {
                         None
                     } else {
@@ -697,15 +670,17 @@ impl Controls {
         } else {
             conflicts(keys, self.player)
         };
-        let lit: [bool; 11] = std::array::from_fn(|i| match pad {
-            Some((_, b)) => button(b, i),
+        let lit: [bool; 12] = std::array::from_fn(|i| match pad {
+            Some((_, _, b)) => button(*b, i),
             None => !names[i].is_empty() && self.held.contains(&names[i].to_lowercase()),
         });
+        let device = match pad {
+            Some((_, kind, _)) => Device::Pad(*kind),
+            None => Device::Keyboard,
+        };
         let cap = |i: usize| -> (String, &'static str) {
-            match pad {
-                Some(_) => (PAD_CAPS[i].0.to_string(), PAD_CAPS[i].1),
-                None => key_cap(names[i]),
-            }
+            let c = crate::keylabel::cap(&c.input, self.player, i, device);
+            (c.text, c.glyph)
         };
         let binds: Vec<Value> = ACTIONS
             .iter()
@@ -719,8 +694,8 @@ impl Controls {
                     "id": id,
                     "label": label,
                     "group": if pad.is_some() { "FIXED ON PAD" } else { *group },
-                    "icon": if dir { String::new() } else if *id == "start" { "S".to_string() } else { label.to_string() },
-                    "icon_glyph": if dir { *id } else { "" },
+                    "icon": if dir || *id == "start" { String::new() } else { label.to_string() },
+                    "icon_glyph": if dir { *id } else if *id == "start" { "tri_right" } else { "" },
                     "round": !dir && *id != "start",
                     "square": dir || *id == "start",
                     "cap": text,
@@ -734,6 +709,7 @@ impl Controls {
                     "show_group": conflict.is_none() && !listening,
                     "show_conflict": conflict.is_some() && !listening,
                     "spaced": i == 4 || i == 10,
+                    "is_start": *id == "start",
                     "press": format!("listen:{i}"),
                 })
             })
@@ -763,7 +739,7 @@ impl Controls {
             })
             .collect();
         let device_label = match pad {
-            Some((name, _)) => {
+            Some((name, _, _)) => {
                 let mut n = name.to_uppercase();
                 n.truncate(18);
                 n
@@ -824,7 +800,7 @@ mod tests {
         let cf = conflicts([&c.input.p1, &c.input.p2], 0);
         assert_eq!(cf[4].as_deref(), Some("ALSO B"));
         assert_eq!(cf[5].as_deref(), Some("ALSO A"));
-        assert_eq!(cf[10].as_deref(), Some("ALSO 2P UP"));
+        assert_eq!(cf[11].as_deref(), Some("ALSO 2P UP"));
         let cf2 = conflicts([&c.input.p1, &c.input.p2], 1);
         assert_eq!(cf2[0].as_deref(), Some("ALSO 1P START"));
     }
@@ -841,7 +817,8 @@ mod tests {
         assert!(ctl.listen.is_none());
         ctl.action(&mut c, "preset:1");
         assert_eq!(c.input.p1.up, "w");
-        assert_eq!(c.input.p1.start, "Enter");
+        assert_eq!(c.input.p1.start, "p");
+        assert_eq!(c.input.p1.s, ";");
         ctl.key(&mut c, &Key::Named(NamedKey::F5), true, None);
         assert_eq!(c.input.p1.up, "z");
         ctl.key(

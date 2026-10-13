@@ -4,7 +4,7 @@
 use rugen_cns::cmd::Key as CmdKey;
 use rugen_sim::{CharData, World};
 
-use crate::config::PlayerKeys;
+use crate::keylabel::Labels;
 
 enum Check {
     WalkFwd,
@@ -29,71 +29,73 @@ pub struct Tutorial {
     /// Ticks left showing "GOOD" before the next step.
     celebrate: i32,
     pub finished: bool,
+    /// The START key's label for "PRESS P TO LEAVE".
+    start: String,
 }
 
-fn key_label(k: CmdKey, keys: &PlayerKeys) -> String {
-    let n = keys.names();
-    let up = |s: &str| s.to_uppercase();
+/// A command key as the player presses it: directions as arrows (facing
+/// right, as P1 starts), buttons as the bound key.
+fn key_label(k: CmdKey, keys: &Labels) -> String {
     match k {
-        CmdKey::U => "UP".into(),
-        CmdKey::D => "DOWN".into(),
-        CmdKey::F => "FWD".into(),
-        CmdKey::B => "BACK".into(),
-        CmdKey::UF => "UP-FWD".into(),
-        CmdKey::UB => "UP-BACK".into(),
-        CmdKey::DF => "DOWN-FWD".into(),
-        CmdKey::DB => "DOWN-BACK".into(),
-        CmdKey::A => format!("A({})", up(n[4])),
-        CmdKey::Bt => format!("B({})", up(n[5])),
-        CmdKey::C => format!("C({})", up(n[6])),
-        CmdKey::X => format!("X({})", up(n[7])),
-        CmdKey::Y => format!("Y({})", up(n[8])),
-        CmdKey::Z => format!("Z({})", up(n[9])),
-        CmdKey::S => format!("START({})", up(n[10])),
+        CmdKey::U => "↑".into(),
+        CmdKey::D => "↓".into(),
+        CmdKey::F => "→".into(),
+        CmdKey::B => "←".into(),
+        CmdKey::UF => "↗".into(),
+        CmdKey::UB => "↖".into(),
+        CmdKey::DF => "↘".into(),
+        CmdKey::DB => "↙".into(),
+        CmdKey::A => keys.button("a"),
+        CmdKey::Bt => keys.button("b"),
+        CmdKey::C => keys.button("c"),
+        CmdKey::X => keys.button("x"),
+        CmdKey::Y => keys.button("y"),
+        CmdKey::Z => keys.button("z"),
+        CmdKey::S => keys.button("s"),
     }
 }
 
 impl Tutorial {
-    pub fn new(data: &CharData, keys: &PlayerKeys) -> Self {
-        let n = keys.names();
-        let up = |s: &str| s.to_uppercase();
+    pub fn new(data: &CharData, keys: &Labels) -> Self {
+        let b = |n: &str| keys.button(n);
+        let start = keys.start();
         let mut steps = vec![
             Step {
                 title: "WALK FORWARD".into(),
-                hint: format!("HOLD {}", up(n[3])),
+                hint: "HOLD →".into(),
                 check: Check::WalkFwd,
             },
             Step {
                 title: "WALK BACK".into(),
-                hint: format!("HOLD {}", up(n[2])),
+                hint: "HOLD ←".into(),
                 check: Check::WalkBack,
             },
             Step {
                 title: "JUMP".into(),
-                hint: format!("PRESS {}", up(n[0])),
+                hint: "PRESS ↑".into(),
                 check: Check::Jump,
             },
             Step {
                 title: "CROUCH".into(),
-                hint: format!("HOLD {}", up(n[1])),
+                hint: "HOLD ↓".into(),
                 check: Check::Crouch,
             },
             Step {
                 title: "ATTACK".into(),
                 hint: format!(
                     "PRESS {} {} {} OR {} {} {}",
-                    up(n[4]),
-                    up(n[5]),
-                    up(n[6]),
-                    up(n[7]),
-                    up(n[8]),
-                    up(n[9])
+                    b("a"),
+                    b("b"),
+                    b("c"),
+                    b("x"),
+                    b("y"),
+                    b("z")
                 ),
                 check: Check::Attack,
             },
             Step {
                 title: "GUARD".into(),
-                hint: format!("HOLD {} AWAY FROM THE ENEMY", up(n[2])),
+                hint: "HOLD ← AWAY FROM THE ENEMY".into(),
                 check: Check::Guard,
             },
         ];
@@ -138,6 +140,7 @@ impl Tutorial {
             hold: 0,
             celebrate: 0,
             finished: false,
+            start,
         }
     }
 
@@ -146,7 +149,7 @@ impl Tutorial {
         if self.finished {
             return [
                 "TUTORIAL COMPLETE".into(),
-                "PRESS START TO LEAVE".into(),
+                format!("PRESS {} TO LEAVE", self.start),
                 String::new(),
             ];
         }
@@ -160,9 +163,10 @@ impl Tutorial {
             title,
             s.hint.clone(),
             format!(
-                "STEP {} OF {}   START SKIPS",
+                "STEP {} OF {}   {} SKIPS",
                 self.idx + 1,
-                self.steps.len()
+                self.steps.len(),
+                self.start
             ),
         ]
     }

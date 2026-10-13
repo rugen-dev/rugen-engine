@@ -1,5 +1,6 @@
-; rugen sample arena: three platforms, a pit on both sides of the floor,
-; blast zones, 3 stocks, engine air moves. Uses the bundled training-room art.
+; rugen sample arena: nine platforms in three tiers over a 1280-unit floor
+; with a pit on both sides, blast zones, 3 stocks, engine air moves. Uses
+; the bundled training-room art.
 ;
 ;   rugen play kfm --stage examples/arena/arena.def --ai 8 --watch --frames 1500 --shot target/shots/arena.png
 
@@ -12,27 +13,27 @@ mugenversion = 1.1
 [Camera]
 startx = 0
 starty = 0
-boundleft = -320
-boundright = 320
-boundhigh = -260
+boundleft = -760
+boundright = 760
+boundhigh = -360
 boundlow = 0
 verticalfollow = 0.6
 floortension = 20
 tension = 70
-zoomout = 0.5
+zoomout = 0.25
 zoomin = 1.2
 
 [PlayerInfo]
-p1startx = -90
+p1startx = -160
 p1starty = 0
 p1startz = 0
 p1facing = 1
-p2startx = 90
+p2startx = 160
 p2starty = 0
 p2startz = 0
 p2facing = -1
-leftbound = -1000
-rightbound = 1000
+leftbound = -2000
+rightbound = 2000
 
 [Bound]
 screenleft = 15
@@ -53,29 +54,53 @@ yscale = 0.4
 
 [Arena]
 ; players crossing this box are KO'd (left, top, right, bottom)
-blastzone = -520, -420, 520, 160
+blastzone = -920, -540, 920, 160
 ; no screen-edge walls: knockback can carry players off the platforms
 walls = 0
 ; lives per round
 stocks = 3
 ; the floor only exists here; beyond it is a pit down to the bottom blast line
-floor = -240, 240
+floor = -640, 640
 spawn_y = -140
 air_jumps = 1
 air_dash = 1
 fast_fall = 1
 
 [Platform]
-x = -220, -80
+x = -540, -400
 y = -80
 
 [Platform]
-x = 80, 220
+x = -240, -100
 y = -80
+
+[Platform]
+x = 100, 240
+y = -80
+
+[Platform]
+x = 400, 540
+y = -80
+
+[Platform]
+x = -390, -250
+y = -160
 
 [Platform]
 x = -70, 70
 y = -160
+
+[Platform]
+x = 250, 390
+y = -160
+
+[Platform]
+x = -230, -90
+y = -240
+
+[Platform]
+x = 90, 230
+y = -240
 
 [Music]
 bgmusic =
@@ -92,32 +117,74 @@ delta = 1, 1
 tile = 1, 1
 tilespacing = 0, 0
 
-; the floor: 14 tiles of 35 px from x = -245 (the [Arena] floor span)
+; the floor: 37 tiles of 35 px from x = -648 (the [Arena] floor span)
 [BG floor]
 type = normal
 spriteno = 0, 1
-start = -245, 185
+start = -648, 185
 delta = 1, 1
-tile = 14, 0
+tile = 37, 0
 
 ; platform art: 4 tiles each, top at ground - height
-[BG platform left]
+[BG platform low -470]
 type = normal
 spriteno = 0, 1
-start = -220, 110
+start = -540, 110
 delta = 1, 1
 tile = 4, 0
 
-[BG platform right]
+[BG platform low -170]
 type = normal
 spriteno = 0, 1
-start = 80, 110
+start = -240, 110
 delta = 1, 1
 tile = 4, 0
 
-[BG platform top]
+[BG platform low 170]
+type = normal
+spriteno = 0, 1
+start = 100, 110
+delta = 1, 1
+tile = 4, 0
+
+[BG platform low 470]
+type = normal
+spriteno = 0, 1
+start = 400, 110
+delta = 1, 1
+tile = 4, 0
+
+[BG platform mid -320]
+type = normal
+spriteno = 0, 1
+start = -390, 30
+delta = 1, 1
+tile = 4, 0
+
+[BG platform mid 0]
 type = normal
 spriteno = 0, 1
 start = -70, 30
+delta = 1, 1
+tile = 4, 0
+
+[BG platform mid 320]
+type = normal
+spriteno = 0, 1
+start = 250, 30
+delta = 1, 1
+tile = 4, 0
+
+[BG platform top -160]
+type = normal
+spriteno = 0, 1
+start = -230, -50
+delta = 1, 1
+tile = 4, 0
+
+[BG platform top 160]
+type = normal
+spriteno = 0, 1
+start = 90, -50
 delta = 1, 1
 tile = 4, 0

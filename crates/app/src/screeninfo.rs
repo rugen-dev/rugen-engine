@@ -191,6 +191,19 @@ pub fn parts_text(parts: &[Part]) -> String {
         .join(" ")
 }
 
+/// Rename every button piece (`A` → the player's key) and rebuild the
+/// plain-text notation.
+pub fn relabel(moves: &mut [Move], label: impl Fn(&str) -> String) {
+    for m in moves {
+        for p in &mut m.parts {
+            if let Part::Button(b) = p {
+                *b = label(b);
+            }
+        }
+        m.notation = parts_text(&m.parts);
+    }
+}
+
 /// MUGEN command notation → arrows and buttons: `~D, DF, F, x` → `↓↘→ X`.
 #[cfg(test)]
 fn notation(cmd: &str) -> String {

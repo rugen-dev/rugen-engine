@@ -37,15 +37,47 @@ font = 3
 bank = 11
 scale = 2
 
+
 [[node]]
 kind = "text"
 dock = "right top"
-text = "SAVED TO RUGEN.TOML"
 anchor = "tr"
 x = 40
-y = 34
+y = 38
+text = "ALL SAVED"
 font = 2
 bank = 11
+visible = "save.clean"
+
+[[node]]
+kind = "panel"
+dock = "right top"
+anchor = "tr"
+x = 40
+y = 28
+w = 220
+h = 32
+color = [0.878, 0.125, 0.125, 1.0]
+border = 3
+border_color = [0.067, 0.067, 0.067, 1.0]
+visible = "save.unsaved"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  anchor = "left"
+  x = 12
+  w = 14
+  h = 14
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "UNSAVED CHANGES"
+  anchor = "left"
+  x = 36
+  font = 2
+  bank = 11
 
 # ---------------------------------------------------------------- tabs
 [[node]]
@@ -114,6 +146,90 @@ stagger = 2
     h = 14
     color = [0.95, 0.94, 0.89, 1.0]
     visible = "item.ext"
+
+[[node]]
+kind = "button"
+id = "save"
+x = 30
+y = 520
+w = 290
+h = 50
+on_press = "save"
+dock = "left"
+group = "tabs"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.878, 0.125, 0.125, 1.0]
+  visible = "save.unsaved"
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.878, 0.125, 0.125, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [1.0, 1.0, 1.0, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 9
+  when = "blur"
+  visible = "!save.unsaved"
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 11
+  when = "blur"
+  visible = "save.unsaved"
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 11
+  when = "focus"
+
+  [[node.children]]
+  kind = "keycap"
+  anchor = "right"
+  x = 10
+  h = 30
+  text = "F2"
+  font = 2
+  bank = 9
 
 # ---------------------------------------------------------------- content panel
 [[node]]
@@ -407,7 +523,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE AND SAVED"
+  text = "APPLIED AT ONCE - SAVE TO KEEP IT"
   x = 28
   y = 400
   font = 2
@@ -512,6 +628,292 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE & BACK"
+  text = "BACK"
   font = 2
   bank = 9
+
+# ---------------------------------------------------------------- saved toast
+[[node]]
+kind = "panel"
+dock = "top"
+x = 470
+y = 20
+w = 340
+h = 44
+color = [0.878, 0.125, 0.125, 1.0]
+border = 3
+border_color = [0.067, 0.067, 0.067, 1.0]
+visible = "save.toast"
+top = true
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "check"
+  anchor = "left"
+  x = 18
+  w = 16
+  h = 16
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVED TO RUGEN.TOML"
+  anchor = "left"
+  x = 46
+  font = 2
+  bank = 11
+
+# ---------------------------------------------------------------- leave dialog
+[[node]]
+kind = "panel"
+dock = "fill"
+w = "100%"
+h = "100%"
+color = [0.0, 0.0, 0.0, 0.6]
+visible = "save.confirm"
+modal = true
+top = true
+
+[[node]]
+kind = "panel"
+x = 336
+y = 216
+w = 620
+h = 300
+color = [0.067, 0.067, 0.067, 1.0]
+visible = "save.confirm"
+top = true
+
+[[node]]
+kind = "panel"
+x = 330
+y = 210
+w = 620
+h = 300
+color = [1.0, 1.0, 1.0, 1.0]
+border = 4
+border_color = [0.067, 0.067, 0.067, 1.0]
+visible = "save.confirm"
+modal = true
+top = true
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 0
+  w = 620
+  h = 56
+  color = [0.878, 0.125, 0.125, 1.0]
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "warn"
+  x = 26
+  y = 20
+  w = 16
+  h = 16
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "UNSAVED CHANGES"
+  x = 54
+  y = 14
+  font = 1
+  scale = 2
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "You changed settings that are not in rugen.toml yet. Save them before leaving?"
+  x = 30
+  y = 84
+  w = 560
+  h = 80
+  wrap = true
+  line_gap = 8
+  font = 2
+  bank = 9
+
+[[node]]
+kind = "button"
+id = "dlg_save"
+x = 360
+y = 420
+w = 172
+h = 56
+on_press = "leave:save"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.878, 0.125, 0.125, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [1.0, 1.0, 1.0, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 9
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "SAVE"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 11
+  when = "focus"
+
+[[node]]
+kind = "button"
+id = "dlg_discard"
+x = 552
+y = 420
+w = 172
+h = 56
+on_press = "leave:discard"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.878, 0.125, 0.125, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [1.0, 1.0, 1.0, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "DISCARD"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 9
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "DISCARD"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 11
+  when = "focus"
+
+[[node]]
+kind = "button"
+id = "dlg_cancel"
+x = 744
+y = 420
+w = 172
+h = 56
+on_press = "leave:cancel"
+visible = "save.confirm"
+modal = true
+top = true
+group = "dialog"
+
+  [[node.children]]
+  kind = "panel"
+  x = 6
+  y = 6
+  color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "panel"
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  color = [0.878, 0.125, 0.125, 1.0]
+  border = 3
+  border_color = [0.067, 0.067, 0.067, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_right"
+  anchor = "left"
+  x = 12
+  w = 12
+  h = 12
+  color = [1.0, 1.0, 1.0, 1.0]
+  when = "focus"
+
+
+  [[node.children]]
+  kind = "text"
+  text = "CANCEL"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 9
+  when = "blur"
+  [[node.children]]
+  kind = "text"
+  text = "CANCEL"
+  anchor = "center"
+  font = 1
+  scale = 2
+  bank = 11
+  when = "focus"

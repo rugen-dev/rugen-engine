@@ -10,8 +10,8 @@ use crate::game::Transition;
 use crate::stage::StageVisual;
 use crate::system::SystemData;
 
-const BUTTON_NAMES: [&str; 11] = [
-    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "START",
+const BUTTON_NAMES: [&str; 12] = [
+    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "S", "START",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,7 +91,7 @@ impl OptionsScreen {
         };
         keys.set(idx, &name);
         self.dirty = true;
-        self.capture = if idx + 1 < 11 {
+        self.capture = if idx + 1 < BUTTON_NAMES.len() {
             Some((player, idx + 1))
         } else {
             None

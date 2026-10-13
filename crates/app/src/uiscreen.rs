@@ -413,18 +413,7 @@ const FEATURE_TICKS: u64 = 300;
 
 /// Short key label for a bound key name (`ArrowUp` → `↑`, `j` → `J`).
 fn key_label(k: &str) -> String {
-    match k {
-        "ArrowUp" => "↑".into(),
-        "ArrowDown" => "↓".into(),
-        "ArrowLeft" => "←".into(),
-        "ArrowRight" => "→".into(),
-        "Enter" => "ENTER".into(),
-        "Space" => "SPACE".into(),
-        "Escape" => "ESC".into(),
-        "Shift" => "SHIFT".into(),
-        "Control" => "CTRL".into(),
-        other => other.to_uppercase(),
-    }
+    crate::keylabel::key_cap(k).plain()
 }
 
 /// One-line description of a title menu entry.
@@ -460,7 +449,29 @@ struct SettingsPage {
     controls: Option<crate::settings::Controls>,
     root: PathBuf,
     ticks: u64,
+    /// The edits differ from rugen.toml (the host compares every tick).
+    unsaved: bool,
+    /// Ticks left of the SAVED toast.
+    toast: u32,
+    /// Leaving with unsaved changes: the SAVE / DISCARD / CANCEL dialog is
+    /// up, holding where to go once it is answered.
+    confirm: Option<Transition>,
+    /// Controls opened from the pause menu: leaving goes back to the match.
+    from_pause: bool,
+    /// What the host has to do with the edits (see [`SaveRequest`]).
+    request: Option<SaveRequest>,
 }
+
+/// Options / controls: the player asked to write the edits to rugen.toml or
+/// to drop them (the live preview goes back to the saved settings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveRequest {
+    Save,
+    Discard,
+}
+
+/// Ticks the SAVED toast stays up.
+const SAVED_TOAST: u32 = 120;
 
 pub(crate) use rugen_ui::viewport;
 
@@ -546,6 +557,7 @@ impl UiScreen {
     /// The controls page was opened from the pause menu.
     pub fn set_from_pause(&mut self, from_pause: bool, sys: &SystemData) {
         self.from_pause = from_pause;
+        self.settings.from_pause = from_pause;
         self.refresh_data(sys);
     }
 
@@ -713,12 +725,20 @@ impl UiScreen {
             "b": key_label(&k.b),
             "c": key_label(&k.c),
             "x": key_label(&k.x),
+            "s": key_label(&k.s),
             "start": key_label(&k.start),
         })
     }
 
     /// Function keys a screen handles itself (TAB search / F1 sort on the roster).
     pub fn hotkey(&mut self, key: &Key, sys: &SystemData) -> bool {
+        // options / controls: F2 saves
+        if matches!(self.kind, UiKind::Options | UiKind::Controls)
+            && *key == Key::Named(NamedKey::F2)
+        {
+            self.action("save", sys);
+            return true;
+        }
         // stage strip: Page Up / Down, Home / End, a letter jumps by name
         if let Some(st) = self.stages.as_mut() {
             return match st.key(key) {
@@ -1100,6 +1120,17 @@ impl UiScreen {
                     ),
                 };
                 if let Value::Object(m) = &mut d {
+                    let st = &self.settings;
+                    m.insert(
+                        "save".into(),
+                        json!({
+                            "unsaved": st.unsaved,
+                            "clean": !st.unsaved,
+                            "toast": st.toast > 0,
+                            "confirm": st.confirm.is_some(),
+                            "status": if st.unsaved { "UNSAVED CHANGES" } else { "ALL SAVED" },
+                        }),
+                    );
                     m.insert("profile".into(), self.profile_json());
                     m.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
                     // where Esc goes: opened from the pause menu it resumes the match
@@ -1160,7 +1191,7 @@ impl UiScreen {
     }
 
     /// Connected gamepads (name, held buttons) for the controls page device chip / test pad.
-    pub fn set_pads(&mut self, pads: Vec<(String, Buttons)>, sys: &SystemData) {
+    pub fn set_pads(&mut self, pads: Vec<(String, crate::input::PadKind, u16)>, sys: &SystemData) {
         if let Some(c) = self.settings.controls.as_mut()
             && (c.pads != pads)
         {
@@ -1172,19 +1203,98 @@ impl UiScreen {
         }
     }
 
+    // ------------------------------------------------------------ save flow
+
+    /// The host compares the edits with rugen.toml: true = unsaved changes.
+    pub fn set_unsaved(&mut self, unsaved: bool, sys: &SystemData) {
+        if self.settings.unsaved != unsaved {
+            self.settings.unsaved = unsaved;
+            self.refresh_data(sys);
+        }
+    }
+
+    /// Controls opened from the pause menu (leaving returns to the match).
+    /// SAVE / DISCARD asked this tick, for the host to carry out.
+    pub fn take_request(&mut self) -> Option<SaveRequest> {
+        self.settings.request.take()
+    }
+
+    /// The host wrote rugen.toml: show the SAVED toast.
+    pub fn saved(&mut self, sys: &SystemData) {
+        self.settings.unsaved = false;
+        self.settings.toast = SAVED_TOAST;
+        self.refresh_data(sys);
+    }
+
+    /// A transition out of the options / controls: with unsaved changes it
+    /// opens the SAVE / DISCARD / CANCEL dialog instead (`None`) and goes
+    /// once that is answered. Moving between the two pages is not leaving.
+    fn guard(&mut self, t: Transition, sys: &SystemData) -> Option<Transition> {
+        if !matches!(self.kind, UiKind::Options | UiKind::Controls) || !self.settings.unsaved {
+            return Some(t);
+        }
+        let inside = match t {
+            Transition::Controls(_) => true,
+            Transition::Options => !(self.kind == UiKind::Controls && self.settings.from_pause),
+            _ => false,
+        };
+        if inside {
+            return Some(t);
+        }
+        self.settings.confirm = Some(t);
+        if let Some(c) = self.settings.controls.as_mut() {
+            c.listen = None;
+        }
+        self.refresh_data(sys);
+        self.ui.set_focus(Some("dlg_save"));
+        None
+    }
+
+    /// `save`, `leave:save|discard|cancel`; None when `a` is not one of them.
+    fn save_action(&mut self, a: &str, sys: &SystemData) -> Option<Option<Transition>> {
+        let st = &mut self.settings;
+        let out = match a {
+            "save" => {
+                st.request = Some(SaveRequest::Save);
+                None
+            }
+            "leave:save" => {
+                st.request = Some(SaveRequest::Save);
+                st.confirm.take()
+            }
+            "leave:discard" => {
+                st.request = Some(SaveRequest::Discard);
+                st.confirm.take()
+            }
+            "leave:cancel" => {
+                st.confirm = None;
+                None
+            }
+            _ => return None,
+        };
+        self.refresh_data(sys);
+        Some(out)
+    }
+
     /// Escape: `None` when the screen handled it (options content → tab column),
     /// else where to go.
     pub fn escape(&mut self, sys: &SystemData) -> Option<Transition> {
+        if self.settings.confirm.is_some() {
+            // Esc in the leave dialog: CANCEL
+            self.settings.confirm = None;
+            self.refresh_data(sys);
+            return None;
+        }
         match self.kind {
             UiKind::Options if self.settings.controls.is_none() => {
                 let on_tabs = self.ui.focused().is_some_and(|f| f.starts_with("tabs["));
                 if on_tabs || !self.ui.data()["tabs"].is_array() {
-                    return Some(Transition::Title);
+                    return self.guard(Transition::Title, sys);
                 }
                 self.set_tab(self.settings.tab, sys);
                 None
             }
-            UiKind::Controls => Some(Transition::Options),
+            UiKind::Controls => self.guard(Transition::Options, sys),
             // back to the fighters, both picks still locked
             UiKind::Stages => self.stages.as_mut().map(|s| s.back()),
             UiKind::Select(mode) => {
@@ -1262,6 +1372,16 @@ impl UiScreen {
         pressed: bool,
         sys: &SystemData,
     ) -> Option<Transition> {
+        if self.settings.confirm.is_some() {
+            // the leave dialog has the keys: Enter presses its focused button
+            if pressed
+                && *key == Key::Named(NamedKey::Enter)
+                && let Some(a) = self.ui.focused_action()
+            {
+                return self.action(&a, sys);
+            }
+            return None;
+        }
         let focused = self.ui.focused().map(str::to_string);
         let ctl = self.settings.controls.as_mut()?;
         let before = (self.config.input.p1.clone(), self.config.input.p2.clone());
@@ -1401,6 +1521,11 @@ impl UiScreen {
                 _ => None,
             };
         }
+        if matches!(self.kind, UiKind::Options | UiKind::Controls)
+            && let Some(t) = self.save_action(a, sys)
+        {
+            return t;
+        }
         if let Some(ctl) = self.settings.controls.as_mut() {
             let before = self.config.input.clone();
             if ctl.action(&mut self.config, a) {
@@ -1413,7 +1538,7 @@ impl UiScreen {
                 return None;
             }
             return match a {
-                "back" => Some(Transition::Options),
+                "back" => self.guard(Transition::Options, sys),
                 _ => None,
             };
         }
@@ -1461,6 +1586,9 @@ impl UiScreen {
             "netplay" => Some(Transition::Netplay),
             "online" => Some(Transition::Online),
             "profile" => Some(Transition::Profile),
+            "back" | "title" if matches!(self.kind, UiKind::Options) => {
+                self.guard(Transition::Title, sys)
+            }
             "back" | "title" => Some(Transition::Title),
             "mode" => Some(match arg {
                 "arcade" => Transition::Select(Mode::Arcade),
@@ -1585,6 +1713,12 @@ impl UiScreen {
             let merged = Buttons::from_bits(pressed[0].bits() | pressed[1].bits());
             (of(&merged), Nav::default())
         };
+        if matches!(self.kind, UiKind::Options | UiKind::Controls) && self.settings.toast > 0 {
+            self.settings.toast -= 1;
+            if self.settings.toast == 0 {
+                self.refresh_data(sys);
+            }
+        }
         if self.kind == UiKind::Controls {
             // fight buttons only light the test pad here; Enter / clicks press, Esc leaves
             nav.accept = false;

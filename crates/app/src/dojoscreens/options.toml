@@ -20,16 +20,7 @@ y = 30
 font = 3
 bank = 14
 
-[[node]]
-kind = "text"
-dock = "right top"
-text = "SAVED TO RUGEN.TOML"
-anchor = "tr"
-x = 44
-y = 44
-font = 2
-bank = 16
-
+@SAVE_STATUS@
 # ---------------------------------------------------------------- tabs
 [[node]]
 kind = "vbox"
@@ -107,7 +98,7 @@ stagger = 2
     h = 14
     color = [0.976, 0.945, 0.871, 1.0]
     visible = "item.ext"
-
+@SAVE_BUTTON@
 # ---------------------------------------------------------------- content sheet
 [[node]]
 kind = "panel"
@@ -416,7 +407,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE AND SAVED"
+  text = "APPLIED AT ONCE - SAVE TO KEEP IT"
   x = 30
   y = 410
   font = 2
@@ -530,6 +521,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE & BACK"
+  text = "BACK"
   font = 2
   bank = 14
+@SAVE_OVERLAYS@
