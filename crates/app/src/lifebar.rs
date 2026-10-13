@@ -886,16 +886,26 @@ impl Lifebar {
                     r.rect_outline(at(a0, top + 19.0), at(a1, top + 29.0), 2.0 * us, INK);
                 }
             }
+            // the name in the small font doubled; a long one in the narrower
+            // caption font, cut to fit if it still does not
             let mut name = w.data[p.data].display_name.to_uppercase();
-            // keep the name clear of the life number
             let max_w = num_x - num_w - 10.0 - tx;
-            if let Some(f) = self.fonts.get(&1) {
-                while name.chars().count() > 3 && f.width(&name, 2.0) > max_w {
+            let big = self
+                .fonts
+                .get(&1)
+                .is_some_and(|f| f.width(&name, 2.0) <= max_w);
+            let (font, scale) = if big || !self.fonts.contains_key(&3) {
+                (1, 2.0)
+            } else {
+                (3, 1.0)
+            };
+            if let Some(f) = self.fonts.get(&font) {
+                while name.chars().count() > 3 && f.width(&name, scale) > max_w {
                     name.pop();
                 }
             }
-            if let Some(f) = self.fonts.get_mut(&1) {
-                f.draw(r, name.trim_end(), at(tx, top + 58.0), 9, 1, 2.0 * us);
+            if let Some(f) = self.fonts.get_mut(&font) {
+                f.draw(r, name.trim_end(), at(tx, top + 58.0), 9, 1, scale * us);
             }
             // life in percent, big, at the right
             let pct = if p.life <= 0 {
@@ -934,7 +944,8 @@ impl Lifebar {
                 f.draw(r, "POWER", at(sx0, top + 98.0), 8, 1, us);
             }
             let bars = (p.power_max / 1000).max(1);
-            let px0 = sx0 + 52.0;
+            let label_w = self.fonts.get(&1).map_or(40.0, |f| f.width("POWER", 1.0));
+            let px0 = sx0 + label_w + 10.0;
             for i in 0..bars {
                 let a = px0 + i as f32 * 46.0;
                 rect(r, a, top + 90.0, a + 40.0, top + 98.0, PIP_OFF);

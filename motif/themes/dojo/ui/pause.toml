@@ -81,7 +81,7 @@ ease = "back"
 [[node]]
 kind = "text"
 dock = "bottom"
-text = "ESC OR START RESUMES"
+text = "ESC RESUMES"
 anchor = "bottom"
 y = 24
 font = 1
