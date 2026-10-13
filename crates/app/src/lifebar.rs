@@ -1093,9 +1093,7 @@ impl Lifebar {
             }
         }
         // the clock: a small black box with a red shadow, top centre
-        let clock = w.round.clock();
-        if clock >= 0 {
-            let line = format!("{clock:02}");
+        if let Some(line) = arena_clock(w.round.time_left) {
             let tw = self.fonts.get(&2).map_or(40.0, |f| f.width(&line, 2.0));
             let (bw, bh) = (tw + 36.0, 46.0);
             let (bx, by) = (640.0 - bw / 2.0, 20.0);
@@ -1365,9 +1363,30 @@ impl Lifebar {
     }
 }
 
+/// The arena clock: real minutes and seconds left (`1:39`), counted up to
+/// the next whole second like MUGEN's clock; `None` without a time limit.
+fn arena_clock(time_left: i32) -> Option<String> {
+    if time_left < 0 {
+        return None;
+    }
+    let secs = (time_left + 59) / 60;
+    Some(format!("{}:{:02}", secs / 60, secs % 60))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arena_clock_reads_minutes_and_seconds() {
+        assert_eq!(arena_clock(99 * 60).as_deref(), Some("1:39"));
+        assert_eq!(arena_clock(60 * 60).as_deref(), Some("1:00"));
+        assert_eq!(arena_clock(59 * 60 + 1).as_deref(), Some("1:00"));
+        assert_eq!(arena_clock(9 * 60).as_deref(), Some("0:09"));
+        assert_eq!(arena_clock(1).as_deref(), Some("0:01"));
+        assert_eq!(arena_clock(0).as_deref(), Some("0:00"));
+        assert_eq!(arena_clock(-1), None);
+    }
 
     #[test]
     fn ink_fight_def_uses_the_extensions() {
