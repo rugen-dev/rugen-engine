@@ -457,18 +457,30 @@ color = [1.0, 1.0, 1.0, 1.0]
   bank = 9
   font = 1
   scale = 1
-  text = "YOUR RANK"
+  text = "YOUR RATING"
 
   [[node.children]]
   kind = "text"
   x = 459
-  y = 190
-  w = 150
+  y = 188
+  w = 136
   bank = 10
   ellipsis = true
   font = 1
-  scale = 2
-  text = "{sel.rank}"
+  scale = 3
+  text = "{sel.rating}"
+
+  [[node.children]]
+  kind = "text"
+  x = 459
+  y = 222
+  w = 150
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{sel.tier}"
 
   [[node.children]]
   kind = "text"
@@ -553,7 +565,8 @@ color = [1.0, 1.0, 1.0, 1.0]
   x = 30
   y = 352
   w = 572
-  bank = 10
+  bank = 9
+  blink = 40
   ellipsis = true
   font = 1
   scale = 1
@@ -757,9 +770,9 @@ text = "LAN / DIRECT IP"
 [[node]]
 kind = "panel"
 visible = "is_lobby"
-x = 780
+x = 714
 y = 32
-w = 210
+w = 244
 h = 48
 color = [0.078, 0.071, 0.063, 1.0]
 
@@ -767,9 +780,9 @@ color = [0.078, 0.071, 0.063, 1.0]
 kind = "button"
 id = "lobby_create"
 visible = "is_lobby"
-x = 776
+x = 710
 y = 28
-w = 210
+w = 244
 h = 48
 bank = 11
 bank_focus = 11
@@ -787,9 +800,9 @@ text = "CREATE ROOM"
 kind = "button"
 id = "lobby_join"
 visible = "is_lobby"
-x = 1000
+x = 968
 y = 28
-w = 232
+w = 264
 h = 48
 bank = 9
 bank_focus = 9
@@ -845,7 +858,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 528
+  x = 512
   y = 16
   alpha = 0.72
   bank = 9
@@ -855,7 +868,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 806
+  x = 856
   y = 16
   alpha = 0.72
   bank = 9
@@ -865,7 +878,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 884
+  x = 940
   y = 16
   alpha = 0.72
   bank = 9
@@ -944,11 +957,23 @@ color = [1.0, 1.0, 1.0, 1.0]
         scale = 2
         text = "{item.name}"
 
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.live"
+        h = 20
+        align = "center"
+        bank = 11
+        color = [0.784, 0.063, 0.102, 1.0]
+        font = 1
+        pad = 6
+        scale = 1
+        text = "LIVE"
+
       [[node.children.children.children]]
       kind = "text"
       x = 330
       y = 27
-      w = 190
+      w = 170
       bank = 9
       ellipsis = true
       font = 1
@@ -957,9 +982,9 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 528
+      x = 512
       y = 27
-      w = 264
+      w = 330
       alpha = 0.72
       bank = 9
       ellipsis = true
@@ -969,7 +994,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 806
+      x = 856
       y = 21
       bank = 9
       font = 1
@@ -978,26 +1003,12 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 884
+      x = 940
       y = 21
       bank = 9
       font = 1
       scale = 2
       text = "{item.watching}"
-
-      [[node.children.children.children]]
-      kind = "text"
-      visible = "item.live"
-      x = 980
-      y = 22
-      h = 20
-      align = "center"
-      bank = 11
-      color = [0.784, 0.063, 0.102, 1.0]
-      font = 1
-      pad = 6
-      scale = 1
-      text = "LIVE"
 
       [[node.children.children.children]]
       kind = "hbox"
@@ -1243,7 +1254,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     align = "center"
     bank = 10
     font = 3
-    scale = 4
+    scale = 3
     text = "{room.cells.0.c}"
     text_dy = 2
 
@@ -1267,7 +1278,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     align = "center"
     bank = 10
     font = 3
-    scale = 4
+    scale = 3
     text = "{room.cells.1.c}"
     text_dy = 2
 
@@ -1291,7 +1302,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     align = "center"
     bank = 10
     font = 3
-    scale = 4
+    scale = 3
     text = "{room.cells.2.c}"
     text_dy = 2
 
@@ -1315,7 +1326,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     align = "center"
     bank = 10
     font = 3
-    scale = 4
+    scale = 3
     text = "{room.cells.3.c}"
     text_dy = 2
 
@@ -1339,7 +1350,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     align = "center"
     bank = 10
     font = 3
-    scale = 4
+    scale = 3
     text = "{room.cells.4.c}"
     text_dy = 2
 
@@ -1778,6 +1789,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   font = 1
   max_len = 24
   on_change = "room_name:{value}"
+  on_press = "form:go"
   pad = 16
   placeholder = "NAME YOUR ROOM"
   scale = 2
@@ -1808,6 +1820,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_rounds"
   x = 220
   y = 122
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -1843,6 +1856,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_time"
   x = 220
   y = 174
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -1878,6 +1892,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_mode"
   x = 220
   y = 226
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -1913,6 +1928,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_chars"
   x = 220
   y = 278
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -1948,6 +1964,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_join"
   x = 220
   y = 330
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -1983,6 +2000,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_spect"
   x = 220
   y = 382
+  w = 568
   h = 40
   bank = 9
   bank_focus = 11
@@ -2018,7 +2036,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   id = "cr_pass"
   x = 220
   y = 434
-  w = 330
+  w = 568
   h = 40
   bank = 9
   border = 3
@@ -2029,14 +2047,14 @@ color = [1.0, 1.0, 1.0, 1.0]
   font = 1
   max_len = 32
   on_change = "room_password:{value}"
+  on_press = "form:go"
   pad = 12
-  placeholder = "NONE"
   scale = 2
 
   [[node.children]]
   kind = "text"
-  x = 566
-  y = 448
+  x = 32
+  y = 464
   alpha = 0.72
   bank = 9
   font = 1
@@ -2231,7 +2249,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   align = "center"
   bank = 10
   font = 3
-  scale = 4
+  scale = 3
   text = "{join.cells.0.c}"
   text_dy = 2
 
@@ -2296,7 +2314,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   align = "center"
   bank = 10
   font = 3
-  scale = 4
+  scale = 3
   text = "{join.cells.1.c}"
   text_dy = 2
 
@@ -2361,7 +2379,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   align = "center"
   bank = 10
   font = 3
-  scale = 4
+  scale = 3
   text = "{join.cells.2.c}"
   text_dy = 2
 
@@ -2426,7 +2444,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   align = "center"
   bank = 10
   font = 3
-  scale = 4
+  scale = 3
   text = "{join.cells.3.c}"
   text_dy = 2
 
@@ -2491,7 +2509,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   align = "center"
   bank = 10
   font = 3
-  scale = 4
+  scale = 3
   text = "{join.cells.4.c}"
   text_dy = 2
 
@@ -2533,12 +2551,16 @@ color = [1.0, 1.0, 1.0, 1.0]
   [[node.children]]
   kind = "text"
   visible = "join.bad"
-  x = 0
-  y = 192
-  w = 720
+  anchor = "top"
+  y = 184
+  h = 28
   align = "center"
-  bank = 10
+  bank = 9
+  border = 2
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [0.984, 0.91, 0.902, 1.0]
   font = 1
+  pad = 12
   scale = 1
   text = "{join.hint}"
 
@@ -2726,7 +2748,7 @@ items = "accts"
     visible = "item.side_plain"
     anchor = "right"
     x = 18
-    bank = 10
+    bank = 9
     font = 1
     scale = 1
     text = "{item.side}"
@@ -3309,18 +3331,29 @@ color = [1.0, 1.0, 1.0, 1.0]
     wrap = true
 
     [[node.children.children]]
-    kind = "text"
+    kind = "panel"
     visible = "acct.has_error"
     x = 30
-    y = 414
+    y = 408
     w = 592
-    h = 30
-    bank = 10
-    font = 1
-    max_lines = 2
-    scale = 1
-    text = "{acct.error}"
-    wrap = true
+    h = 40
+    border = 2
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    color = [0.984, 0.91, 0.902, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 12
+      y = 0
+      w = 568
+      h = 40
+      bank = 9
+      font = 1
+      line_gap = 6
+      max_lines = 2
+      scale = 1
+      text = "{acct.error}"
+      wrap = true
 
     [[node.children.children]]
     kind = "hbox"
@@ -4019,7 +4052,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   visible = "direct.netplay"
   x = 306
   y = 452
-  w = 360
+  w = 420
   h = 60
   bank = 9
   bank_focus = 9
@@ -6305,7 +6338,7 @@ top = true
   kind = "panel"
   x = 36
   y = 258
-  w = 260
+  w = 300
   h = 56
   color = [0.078, 0.071, 0.063, 1.0]
 
@@ -6314,7 +6347,7 @@ top = true
   id = "dlg_primary"
   x = 32
   y = 254
-  w = 260
+  w = 300
   h = 56
   bank = 11
   bank_focus = 11
@@ -6332,7 +6365,7 @@ top = true
   kind = "button"
   id = "dlg_secondary"
   visible = "dialog.has_secondary"
-  x = 308
+  x = 348
   y = 254
   w = 200
   h = 56

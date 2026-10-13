@@ -1,1496 +1,4070 @@
-# rugen ONLINE screen: servers, lobby, rooms, quick match, ranked, leaderboard. 1280x720.
-# Data: is_servers/is_add/is_menu/is_lobby/is_create/is_room/is_join/is_queue/is_board/is_direct,
-# has_server, no_server, server_line, motd, lobby[] (name host rules count join watch), lobby_empty,
-# create.* (name password public rounds time mode chars spect), direct.* (title addr mine fighters),
-# status, error, me.*, room.* (code name rules ready waiting rematch role members[] (name role ping
-# kick can_kick)), typed, password, opponent.* (.. ping), queue.* (title ..), board[], season, my_rank.
-# Official / community: menu[] items carry badge has_badge official community (server list),
-# scope (OFFICIAL | COMMUNITY · NAME), ranked_official, me.scope, opponent.scope, last_result,
-# has_last_result, mx.stamp stamp_official stamp_other, mx.left/right.official_block.
-# PROFILE / accounts: title (ONLINE | PROFILE), is_profile is_account is_acct_form, accts[] (server
-# status named), acct.* (scope server title rating record hint note form_title user pass new masked
-# show_label has_user has_new pass_label rules submit error has_error).
-background = [0.03, 0.04, 0.08, 1.0]
+# rugen ONLINE screen (ink): hub (servers + the selected server), rooms lobby,
+# room, create room, join by code, PROFILE / accounts, leaderboard, queue, LAN /
+# direct IP, matchup. 1280x720. One font family: font 3 for titles, font 1 for
+# everything else (scale 1 small, 2 body, 3 big numbers); grey text is ink at
+# alpha 0.72. Errors show as a toast in the footer band (toast.*) or a centred
+# dialog that keeps the focus (dialog.*). Hotkey hints come from the engine
+# (hints.N.key / glyph / label): they only name keys no player binding uses.
+# Data: title sub hints chip has_chip lan_key has_lan_key, is_hub is_lobby
+# is_create is_room is_join is_queue is_board is_direct is_profile is_matchup
+# not_matchup, servers[] (is_server is_add name tag tag_red tag_amber tag_grey
+# sub ping on off selected action), sel.* (name tag tag_* motd has_motd online
+# rooms ping rank usable unusable reason has_reason retry versions last_result
+# has_last_result busy busy_line), lobby.* (rows[] (name tag has_tag host rules
+# seats watching live on off full open can_watch action) empty loading count),
+# room.* (has code cells[].c name tags[] host_card/chal_card (present name tag
+# you line ping has_ping high_ping) spect waiting can_rematch can_kick watching
+# copy note has_note wait_line), create.* (count rounds times modes chars joins
+# spects + *_sel, preview_name preview_host preview_rules note), join.* (cells[]
+# (c active empty filled) bad hint need_password), accts[] (name tag tag_red
+# tag_amber status side side_ok side_plain on off selected action), acct.*
+# (server on_server details form note has_note name rating devices hint enter
+# tab0/tab1 (show label action on off) has_user has_again has_new pass_label
+# user_rule rule guest has_guest masked show_label submit error has_error),
+# board.* (rows[] (pos top name verified rating record tier) empty loading me.*
+# scope), queue.* (time count found searching found_line rule), direct.* (sides
+# side mine fighters netplay), toast.* (show title body retry error), dialog.*
+# (show kicker title body primary primary_action secondary secondary_action
+# has_secondary input), mx.* (matchup, below).
+background = [0.95, 0.94, 0.89, 1.0]
 
 [[node]]
 kind = "image"
 fit = "cover"
-image = "ui/bg.webp"
+image = "ui/paper.webp"
 w = "100%"
 h = "100%"
 
 [[node]]
-kind = "text"
-dock = "top"
-text = "{title}"
+kind = "hbox"
 visible = "not_matchup"
-x = 0
-w = "100%"
-y = 42
-font = 3
-bank = 0
-scale = 2
-align = "center"
-enter = "down"
-enter_time = 16
-
-[[node]]
-kind = "text"
-dock = "top"
-text = "{server_line}"
-visible = "not_matchup"
-x = 0
-w = "100%"
-y = 112
-font = 1
-bank = 6
-scale = 2
-align = "center"
-
-# player card (with a server)
-[[node]]
-kind = "panel"
-dock = "right"
-visible = "has_server"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-anchor = "tr"
-x = 40
-y = 150
-w = 400
-h = 196
-enter = "right"
-enter_time = 18
+x = 48
+y = 24
+w = 860
+h = 52
+align = "end"
+gap = 16
 
   [[node.children]]
   kind = "text"
-  text = "{me.scope}"
-  x = 18
-  y = 154
-  w = 370
-  font = 2
-  bank = 4
+  bank = 9
+  font = 3
+  scale = 2
+  text = "{title}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "text"
+  alpha = 0.72
+  bank = 9
+  font = 1
   scale = 1
+  text = "{sub}"
+  text_dy = -6
 
-  [[node.children]]
-  kind = "text"
-  text = "{me.name}"
-  x = 18
-  y = 12
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{me.rank}   {me.rating}"
-  x = 18
-  y = 46
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "BEST {me.best}   {me.wins}W {me.losses}L"
-  x = 18
-  y = 94
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "FIGHTER: {me.char}"
-  x = 18
-  y = 124
-  font = 1
-  bank = 7
-  scale = 2
-
-# last online result with its signature stamp (OFFICIAL / COMMUNITY key)
+# account chip: username · rank on the selected server
 [[node]]
 kind = "text"
-dock = "right"
-visible = "has_last_result"
-text = "{last_result}"
+visible = "has_chip"
 anchor = "tr"
-x = 40
-y = 362
-w = 400
-font = 2
-bank = 7
+x = 48
+y = 30
+h = 38
+align = "center"
+bank = 9
+border = 3
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+font = 1
+pad = 14
 scale = 1
-wrap = true
-line_gap = 4
+text = "{chip}"
 
-# ---- menu: one slanted button per entry of `menu`
+# ---- HUB: servers (left) and the selected one (right)
 [[node]]
-kind = "vbox"
-dock = "left"
-visible = "is_menu"
-x = 60
-y = 176
-w = 400
+kind = "list"
+id = "srv_list"
+visible = "is_hub"
+x = 48
+y = 98
+w = 532
+h = 542
 gap = 12
-items = "menu"
-enter = "left"
-enter_time = 18
+items = "servers"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "item.selected"
+  x = 6
+  y = 6
+  w = 520
+  h = 68
+  color = [0.078, 0.071, 0.063, 1.0]
 
   [[node.children]]
   kind = "button"
-  id = "{item.id}"
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{item.label}"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  align = "left"
-  pad = 26
-  hover_scale = 1.03
+  id = "row"
+  visible = "item.on"
+  selected = "item.selected"
+  w = 520
+  h = 68
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [1.0, 1.0, 1.0, 1.0]
   on_press = "{item.action}"
 
-  # server list: OFFICIAL (pinned) / COMMUNITY badge in the slab's corner
-  [[node.children]]
-  kind = "panel"
-  visible = "item.official"
-  color = [0.82, 0.12, 0.16, 1.0]
-  border = 2
-  border_color = [0.07, 0.07, 0.07, 1.0]
-  x = 246
-  y = -9
-  w = 136
-  h = 20
-  angle = -3
-
-  [[node.children]]
-  kind = "text"
-  visible = "item.official"
-  text = "{item.badge}"
-  x = 246
-  y = -6
-  w = 136
-  font = 2
-  bank = 0
-  scale = 1
-  align = "center"
-
-  [[node.children]]
-  kind = "panel"
-  visible = "item.community"
-  color = [0.12, 0.14, 0.2, 1.0]
-  border = 2
-  border_color = [0.07, 0.07, 0.07, 1.0]
-  x = 246
-  y = -9
-  w = 136
-  h = 20
-  angle = -3
-
-  [[node.children]]
-  kind = "text"
-  visible = "item.community"
-  text = "{item.badge}"
-  x = 246
-  y = -6
-  w = 136
-  font = 2
-  bank = 7
-  scale = 1
-  align = "center"
-
-# ---- room
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_room"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 190
-w = 720
-h = 300
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "ROOM CODE"
-  x = 30
-  y = 24
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{room.code}"
-  x = 30
-  y = 54
-  font = 2
-  bank = 4
-  scale = 5
-
-  [[node.children]]
-  kind = "text"
-  text = "GIVE THIS CODE TO YOUR OPPONENT"
-  visible = "room.waiting"
-  x = 30
-  y = 160
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.ping}"
-  visible = "room.rematch"
-  x = 30
-  y = 160
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{room.name}   {room.rules}"
-  x = 260
-  y = 24
-  font = 1
-  bank = 8
-  scale = 2
-
-  [[node.children]]
-  kind = "list"
-  x = 360
-  y = 54
-  w = 340
-  h = 150
-  gap = 4
-  items = "room.members"
-
     [[node.children.children]]
-    kind = "panel"
-    h = 34
-    image = "ui/row.webp"
-    nine = [4, 4, 4, 4]
+    kind = "hbox"
+    x = 16
+    y = 12
+    h = 22
+    align = "center"
+    gap = 10
 
       [[node.children.children.children]]
       kind = "text"
-      text = "{item.name} {item.role} {item.ping}"
-      x = 8
-      y = 8
-      font = 1
       bank = 9
-      scale = 1
+      font = 1
+      scale = 2
+      text = "{item.name}"
 
       [[node.children.children.children]]
-      kind = "button"
-      id = "room_kick"
-      visible = "item.can_kick"
-      anchor = "tr"
-      x = 4
-      y = 3
-      w = 70
-      h = 28
-      image = "ui/button.webp"
-      image_focus = "ui/button_lit.webp"
-      text = "KICK"
-      font = 1
+      kind = "text"
+      visible = "item.tag_red"
+      h = 20
+      align = "center"
       bank = 11
-      bank_focus = 11
+      color = [0.784, 0.063, 0.102, 1.0]
+      font = 1
+      pad = 6
       scale = 1
-      on_press = "{item.kick}"
+      text = "{item.tag}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.tag_amber"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.706, 0.325, 0.035, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.tag}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 16
+    y = 44
+    w = 380
+    alpha = 0.72
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 1
+    text = "{item.sub}"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "right"
+    x = 18
+    bank = 9
+    font = 1
+    scale = 2
+    text = "{item.ping}"
+
+  [[node.children]]
+  kind = "button"
+  id = "row"
+  visible = "item.off"
+  selected = "item.selected"
+  w = 520
+  h = 68
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  color_focus = [0.922, 0.902, 0.859, 1.0]
+  on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 16
+    y = 12
+    h = 22
+    align = "center"
+    gap = 10
+
+      [[node.children.children.children]]
+      kind = "text"
+      alpha = 0.6
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.name}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.tag_grey"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.353, 0.333, 0.298, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.tag}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.tag_amber"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.706, 0.325, 0.035, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.tag}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 16
+    y = 44
+    w = 400
+    alpha = 0.6
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 1
+    text = "{item.sub}"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "right"
+    x = 18
+    alpha = 0.6
+    bank = 9
+    font = 1
+    scale = 2
+    text = "{item.ping}"
+
+  [[node.children]]
+  kind = "button"
+  id = "add"
+  visible = "item.is_add"
+  w = 520
+  h = 56
+  align = "left"
+  bank = 9
+  bank_focus = 9
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.0, 0.0, 0.0, 0.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "{item.action}"
+  pad = 16
+  scale = 2
+  text = "+ ADD SERVER"
+
+[[node]]
+kind = "panel"
+visible = "is_hub"
+x = 610
+y = 108
+w = 632
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_hub"
+x = 600
+y = 98
+w = 632
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 26
+  w = 440
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.name}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.tag_green"
+  anchor = "tr"
+  x = 30
+  y = 30
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.122, 0.435, 0.227, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{sel.tag}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.tag_red"
+  anchor = "tr"
+  x = 30
+  y = 30
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.784, 0.063, 0.102, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{sel.tag}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.tag_amber"
+  anchor = "tr"
+  x = 30
+  y = 30
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.706, 0.325, 0.035, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{sel.tag}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.tag_grey"
+  anchor = "tr"
+  x = 30
+  y = 30
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.353, 0.333, 0.298, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{sel.tag}"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "sel.has_motd"
+  x = 30
+  y = 76
+  w = 572
+  h = 76
+  color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 14
+    y = 0
+    w = 544
+    h = 76
+    alpha = 0.8
+    bank = 9
+    font = 1
+    line_gap = 8
+    max_lines = 3
+    scale = 1
+    text = "{sel.motd}"
+    wrap = true
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 172
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ONLINE"
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 188
+  w = 136
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.online}"
+
+  [[node.children]]
+  kind = "text"
+  x = 173
+  y = 172
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ROOMS"
+
+  [[node.children]]
+  kind = "text"
+  x = 173
+  y = 188
+  w = 136
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.rooms}"
+
+  [[node.children]]
+  kind = "text"
+  x = 316
+  y = 172
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "PING"
+
+  [[node.children]]
+  kind = "text"
+  x = 316
+  y = 188
+  w = 136
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.ping}"
+
+  [[node.children]]
+  kind = "text"
+  x = 459
+  y = 172
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "YOUR RATING"
+
+  [[node.children]]
+  kind = "text"
+  x = 459
+  y = 188
+  w = 136
+  bank = 10
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.rating}"
+
+  [[node.children]]
+  kind = "text"
+  x = 459
+  y = 222
+  w = 150
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{sel.tier}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.has_last_result"
+  x = 30
+  y = 240
+  w = 572
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{sel.last_result}"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "sel.has_reason"
+  x = 30
+  y = 268
+  w = 572
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 16
+    y = 12
+    w = 400
+    h = 72
+    bank = 9
+    font = 1
+    line_gap = 8
+    max_lines = 4
+    scale = 1
+    text = "{sel.reason}"
+    wrap = true
+
+    [[node.children.children]]
+    kind = "button"
+    id = "hub_retry"
+    visible = "sel.retry"
+    anchor = "right"
+    x = 16
+    w = 120
+    h = 44
+    bank = 11
+    bank_focus = 11
+    border = 4
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    border_color_focus = [0.078, 0.071, 0.063, 1.0]
+    color = [0.784, 0.063, 0.102, 1.0]
+    color_focus = [0.56, 0.043, 0.07, 1.0]
+    font = 1
+    on_press = "retry:servers"
+    scale = 2
+    text = "RETRY"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "hub_why"
+    visible = "sel.versions"
+    anchor = "right"
+    x = 16
+    w = 120
+    h = 44
+    bank = 9
+    bank_focus = 9
+    border = 4
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 1.0, 1.0, 1.0]
+    color_focus = [0.984, 0.91, 0.902, 1.0]
+    font = 1
+    on_press = "server:{index}"
+    scale = 2
+    text = "WHY?"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.busy"
+  x = 30
+  y = 352
+  w = 572
+  bank = 9
+  blink = 40
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{sel.busy_line}"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "sel.usable"
+  x = 35
+  y = 381
+  w = 279
+  h = 64
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "button"
+  id = "hub_quick"
+  visible = "sel.usable"
+  x = 30
+  y = 376
+  w = 279
+  h = 64
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  border_color_focus = [0.078, 0.071, 0.063, 1.0]
+  color = [0.784, 0.063, 0.102, 1.0]
+  color_focus = [0.56, 0.043, 0.07, 1.0]
+  font = 1
+  on_press = "hub:quick"
+  scale = 2
+  text = "QUICK MATCH"
+
+  [[node.children]]
+  kind = "button"
+  id = "hub_ranked"
+  visible = "sel.usable"
+  x = 323
+  y = 376
+  w = 279
+  h = 64
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.078, 0.071, 0.063, 1.0]
+  color_focus = [0.078, 0.071, 0.063, 1.0]
+  font = 1
+  on_press = "hub:ranked"
+  scale = 2
+  text = "RANKED"
+
+  [[node.children]]
+  kind = "button"
+  id = "hub_rooms"
+  visible = "sel.usable"
+  x = 30
+  y = 454
+  w = 279
+  h = 56
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "hub:lobby"
+  scale = 2
+  text = "ROOMS"
+
+  [[node.children]]
+  kind = "button"
+  id = "hub_board"
+  visible = "sel.usable"
+  x = 323
+  y = 454
+  w = 279
+  h = 56
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "hub:board"
+  scale = 2
+  text = "LEADERBOARD"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.unusable"
+  x = 30
+  y = 376
+  w = 279
+  h = 64
+  align = "center"
+  alpha = 0.55
+  bank = 9
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  font = 1
+  scale = 2
+  text = "QUICK MATCH"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.unusable"
+  x = 323
+  y = 376
+  w = 279
+  h = 64
+  align = "center"
+  alpha = 0.55
+  bank = 9
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  font = 1
+  scale = 2
+  text = "RANKED"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.unusable"
+  x = 30
+  y = 454
+  w = 279
+  h = 56
+  align = "center"
+  alpha = 0.55
+  bank = 9
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  font = 1
+  scale = 2
+  text = "ROOMS"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.unusable"
+  x = 323
+  y = 454
+  w = 279
+  h = 56
+  align = "center"
+  alpha = 0.55
+  bank = 9
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  font = 1
+  scale = 2
+  text = "LEADERBOARD"
+
+[[node]]
+kind = "button"
+id = "lan_btn"
+visible = "is_hub"
+x = 48
+y = 670
+w = 236
+h = 30
+align = "left"
+bank = 9
+bank_focus = 9
+border = 3
+border_color = [0.078, 0.071, 0.063, 1.0]
+border_color_focus = [0.784, 0.063, 0.102, 1.0]
+color = [0.0, 0.0, 0.0, 0.0]
+color_focus = [0.984, 0.91, 0.902, 1.0]
+font = 1
+on_press = "online:lan"
+pad = 10
+scale = 1
+text = "LAN / DIRECT IP"
+
+  [[node.children]]
+  kind = "keycap"
+  visible = "has_lan_key"
+  anchor = "right"
+  x = 4
+  h = 20
+  bank = 11
+  border = 0
+  color = [0.078, 0.071, 0.063, 1.0]
+  depth = 0
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{lan_key}"
+  text_color = [0.949, 0.933, 0.894, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_lobby"
+x = 714
+y = 32
+w = 244
+h = 48
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "button"
+id = "lobby_create"
+visible = "is_lobby"
+x = 710
+y = 28
+w = 244
+h = 48
+bank = 11
+bank_focus = 11
+border = 4
+border_color = [0.784, 0.063, 0.102, 1.0]
+border_color_focus = [0.078, 0.071, 0.063, 1.0]
+color = [0.784, 0.063, 0.102, 1.0]
+color_focus = [0.56, 0.043, 0.07, 1.0]
+font = 1
+on_press = "online:create"
+scale = 2
+text = "CREATE ROOM"
+
+[[node]]
+kind = "button"
+id = "lobby_join"
+visible = "is_lobby"
+x = 968
+y = 28
+w = 264
+h = 48
+bank = 9
+bank_focus = 9
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+border_color_focus = [0.784, 0.063, 0.102, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+color_focus = [0.984, 0.91, 0.902, 1.0]
+font = 1
+on_press = "online:join"
+scale = 2
+text = "JOIN BY CODE"
+
+[[node]]
+kind = "panel"
+visible = "is_lobby"
+x = 58
+y = 108
+w = 1184
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_lobby"
+x = 48
+y = 98
+w = 1184
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 22
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ROOM"
+
+  [[node.children]]
+  kind = "text"
+  x = 330
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "HOST"
+
+  [[node.children]]
+  kind = "text"
+  x = 512
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "RULES"
+
+  [[node.children]]
+  kind = "text"
+  x = 856
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "SEATS"
+
+  [[node.children]]
+  kind = "text"
+  x = 940
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "WATCHING"
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 38
+  w = 1176
+  h = 3
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "list"
+  id = "lobby_list"
+  x = 4
+  y = 41
+  w = 1176
+  h = 448
+  items = "lobby.rows"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "row"
+    w = 1176
+    h = 64
+    color = [0.0, 0.0, 0.0, 0.0]
+    color_focus = [0.984, 0.91, 0.902, 1.0]
+    on_press = "{item.action}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 0
+      y = 0
+      w = 1176
+      h = 2
+      color = [0.886, 0.863, 0.812, 1.0]
+
+      [[node.children.children.children]]
+      kind = "panel"
+      when = "focus"
+      x = 0
+      y = 0
+      w = 8
+      h = 64
+      color = [0.784, 0.063, 0.102, 1.0]
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      x = 22
+      y = 21
+      w = 300
+      h = 22
+      align = "center"
+      gap = 8
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.has_tag"
+        h = 20
+        align = "center"
+        bank = 11
+        color = [0.353, 0.333, 0.298, 1.0]
+        font = 1
+        pad = 6
+        scale = 1
+        text = "{item.tag}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        bank = 9
+        font = 1
+        scale = 2
+        text = "{item.name}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.live"
+        h = 20
+        align = "center"
+        bank = 11
+        color = [0.784, 0.063, 0.102, 1.0]
+        font = 1
+        pad = 6
+        scale = 1
+        text = "LIVE"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 330
+      y = 27
+      w = 170
+      bank = 9
+      ellipsis = true
+      font = 1
+      scale = 1
+      text = "{item.host}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 512
+      y = 27
+      w = 330
+      alpha = 0.72
+      bank = 9
+      ellipsis = true
+      font = 1
+      scale = 1
+      text = "{item.rules}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 856
+      y = 21
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.seats}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 940
+      y = 21
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.watching}"
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      visible = "item.on"
+      when = "focus"
+      anchor = "right"
+      x = 16
+      y = 0
+      w = 176
+      h = 64
+      align = "center"
+      gap = 8
+      justify = "end"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.open"
+        h = 32
+        align = "center"
+        bank = 11
+        color = [0.784, 0.063, 0.102, 1.0]
+        font = 1
+        pad = 10
+        scale = 1
+        text = "ENTER JOIN"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.full"
+        alpha = 0.72
+        bank = 9
+        font = 1
+        scale = 1
+        text = "FULL · WATCH ONLY"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      visible = "item.off"
+      x = 0
+      y = 2
+      w = 1176
+      h = 62
+      color = [0.949, 0.933, 0.894, 0.55]
+
+  [[node.children]]
+  kind = "text"
+  visible = "lobby.empty"
+  x = 0
+  y = 190
+  w = 1176
+  align = "center"
+  bank = 9
+  font = 1
+  scale = 2
+  text = "NO PUBLIC ROOMS YET"
+
+  [[node.children]]
+  kind = "text"
+  visible = "lobby.empty"
+  x = 0
+  y = 226
+  w = 1176
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "CREATE ONE, OR JOIN A FRIEND'S ROOM BY CODE."
+
+  [[node.children]]
+  kind = "text"
+  visible = "lobby.loading"
+  x = 0
+  y = 200
+  w = 1176
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 2
+  text = "LOADING ROOMS..."
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 490
+  w = 1176
+  h = 3
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 22
+  y = 510
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{lobby.count}"
+
+  [[node.children]]
+  kind = "text"
+  anchor = "tr"
+  x = 22
+  y = 510
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "PRIVATE ROOMS NEED A CODE"
+
+[[node]]
+kind = "hbox"
+visible = "is_room"
+anchor = "tr"
+x = 48
+y = 36
+w = 640
+h = 26
+gap = 8
+justify = "end"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.tags.0"
+  h = 26
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  font = 1
+  pad = 8
+  scale = 1
+  text = "{room.tags.0}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.tags.1"
+  h = 26
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  font = 1
+  pad = 8
+  scale = 1
+  text = "{room.tags.1}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.tags.2"
+  h = 26
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  font = 1
+  pad = 8
+  scale = 1
+  text = "{room.tags.2}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.tags.3"
+  h = 26
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  font = 1
+  pad = 8
+  scale = 1
+  text = "{room.tags.3}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.tags.4"
+  h = 26
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  font = 1
+  pad = 8
+  scale = 1
+  text = "{room.tags.4}"
+
+[[node]]
+kind = "panel"
+visible = "is_room"
+x = 58
+y = 108
+w = 560
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_room"
+x = 48
+y = 98
+w = 560
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.has"
+  x = 0
+  y = 104
+  w = 560
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ROOM CODE"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "room.has"
+  x = 61
+  y = 150
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 0
+    w = 78
+    h = 96
+    align = "center"
+    bank = 10
+    font = 3
+    scale = 3
+    text = "{room.cells.0.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "room.has"
+  x = 151
+  y = 150
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 0
+    w = 78
+    h = 96
+    align = "center"
+    bank = 10
+    font = 3
+    scale = 3
+    text = "{room.cells.1.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "room.has"
+  x = 241
+  y = 150
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 0
+    w = 78
+    h = 96
+    align = "center"
+    bank = 10
+    font = 3
+    scale = 3
+    text = "{room.cells.2.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "room.has"
+  x = 331
+  y = 150
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 0
+    w = 78
+    h = 96
+    align = "center"
+    bank = 10
+    font = 3
+    scale = 3
+    text = "{room.cells.3.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "room.has"
+  x = 421
+  y = 150
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 0
+    w = 78
+    h = 96
+    align = "center"
+    bank = 10
+    font = 3
+    scale = 3
+    text = "{room.cells.4.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.has"
+  x = 0
+  y = 284
+  w = 560
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "SEND THIS CODE TO YOUR FRIEND:"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.has"
+  x = 0
+  y = 304
+  w = 560
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ONLINE · ROOMS · JOIN BY CODE"
+
+  [[node.children]]
+  kind = "button"
+  id = "room_copy"
+  visible = "room.copy"
+  x = 170
+  y = 350
+  w = 220
+  h = 48
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "room:copy"
+  scale = 2
+  text = "COPY CODE"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!room.has"
+  x = 0
+  y = 250
+  w = 560
+  align = "center"
+  bank = 9
+  font = 1
+  scale = 2
+  text = "{room.wait_line}"
+
+[[node]]
+kind = "panel"
+visible = "room.host_card.present"
+x = 640
+y = 98
+w = 592
+h = 120
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "image"
+  x = 20
+  y = 26
+  w = 64
+  h = 64
+  fit = "contain"
+  image = "ui/avatar.webp"
+  outline = [0.078, 0.071, 0.063, 1.0]
+  outline_w = 3
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.host_card.you"
+  x = 104
+  y = 20
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.784, 0.063, 0.102, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{room.host_card.tag}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!room.host_card.you"
+  x = 104
+  y = 24
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{room.host_card.tag}"
+
+  [[node.children]]
+  kind = "text"
+  x = 104
+  y = 50
+  w = 330
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 2
+  text = "{room.host_card.name}"
+
+  [[node.children]]
+  kind = "text"
+  x = 104
+  y = 84
+  w = 330
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{room.host_card.line}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.host_card.has_ping"
+  anchor = "tr"
+  x = 22
+  y = 36
+  bank = 9
+  font = 1
+  scale = 2
+  text = "{room.host_card.ping}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.host_card.high_ping"
+  anchor = "tr"
+  x = 22
+  y = 66
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.706, 0.325, 0.035, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "HIGH PING"
+
+[[node]]
+kind = "panel"
+visible = "room.chal_card.present"
+x = 640
+y = 232
+w = 592
+h = 120
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "image"
+  x = 20
+  y = 26
+  w = 64
+  h = 64
+  fit = "contain"
+  image = "ui/avatar.webp"
+  outline = [0.078, 0.071, 0.063, 1.0]
+  outline_w = 3
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.chal_card.you"
+  x = 104
+  y = 20
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.784, 0.063, 0.102, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "{room.chal_card.tag}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!room.chal_card.you"
+  x = 104
+  y = 24
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{room.chal_card.tag}"
+
+  [[node.children]]
+  kind = "text"
+  x = 104
+  y = 50
+  w = 330
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 2
+  text = "{room.chal_card.name}"
+
+  [[node.children]]
+  kind = "text"
+  x = 104
+  y = 84
+  w = 330
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{room.chal_card.line}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.chal_card.has_ping"
+  anchor = "tr"
+  x = 22
+  y = 36
+  bank = 9
+  font = 1
+  scale = 2
+  text = "{room.chal_card.ping}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "room.chal_card.high_ping"
+  anchor = "tr"
+  x = 22
+  y = 66
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.706, 0.325, 0.035, 1.0]
+  font = 1
+  pad = 6
+  scale = 1
+  text = "HIGH PING"
+
+[[node]]
+kind = "panel"
+visible = "room.waiting"
+x = 640
+y = 232
+w = 592
+h = 120
+border = 3
+border_color = [0.541, 0.514, 0.471, 1.0]
+color = [0.0, 0.0, 0.0, 0.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 0
+  w = 592
+  h = 120
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  blink = 60
+  font = 1
+  scale = 2
+  text = "WAITING FOR A CHALLENGER..."
+
+[[node]]
+kind = "panel"
+visible = "room.has"
+x = 640
+y = 368
+w = 592
+h = 48
+border = 3
+border_color = [0.541, 0.514, 0.471, 1.0]
+color = [0.0, 0.0, 0.0, 0.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 20
+  y = 0
+  h = 48
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "SPECTATORS"
+
+  [[node.children]]
+  kind = "text"
+  anchor = "right"
+  x = 20
+  w = 420
+  h = 48
+  align = "right"
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{room.spect}"
+
+[[node]]
+kind = "text"
+visible = "room.has_note"
+x = 640
+y = 436
+w = 592
+h = 60
+alpha = 0.72
+bank = 9
+font = 1
+max_lines = 3
+scale = 1
+text = "{room.note}"
+wrap = true
+
+[[node]]
+kind = "hbox"
+visible = "is_room"
+x = 640
+y = 578
+w = 597
+h = 62
+gap = 14
+justify = "end"
 
   [[node.children]]
   kind = "button"
   id = "room_rematch"
-  visible = "room.rematch"
-  anchor = "br"
-  x = 30
-  y = 24
-  w = 260
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "REMATCH"
-  font = 2
+  visible = "room.can_rematch"
+  h = 60
   bank = 11
   bank_focus = 11
-  scale = 2
-  pad = 26
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  border_color_focus = [0.078, 0.071, 0.063, 1.0]
+  color = [0.784, 0.063, 0.102, 1.0]
+  color_focus = [0.56, 0.043, 0.07, 1.0]
+  font = 1
+  grow = true
   on_press = "room:rematch"
+  scale = 2
+  text = "REMATCH"
 
   [[node.children]]
   kind = "button"
-  id = "room_cancel"
-  anchor = "bl"
-  x = 30
-  y = 24
-  w = 260
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "CANCEL"
-  font = 2
-  bank = 7
-  bank_focus = 4
+  id = "room_kick"
+  visible = "room.can_kick"
+  w = 140
+  h = 60
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "room:kick"
   scale = 2
-  align = "left"
-  pad = 26
-  on_press = "online:cancel"
+  text = "KICK"
 
-# ---- join (typing)
+  [[node.children]]
+  kind = "button"
+  id = "room_leave"
+  w = 140
+  h = 60
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.078, 0.071, 0.063, 1.0]
+  color_focus = [0.078, 0.071, 0.063, 1.0]
+  font = 1
+  on_press = "back"
+  scale = 2
+  text = "LEAVE"
+
 [[node]]
 kind = "panel"
-dock = "left"
-visible = "is_join"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 190
-w = 720
-h = 300
+visible = "is_create"
+x = 58
+y = 108
+w = 820
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_create"
+x = 48
+y = 98
+w = 820
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "TYPE THE ROOM CODE AND PRESS ENTER"
-  x = 30
+  x = 32
   y = 24
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 6
+  scale = 1
+  text = "ROOM NAME"
+
+  [[node.children]]
+  kind = "input"
+  id = "room_name"
+  x = 32
+  y = 42
+  w = 756
+  h = 56
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  caret = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 0.992, 0.973, 1.0]
+  font = 1
+  max_len = 24
+  on_change = "room_name:{value}"
+  on_press = "form:go"
+  pad = 16
+  placeholder = "NAME YOUR ROOM"
   scale = 2
+  value = "create.name"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "right"
+    x = 16
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{create.count}"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 136
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ROUNDS"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_rounds"
+  x = 220
+  y = 122
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:rounds:-"
+  on_press = "form:go"
+  on_right = "form:rounds:+"
+  options = "create.rounds"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.rounds_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 188
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "TIME"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_time"
+  x = 220
+  y = 174
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:time:-"
+  on_press = "form:go"
+  on_right = "form:time:+"
+  options = "create.times"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.times_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 240
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "MODE"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_mode"
+  x = 220
+  y = 226
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:mode:-"
+  on_press = "form:go"
+  on_right = "form:mode:+"
+  options = "create.modes"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.modes_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 292
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "FIGHTERS"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_chars"
+  x = 220
+  y = 278
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:chars:-"
+  on_press = "form:go"
+  on_right = "form:chars:+"
+  options = "create.chars"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.chars_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 344
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "WHO CAN JOIN"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_join"
+  x = 220
+  y = 330
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:public:-"
+  on_press = "form:go"
+  on_right = "form:public:+"
+  options = "create.joins"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.joins_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 396
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "SPECTATORS"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_spect"
+  x = 220
+  y = 382
+  w = 568
+  h = 40
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "form:spect:-"
+  on_press = "form:go"
+  on_right = "form:spect:+"
+  options = "create.spects"
+  pad = 14
+  scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "create.spects_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 448
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "PASSWORD"
+
+  [[node.children]]
+  kind = "input"
+  id = "cr_pass"
+  x = 220
+  y = 434
+  w = 568
+  h = 40
+  bank = 9
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  caret = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 0.992, 0.973, 1.0]
+  font = 1
+  max_len = 32
+  on_change = "room_password:{value}"
+  on_press = "form:go"
+  pad = 12
+  scale = 2
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 464
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "OPTIONAL"
+
+[[node]]
+kind = "text"
+visible = "is_create"
+x = 900
+y = 100
+alpha = 0.72
+bank = 9
+font = 1
+scale = 1
+text = "HOW OTHERS SEE IT"
+
+[[node]]
+kind = "panel"
+visible = "is_create"
+x = 900
+y = 122
+w = 332
+h = 132
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 18
+  y = 18
+  w = 296
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 2
+  text = "{create.preview_name}"
+
+  [[node.children]]
+  kind = "text"
+  x = 18
+  y = 54
+  w = 296
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{create.preview_host}"
+
+  [[node.children]]
+  kind = "text"
+  x = 18
+  y = 76
+  w = 296
+  h = 40
+  alpha = 0.72
+  bank = 9
+  font = 1
+  line_gap = 6
+  max_lines = 2
+  scale = 1
+  text = "{create.preview_rules}"
+  wrap = true
+
+[[node]]
+kind = "text"
+visible = "is_create"
+x = 900
+y = 276
+w = 332
+h = 160
+alpha = 0.72
+bank = 9
+font = 1
+line_gap = 8
+max_lines = 8
+scale = 1
+text = "{create.note}"
+wrap = true
+
+[[node]]
+kind = "panel"
+visible = "is_create"
+x = 905
+y = 581
+w = 332
+h = 64
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "button"
+id = "cr_go"
+visible = "is_create"
+x = 900
+y = 576
+w = 332
+h = 64
+bank = 11
+bank_focus = 11
+border = 4
+border_color = [0.784, 0.063, 0.102, 1.0]
+border_color_focus = [0.078, 0.071, 0.063, 1.0]
+color = [0.784, 0.063, 0.102, 1.0]
+color_focus = [0.56, 0.043, 0.07, 1.0]
+font = 1
+on_press = "form:go"
+scale = 3
+text = "CREATE"
+
+[[node]]
+kind = "panel"
+visible = "is_join"
+x = 290
+y = 150
+w = 720
+h = 440
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_join"
+x = 280
+y = 140
+w = 720
+h = 440
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 36
+  w = 720
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "TYPE THE 5-CHARACTER CODE"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.0.active"
+  x = 141
+  y = 74
+  w = 78
+  h = 96
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.0.active"
+  x = 137
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.0.filled"
+  x = 137
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.0.empty"
+  x = 137
+  y = 70
+  w = 78
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 137
+  y = 70
+  w = 78
+  h = 96
+  align = "center"
+  bank = 10
+  font = 3
+  scale = 3
+  text = "{join.cells.0.c}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.0.active"
+  x = 161
+  y = 150
+  w = 30
+  h = 4
+  blink = 40
+  color = [0.784, 0.063, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.1.active"
+  x = 233
+  y = 74
+  w = 78
+  h = 96
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.1.active"
+  x = 229
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.1.filled"
+  x = 229
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.1.empty"
+  x = 229
+  y = 70
+  w = 78
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 229
+  y = 70
+  w = 78
+  h = 96
+  align = "center"
+  bank = 10
+  font = 3
+  scale = 3
+  text = "{join.cells.1.c}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.1.active"
+  x = 253
+  y = 150
+  w = 30
+  h = 4
+  blink = 40
+  color = [0.784, 0.063, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.2.active"
+  x = 325
+  y = 74
+  w = 78
+  h = 96
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.2.active"
+  x = 321
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.2.filled"
+  x = 321
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.2.empty"
+  x = 321
+  y = 70
+  w = 78
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 321
+  y = 70
+  w = 78
+  h = 96
+  align = "center"
+  bank = 10
+  font = 3
+  scale = 3
+  text = "{join.cells.2.c}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.2.active"
+  x = 345
+  y = 150
+  w = 30
+  h = 4
+  blink = 40
+  color = [0.784, 0.063, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.3.active"
+  x = 417
+  y = 74
+  w = 78
+  h = 96
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.3.active"
+  x = 413
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.3.filled"
+  x = 413
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.3.empty"
+  x = 413
+  y = 70
+  w = 78
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 413
+  y = 70
+  w = 78
+  h = 96
+  align = "center"
+  bank = 10
+  font = 3
+  scale = 3
+  text = "{join.cells.3.c}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.3.active"
+  x = 437
+  y = 150
+  w = 30
+  h = 4
+  blink = 40
+  color = [0.784, 0.063, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.4.active"
+  x = 509
+  y = 74
+  w = 78
+  h = 96
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.4.active"
+  x = 505
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.4.filled"
+  x = 505
+  y = 70
+  w = 78
+  h = 96
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.4.empty"
+  x = 505
+  y = 70
+  w = 78
+  h = 96
+  border = 3
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  color = [0.949, 0.933, 0.894, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 505
+  y = 70
+  w = 78
+  h = 96
+  align = "center"
+  bank = 10
+  font = 3
+  scale = 3
+  text = "{join.cells.4.c}"
+  text_dy = 2
+
+  [[node.children]]
+  kind = "panel"
+  visible = "join.cells.4.active"
+  x = 529
+  y = 150
+  w = 30
+  h = 4
+  blink = 40
+  color = [0.784, 0.063, 0.102, 1.0]
 
   [[node.children]]
   kind = "input"
   id = "code"
-  x = 30
-  y = 60
-  w = 400
-  h = 80
-  font = 2
-  bank = 7
-  scale = 5
-  max_len = 5
-  placeholder = "_____"
-  value = "typed"
+  x = 137
+  y = 70
+  w = 446
+  h = 96
+  alpha = 0.0
+  max_len = 16
   on_change = "typed:{value}"
-  on_press = "join"
+  on_press = "join:join"
 
   [[node.children]]
   kind = "text"
-  text = "PASSWORD (IF THE ROOM HAS ONE)"
-  x = 30
-  y = 156
+  visible = "!join.bad"
+  x = 0
+  y = 192
+  w = 720
+  align = "center"
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 8
-  scale = 2
+  scale = 1
+  text = "{join.hint}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "join.bad"
+  anchor = "top"
+  y = 184
+  h = 28
+  align = "center"
+  bank = 9
+  border = 2
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  color = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  pad = 12
+  scale = 1
+  text = "{join.hint}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "join.need_password"
+  x = 137
+  y = 226
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "ROOM PASSWORD"
 
   [[node.children]]
   kind = "input"
   id = "password"
-  x = 30
-  y = 182
-  w = 400
-  h = 48
-  font = 2
+  visible = "join.need_password"
+  x = 137
+  y = 244
+  w = 446
+  h = 44
   bank = 9
-  scale = 2
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  caret = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 0.992, 0.973, 1.0]
+  font = 1
+  mask = "join.need_password"
   max_len = 32
-  value = "password"
   on_change = "pw:{value}"
-  on_press = "join"
+  on_press = "join:join"
+  pad = 12
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  x = 128
+  y = 335
+  w = 260
+  h = 60
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "button"
+  id = "join_go"
+  x = 123
+  y = 330
+  w = 260
+  h = 60
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  border_color_focus = [0.078, 0.071, 0.063, 1.0]
+  color = [0.784, 0.063, 0.102, 1.0]
+  color_focus = [0.56, 0.043, 0.07, 1.0]
+  font = 1
+  on_press = "join:join"
+  scale = 3
+  text = "JOIN"
+
+  [[node.children]]
+  kind = "button"
+  id = "join_watch"
+  x = 397
+  y = 330
+  w = 200
+  h = 60
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "join:watch"
+  scale = 2
+  text = "WATCH"
+
+# ---- PROFILE: one card per server (left), its account (right)
+[[node]]
+kind = "list"
+id = "acct_list"
+visible = "is_profile"
+x = 48
+y = 98
+w = 506
+h = 542
+gap = 12
+items = "accts"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "item.selected"
+  x = 6
+  y = 6
+  w = 494
+  h = 84
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "button"
+  id = "card"
+  visible = "item.on"
+  selected = "item.selected"
+  w = 494
+  h = 84
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [1.0, 1.0, 1.0, 1.0]
+  on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 18
+    y = 16
+    h = 22
+    align = "center"
+    gap = 10
+
+      [[node.children.children.children]]
+      kind = "text"
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.name}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.tag_red"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.784, 0.063, 0.102, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.tag}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.tag_amber"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.706, 0.325, 0.035, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.tag}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 18
+    y = 52
+    w = 330
+    alpha = 0.72
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 1
+    text = "{item.status}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.side_ok"
+    anchor = "right"
+    x = 18
+    h = 20
+    align = "center"
+    bank = 11
+    color = [0.122, 0.435, 0.227, 1.0]
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{item.side}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.side_plain"
+    anchor = "right"
+    x = 18
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{item.side}"
+
+  [[node.children]]
+  kind = "button"
+  id = "card"
+  visible = "item.off"
+  selected = "item.selected"
+  w = 494
+  h = 84
+  border = 4
+  border_color = [0.541, 0.514, 0.471, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.922, 0.902, 0.859, 1.0]
+  color_focus = [0.922, 0.902, 0.859, 1.0]
+  on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 18
+    y = 16
+    alpha = 0.6
+    bank = 9
+    font = 1
+    scale = 2
+    text = "{item.name}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 18
+    y = 52
+    w = 330
+    alpha = 0.6
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 1
+    text = "{item.status}"
+
+[[node]]
+kind = "panel"
+visible = "is_profile"
+x = 590
+y = 108
+w = 652
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_profile"
+x = 580
+y = 98
+w = 652
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.details"
+  x = 0
+  y = 0
+  w = 652
+  h = 542
+  color = [0.0, 0.0, 0.0, 0.0]
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 30
+    y = 28
+    h = 34
+    align = "center"
+    gap = 12
+
+      [[node.children.children.children]]
+      kind = "text"
+      bank = 9
+      font = 1
+      scale = 3
+      text = "{acct.name}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      h = 20
+      align = "center"
+      bank = 11
+      color = [0.122, 0.435, 0.227, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "VERIFIED"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "tr"
+    x = 30
+    y = 36
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{acct.on_server}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 80
+    w = 592
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 1
+    text = "{acct.rating}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 104
+    w = 592
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{acct.devices}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 134
+    w = 592
+    h = 50
+    alpha = 0.72
+    bank = 9
+    font = 1
+    line_gap = 8
+    max_lines = 3
+    scale = 1
+    text = "{acct.hint}"
+    wrap = true
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 30
+    y = 206
+    w = 592
+    h = 44
+    gap = 10
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_btn0"
+      w = 200
+      h = 44
+      bank = 9
+      bank_focus = 9
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [1.0, 1.0, 1.0, 1.0]
+      color_focus = [0.984, 0.91, 0.902, 1.0]
+      font = 1
+      on_press = "acct:password"
+      scale = 1
+      text = "CHANGE PASSWORD"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_btn1"
+      w = 130
+      h = 44
+      bank = 9
+      bank_focus = 9
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [1.0, 1.0, 1.0, 1.0]
+      color_focus = [0.984, 0.91, 0.902, 1.0]
+      font = 1
+      on_press = "acct:logout"
+      scale = 1
+      text = "LOG OUT"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_btn2"
+      w = 230
+      h = 44
+      bank = 11
+      bank_focus = 11
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.078, 0.071, 0.063, 1.0]
+      color_focus = [0.078, 0.071, 0.063, 1.0]
+      font = 1
+      on_press = "acct:logout_all"
+      scale = 1
+      text = "LOG OUT EVERYWHERE"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.enter"
+    x = 35
+    y = 461
+    w = 592
+    h = 60
+    color = [0.078, 0.071, 0.063, 1.0]
+
+    [[node.children.children]]
+    kind = "button"
+    id = "acct_enter"
+    visible = "acct.enter"
+    x = 30
+    y = 456
+    w = 592
+    h = 60
+    bank = 11
+    bank_focus = 11
+    border = 4
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    border_color_focus = [0.078, 0.071, 0.063, 1.0]
+    color = [0.784, 0.063, 0.102, 1.0]
+    color_focus = [0.56, 0.043, 0.07, 1.0]
+    font = 1
+    on_press = "acct:enter"
+    scale = 3
+    text = "ENTER SERVER"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.form"
+  x = 0
+  y = 0
+  w = 652
+  h = 542
+  color = [0.0, 0.0, 0.0, 0.0]
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 30
+    y = 22
+    w = 592
+    h = 44
+    gap = 0
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_tab0"
+      visible = "acct.tab0.on"
+      w = 230
+      h = 44
+      bank = 11
+      bank_focus = 11
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.078, 0.071, 0.063, 1.0]
+      color_focus = [0.078, 0.071, 0.063, 1.0]
+      font = 1
+      on_press = "{acct.tab0.action}"
+      scale = 1
+      text = "{acct.tab0.label}"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_tab0"
+      visible = "acct.tab0.off"
+      w = 230
+      h = 44
+      bank = 9
+      bank_focus = 9
+      border = 0
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.0, 0.0, 0.0, 0.0]
+      color_focus = [0.984, 0.91, 0.902, 1.0]
+      font = 1
+      on_press = "{acct.tab0.action}"
+      scale = 1
+      text = "{acct.tab0.label}"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_tab1"
+      visible = "acct.tab1.on"
+      w = 130
+      h = 44
+      bank = 11
+      bank_focus = 11
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.078, 0.071, 0.063, 1.0]
+      color_focus = [0.078, 0.071, 0.063, 1.0]
+      font = 1
+      on_press = "{acct.tab1.action}"
+      scale = 1
+      text = "{acct.tab1.label}"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_tab1"
+      visible = "acct.tab1.off"
+      w = 130
+      h = 44
+      bank = 9
+      bank_focus = 9
+      border = 0
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.0, 0.0, 0.0, 0.0]
+      color_focus = [0.984, 0.91, 0.902, 1.0]
+      font = 1
+      on_press = "{acct.tab1.action}"
+      scale = 1
+      text = "{acct.tab1.label}"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "tr"
+    x = 30
+    y = 38
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{acct.on_server}"
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 30
+    y = 66
+    w = 592
+    h = 3
+    color = [0.078, 0.071, 0.063, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_user"
+    x = 30
+    y = 88
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "USERNAME"
+
+    [[node.children.children]]
+    kind = "input"
+    id = "acct_user"
+    visible = "acct.has_user"
+    x = 30
+    y = 104
+    w = 592
+    h = 44
+    bank = 9
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    caret = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 0.992, 0.973, 1.0]
+    font = 1
+    max_len = 16
+    on_change = "acct_user:{value}"
+    on_press = "acct:next:user"
+    pad = 12
+    scale = 2
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_user"
+    x = 30
+    y = 154
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{acct.user_rule}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_new"
+    x = 30
+    y = 88
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "CURRENT PASSWORD"
+
+    [[node.children.children]]
+    kind = "input"
+    id = "acct_pass"
+    visible = "acct.has_new"
+    x = 30
+    y = 104
+    w = 592
+    h = 44
+    bank = 9
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    caret = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 0.992, 0.973, 1.0]
+    font = 1
+    mask = "acct.masked"
+    max_len = 128
+    on_change = "acct_pass:{value}"
+    on_press = "acct:next:pass"
+    pad = 12
+    scale = 2
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_user"
+    x = 30
+    y = 182
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{acct.pass_label}"
+
+    [[node.children.children]]
+    kind = "input"
+    id = "acct_pass"
+    visible = "acct.has_user"
+    x = 30
+    y = 198
+    w = 288
+    h = 44
+    bank = 9
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    caret = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 0.992, 0.973, 1.0]
+    font = 1
+    mask = "acct.masked"
+    max_len = 128
+    on_change = "acct_pass:{value}"
+    on_press = "acct:next:pass"
+    pad = 12
+    scale = 2
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_new"
+    x = 30
+    y = 182
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "NEW PASSWORD"
+
+    [[node.children.children]]
+    kind = "input"
+    id = "acct_new"
+    visible = "acct.has_new"
+    x = 30
+    y = 198
+    w = 288
+    h = 44
+    bank = 9
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    caret = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 0.992, 0.973, 1.0]
+    font = 1
+    mask = "acct.masked"
+    max_len = 128
+    on_change = "acct_new:{value}"
+    on_press = "acct:next:new"
+    pad = 12
+    scale = 2
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_again"
+    x = 334
+    y = 182
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "AGAIN"
+
+    [[node.children.children]]
+    kind = "input"
+    id = "acct_again"
+    visible = "acct.has_again"
+    x = 334
+    y = 198
+    w = 288
+    h = 44
+    bank = 9
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    caret = [0.784, 0.063, 0.102, 1.0]
+    color = [1.0, 0.992, 0.973, 1.0]
+    font = 1
+    mask = "acct.masked"
+    max_len = 128
+    on_change = "acct_again:{value}"
+    on_press = "acct:next:again"
+    pad = 12
+    scale = 2
+
+    [[node.children.children]]
+    kind = "button"
+    id = "acct_show"
+    x = 30
+    y = 248
+    w = 96
+    h = 26
+    bank = 9
+    bank_focus = 9
+    border = 2
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    color = [0.0, 0.0, 0.0, 0.0]
+    color_focus = [0.984, 0.91, 0.902, 1.0]
+    font = 1
+    on_press = "acct:show"
+    scale = 1
+    text = "{acct.show_label}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 136
+    y = 255
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "F2"
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 30
+    y = 290
+    w = 592
+    h = 72
+    color = [0.949, 0.933, 0.894, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 12
+      y = 0
+      w = 568
+      h = 72
+      alpha = 0.8
+      bank = 9
+      font = 1
+      line_gap = 8
+      max_lines = 3
+      scale = 1
+      text = "{acct.rule}"
+      wrap = true
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.has_guest"
+    x = 30
+    y = 376
+    w = 592
+    h = 30
+    alpha = 0.72
+    bank = 9
+    font = 1
+    max_lines = 2
+    scale = 1
+    text = "{acct.guest}"
+    wrap = true
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.has_error"
+    x = 30
+    y = 408
+    w = 592
+    h = 40
+    border = 2
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    color = [0.984, 0.91, 0.902, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 12
+      y = 0
+      w = 568
+      h = 40
+      bank = 9
+      font = 1
+      line_gap = 6
+      max_lines = 2
+      scale = 1
+      text = "{acct.error}"
+      wrap = true
+
+    [[node.children.children]]
+    kind = "hbox"
+    x = 30
+    y = 456
+    w = 592
+    h = 60
+    gap = 14
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_submit"
+      h = 60
+      bank = 11
+      bank_focus = 11
+      border = 4
+      border_color = [0.784, 0.063, 0.102, 1.0]
+      border_color_focus = [0.078, 0.071, 0.063, 1.0]
+      color = [0.784, 0.063, 0.102, 1.0]
+      color_focus = [0.56, 0.043, 0.07, 1.0]
+      font = 1
+      grow = true
+      on_press = "acct:submit"
+      scale = 2
+      text = "{acct.submit}"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_cancel"
+      visible = "acct.has_new"
+      w = 150
+      h = 60
+      bank = 9
+      bank_focus = 9
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [1.0, 1.0, 1.0, 1.0]
+      color_focus = [0.984, 0.91, 0.902, 1.0]
+      font = 1
+      on_press = "acct:cancel_password"
+      scale = 2
+      text = "CANCEL"
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_enter2"
+      visible = "acct.enter"
+      w = 150
+      h = 60
+      bank = 11
+      bank_focus = 11
+      border = 4
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      border_color_focus = [0.784, 0.063, 0.102, 1.0]
+      color = [0.078, 0.071, 0.063, 1.0]
+      color_focus = [0.078, 0.071, 0.063, 1.0]
+      font = 1
+      on_press = "acct:enter"
+      scale = 2
+      text = "ENTER"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.has_note"
+  x = 0
+  y = 0
+  w = 652
+  h = 542
+  color = [0.0, 0.0, 0.0, 0.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 28
+    w = 592
+    bank = 9
+    ellipsis = true
+    font = 1
+    scale = 3
+    text = "{acct.server}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 90
+    w = 592
+    h = 80
+    bank = 9
+    font = 1
+    line_gap = 8
+    max_lines = 4
+    scale = 1
+    text = "{acct.note}"
+    wrap = true
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.enter"
+    x = 35
+    y = 461
+    w = 592
+    h = 60
+    color = [0.078, 0.071, 0.063, 1.0]
+
+    [[node.children.children]]
+    kind = "button"
+    id = "acct_enter3"
+    visible = "acct.enter"
+    x = 30
+    y = 456
+    w = 592
+    h = 60
+    bank = 11
+    bank_focus = 11
+    border = 4
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    border_color_focus = [0.078, 0.071, 0.063, 1.0]
+    color = [0.784, 0.063, 0.102, 1.0]
+    color_focus = [0.56, 0.043, 0.07, 1.0]
+    font = 1
+    on_press = "acct:enter"
+    scale = 3
+    text = "ENTER SERVER"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 48
+y = 32
+h = 40
+align = "center"
+bank = 11
+color = [0.078, 0.071, 0.063, 1.0]
+font = 1
+pad = 18
+scale = 1
+text = "PLAYERS"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 170
+y = 46
+alpha = 0.72
+bank = 9
+font = 1
+scale = 1
+text = "{board.scope}"
+
+[[node]]
+kind = "panel"
+visible = "is_board"
+x = 58
+y = 108
+w = 1184
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_board"
+x = 48
+y = 98
+w = 1184
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "LETTERS AND DIGITS   BACKSPACE ERASES   ESC CANCELS"
-  anchor = "bl"
-  x = 30
-  y = 24
+  x = 24
+  y = 16
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 6
-  scale = 2
+  scale = 1
+  text = "RANK"
 
-# ---- no server: what ONLINE needs, and the direct match that works without one
+  [[node.children]]
+  kind = "text"
+  x = 130
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "PLAYER"
+
+  [[node.children]]
+  kind = "text"
+  x = 620
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "RATING"
+
+  [[node.children]]
+  kind = "text"
+  x = 800
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "W - L"
+
+  [[node.children]]
+  kind = "text"
+  x = 980
+  y = 16
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "TIER"
+
+  [[node.children]]
+  kind = "panel"
+  x = 0
+  y = 38
+  w = 1176
+  h = 3
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "list"
+  id = "board_list"
+  x = 4
+  y = 41
+  w = 1176
+  h = 432
+  items = "board.rows"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "row"
+    w = 1176
+    h = 48
+    color = [0.0, 0.0, 0.0, 0.0]
+    color_focus = [0.984, 0.91, 0.902, 1.0]
+    on_press = "board:row"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 0
+      y = 0
+      w = 1176
+      h = 2
+      color = [0.886, 0.863, 0.812, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.top"
+      x = 20
+      y = 15
+      bank = 10
+      font = 1
+      scale = 2
+      text = "{item.pos}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "!item.top"
+      x = 20
+      y = 15
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.pos}"
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      x = 126
+      y = 15
+      h = 20
+      align = "center"
+      gap = 10
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        bank = 9
+        font = 1
+        scale = 2
+        text = "{item.name}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "item.verified"
+        h = 20
+        align = "center"
+        bank = 11
+        color = [0.122, 0.435, 0.227, 1.0]
+        font = 1
+        pad = 6
+        scale = 1
+        text = "VERIFIED"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 616
+      y = 15
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.rating}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 796
+      y = 15
+      bank = 9
+      font = 1
+      scale = 2
+      text = "{item.record}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 976
+      y = 19
+      alpha = 0.72
+      bank = 9
+      font = 1
+      scale = 1
+      text = "{item.tier}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.empty"
+  x = 0
+  y = 200
+  w = 1176
+  align = "center"
+  bank = 9
+  font = 1
+  scale = 2
+  text = "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD."
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.loading"
+  x = 0
+  y = 200
+  w = 1176
+  align = "center"
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 2
+  text = "LOADING THE LEADERBOARD..."
+
+  [[node.children]]
+  kind = "panel"
+  visible = "board.me.show"
+  x = 0
+  y = 474
+  w = 1176
+  h = 60
+  color = [0.078, 0.071, 0.063, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 20
+    y = 19
+    bank = 11
+    font = 1
+    scale = 2
+    text = "{board.me.pos}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 126
+    y = 19
+    bank = 11
+    font = 1
+    scale = 2
+    text = "{board.me.name}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 616
+    y = 19
+    bank = 11
+    font = 1
+    scale = 2
+    text = "{board.me.rating}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 796
+    y = 19
+    bank = 11
+    font = 1
+    scale = 2
+    text = "{board.me.record}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 976
+    y = 23
+    bank = 11
+    font = 1
+    scale = 1
+    text = "{board.me.tier}"
+
 [[node]]
 kind = "panel"
-dock = "right"
-visible = "no_server"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-anchor = "tr"
-x = 40
+visible = "is_queue"
+x = 330
+y = 160
+w = 640
+h = 380
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_queue"
+x = 320
 y = 150
 w = 640
-h = 360
-enter = "right"
-enter_time = 18
+h = 380
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "PLAY ONLINE THROUGH A SERVER"
-  x = 24
-  y = 20
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "PICK ONE ON THE LEFT OR ADD ONE:"
-  x = 24
-  y = 64
+  visible = "queue.searching"
+  x = 0
+  y = 40
+  w = 640
+  align = "center"
+  bank = 9
   font = 1
-  bank = 7
   scale = 2
+  text = "SEARCHING FOR AN OPPONENT"
 
   [[node.children]]
   kind = "text"
-  text = "HTTPS://HOST OR IP:PORT. MATCHES"
-  x = 24
-  y = 90
+  visible = "queue.found"
+  x = 0
+  y = 40
+  w = 640
+  align = "center"
+  bank = 10
   font = 1
-  bank = 7
   scale = 2
+  text = "MATCH FOUND"
 
   [[node.children]]
   kind = "text"
-  text = "GO THROUGH IT: NO IP IS SHARED."
-  x = 24
-  y = 116
+  visible = "queue.searching"
+  x = 0
+  y = 86
+  w = 640
+  align = "center"
+  bank = 9
+  font = 3
+  scale = 3
+  text = "{queue.time}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "queue.searching"
+  x = 0
+  y = 168
+  w = 640
+  align = "center"
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 6
-  scale = 2
+  scale = 1
+  text = "{queue.count}"
 
   [[node.children]]
   kind = "text"
-  text = "DIRECT MATCH (LAN / IP):"
-  x = 24
-  y = 166
+  visible = "queue.found"
+  x = 0
+  y = 120
+  w = 640
+  align = "center"
+  bank = 9
   font = 1
-  bank = 4
   scale = 2
+  text = "{queue.found_line}"
 
   [[node.children]]
   kind = "text"
-  text = "HOST PLAYS 1P, JOIN PLAYS 2P;"
-  x = 24
-  y = 192
+  x = 60
+  y = 204
+  w = 520
+  h = 50
+  align = "center"
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 7
-  scale = 2
+  line_gap = 8
+  max_lines = 3
+  scale = 1
+  text = "{queue.rule}"
+  wrap = true
 
   [[node.children]]
-  kind = "text"
-  text = "EACH TYPES THE OTHER'S ADDRESS."
-  x = 24
-  y = 218
+  kind = "button"
+  id = "q_cancel"
+  x = 210
+  y = 290
+  w = 220
+  h = 56
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.078, 0.071, 0.063, 1.0]
+  color_focus = [0.078, 0.071, 0.063, 1.0]
   font = 1
-  bank = 7
+  on_press = "online:cancel"
   scale = 2
+  text = "CANCEL"
 
-  [[node.children]]
-  kind = "text"
-  text = "YOUR ADDRESS: {direct.mine}"
-  x = 24
-  y = 262
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{direct.fighters}"
-  x = 24
-  y = 306
-  font = 1
-  bank = 6
-  scale = 2
-
-# ---- direct match: type the peer address
 [[node]]
 kind = "panel"
-dock = "left"
 visible = "is_direct"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 190
-w = 720
-h = 330
-enter = "up"
-enter_time = 16
+x = 250
+y = 108
+w = 800
+h = 542
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_direct"
+x = 240
+y = 98
+w = 800
+h = 542
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  text = "{direct.title}"
   x = 30
-  y = 24
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "PEER ADDRESS (IP OR IP:PORT)"
-  x = 30
-  y = 66
+  y = 30
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 6
+  scale = 1
+  text = "YOU ARE"
+
+  [[node.children]]
+  kind = "choice"
+  id = "direct_side"
+  x = 30
+  y = 48
+  h = 44
+  bank = 9
+  bank_focus = 11
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color2 = [0.078, 0.071, 0.063, 1.0]
+  focus = true
+  font = 1
+  on_left = "direct_side:-"
+  on_press = "direct:go"
+  on_right = "direct_side:+"
+  options = "direct.sides"
+  pad = 16
   scale = 2
+  text_color = [0.078, 0.071, 0.063, 1.0]
+  text_color_focus = [0.949, 0.933, 0.894, 1.0]
+  value = "direct.side"
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 120
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "YOUR ADDRESS"
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 138
+  w = 740
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 3
+  text = "{direct.mine}"
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 180
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "THE OTHER PLAYER TYPES THIS. SAME NETWORK, OR A FORWARDED PORT."
+
+  [[node.children]]
+  kind = "text"
+  x = 30
+  y = 222
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "THEIR ADDRESS"
 
   [[node.children]]
   kind = "input"
   id = "addr"
   x = 30
-  y = 96
-  w = 640
-  h = 60
-  font = 2
-  bank = 7
-  scale = 3
+  y = 240
+  w = 740
+  h = 52
+  bank = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  caret = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 0.992, 0.973, 1.0]
+  font = 1
   max_len = 40
-  placeholder = "192.168.1.20"
-  value = "direct.addr"
   on_change = "addr:{value}"
   on_press = "direct:go"
-
-  [[node.children]]
-  kind = "text"
-  text = "YOUR ADDRESS: {direct.mine}"
-  x = 30
-  y = 178
-  font = 2
-  bank = 7
+  pad = 14
+  placeholder = "E.G. 192.168.1.20"
   scale = 2
 
   [[node.children]]
   kind = "text"
+  x = 30
+  y = 312
+  w = 740
+  alpha = 0.72
+  bank = 9
+  ellipsis = true
+  font = 1
+  scale = 1
   text = "{direct.fighters}"
-  x = 30
-  y = 216
-  font = 1
-  bank = 6
-  scale = 2
 
   [[node.children]]
   kind = "text"
-  text = "ENTER CONNECTS   ESC CANCELS"
-  anchor = "bl"
   x = 30
-  y = 24
+  y = 332
+  alpha = 0.72
+  bank = 9
   font = 1
-  bank = 6
-  scale = 2
-
-# ---- ranked queue
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_queue"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 190
-w = 720
-h = 300
-enter = "up"
-enter_time = 16
+  scale = 1
+  text = "FIGHTERS AND STAGE COME FROM [NET] IN RUGEN.TOML."
 
   [[node.children]]
-  kind = "text"
-  text = "{queue.title}"
-  x = 30
-  y = 24
-  font = 2
-  bank = 4
-  scale = 3
-
-  [[node.children]]
-  kind = "text"
-  text = "WAITING {queue.secs} S   {queue.count} IN QUEUE"
-  x = 30
-  y = 90
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "OPPONENT: {opponent.name}  {opponent.rank} {opponent.rating}  {opponent.ping}"
-  visible = "queue.found"
-  x = 30
-  y = 130
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "button"
-  id = "queue_cancel"
-  anchor = "bl"
-  x = 30
-  y = 24
+  kind = "panel"
+  x = 35
+  y = 457
   w = 260
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "CANCEL"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  align = "left"
-  pad = 26
-  on_press = "online:cancel"
-
-# ---- leaderboard
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_board"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 150
-w = 760
-h = 466
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "{season}   {my_rank}"
-  x = 24
-  y = 16
-  font = 1
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "list"
-  x = 16
-  y = 50
-  w = 728
-  h = 380
-  gap = 4
-  items = "board"
-
-    [[node.children.children]]
-    kind = "panel"
-    h = 34
-    image = "ui/row.webp"
-    nine = [6, 6, 6, 6]
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "#{item.pos}  {item.name}"
-      x = 16
-      y = 8
-      font = 1
-      bank = 7
-      scale = 2
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.rank}  {item.rating}   {item.record}"
-      anchor = "tr"
-      x = 16
-      y = 8
-      font = 1
-      bank = 6
-      scale = 2
-
-  [[node.children]]
-  kind = "button"
-  id = "board_back"
-  anchor = "bl"
-  x = 16
-  y = 16
-  w = 220
-  h = 44
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "BACK"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  align = "left"
-  pad = 26
-  on_press = "online:cancel"
-
-# ---- message of the day of the chosen server
-[[node]]
-kind = "text"
-dock = "top"
-text = "{motd}"
-visible = "has_server"
-x = 0
-w = "100%"
-y = 146
-font = 1
-bank = 8
-scale = 2
-align = "center"
-
-# ---- add a server (saved to [net] servers)
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_add"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-x = 60
-y = 190
-w = 720
-h = 260
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "SERVER ADDRESS (HTTPS://HOST OR IP:PORT)"
-  x = 30
-  y = 24
-  font = 1
-  bank = 8
-  scale = 2
-
-  [[node.children]]
-  kind = "input"
-  id = "server_addr"
-  x = 30
-  y = 60
-  w = 660
   h = 60
-  font = 2
-  bank = 9
-  scale = 2
-  max_len = 80
-  placeholder = "https://rugen.example.com"
-  value = "direct.addr"
-  on_change = "server_addr:{value}"
-  on_press = "server_add"
+  color = [0.078, 0.071, 0.063, 1.0]
 
   [[node.children]]
-  kind = "text"
-  text = "ENTER SAVES IT TO YOUR SERVER LIST   ESC CANCELS"
-  anchor = "bl"
+  kind = "button"
+  id = "direct_go"
   x = 30
-  y = 24
+  y = 452
+  w = 260
+  h = 60
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  border_color_focus = [0.078, 0.071, 0.063, 1.0]
+  color = [0.784, 0.063, 0.102, 1.0]
+  color_focus = [0.56, 0.043, 0.07, 1.0]
   font = 1
-  bank = 8
-  scale = 2
-
-# ---- PROFILE: this device's account on every server (overview)
-[[node]]
-kind = "panel"
-dock = "right"
-visible = "is_profile"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-anchor = "tr"
-x = 40
-y = 150
-w = 640
-h = 440
-enter = "right"
-enter_time = 18
-
-  [[node.children]]
-  kind = "text"
-  text = "YOUR ACCOUNTS"
-  x = 24
-  y = 16
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "OFFLINE PLAY NEEDS NONE. ONLINE PLAY NEEDS ONE PER SERVER."
-  x = 24
-  y = 58
-  w = 592
-  font = 1
-  bank = 7
-  scale = 2
-  wrap = true
-  line_gap = 4
-
-  [[node.children]]
-  kind = "list"
-  x = 24
-  y = 136
-  w = 592
-  h = 240
-  gap = 8
-  items = "accts"
-
-    [[node.children.children]]
-    kind = "panel"
-    h = 56
-    image = "ui/row.webp"
-    nine = [4, 4, 4, 4]
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.server}"
-      x = 12
-      y = 6
-      font = 1
-      bank = 7
-      scale = 2
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.status}"
-      x = 12
-      y = 30
-      w = 568
-      font = 2
-      bank = 7
-      scale = 1
-
-  [[node.children]]
-  kind = "text"
-  text = "NO EMAIL: KEEP YOUR PASSWORD SAFE"
-  anchor = "bl"
-  x = 24
-  y = 20
-  font = 2
-  bank = 4
-  scale = 1
-
-# ---- one server's account (account page and form)
-[[node]]
-kind = "panel"
-dock = "right"
-visible = "is_account"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-anchor = "tr"
-x = 40
-y = 150
-w = 640
-h = 440
-enter = "right"
-enter_time = 18
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.scope}"
-  x = 24
-  y = 16
-  font = 2
-  bank = 4
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.server}"
-  x = 24
-  y = 40
-  w = 592
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.title}"
-  x = 24
-  y = 84
-  w = 592
-  font = 2
-  bank = 7
+  on_press = "direct:go"
   scale = 3
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.rating}"
-  x = 24
-  y = 290
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.record}"
-  x = 24
-  y = 330
-  font = 1
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.hint}"
-  x = 24
-  y = 150
-  w = 592
-  font = 1
-  bank = 7
-  scale = 2
-  wrap = true
-  line_gap = 4
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.note}"
-  anchor = "bl"
-  x = 24
-  y = 20
-  font = 2
-  bank = 4
-  scale = 1
-
-# ---- account form: username / password
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_acct_form"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 150
-w = 520
-h = 440
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.form_title}"
-  x = 30
-  y = 16
-  w = 460
-  font = 2
-  bank = 4
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "acct.has_user"
-  text = "USERNAME"
-  x = 30
-  y = 48
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "panel"
-  visible = "acct.has_user"
-  x = 24
-  y = 76
-  w = 472
-  h = 48
-  color = [1.0, 1.0, 1.0, 0.06]
-  border = 2
-  border_color = [0.55, 0.6, 0.7, 1.0]
-
-  [[node.children]]
-  kind = "input"
-  id = "acct_user"
-  visible = "acct.has_user"
-  x = 30
-  y = 78
-  w = 460
-  h = 44
-  pad = 10
-  font = 2
-  bank = 7
-  scale = 2
-  max_len = 16
-  placeholder = "USERNAME"
-  value = "acct.user"
-  on_change = "acct_user:{value}"
-  on_press = "acct:next:user"
-
-  [[node.children]]
-  kind = "text"
-  visible = "acct.has_new"
-  text = "ACCOUNT"
-  x = 30
-  y = 48
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  visible = "acct.has_new"
-  text = "{acct.title}"
-  x = 30
-  y = 82
-  w = 460
-  font = 2
-  bank = 7
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.pass_label}"
-  x = 30
-  y = 134
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "panel"
-  x = 24
-  y = 158
-  w = 472
-  h = 48
-  color = [1.0, 1.0, 1.0, 0.06]
-  border = 2
-  border_color = [0.55, 0.6, 0.7, 1.0]
-
-  [[node.children]]
-  kind = "input"
-  id = "acct_pass"
-  x = 30
-  y = 160
-  w = 460
-  h = 44
-  pad = 10
-  font = 2
-  bank = 7
-  scale = 2
-  max_len = 128
-  placeholder = "PASSWORD"
-  mask = "acct.masked"
-  value = "acct.pass"
-  on_change = "acct_pass:{value}"
-  on_press = "acct:next:pass"
-
-  [[node.children]]
-  kind = "text"
-  visible = "acct.has_new"
-  text = "NEW PASSWORD"
-  x = 30
-  y = 214
-  font = 1
-  bank = 6
-  scale = 2
-
-  [[node.children]]
-  kind = "panel"
-  visible = "acct.has_new"
-  x = 24
-  y = 238
-  w = 472
-  h = 48
-  color = [1.0, 1.0, 1.0, 0.06]
-  border = 2
-  border_color = [0.55, 0.6, 0.7, 1.0]
-
-  [[node.children]]
-  kind = "input"
-  id = "acct_new"
-  visible = "acct.has_new"
-  x = 30
-  y = 240
-  w = 460
-  h = 44
-  pad = 10
-  font = 2
-  bank = 7
-  scale = 2
-  max_len = 128
-  placeholder = "NEW PASSWORD"
-  mask = "acct.masked"
-  value = "acct.new"
-  on_change = "acct_new:{value}"
-  on_press = "acct:next:new"
-
-  [[node.children]]
-  kind = "text"
-  text = "{acct.rules}"
-  x = 30
-  y = 300
-  w = 460
-  font = 2
-  bank = 7
-  scale = 1
-  wrap = true
-  line_gap = 4
-
-  [[node.children]]
-  kind = "text"
-  visible = "acct.has_error"
-  text = "{acct.error}"
-  x = 30
-  y = 334
-  w = 460
-  font = 2
-  bank = 4
-  scale = 1
-  wrap = true
-  line_gap = 4
+  text = "START"
 
   [[node.children]]
   kind = "button"
-  id = "acct_show"
-  anchor = "bl"
-  x = 30
-  y = 24
-  w = 120
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{acct.show_label}"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  on_press = "acct:show"
-
-  [[node.children]]
-  kind = "button"
-  id = "acct_submit"
-  anchor = "bl"
-  x = 162
-  y = 24
-  w = 180
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{acct.submit}"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  on_press = "acct:submit"
-
-  [[node.children]]
-  kind = "button"
-  id = "acct_cancel"
-  anchor = "bl"
-  x = 354
-  y = 24
-  w = 136
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "CANCEL"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  scale = 2
-  on_press = "online:cancel"
-
-# ---- lobby: public rooms of this server
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_lobby"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-x = 60
-y = 170
-w = 760
-h = 440
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "PUBLIC ROOMS"
-  x = 24
-  y = 16
-  font = 2
-  bank = 10
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "NOBODY YET - CREATE A ROOM FROM THE MENU"
-  visible = "lobby_empty"
-  x = 24
-  y = 70
-  font = 1
+  id = "direct_netplay"
+  visible = "direct.netplay"
+  x = 306
+  y = 452
+  w = 420
+  h = 60
   bank = 9
-  scale = 2
-
-  [[node.children]]
-  kind = "list"
-  x = 16
-  y = 54
-  w = 728
-  h = 350
-  gap = 6
-  items = "lobby"
-
-    [[node.children.children]]
-    kind = "panel"
-    h = 74
-    image = "ui/row.webp"
-    nine = [4, 4, 4, 4]
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.name}  BY {item.host}"
-      x = 14
-      y = 8
-      font = 1
-      bank = 9
-      scale = 2
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.rules}   {item.count}"
-      x = 14
-      y = 40
-      font = 1
-      bank = 8
-      scale = 2
-
-      [[node.children.children.children]]
-      kind = "button"
-      id = "lobby_join"
-      anchor = "tr"
-      x = 120
-      y = 14
-      w = 100
-      h = 44
-      image = "ui/button.webp"
-      image_focus = "ui/button_lit.webp"
-      text = "JOIN"
-      font = 2
-      bank = 11
-      bank_focus = 11
-      scale = 2
-      on_press = "{item.join}"
-
-      [[node.children.children.children]]
-      kind = "button"
-      id = "lobby_watch"
-      anchor = "tr"
-      x = 10
-      y = 14
-      w = 104
-      h = 44
-      image = "ui/button.webp"
-      image_focus = "ui/button_lit.webp"
-      text = "WATCH"
-      font = 2
-      bank = 11
-      bank_focus = 11
-      scale = 2
-      on_press = "{item.watch}"
-
-  [[node.children]]
-  kind = "button"
-  id = "lobby_back"
-  anchor = "bl"
-  x = 16
-  y = 16
-  w = 220
-  h = 44
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "BACK"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 26
-  on_press = "online:cancel"
-
-# ---- create a room
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "is_create"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-x = 60
-y = 170
-w = 720
-h = 466
-enter = "up"
-enter_time = 16
-
-  [[node.children]]
-  kind = "text"
-  text = "ROOM NAME"
-  x = 30
-  y = 16
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
   font = 1
-  bank = 8
+  on_press = "netplay"
   scale = 2
-
-  [[node.children]]
-  kind = "input"
-  id = "room_name"
-  x = 30
-  y = 40
-  w = 400
-  h = 44
-  font = 2
-  bank = 9
-  scale = 2
-  max_len = 24
-  value = "create.name"
-  on_change = "room_name:{value}"
-
-  [[node.children]]
-  kind = "text"
-  text = "PASSWORD (EMPTY = NONE)"
-  x = 30
-  y = 96
-  font = 1
-  bank = 8
-  scale = 2
-
-  [[node.children]]
-  kind = "input"
-  id = "room_password"
-  x = 30
-  y = 120
-  w = 400
-  h = 44
-  font = 2
-  bank = 9
-  scale = 2
-  max_len = 32
-  value = "create.password"
-  on_change = "room_password:{value}"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_public"
-  x = 30
-  y = 180
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.public}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:public"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_rounds"
-  x = 30
-  y = 226
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.rounds}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:rounds"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_time"
-  x = 30
-  y = 272
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.time}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:time"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_mode"
-  x = 30
-  y = 318
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.mode}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:mode"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_chars"
-  x = 30
-  y = 364
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.chars}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:chars"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_spect"
-  x = 30
-  y = 410
-  w = 420
-  h = 40
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "{create.spect}"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  align = "left"
-  pad = 20
-  on_press = "form:spect"
-
-  [[node.children]]
-  kind = "button"
-  id = "form_go"
-  anchor = "br"
-  x = 30
-  y = 24
-  w = 200
-  h = 48
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  text = "CREATE"
-  font = 2
-  bank = 11
-  bank_focus = 11
-  scale = 2
-  pad = 26
-  on_press = "form:go"
+  text = "NETPLAY (RUGEN.TOML)"
 
 # ---- MATCHUP (bring your own character): stat face-off. Top row: both
 # fighters (portrait, YOU / OPPONENT, name, author, rating) and the server's
@@ -3217,39 +5791,586 @@ justify = "end"
   scale = 2
   hover_scale = 1.04
 
-# status / error footer
+# key hints (data-driven: only keys that work)
 [[node]]
-kind = "text"
-dock = "right bottom"
-text = "{status}"
+kind = "hbox"
 visible = "not_matchup"
-anchor = "br"
-x = 24
-y = 64
-font = 2
-bank = 7
-scale = 2
+x = 320
+y = 674
+w = 912
+h = 24
+align = "center"
+gap = 22
+justify = "end"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.0"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.0.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.0.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.0.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.0.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.0.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.0.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.1"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.1.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.1.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.1.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.1.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.1.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.1.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.2"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.2.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.2.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.2.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.2.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.2.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.2.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.3"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.3.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.3.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.3.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.3.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.3.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.3.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.4"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.4.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.4.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.4.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.4.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.4.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.4.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.5"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.5.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.5.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.5.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.5.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.5.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.5.label}"
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "hints.6"
+  h = 22
+  align = "center"
+  gap = 8
+  hug = true
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.6.is_text"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{hints.6.key}"
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "keycap"
+    visible = "hints.6.is_glyph"
+    h = 22
+    bank = 11
+    border = 0
+    color = [0.078, 0.071, 0.063, 1.0]
+    depth = 0
+    font = 1
+    glyph = "{hints.6.glyph}"
+    pad = 6
+    scale = 1
+    text_color = [0.949, 0.933, 0.894, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "hints.6.has_label"
+    alpha = 0.72
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{hints.6.label}"
+
+# toast: errors in plain words (RETRY / DISMISS), notices; it takes the footer band, never the buttons
+[[node]]
+kind = "panel"
+visible = "toast.show"
+x = 48
+y = 654
+w = 1184
+h = 56
+color = [0.078, 0.071, 0.063, 1.0]
+enter = "up"
+enter_time = 8
+top = true
+
+  [[node.children]]
+  kind = "panel"
+  visible = "toast.error"
+  x = 0
+  y = 0
+  w = 8
+  h = 56
+  color = [0.784, 0.063, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "!toast.error"
+  x = 0
+  y = 0
+  w = 8
+  h = 56
+  color = [0.122, 0.435, 0.227, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 24
+  y = 8
+  w = 820
+  bank = 11
+  ellipsis = true
+  font = 1
+  scale = 2
+  text = "{toast.title}"
+
+  [[node.children]]
+  kind = "text"
+  x = 24
+  y = 34
+  w = 820
+  alpha = 0.85
+  bank = 11
+  ellipsis = true
+  font = 1
+  scale = 1
+  text = "{toast.body}"
+
+  [[node.children]]
+  kind = "hbox"
+  anchor = "right"
+  x = 10
+  w = 320
+  h = 40
+  align = "center"
+  gap = 10
+  justify = "end"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "toast_retry"
+    visible = "toast.retry"
+    w = 130
+    h = 38
+    bank = 11
+    bank_focus = 11
+    border = 4
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    border_color_focus = [0.078, 0.071, 0.063, 1.0]
+    color = [0.784, 0.063, 0.102, 1.0]
+    color_focus = [0.56, 0.043, 0.07, 1.0]
+    font = 1
+    on_press = "toast:retry"
+    scale = 2
+    text = "RETRY"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "toast_dismiss"
+    w = 168
+    h = 38
+    bank = 11
+    bank_focus = 11
+    border = 2
+    border_color = [1.0, 1.0, 1.0, 1.0]
+    border_color_focus = [0.784, 0.063, 0.102, 1.0]
+    color = [0.0, 0.0, 0.0, 0.0]
+    color_focus = [1, 1, 1, 0.15]
+    font = 1
+    on_press = "toast:dismiss"
+    scale = 2
+    text = "DISMISS"
+
+# dialog: another version, remove / add a server (keeps the focus)
+[[node]]
+kind = "panel"
+visible = "dialog.show"
+dock = "fill"
+w = "100%"
+h = "100%"
+color = [0.078, 0.071, 0.063, 0.5]
+modal = true
+top = true
 
 [[node]]
-kind = "text"
-dock = "right bottom"
-text = "{error}"
-visible = "has_error"
-anchor = "br"
-x = 24
-y = 100
-font = 1
-bank = 4
-scale = 2
+kind = "panel"
+visible = "dialog.show"
+x = 330
+y = 160
+w = 640
+h = 340
+color = [0.784, 0.063, 0.102, 1.0]
+top = true
 
 [[node]]
-kind = "text"
-dock = "right bottom"
-text = "ENTER  SELECT     ESC  BACK"
-visible = "not_matchup"
-anchor = "br"
-x = 24
-y = 16
-font = 1
-bank = 6
-scale = 2
+kind = "panel"
+visible = "dialog.show"
+x = 320
+y = 150
+w = 640
+h = 340
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+modal = true
+top = true
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 28
+  bank = 10
+  font = 1
+  scale = 1
+  text = "{dialog.kicker}"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 50
+  w = 576
+  h = 56
+  bank = 9
+  font = 1
+  line_gap = 10
+  max_lines = 2
+  scale = 2
+  text = "{dialog.title}"
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "!dialog.input"
+  x = 32
+  y = 118
+  w = 576
+  h = 110
+  alpha = 0.72
+  bank = 9
+  font = 1
+  line_gap = 8
+  max_lines = 6
+  scale = 1
+  text = "{dialog.body}"
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "dialog.input"
+  x = 32
+  y = 118
+  w = 576
+  h = 40
+  alpha = 0.72
+  bank = 9
+  font = 1
+  line_gap = 8
+  max_lines = 2
+  scale = 1
+  text = "{dialog.body}"
+  wrap = true
+
+  [[node.children]]
+  kind = "input"
+  id = "server_addr"
+  visible = "dialog.input"
+  x = 32
+  y = 176
+  w = 576
+  h = 52
+  bank = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  caret = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 0.992, 0.973, 1.0]
+  font = 1
+  max_len = 80
+  on_change = "server_addr:{value}"
+  on_press = "server_add"
+  pad = 14
+  placeholder = "PLAY.EXAMPLE.COM"
+  scale = 2
+
+  [[node.children]]
+  kind = "panel"
+  x = 36
+  y = 258
+  w = 300
+  h = 56
+  color = [0.078, 0.071, 0.063, 1.0]
+
+  [[node.children]]
+  kind = "button"
+  id = "dlg_primary"
+  x = 32
+  y = 254
+  w = 300
+  h = 56
+  bank = 11
+  bank_focus = 11
+  border = 4
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  border_color_focus = [0.078, 0.071, 0.063, 1.0]
+  color = [0.784, 0.063, 0.102, 1.0]
+  color_focus = [0.56, 0.043, 0.07, 1.0]
+  font = 1
+  on_press = "{dialog.primary_action}"
+  scale = 2
+  text = "{dialog.primary}"
+
+  [[node.children]]
+  kind = "button"
+  id = "dlg_secondary"
+  visible = "dialog.has_secondary"
+  x = 348
+  y = 254
+  w = 200
+  h = 56
+  bank = 9
+  bank_focus = 9
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  font = 1
+  on_press = "{dialog.secondary_action}"
+  scale = 2
+  text = "{dialog.secondary}"

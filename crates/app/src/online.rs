@@ -468,6 +468,8 @@ pub struct OnlineScreen {
     pub hold_for_shot: bool,
     /// CONFIRM was visible last refresh (focus moves onto it when it appears).
     confirm_focused: bool,
+    /// REMATCH was visible last refresh (same).
+    rematch_focused: bool,
     /// Node to focus on the next tick (it appears with the next layout).
     pending_focus_key: Option<String>,
     /// ... and start typing in it (an input).
@@ -518,10 +520,6 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
         return (profile.online_id, profile.online_key.clone());
     }
     (0, String::new())
-}
-
-fn rules_line(r: &Rules) -> String {
-    rules_tags(r).join(" · ")
 }
 
 fn ping_text(ms: Option<u32>) -> String {
@@ -695,6 +693,7 @@ impl OnlineScreen {
             auto_quit_at: None,
             hold_for_shot: false,
             confirm_focused: false,
+            rematch_focused: false,
             pending_focus_key: None,
             pending_edit: false,
             accounts: HashMap::new(),
@@ -1913,6 +1912,19 @@ impl OnlineScreen {
             .unwrap_or(want)
     }
 
+    /// The name others see: the username on this server, else the profile name.
+    fn my_name(&self) -> String {
+        match &self.me {
+            Some(m) if m.verified => m.name.to_uppercase(),
+            _ => self
+                .profile
+                .online_names
+                .get(&self.client.server)
+                .unwrap_or(&self.profile.name)
+                .to_uppercase(),
+        }
+    }
+
     fn my_id(&self) -> u64 {
         self.me.as_ref().map_or_else(
             || account_for(&self.profile, &self.config, &self.client.server).0,
@@ -2086,7 +2098,7 @@ impl OnlineScreen {
             }
             State::Join => {
                 push(Some("A-Z 0-9".into()), "TYPE");
-                push(Some("@back".into()), "ERASE");
+                push(Some("BKSP".into()), "ERASE");
                 if self.clipboard {
                     push(Some("CTRL V".into()), "PASTE");
                 }
@@ -2142,7 +2154,7 @@ impl OnlineScreen {
                 let off = problem.is_some();
                 json!({
                     "is_server": true,
-                    "name": fit(&self.row_name(i), if tag.is_empty() { 24 } else { 17 }),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 19 } else { 13 }),
                     "tag": tag,
                     "tag_red": tone == "red",
                     "tag_amber": tone == "amber",
@@ -2184,13 +2196,15 @@ impl OnlineScreen {
             _ => String::new(),
         };
         let connected = official::same_server(&self.client.server, &r.addr);
-        let rank = match (&self.me, connected) {
-            (Some(me), true) => format!("{} {}", me.rank, me.rating),
+        let (rating, tier) = match (&self.me, connected) {
+            (Some(me), true) => (me.rating.to_string(), me.rank.clone()),
             _ => self
                 .profile
                 .online_ranks
                 .get(&r.addr)
-                .map_or("--".into(), |s| format!("{} {}", s.rank, s.rating)),
+                .map_or(("--".into(), "NOT RANKED YET".into()), |s| {
+                    (s.rating.to_string(), s.rank.clone())
+                }),
         };
         let last = LAST_RESULT
             .lock()
@@ -2221,7 +2235,8 @@ impl OnlineScreen {
             "online": info.map_or("--".into(), |i| i.online.to_string()),
             "rooms": info.map_or("--".into(), |i| i.rooms.to_string()),
             "ping": if r.error { "--".into() } else { r.ping.map_or("--".into(), |p| p.to_string()) },
-            "rank": rank,
+            "rating": rating,
+            "tier": tier,
             "usable": usable,
             "unusable": !usable,
             "reason": reason,
@@ -2270,7 +2285,7 @@ impl OnlineScreen {
                     AcctState::None => ("NO USERNAMES ON THIS SERVER".into(), "", false),
                 };
                 json!({
-                    "name": fit(&self.row_name(i), if tag.is_empty() { 22 } else { 15 }),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 18 } else { 12 }),
                     "tag": tag,
                     "tag_red": tone == "red",
                     "tag_amber": tone == "amber",
@@ -2417,17 +2432,25 @@ impl OnlineScreen {
                     fit(&r.host.to_uppercase(), 18)
                 };
                 json!({
-                    "name": fit(&r.name.to_uppercase(), if tag.is_empty() { 17 } else { 11 }),
+                    "name": fit(
+                        &r.name.to_uppercase(),
+                        15 - if tag.is_empty() { 0 } else { 5 } - if r.in_match { 3 } else { 0 },
+                    ),
                     "tag": tag,
                     "has_tag": !tag.is_empty(),
                     "host": host,
                     "rules": if off {
                         if r.api < rugen_proto::API_VERSION { "OLDER RUGEN · CAN'T JOIN".to_string() } else { "NEWER RUGEN · UPDATE TO JOIN".to_string() }
                     } else {
-                        rules_line(&r.rules)
+                        // classic is the usual mode: only arena is worth the room
+                        let mut t = rules_tags(&r.rules);
+                        if r.rules.mode != "arena" {
+                            t.pop();
+                        }
+                        t.join(" · ")
                     },
-                    "seats": format!("{} / 2", r.players),
-                    "watching": format!("{} / {}", r.spectators, r.max_spectators),
+                    "seats": format!("{}/2", r.players),
+                    "watching": format!("{}/{}", r.spectators, r.max_spectators),
                     "live": r.in_match,
                     "off": off,
                     "on": !off,
@@ -2470,7 +2493,7 @@ impl OnlineScreen {
             let ping = m.rtt_ms;
             json!({
                 "present": true,
-                "name": fit(&badge_name(&m.profile), 20),
+                "name": fit(&badge_name(&m.profile), 17),
                 "tag": tag,
                 "you": you,
                 "line": format!("{} {} · {}W {}L", m.profile.rank, m.profile.rating, m.profile.wins, m.profile.losses),
@@ -2581,7 +2604,7 @@ impl OnlineScreen {
             "joins_sel": usize::from(!f.public),
             "spects": ["OFF", "2", "4", "6"],
             "spects_sel": spect.iter().position(|s| *s == f.spectators).unwrap_or(1),
-            "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.profile.name.to_uppercase()) } else { f.name.to_uppercase() },
+            "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.my_name()) } else { f.name.to_uppercase() },
             "preview_host": host,
             "preview_rules": line.join(" · "),
             "note": note,
@@ -2603,7 +2626,10 @@ impl OnlineScreen {
             "cells": cells,
             "bad": self.code_bad.is_some(),
             "hint": match self.code_bad {
-                Some(c) => format!("CODES NEVER USE {c}: 0, O, 1 AND I ARE LEFT OUT ON PURPOSE"),
+                Some(c) if c.is_ascii_alphanumeric() => {
+                    format!("NO CODE HAS A {c}: 0, O, 1 AND I ARE NEVER USED")
+                }
+                Some(_) => "CODES ARE ONLY LETTERS AND NUMBERS".into(),
                 None => "LETTERS AND NUMBERS · NO 0/O OR 1/I MIX-UPS: CODES NEVER USE THEM".into(),
             },
             "need_password": locked || !self.password.is_empty() || self.ui.focused() == Some("password"),
@@ -2623,7 +2649,7 @@ impl OnlineScreen {
                 json!({
                     "pos": format!("#{}", i + 1),
                     "top": i < 3,
-                    "name": fit(&p.name.to_uppercase(), 18),
+                    "name": fit(&p.name.to_uppercase(), 20),
                     "verified": p.verified,
                     "rating": p.rating,
                     "record": format!("{} - {}", p.wins, p.losses),
@@ -2852,6 +2878,12 @@ impl OnlineScreen {
             self.ui.set_focus(Some("mx_confirm"));
         }
         self.confirm_focused = can_confirm;
+        // REMATCH too (ENTER REMATCH, never LEAVE by accident)
+        let can_rematch = data["room"]["can_rematch"].as_bool() == Some(true);
+        if can_rematch && !self.rematch_focused {
+            self.pending_focus_key = Some("room_rematch".into());
+        }
+        self.rematch_focused = can_rematch;
         self.ui.set_data(data);
     }
 
@@ -3311,21 +3343,29 @@ impl OnlineScreen {
             }
             ("online", "create") => {
                 self.form = Form {
-                    name: fit(&format!("{}'S ROOM", self.profile.name.to_uppercase()), 24),
+                    name: fit(&format!("{}'S ROOM", self.my_name()), 24),
                     ..Form::default()
                 };
                 self.state = State::Create;
                 self.ui.set_input("room_name", &self.form.name);
-                self.ui.set_input("room_password", "");
-                self.ui.set_focus(Some("room_name"));
+                self.ui.set_input("cr_pass", "");
+                self.pending_focus_key = Some("room_name".into());
+                self.pending_edit = true;
             }
             ("room_name", v) => {
-                self.form.name = v.chars().take(24).collect();
+                // what the server keeps in a name
+                self.form.name = v
+                    .chars()
+                    .filter(|c| {
+                        c.is_alphanumeric() || matches!(c, '_' | '-' | ' ' | '!' | '?' | '.' | '\'')
+                    })
+                    .take(24)
+                    .collect();
                 self.ui.set_input("room_name", &self.form.name);
             }
             ("room_password", v) => {
                 self.form.password = v.chars().take(32).collect();
-                self.ui.set_input("room_password", &self.form.password);
+                self.ui.set_input("cr_pass", &self.form.password);
             }
             ("form", what) => {
                 let (what, dir) = what.split_once(':').unwrap_or((what, "+"));
@@ -3339,6 +3379,7 @@ impl OnlineScreen {
                     };
                     opts[j as usize]
                 };
+                let fallback = format!("{}'S ROOM", self.my_name());
                 let f = &mut self.form;
                 match what {
                     "public" => f.public = dir == "-",
@@ -3358,7 +3399,7 @@ impl OnlineScreen {
                     "go" => {
                         let opts = RoomOptions {
                             name: if f.name.trim().is_empty() {
-                                format!("{}'S ROOM", self.profile.name.to_uppercase())
+                                fallback
                             } else {
                                 f.name.trim().to_string()
                             },
