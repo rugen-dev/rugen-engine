@@ -28,6 +28,10 @@ use rugen_net::online::{
 
 /// Largest decompressed size of a downloaded content file (bombs stop here).
 const MAX_UNPACKED: u64 = 1 << 30;
+/// A downloaded package of rugen 0.5 or earlier (RGPK / zip): the opponent
+/// runs an older game (an API 4 server pairs anyone with anyone).
+const OLDER_PEER: &str =
+    "your opponent runs an older rugen (0.5): both players need the same version";
 
 /// First 12 hex digits of a fingerprint, for logs.
 pub fn short(fp: &str) -> String {
@@ -523,6 +527,7 @@ impl Worker {
         // a download that failed ends the matchup
         let failed = self.with(|s| {
             s.downloads.iter().find_map(|x| match &x.state {
+                XferState::Failed(e) if e == OLDER_PEER => Some(e.clone()),
                 XferState::Failed(e) => Some(format!("could not download {}: {e}", x.label)),
                 _ => None,
             })
@@ -604,6 +609,10 @@ impl Worker {
                 .download_package(&fp, size, &part, &x.progress)
                 .map_err(|e| e.to_string())
                 .and_then(|()| {
+                    // an RGPK / zip: the opponent's game predates .rgc
+                    if rugen_fair::package::is_legacy_file(&part) {
+                        return Err(OLDER_PEER.to_string());
+                    }
                     lib.install_package(&part, &fp, MAX_UNPACKED)
                         .map_err(|e| e.to_string())
                 });

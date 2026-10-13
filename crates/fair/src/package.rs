@@ -24,6 +24,33 @@ pub fn ext(kind: Kind) -> &'static str {
     }
 }
 
+/// Why a package of rugen 0.5 or earlier cannot be used (see
+/// [`is_legacy_file`]).
+pub const LEGACY: &str = "this fighter comes from an older rugen (0.5), not a .rgc / .rgs: both players need the same version";
+
+/// Whether these first bytes start a package of rugen 0.5 or earlier (an
+/// RGPK archive, API 4) or a zip, never a content file.
+pub fn is_legacy(head: &[u8]) -> bool {
+    head.starts_with(b"RGPK") || head.starts_with(b"PK\x03\x04")
+}
+
+/// [`is_legacy`] of the file at `path` (false when it cannot be read).
+pub fn is_legacy_file(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|()| is_legacy(&head))
+}
+
+/// [`LEGACY`] as an error for an older package at `path`.
+fn refuse_legacy(path: &Path) -> Result<()> {
+    if is_legacy_file(path) {
+        return Err(Error::Package(LEGACY.into()));
+    }
+    Ok(())
+}
+
 /// A verified content file.
 #[derive(Clone, Debug)]
 pub struct Verified {
@@ -64,6 +91,7 @@ fn kind_of(k: rgc::Kind) -> Kind {
 /// decompressed content.
 pub fn verify(path: &Path, max_bytes: u64) -> Result<Verified> {
     let bad = |m: String| Error::Package(m);
+    refuse_legacy(path)?;
     // a fresh read: a file replaced under the same name must not hit the cache
     rugen_formats::vfs::forget(path);
     let a = rugen_formats::vfs::archive(path).map_err(|e| bad(e.to_string()))?;
@@ -95,6 +123,7 @@ pub fn verify(path: &Path, max_bytes: u64) -> Result<Verified> {
 
 /// The kind and claimed fingerprint of a content file, from its header only.
 pub fn read_header(path: &Path) -> Result<(Kind, String)> {
+    refuse_legacy(path)?;
     let a = rgc::Archive::open(path).map_err(|e| Error::Package(e.to_string()))?;
     Ok((kind_of(a.kind), hex(&a.fingerprint)))
 }
@@ -163,6 +192,19 @@ mod tests {
         assert!(verify(&nodef, 1 << 20).is_err());
         std::fs::write(root.join("junk.rgc"), b"RUGENRGC garbage").unwrap();
         assert!(verify(&root.join("junk.rgc"), 1 << 20).is_err());
+        // packages of rugen 0.5 (RGPK) and zips say so
+        for head in [&b"RGPK\x01\x00rest"[..], b"PK\x03\x04zip"] {
+            let old = root.join("old.rgc");
+            std::fs::write(&old, head).unwrap();
+            assert!(is_legacy_file(&old));
+            for e in [
+                verify(&old, 1 << 20).unwrap_err(),
+                read_header(&old).unwrap_err(),
+            ] {
+                assert!(e.to_string().contains("older rugen (0.5)"), "{e}");
+            }
+        }
+        assert!(!is_legacy_file(&p));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

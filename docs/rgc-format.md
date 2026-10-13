@@ -201,6 +201,27 @@ encoded, so converting, exporting and converting again keep it, and two
 machines converting the same character get the same value. It is the key
 of online matchups, the official blocklist and character ratings.
 
+### Older games online (API 4)
+
+rugen 0.5 and earlier (lobby API 4) sent RGPK packages (the canonical files
+byte for byte, zstd) fingerprinted with `rugen-fp-1` (sha256 of every
+file's bytes, sounds included). Neither side can read the other's
+packages, and the same character has different fingerprints in the two
+generations, so players of different APIs can never share a match:
+
+- Clients send `X-Rugen-Api: 5` on every request; a request without it is
+  API 4. A server serving both says `api: 5, api_min: 4` in `/health`
+  (0.5 clients never read `api`), never pairs different APIs in its
+  queue, refuses joining a room whose host runs the other API (with a
+  message saying who must update) and marks those rooms in its lobby
+  (`api` on each room).
+- This game refuses a server that serves API 4 only, and says why when a
+  downloaded package is an RGPK / zip (an opponent on an older game, on
+  such a server) instead of a content-file parse error.
+- Blocklist entries and ratings stay keyed by fingerprint: a `rugen-fp-1`
+  entry does not cover the `.rgc` of the same character. Block the
+  character again by its `rugen-fp-2` fingerprint.
+
 ## Content library rules
 
 - `chars/` / `stages/`: an archive (`.zip`, `.rar`) is converted on launch
