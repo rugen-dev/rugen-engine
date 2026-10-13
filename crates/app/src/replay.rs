@@ -5,7 +5,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use rugen_sim::scale::FighterSize;
+
 use crate::play::FightSetup;
+
+fn size_none() -> FighterSize {
+    FighterSize::None
+}
 
 pub const REPLAY_VERSION: u32 = 1;
 
@@ -16,18 +22,24 @@ pub struct Replay {
     pub p2: PathBuf,
     pub stage: Option<PathBuf>,
     pub ai: [i32; 2],
+    /// FIGHTER SIZE the match was simulated with; replays from before the
+    /// option played every fighter at its own size.
+    #[serde(default = "size_none")]
+    pub fighter_size: FighterSize,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
 
 impl Replay {
-    pub fn new(setup: &FightSetup) -> Self {
+    /// A recording of `setup`, simulated with `fighter_size`.
+    pub fn new(setup: &FightSetup, fighter_size: FighterSize) -> Self {
         Self {
             version: REPLAY_VERSION,
             p1: setup.p1.clone(),
             p2: setup.p2.clone(),
             stage: setup.stage.clone(),
             ai: setup.ai,
+            fighter_size,
             inputs: Vec::new(),
         }
     }
@@ -42,6 +54,7 @@ impl Replay {
             tutorial: false,
             ids: [String::new(), String::new()],
             mode: None,
+            fighter_size: Some(self.fighter_size),
         }
     }
 
@@ -63,5 +76,28 @@ impl Replay {
             r.version
         );
         Ok(r)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replays_keep_their_fighter_size() {
+        // recorded before the option: every fighter at its own size
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.fighter_size, FighterSize::None);
+        assert_eq!(old.setup().fighter_size, Some(FighterSize::None));
+        let r = Replay {
+            fighter_size: FighterSize::Chibi,
+            ..old
+        };
+        let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        assert_eq!(back.fighter_size, FighterSize::Chibi);
+        assert_eq!(back.setup().fighter_size, Some(FighterSize::Chibi));
     }
 }

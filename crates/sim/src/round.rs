@@ -228,7 +228,7 @@ impl World {
             } else {
                 (self.stage.p2_start_x, -1.0)
             };
-            let x = x * data.localcoord[0] / self.stage.width;
+            let x = x / self.local_scale(i);
             let int_persist = data.konst("data.intpersistindex").unwrap_or(60.0) as usize;
             let float_persist = data.konst("data.floatpersistindex").unwrap_or(40.0) as usize;
             let p = &mut self.players[i];
@@ -314,14 +314,14 @@ impl World {
             if self.round.intro == cfg.ctrl_time {
                 for &i in &roots {
                     if !self.players[i].asserted(assert::NOINTRORESET) {
-                        let data = self.data[self.players[i].data].clone();
                         let (x, facing) = if self.players[i].team == 0 {
                             (self.stage.p1_start_x, 1.0)
                         } else {
                             (self.stage.p2_start_x, -1.0)
                         };
+                        let x = x / self.local_scale(i);
                         let p = &mut self.players[i];
-                        p.pos = [x * data.localcoord[0] / self.stage.width, 0.0];
+                        p.pos = [x, 0.0];
                         p.old_pos = p.pos;
                         p.vel = [0.0, 0.0];
                         p.facing = facing;

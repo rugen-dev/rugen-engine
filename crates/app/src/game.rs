@@ -638,6 +638,7 @@ impl Shell {
                 tutorial: false,
                 ids: [manifest_id(&p1), man.id.clone()],
                 mode: Some(Mode::Arcade),
+                fighter_size: None,
             },
             [side(&p1), side(&p2)],
         ))
@@ -766,6 +767,7 @@ impl Shell {
                     tutorial: false,
                     ids: [String::new(), String::new()],
                     mode: None,
+                    fighter_size: None,
                 }));
             }
             Transition::Resume => {
@@ -1101,7 +1103,8 @@ impl Shell {
                             m.ranked = self.online_match.as_ref().map(|om| om.ranked);
                         }
                         if setup.net.is_none() {
-                            m.record = Some(crate::replay::Replay::new(&setup));
+                            m.record =
+                                Some(crate::replay::Replay::new(&setup, m.world.fighter_size));
                         }
                         if let Some(r) = self.replay.take() {
                             m.playback = Some((r.inputs, 0));

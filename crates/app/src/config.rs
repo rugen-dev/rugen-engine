@@ -48,6 +48,10 @@ pub struct GameCfg {
     pub fast_fall: bool,
     /// Seconds on the round clock in offline matches; 0 = no timer.
     pub round_time: i32,
+    /// FIGHTER SIZE: fighters already inside the band keep their size, the
+    /// rest get a round x1.1..x3.0 or /1.1../3.0 step (0.1 apart) into it (320x240 units: `normal`
+    /// 58-82, `small` 62-78, `chibi` 44-56); `none` never scales.
+    pub fighter_size: rugen_sim::scale::FighterSize,
 }
 
 impl Default for GameCfg {
@@ -58,6 +62,7 @@ impl Default for GameCfg {
             air_dash: false,
             fast_fall: false,
             round_time: 99,
+            fighter_size: rugen_sim::scale::FighterSize::Normal,
         }
     }
 }

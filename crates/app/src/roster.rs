@@ -516,6 +516,7 @@ impl Roster {
             tutorial,
             ids: [id1.clone(), if tutorial { id1 } else { id2 }],
             mode: Some(self.mode),
+            fighter_size: None,
         };
         if tutorial {
             return Some(Transition::Fight(setup));

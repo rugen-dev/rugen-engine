@@ -102,6 +102,7 @@ fn match_checksum(p1: &Path, p2: &Path, data: &Path, seed: u32) -> (u32, u64) {
         movement: Movement::default(),
         round_time: None,
         ai: [8, 8],
+        fighter_size: rugen_sim::scale::FighterSize::Normal,
     };
     let mut world = build_world(&spec).expect("world builds");
     let mut s = seed;

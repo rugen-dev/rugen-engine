@@ -316,6 +316,7 @@ fn main() -> anyhow::Result<()> {
                 tutorial: false,
                 ids: [String::new(), String::new()],
                 mode: None,
+                fighter_size: None,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

@@ -235,7 +235,7 @@ pub fn size_box(w: &World, i: usize) -> [f32; 4] {
 /// Clsn boxes of the current frame, scaled to stage space. group 1 = attack, 2 = hurt, 3 = size.
 pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
     let p = &w.players[i];
-    let scale = w.stage.width / w.data[p.data].localcoord[0];
+    let scale = w.data_scale(p.data);
     let mut out = Vec::new();
     if group == 3 {
         let b = size_box(w, i);
@@ -246,7 +246,7 @@ pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
     let Some(frame) = d.air.get(p.anim.action).and_then(|a| p.anim.frame(a)) else {
         return out;
     };
-    let anim_scale = w.stage.width / d.localcoord[0];
+    let anim_scale = w.data_scale(p.anim_owner);
     // Clsn scale is the animation owner's [Size] xscale / yscale constants, even
     // for a helper with its own size.* (MUGEN; Ikemen `clsnScaleLocal`)
     let sx = anim_scale * d.konst("size.xscale").unwrap_or(1.0);
@@ -269,12 +269,12 @@ pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
 
 fn stage_pos(w: &World, i: usize) -> [f32; 2] {
     let p = &w.players[i];
-    let scale = w.stage.width / w.data[p.data].localcoord[0];
+    let scale = w.data_scale(p.data);
     [p.pos[0] * scale, p.pos[1] * scale]
 }
 
 fn local_scale(w: &World, i: usize) -> f32 {
-    w.stage.width / w.data[w.players[i].data].localcoord[0]
+    w.local_scale(i)
 }
 
 // ------------------------------------------------------------------ push
@@ -1164,7 +1164,7 @@ fn proj_clsn(w: &World, k: usize, group: u8) -> Vec<[f32; 4]> {
     let Some(frame) = d.air.get(p.anim_no).and_then(|a| p.anim.frame(a)) else {
         return Vec::new();
     };
-    let s = w.stage.width / d.localcoord[0];
+    let s = w.data_scale(w.players[p.owner].data);
     let boxes = if group == 1 {
         &frame.clsn1
     } else {

@@ -317,6 +317,11 @@ impl Default for Limits {
 #[derive(Clone)]
 pub struct World {
     pub data: Vec<Arc<CharData>>,
+    /// FIGHTER SIZE zoom per `data` slot (1 = the art's own size), fixed when
+    /// the player is added (see [`crate::scale`]).
+    pub data_zoom: Vec<f32>,
+    /// FIGHTER SIZE for players added from now on; `None` by default (tests, tools).
+    pub fighter_size: crate::scale::FighterSize,
     pub fx: Option<Arc<FxData>>,
     pub players: Vec<Player>,
     pub explods: Vec<Explod>,
@@ -364,6 +369,8 @@ impl World {
         let cam_zoom = stage.zoom_in.min(1.0).max(stage.zoom_out);
         Self {
             data: Vec::new(),
+            data_zoom: Vec::new(),
+            fighter_size: crate::scale::FighterSize::None,
             fx: None,
             players: Vec::new(),
             explods: Vec::new(),
@@ -397,7 +404,14 @@ impl World {
 
     /// Stage units per player-local unit.
     pub fn local_scale(&self, i: usize) -> f32 {
-        self.stage.width / self.data[self.players[i].data].localcoord[0]
+        self.data_scale(self.players[i].data)
+    }
+
+    /// Stage units per local unit of data slot `d`: its localcoord, zoomed by
+    /// FIGHTER SIZE (the fighter acts as if authored at `localcoord / zoom`).
+    pub fn data_scale(&self, d: usize) -> f32 {
+        let zoom = self.data_zoom.get(d).copied().unwrap_or(1.0);
+        self.stage.width / self.data[d].localcoord[0] * zoom
     }
 
     /// Does `i` act this tick, given a running Pause / SuperPause?
@@ -422,8 +436,20 @@ impl World {
         } else {
             (self.stage.p2_start_x, -1.0)
         };
-        let x = x * data.localcoord[0] / self.stage.width;
+        let zoom = crate::scale::factor(&data, self.fighter_size);
+        if self.fighter_size != crate::scale::FighterSize::None {
+            log::info!(
+                "{}: fighter size {} (stands {:?}, {})",
+                data.name,
+                crate::scale::describe(zoom),
+                crate::scale::standing_height(&data),
+                self.fighter_size.as_str()
+            );
+        }
         self.data.push(data.clone());
+        self.data_zoom.resize(self.data.len() - 1, 1.0);
+        self.data_zoom.push(zoom);
+        let x = x / self.data_scale(self.data.len() - 1);
         let mut p = Player::new(
             self.data.len() - 1,
             team,
@@ -4553,6 +4579,53 @@ mod tests {
             assert_eq!([a[0] * 2.0, a[1] * 0.5, a[2] * 2.0, a[3] * 0.5], *b);
         }
         assert_eq!(w2.players[0].size.xscale, 2.0);
+    }
+
+    /// FIGHTER SIZE zooms a fighter as a smaller localcoord would: stage
+    /// positions, Clsn and the zoom all follow `target / standing height`.
+    #[test]
+    fn fighter_size_zooms_like_localcoord() {
+        use crate::scale::{FighterSize, factor, standing_height};
+        let Some(d) = kfm() else { return };
+        let h = standing_height(&d).expect("kfm has sprite 0,0");
+        assert!((100.0..110.0).contains(&h), "kfm stands ~105: {h}");
+        let mut plain = World::new(Stage::default(), 1);
+        plain.add_player(d.clone(), 0, 1);
+        plain.add_player(d.clone(), 1, 2);
+        let mut chibi = World::new(Stage::default(), 1);
+        chibi.fighter_size = FighterSize::Chibi;
+        chibi.add_player(d.clone(), 0, 1);
+        chibi.add_player(d.clone(), 1, 2);
+        let f = factor(&d, FighterSize::Chibi);
+        assert!(
+            (f - 1.0 / 1.9).abs() < 1e-6,
+            "105 / 1.9 = 55.3 lands in 44-56"
+        );
+        assert!((factor(&d, FighterSize::Normal) - 1.0 / 1.3).abs() < 1e-6);
+        assert_eq!(chibi.data_zoom, vec![f, f]);
+        assert!((chibi.local_scale(0) - plain.local_scale(0) * f).abs() < 1e-5);
+        // same spawn point on stage, so a different local x
+        let sx = |w: &World, i: usize| w.players[i].pos[0] * w.local_scale(i);
+        assert!((sx(&plain, 1) - sx(&chibi, 1)).abs() < 1e-3);
+        for w in [&mut plain, &mut chibi] {
+            w.start_round();
+            run(w, 2, Buttons::default());
+        }
+        let (a, b) = (
+            collision::clsn_world(&plain, 0, 2),
+            collision::clsn_world(&chibi, 0, 2),
+        );
+        assert_eq!(a.len(), b.len());
+        for (a, b) in a.iter().zip(&b) {
+            for k in 0..4 {
+                assert!((a[k] * f - b[k]).abs() < 1e-3, "{a:?} * {f} vs {b:?}");
+            }
+        }
+        // NONE and unknown art leave the fighter alone
+        assert_eq!(factor(&d, FighterSize::None), 1.0);
+        let mut none = World::new(Stage::default(), 1);
+        none.add_player(d, 0, 1);
+        assert_eq!(none.data_zoom, vec![1.0]);
     }
 
     #[test]

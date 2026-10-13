@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use rugen_sim::Buttons;
+use rugen_sim::scale::FighterSize;
 use serde_json::{Value, json};
 use winit::keyboard::{Key, NamedKey};
 
@@ -114,6 +115,18 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 on_off(c.game.fast_fall),
                 String::new(),
                 "Hold down while falling to drop faster.",
+            ),
+            row(
+                "fighter_size",
+                "FIGHTER SIZE",
+                Widget::Choice(
+                    FighterSize::ALL.iter().map(|v| v.label().into()).collect(),
+                    FighterSize::ALL
+                        .iter()
+                        .position(|v| *v == c.game.fighter_size),
+                ),
+                String::new(),
+                "Normal: fighters already 58-82 px tall keep their size, others get a round step, x1.1 to x3.0 or /1.1 to /3.0. None never scales.",
             ),
             row(
                 "zoom_out",
@@ -439,6 +452,13 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "delay" => c.net.input_delay = c.net.input_delay.step(dir, wrap),
         "good_conn" => c.net.good_connections_only = !c.net.good_connections_only,
         "direct" => c.net.direct = !c.net.direct,
+        "fighter_size" => {
+            let cur = FighterSize::ALL
+                .iter()
+                .position(|v| *v == c.game.fighter_size)
+                .unwrap_or(3);
+            c.game.fighter_size = FighterSize::ALL[cycle(cur, FighterSize::ALL.len())];
+        }
         "air_jumps" => c.game.air_jumps = cycle(c.game.air_jumps.clamp(0, 3) as usize, 4) as i32,
         "round_time" => {
             let cur = ROUND_TIMES
@@ -841,6 +861,17 @@ mod tests {
         c.camera.zoom_out = 0.6;
         adjust(&mut c, "zoom_out", 1, false);
         assert!((c.camera.zoom_out - 0.65).abs() < 1e-4);
+        assert_eq!(c.game.fighter_size, FighterSize::Normal, "default");
+        adjust(&mut c, "fighter_size", 1, false);
+        assert_eq!(
+            c.game.fighter_size,
+            FighterSize::Normal,
+            "clamped at the end"
+        );
+        adjust(&mut c, "fighter_size", 1, true);
+        assert_eq!(c.game.fighter_size, FighterSize::None, "enter wraps");
+        adjust(&mut c, "fighter_size", 1, false);
+        assert_eq!(c.game.fighter_size, FighterSize::Chibi);
         c.game.round_time = 99;
         adjust(&mut c, "round_time", 1, false);
         assert_eq!(c.game.round_time, 0, "99 -> infinite");
@@ -849,6 +880,13 @@ mod tests {
         adjust(&mut c, "round_time", 1, true);
         assert_eq!(c.game.round_time, 30, "enter wraps");
         let d = options_data(0, &c, &[], Path::new("."), Some("rows[5].row"));
+        assert!(
+            d["help"]
+                .as_str()
+                .unwrap()
+                .starts_with("Normal: fighters already")
+        );
+        let d = options_data(0, &c, &[], Path::new("."), Some("rows[6].row"));
         assert_eq!(d["rows"][1]["sel"], 0);
         assert!(
             d["help"]

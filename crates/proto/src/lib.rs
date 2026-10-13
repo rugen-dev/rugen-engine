@@ -244,6 +244,10 @@ pub struct Rules {
     pub chars: String,
     /// Stage id ("" = server/host default).
     pub stage: String,
+    /// FIGHTER SIZE both sides simulate with: "none", "chibi", "small" or
+    /// "normal". Missing (servers and clients before it) = "normal", which
+    /// quick match and ranked always use.
+    pub fighter_size: String,
 }
 
 impl Default for Rules {
@@ -254,9 +258,13 @@ impl Default for Rules {
             mode: "classic".into(),
             chars: "free".into(),
             stage: String::new(),
+            fighter_size: "normal".into(),
         }
     }
 }
+
+/// [`Rules::fighter_size`] values.
+pub const FIGHTER_SIZES: [&str; 4] = ["none", "chibi", "small", "normal"];
 
 /// Everything a client needs to join a relay session: which session, which
 /// slot (0 = P1, 1 = P2, 2.. = spectators), and the secret token that
@@ -574,6 +582,23 @@ mod tests {
             serde_json::from_str(r#"{"api":1,"name":"x","udp_port":7777,"online":0,"queued":0}"#)
                 .unwrap();
         assert!(i.udp.is_none() && i.motd.is_empty());
+    }
+
+    #[test]
+    fn rules_without_fighter_size_mean_normal() {
+        let r: Rules = serde_json::from_str(r#"{"rounds":3,"round_time":60}"#).unwrap();
+        assert_eq!(r.fighter_size, "normal");
+        assert_eq!(r.rounds, 3);
+        let back: Rules = serde_json::from_value(
+            serde_json::to_value(Rules {
+                fighter_size: "chibi".into(),
+                ..Rules::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(back.fighter_size, "chibi");
+        assert!(FIGHTER_SIZES.contains(&Rules::default().fighter_size.as_str()));
     }
 
     #[test]

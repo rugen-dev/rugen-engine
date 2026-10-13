@@ -23,6 +23,8 @@ pub struct MatchSpec<'a> {
     /// Round time override (offline only; online peers keep the motif's).
     pub round_time: Option<i32>,
     pub ai: [i32; 2],
+    /// FIGHTER SIZE (a match rule: replays record it, online peers share it).
+    pub fighter_size: crate::scale::FighterSize,
 }
 
 /// Build the world and start the first round.
@@ -42,6 +44,7 @@ pub fn build_world(spec: &MatchSpec) -> crate::Result<World> {
         CharData::load_with_data(spec.p2, spec.data_dir)?
     };
     let mut world = World::new(stage, 1);
+    world.fighter_size = spec.fighter_size;
     match FxData::load_with_motif(spec.motif, spec.data_dir) {
         Ok(fx) => {
             let mut round = fx.round.clone();

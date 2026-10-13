@@ -60,6 +60,7 @@ use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, plural, viewp
 use crate::versus::Portrait;
 use rugen_net::online::SignedBlob;
 use rugen_net::online::{FighterCard, VerdictKind};
+use rugen_sim::scale::FighterSize;
 
 /// Which online match a fight belongs to, for result reporting.
 #[derive(Clone, Debug)]
@@ -621,7 +622,7 @@ fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
     (title.into(), body)
 }
 
-/// Rules as the header tags of a room: rounds, timer, fighters, mode.
+/// Rules as the header tags of a room: rounds, timer, fighters, fighter size, mode.
 fn rules_tags(r: &Rules) -> Vec<String> {
     vec![
         plural(r.rounds as usize, "ROUND", "ROUNDS"),
@@ -635,8 +636,14 @@ fn rules_tags(r: &Rules) -> Vec<String> {
         } else {
             "FREE PICK".into()
         },
+        format!("{} SIZE", room_size(r).label()),
         r.mode.to_uppercase(),
     ]
+}
+
+/// The room's FIGHTER SIZE (anything unknown counts as normal, like a missing field).
+fn room_size(r: &Rules) -> FighterSize {
+    FighterSize::parse(&r.fighter_size).unwrap_or_default()
 }
 
 impl OnlineScreen {
@@ -1430,6 +1437,7 @@ impl OnlineScreen {
             tutorial: false,
             ids: [String::new(), String::new()],
             mode: None,
+            fighter_size: None,
         };
         self.used_ticket = Some(ready.ticket.session);
         self.pending_versus = Some((setup, portraits));
@@ -2458,10 +2466,13 @@ impl OnlineScreen {
                     "rules": if off {
                         if r.api < rugen_proto::API_VERSION { "OLDER RUGEN · CAN'T JOIN".to_string() } else { "NEWER RUGEN · UPDATE TO JOIN".to_string() }
                     } else {
-                        // classic is the usual mode: only arena is worth the room
+                        // classic mode and normal size are the usual: only others are worth the room
                         let mut t = rules_tags(&r.rules);
                         if r.rules.mode != "arena" {
                             t.pop();
+                        }
+                        if room_size(&r.rules) == FighterSize::Normal {
+                            t.remove(3);
                         }
                         t.join(" · ")
                     },
@@ -2592,6 +2603,9 @@ impl OnlineScreen {
             }
             Some("cr_spect") => "SPECTATORS WATCH THE MATCH LIVE. THEY NEVER SLOW IT DOWN.",
             Some("cr_pass") => "OPTIONAL. PLAYERS TYPE IT TO JOIN, EVEN WITH THE CODE.",
+            Some("cr_size") => {
+                "NORMAL: FIGHTERS ALREADY 58-82 PX TALL KEEP THEIR SIZE, OTHERS GET A ROUND STEP, x1.1 TO x3.0 OR /1.1 TO /3.0. NONE NEVER SCALES."
+            }
             _ if f.rules.chars == "mirror" => {
                 "MIRROR: THE CHALLENGER PLAYS THE HOST'S FIGHTER. NO MATCHUP QUESTIONS."
             }
@@ -2616,6 +2630,8 @@ impl OnlineScreen {
             "modes_sel": usize::from(f.rules.mode == "arena"),
             "chars": ["FREE PICK", "MIRROR"],
             "chars_sel": usize::from(f.rules.chars == "mirror"),
+            "sizes": FighterSize::ALL.iter().map(|v| v.label()).collect::<Vec<_>>(),
+            "sizes_sel": FighterSize::ALL.iter().position(|v| *v == room_size(&f.rules)).unwrap_or(3),
             "joins": ["ANYONE", "CODE ONLY"],
             "joins_sel": usize::from(!f.public),
             "spects": ["OFF", "2", "4", "6"],
@@ -3411,6 +3427,19 @@ impl OnlineScreen {
                     "chars" => {
                         f.rules.chars = if dir == "-" { "free" } else { "mirror" }.into();
                     }
+                    "size" => {
+                        let all = FighterSize::ALL;
+                        let i = all
+                            .iter()
+                            .position(|v| *v == room_size(&f.rules))
+                            .unwrap_or(3);
+                        let j = if dir == "-" {
+                            i.saturating_sub(1)
+                        } else {
+                            (i + 1).min(all.len() - 1)
+                        };
+                        f.rules.fighter_size = all[j].as_str().into();
+                    }
                     "spect" => f.spectators = step(&[0, 2, 4, 6], f.spectators.into()) as u8,
                     "go" => {
                         let opts = RoomOptions {
@@ -3617,6 +3646,7 @@ impl OnlineScreen {
             tutorial: false,
             ids: [String::new(), String::new()],
             mode: None,
+            fighter_size: None,
         });
     }
 
@@ -4485,6 +4515,7 @@ pub fn match_config(base: &Config, rules: &Rules) -> Config {
     } else {
         rules.round_time as i32
     };
+    c.game.fighter_size = room_size(rules);
     if rules.mode == "arena" {
         c.game.air_jumps = 1;
         c.game.air_dash = true;
@@ -4562,6 +4593,35 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rooms_carry_their_fighter_size() {
+        let mut base = Config::default();
+        base.game.fighter_size = FighterSize::None;
+        let rules = |size: &str| Rules {
+            fighter_size: size.into(),
+            ..Rules::default()
+        };
+        assert_eq!(
+            match_config(&base, &rules("chibi")).game.fighter_size,
+            FighterSize::Chibi
+        );
+        // quick match / ranked (default rules), old servers and nonsense: normal
+        assert_eq!(
+            match_config(&base, &Rules::default()).game.fighter_size,
+            FighterSize::Normal
+        );
+        let old: Rules = serde_json::from_str(r#"{"rounds":2}"#).unwrap();
+        assert_eq!(
+            match_config(&base, &old).game.fighter_size,
+            FighterSize::Normal
+        );
+        assert_eq!(
+            match_config(&base, &rules("huge")).game.fighter_size,
+            FighterSize::Normal
+        );
+        assert!(rules_tags(&rules("small")).contains(&"SMALL SIZE".to_string()));
+    }
 
     #[test]
     fn account_forms_check_what_the_server_will() {

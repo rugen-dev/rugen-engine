@@ -24,6 +24,7 @@ pub mod input;
 pub mod player;
 pub mod projectile;
 pub mod round;
+pub mod scale;
 pub mod sctrl;
 pub mod world;
 

@@ -188,6 +188,7 @@ impl SelectScreen {
             tutorial,
             ids: [String::new(), String::new()],
             mode: Some(self.mode),
+            fighter_size: None,
         };
         if tutorial {
             return Some(Transition::Fight(setup));

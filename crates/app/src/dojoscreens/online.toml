@@ -1771,13 +1771,46 @@ nine = [12, 12, 12, 12]
   y = 344
   bank = 17
   font = 2
+  text = "FIGHTER SIZE"
+
+  [[node.children]]
+  kind = "choice"
+  id = "cr_size"
+  x = 220
+  y = 330
+  w = 568
+  h = 40
+  bank = 12
+  bank_focus = 14
+  border = 3
+  border_color = [0.341, 0.2, 0.122, 1.0]
+  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  color = [0.976, 0.945, 0.871, 1.0]
+  color2 = [0.706, 0.188, 0.102, 1.0]
+  focus = true
+  font = 6
+  on_left = "form:size:-"
+  on_press = "form:go"
+  on_right = "form:size:+"
+  options = "create.sizes"
+  pad = 14
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  value = "create.sizes_sel"
+
+  [[node.children]]
+  kind = "text"
+  x = 32
+  y = 396
+  bank = 17
+  font = 2
   text = "WHO CAN JOIN"
 
   [[node.children]]
   kind = "choice"
   id = "cr_join"
   x = 220
-  y = 330
+  y = 382
   w = 568
   h = 40
   bank = 12
@@ -1801,7 +1834,7 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "text"
   x = 32
-  y = 396
+  y = 448
   bank = 17
   font = 2
   text = "SPECTATORS"
@@ -1810,7 +1843,7 @@ nine = [12, 12, 12, 12]
   kind = "choice"
   id = "cr_spect"
   x = 220
-  y = 382
+  y = 434
   w = 568
   h = 40
   bank = 12
@@ -1834,7 +1867,7 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "text"
   x = 32
-  y = 448
+  y = 500
   bank = 17
   font = 2
   text = "PASSWORD"
@@ -1843,7 +1876,7 @@ nine = [12, 12, 12, 12]
   kind = "input"
   id = "cr_pass"
   x = 220
-  y = 434
+  y = 486
   w = 568
   h = 40
   bank = 12
@@ -1861,7 +1894,7 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "text"
   x = 32
-  y = 464
+  y = 516
   bank = 17
   font = 2
   text = "OPTIONAL"

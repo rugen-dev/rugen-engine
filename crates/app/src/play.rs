@@ -5,6 +5,7 @@
 //! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug,
 //! +/- zoom.
 
+use rugen_sim::scale::FighterSize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -59,6 +60,9 @@ pub struct FightSetup {
     pub ids: [String; 2],
     /// Game mode the match was started from (for "character select" after the result).
     pub mode: Option<crate::game::Mode>,
+    /// FIGHTER SIZE to simulate with instead of the config's (a replay's
+    /// recorded one); LAN matches take the host's from the handshake.
+    pub fighter_size: Option<FighterSize>,
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -275,52 +279,41 @@ impl Match {
                     None
                 }
             });
-        let spec = rugen_sim::headless::MatchSpec {
-            p1: &setup.p1,
-            p2: &setup.p2,
-            stage: setup.stage.as_deref(),
-            data_dir,
-            motif,
-            zoom: (cfg.camera.zoom_out, cfg.camera.zoom_in),
-            movement: rugen_sim::world::Movement {
-                air_jumps: cfg.game.air_jumps,
-                air_dash: cfg.game.air_dash,
-                fast_fall: cfg.game.fast_fall,
-            },
-            // the options' round time; online peers keep the motif's so both sides agree
-            round_time: setup.net.is_none().then_some(cfg.game.round_time),
-            ai: if setup.net.is_none() {
-                setup.ai
-            } else {
-                [0, 0]
-            },
-        };
-        let mut world = rugen_sim::headless::build_world(&spec)
-            .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
-        for d in &world.data {
-            for w in &d.warnings {
-                log::warn!("{}: {w}", d.name);
-            }
-            // Opus sounds of .rgc fighters decode in the background, ready before they play
-            if let Some(snd) = &d.snd {
-                snd.prefetch();
-            }
-        }
-        if setup.tutorial {
-            world.round.time_left = -1;
-        }
-        log::info!("{} vs {}", world.data[0].name, world.data[1].name);
-
+        // a replay's recorded size, else the config's (online: the room's rules)
+        let mut fighter_size = setup.fighter_size.unwrap_or(cfg.game.fighter_size);
         let net = match &setup.net {
             Some(NetMode::P2P { port, remote, side }) => {
                 // LAN / explicit IP: wait for the peer, measure the round trip
                 let mut socket = rugen_net::Socket::bind(*port)
                     .with_context(|| format!("netplay on port {port}"))?;
+                // the host's FIGHTER SIZE rides the handshake: both sides simulate with it
+                let mine = format!("fighter_size={}", cfg.game.fighter_size.as_str());
+                let rules = if *side == 0 {
+                    rugen_net::HandshakeRules::Send(&mine)
+                } else {
+                    rugen_net::HandshakeRules::Receive
+                };
                 let shake = socket
-                    .handshake(*remote, std::time::Duration::from_secs(60), &mut |s| {
-                        log::info!("netplay: {s}")
-                    })
+                    .handshake_with(
+                        *remote,
+                        std::time::Duration::from_secs(60),
+                        rules,
+                        &mut |s| log::info!("netplay: {s}"),
+                    )
                     .with_context(|| format!("netplay with {remote}"))?;
+                if *side == 1 {
+                    match shake
+                        .rules
+                        .as_deref()
+                        .and_then(|r| r.strip_prefix("fighter_size="))
+                        .and_then(FighterSize::parse)
+                    {
+                        Some(v) => fighter_size = v,
+                        None => log::warn!(
+                            "netplay: the host sent no fighter size (older build?); using ours"
+                        ),
+                    }
+                }
                 let p95 = shake.rtt.map(|r| r.p95).or(shake.rtt_ms);
                 let policy = cfg.net.delay_policy();
                 let o = NetOptions {
@@ -345,6 +338,43 @@ impl Match {
             Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
             None => None,
         };
+        let spec = rugen_sim::headless::MatchSpec {
+            p1: &setup.p1,
+            p2: &setup.p2,
+            stage: setup.stage.as_deref(),
+            data_dir,
+            motif,
+            zoom: (cfg.camera.zoom_out, cfg.camera.zoom_in),
+            movement: rugen_sim::world::Movement {
+                air_jumps: cfg.game.air_jumps,
+                air_dash: cfg.game.air_dash,
+                fast_fall: cfg.game.fast_fall,
+            },
+            // the options' round time; online peers keep the motif's so both sides agree
+            round_time: setup.net.is_none().then_some(cfg.game.round_time),
+            ai: if setup.net.is_none() {
+                setup.ai
+            } else {
+                [0, 0]
+            },
+            fighter_size,
+        };
+        let mut world = rugen_sim::headless::build_world(&spec)
+            .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        for d in &world.data {
+            for w in &d.warnings {
+                log::warn!("{}: {w}", d.name);
+            }
+            // Opus sounds of .rgc fighters decode in the background, ready before they play
+            if let Some(snd) = &d.snd {
+                snd.prefetch();
+            }
+        }
+        if setup.tutorial {
+            world.round.time_left = -1;
+        }
+        log::info!("{} vs {}", world.data[0].name, world.data[1].name);
+
         // stage music: paths are relative to the game root (`sound/x.mp3`), else the stage dir
         let bgm = setup.stage.as_ref().and_then(|p| {
             let def = rugen_formats::def::Def::open(p).ok()?;
@@ -1150,8 +1180,8 @@ impl Match {
             if p.removed {
                 continue;
             }
+            let scale = self.world.data_scale(p.anim_owner);
             let d = &self.world.data[p.anim_owner];
-            let scale = stage.width / d.localcoord[0];
             let Some(frame) = d
                 .air
                 .get(p.anim.action)
@@ -1240,11 +1270,11 @@ impl Match {
             .cloned()
             .collect();
         for e in explods {
-            let (src, lc) = match e.src {
-                AnimSrc::Player(d) => (Some(d), self.world.data[d].localcoord[0]),
+            let (src, scale) = match e.src {
+                AnimSrc::Player(d) => (Some(d), self.world.data_scale(d)),
                 AnimSrc::Fx => (
                     None,
-                    self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
+                    stage.width / self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
                 ),
             };
             let Some(frame) = e
@@ -1256,7 +1286,6 @@ impl Match {
                 continue;
             };
             let spr = self.sprite_from(r, src, frame.group, frame.number);
-            let scale = stage.width / lc;
             let blend = resolve_blend(&frame, e.trans, e.alpha);
             let owner_pfx = self
                 .world
@@ -1297,7 +1326,7 @@ impl Match {
         for (pr, key) in projs {
             let off = self.smooth.offset(key);
             let d = self.world.players[pr.owner].data;
-            let lc = self.world.data[d].localcoord[0];
+            let scale = self.world.data_scale(d);
             let Some(frame) = self.world.data[d]
                 .air
                 .get(pr.anim_no)
@@ -1307,7 +1336,6 @@ impl Match {
                 continue;
             };
             let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
-            let scale = stage.width / lc;
             let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
             let owner_pfx = self.world.players[pr.owner].palfx.sample();
             items.push(Item {
