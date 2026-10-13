@@ -4,11 +4,12 @@
 
 use std::path::PathBuf;
 
-use rugen_content::{Entry, Library, Manifest};
+use rugen_content::{Library, Manifest};
 use serde_json::{Value, json};
 
 use crate::game::{Mode, Transition};
 use crate::play::FightSetup;
+use crate::stagesel::{StageItem, StagePlan};
 use crate::uiscreen::Profile;
 use crate::versus::Portrait;
 
@@ -20,25 +21,8 @@ pub struct RosterCell {
     pub manifest: Manifest,
 }
 
-struct StageItem {
-    entry: Entry,
-    dir: Option<PathBuf>,
-    manifest: Option<Manifest>,
-}
-
-impl StageItem {
-    /// The stage def has an `[Arena]` section (blast zones, stocks, ring-out).
-    fn is_arena(&self) -> bool {
-        let (Some(dir), Some(m)) = (&self.dir, &self.manifest) else {
-            return false;
-        };
-        rugen_formats::vfs::read(&m.def_path(dir)).is_ok_and(|b| {
-            String::from_utf8_lossy(&b)
-                .lines()
-                .any(|l| l.trim().eq_ignore_ascii_case("[arena]"))
-        })
-    }
-}
+/// Ticks between the last pick and leaving for the stage select / VS screen.
+const READY_TICKS: u32 = 30;
 
 /// What a grid slot holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +74,9 @@ pub struct Roster {
     hover_slot: [Slot; 2],
     ai_level: i32,
     seed: u32,
+    /// Everyone picked: ticks left before the screen moves on (cleared by
+    /// an unpick; not started when the picks came back from the stage select).
+    ready_in: Option<u32>,
 }
 
 /// Why the official server blocks this fighter (cached, verified feed).
@@ -128,30 +115,12 @@ impl Roster {
                 Err(err) => log::warn!("{}: {err}", e.id),
             }
         }
-        let stages = lib
-            .stages()
-            .into_iter()
-            .map(|entry| {
-                let prepared = lib
-                    .prepare_stage(&entry)
-                    .map_err(|e| log::warn!("stage {}: {e}", entry.id))
-                    .ok();
-                StageItem {
-                    entry,
-                    dir: prepared.as_ref().map(|(d, _)| d.clone()),
-                    manifest: prepared.map(|(_, m)| m),
-                }
-            })
-            .collect::<Vec<StageItem>>();
-        // ARENA fights only on stages with an `[Arena]` section (stocks, ring-out)
-        let stages = if mode == Mode::Arena {
-            let arenas: Vec<StageItem> = stages.into_iter().filter(StageItem::is_arena).collect();
-            if arenas.is_empty() {
-                log::warn!("arena: no stage with an [Arena] section installed");
-            }
-            arenas
+        // the stage is picked on its own screen; only the online pick (the
+        // host's stage travels with the fighter) keeps a stage strip here
+        let stages = if mode == Mode::Online {
+            crate::stagesel::load_stages(lib, mode)
         } else {
-            stages
+            Vec::new()
         };
         let human = match mode {
             Mode::Versus => [true, true],
@@ -183,16 +152,13 @@ impl Roster {
             hover2: None,
             hover_slot: [Slot::Empty; 2],
             ai_level,
+            ready_in: None,
             // a fresh CPU opponent / random stage every visit
             seed: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0x2545_f491, |d| d.subsec_nanos() | 1),
         };
         r.reorder();
-        // a lone arena stage is shown by name rather than as RANDOM
-        if mode == Mode::Arena && r.stages.len() == 1 {
-            r.stage_idx = 1;
-        }
         // computer sides pick up front so the plates fill in (online: the
         // opponent brings their own, unknown until the matchup)
         for side in 0..2 {
@@ -204,6 +170,13 @@ impl Roster {
         r.hover = r.order.first().copied();
         r.hover_slot = [r.hover.map_or(Slot::Random, Slot::Char); 2];
         r
+    }
+
+    /// The last pick went in: leave for the stage select after a beat.
+    fn arm_ready(&mut self) {
+        if self.all_picked() && self.mode != Mode::Online {
+            self.ready_in = Some(READY_TICKS);
+        }
     }
 
     fn rand(&mut self, n: usize) -> usize {
@@ -327,6 +300,7 @@ impl Roster {
     /// screen). False when there was nothing to take back (leave the screen).
     pub fn cancel(&mut self, side: Option<usize>) -> bool {
         let side = match side {
+            // two cursors: each player's back only touches their own pick
             Some(s) if self.dual() => Some(s).filter(|&s| self.picks[s].is_some()),
             // one cursor picks everything: back always undoes the last pick
             _ => (0..2)
@@ -337,11 +311,52 @@ impl Roster {
             Some(s) => {
                 self.picks[s] = None;
                 self.picking = self.next_picking();
+                self.ready_in = None;
                 true
             }
-            // the other player still has a pick: stay
-            None => (0..2).any(|s| self.chooses[s] && self.picks[s].is_some()),
+            // nothing of theirs locked: leave
+            None => false,
         }
+    }
+
+    /// Picks handed back by the stage select (manifest ids): locked again,
+    /// no countdown; one more back changes just that fighter.
+    pub fn restore(&mut self, picks: &[Option<String>; 2]) {
+        for (side, id) in picks.iter().enumerate() {
+            let Some(id) = id else { continue };
+            if let Some(i) = self.cells.iter().position(|c| &c.manifest.id == id) {
+                self.picks[side] = Some(i);
+                if side == 0 || !self.dual() {
+                    self.hover = Some(i);
+                } else {
+                    self.hover2 = Some(i);
+                }
+            }
+        }
+        self.picking = self.next_picking();
+        self.ready_in = None;
+    }
+
+    /// Everyone picked: count down, then move on. `Go` when it is time.
+    pub fn tick(&mut self) -> Outcome {
+        let Some(left) = self.ready_in.as_mut() else {
+            return Outcome::None;
+        };
+        *left = left.saturating_sub(1);
+        if *left > 0 {
+            return Outcome::None;
+        }
+        self.ready_in = None;
+        if self.all_picked() {
+            self.go()
+        } else {
+            Outcome::Refresh
+        }
+    }
+
+    /// Where a stage is chosen. Online keeps the strip on this screen.
+    pub fn stage_strip(&self) -> bool {
+        self.mode == Mode::Online
     }
 
     /// Everyone picked: start (VS screen or straight into the fight).
@@ -383,6 +398,7 @@ impl Roster {
         if let Some(s) = target {
             self.picks[s] = Some(cell);
             self.picking = self.next_picking();
+            self.arm_ready();
         }
         // online: one pick and back to the matchup
         if self.mode == Mode::Online && self.picks[0].is_some() {
@@ -429,6 +445,7 @@ impl Roster {
                     self.picks[1] = self.random_ok();
                     self.hover2 = self.picks[1];
                     self.picking = self.next_picking();
+                    self.arm_ready();
                 }
                 Outcome::Refresh
             }
@@ -437,6 +454,7 @@ impl Roster {
                     self.picks[0] = self.random_ok();
                     self.hover = self.picks[0];
                     self.picking = self.next_picking();
+                    self.arm_ready();
                 }
                 Outcome::Refresh
             }
@@ -445,6 +463,7 @@ impl Roster {
                     self.picks[self.picking] = self.random_ok();
                     self.hover = self.picks[self.picking];
                     self.picking = self.next_picking();
+                    self.arm_ready();
                 }
                 Outcome::Refresh
             }
@@ -481,20 +500,6 @@ impl Roster {
         }
     }
 
-    fn stage_path(&mut self) -> Option<PathBuf> {
-        let chosen = if self.stage_idx == 0 {
-            let n = self.stages.len();
-            if n == 0 { None } else { Some(self.rand(n)) }
-        } else {
-            Some(self.stage_idx - 1)
-        };
-        let path = chosen.and_then(|i| {
-            let s = self.stages.get(i)?;
-            Some(s.manifest.as_ref()?.def_path(s.dir.as_ref()?))
-        });
-        path.or_else(|| self.lib.default_stage())
-    }
-
     fn portrait(&self, side: usize) -> Portrait {
         let c = self.picks[side].and_then(|i| self.cells.get(i));
         let img = c.and_then(|c| {
@@ -529,7 +534,12 @@ impl Roster {
         };
         let (p1, id1) = def(self, 0)?;
         let (p2, id2) = def(self, 1)?;
-        let stage = self.stage_path();
+        // arcade: the ladder decides (a random first stage), no stage select
+        let stage = if self.mode == Mode::Arcade {
+            self.arcade_stage()
+        } else {
+            None
+        };
         let ai = |human: bool, lvl: i32| if human { 0 } else { lvl };
         let tutorial = self.mode == Mode::Tutorial;
         let setup = FightSetup {
@@ -550,12 +560,37 @@ impl Roster {
             fighter_size: None,
         };
         if tutorial {
+            let mut setup = setup;
+            setup.stage = self.lib.default_stage();
             return Some(Transition::Fight(setup));
         }
-        Some(Transition::Versus(
+        let portraits = [self.portrait(0), self.portrait(1)];
+        if self.mode == Mode::Arcade {
+            return Some(Transition::Versus(setup, portraits));
+        }
+        let name = |me: &Self, s: usize| {
+            me.picks[s]
+                .and_then(|i| me.cells.get(i))
+                .map(|c| c.manifest.display_name.clone())
+                .unwrap_or_default()
+        };
+        Some(Transition::StageSelect(Box::new(StagePlan {
+            mode: self.mode,
+            names: [name(self, 0), name(self, 1)],
+            picks: [setup.ids[0].clone(), setup.ids[1].clone()],
             setup,
-            [self.portrait(0), self.portrait(1)],
-        ))
+            portraits,
+        })))
+    }
+
+    /// Arcade's first stage: any installed one (only that one is prepared).
+    fn arcade_stage(&mut self) -> Option<PathBuf> {
+        let all = self.lib.stages();
+        let pick = (!all.is_empty()).then(|| self.rand(all.len()));
+        pick.and_then(|i| all.get(i))
+            .and_then(|e| self.lib.prepare_stage(e).ok())
+            .map(|(d, m)| m.def_path(&d))
+            .or_else(|| self.lib.default_stage())
     }
 
     fn cell_json(&self, order_i: usize, cell: usize) -> Value {
@@ -777,10 +812,17 @@ impl Roster {
             Mode::Online => "ONLINE",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
+        let next = if self.mode == Mode::Arcade {
+            "CONFIRM TO FIGHT"
+        } else {
+            "CONFIRM FOR THE STAGE"
+        };
         let prompt = if self.mode == Mode::Online {
             "BRING YOUR FIGHTER".to_string()
+        } else if self.all_picked() && self.ready_in.is_some() {
+            "READY!".to_string()
         } else if self.all_picked() {
-            "READY  -  CONFIRM TO FIGHT".to_string()
+            format!("READY  -  {next}")
         } else if self.dual() {
             match (self.picks[0].is_some(), self.picks[1].is_some()) {
                 (false, false) => "P1 AND P2 : CHOOSE YOUR FIGHTERS".to_string(),
@@ -797,7 +839,7 @@ impl Roster {
         } else if self.picking < 2 {
             format!("P{} : CHOOSE YOUR FIGHTER", self.picking + 1)
         } else {
-            "READY  -  CONFIRM TO FIGHT".to_string()
+            format!("READY  -  {next}")
         };
         let shown = self.char_json(self.hover.or(self.picks[0]).or(self.picks[1]), profile);
         let warns = self
@@ -833,6 +875,7 @@ impl Roster {
             "p2": self.char_json(self.picks[1], profile),
             "versus": self.human[1] || self.picks[1].is_some(),
             "ready": self.all_picked(),
+            "stage_strip": self.stage_strip(),
             "dual": self.dual(),
             "query": self.query,
             "sort": match self.sort {

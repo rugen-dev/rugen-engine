@@ -54,6 +54,48 @@ struct Elem {
     window: Option<[f32; 4]>,
 }
 
+/// Where a stage preview lands: stage coordinates `src` (top-left of the
+/// visible stage area) map to `dst` = `[x, y, w, h]`, `k` target units per
+/// stage unit.
+#[derive(Clone, Copy, Debug)]
+pub struct View {
+    pub src: [f32; 2],
+    pub k: f32,
+    pub dst: [f32; 4],
+}
+
+impl View {
+    fn map(&self, p: [f32; 2]) -> [f32; 2] {
+        [
+            self.dst[0] + (p[0] - self.src[0]) * self.k,
+            self.dst[1] + (p[1] - self.src[1]) * self.k,
+        ]
+    }
+
+    fn apply(&self, d: &mut Draw) {
+        d.pos = self.map(d.pos);
+        d.scale = [d.scale[0] * self.k, d.scale[1] * self.k];
+        let bx = [
+            self.dst[0],
+            self.dst[1],
+            self.dst[0] + self.dst[2],
+            self.dst[1] + self.dst[3],
+        ];
+        d.clip = Some(match d.clip {
+            Some(c) => {
+                let (a, b) = (self.map([c[0], c[1]]), self.map([c[2], c[3]]));
+                [
+                    a[0].max(bx[0]),
+                    a[1].max(bx[1]),
+                    b[0].min(bx[2]),
+                    b[1].min(bx[3]),
+                ]
+            }
+            None => bx,
+        });
+    }
+}
+
 pub struct StageVisual {
     sff: Sff,
     air: Air,
@@ -279,6 +321,46 @@ impl StageVisual {
         screen_w: f32,
         tint: Tint,
     ) {
+        self.draw_impl(r, layer, cam, scale, screen_w, tint, None);
+    }
+
+    /// Draw `layer` into a box of another screen (a stage preview): the
+    /// view's stage rectangle is mapped onto `view.dst` and clipped to it.
+    pub fn draw_view(
+        &mut self,
+        r: &mut Renderer,
+        layer: i32,
+        cam: [f32; 2],
+        scale: f32,
+        view: View,
+    ) {
+        let screen_w = view.dst[2] / view.k;
+        self.draw_impl(r, layer, cam, scale, screen_w, Tint::default(), Some(view));
+    }
+
+    /// Release the uploaded sprites (a preview that is replaced).
+    pub fn free_gpu(&mut self, r: &mut Renderer) {
+        let mut ids: std::collections::HashSet<TextureId> =
+            self.textures.values().flatten().map(|t| t.0).collect();
+        ids.extend(self.shared.values().copied());
+        for id in ids {
+            r.free_texture(id);
+        }
+        self.textures.clear();
+        self.shared.clear();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_impl(
+        &mut self,
+        r: &mut Renderer,
+        layer: i32,
+        cam: [f32; 2],
+        scale: f32,
+        screen_w: f32,
+        tint: Tint,
+        view: Option<View>,
+    ) {
         let elems = self.elems.clone();
         for (idx, e) in elems.iter().enumerate() {
             if e.layer != layer {
@@ -368,6 +450,9 @@ impl StageVisual {
                     d.tint = tint;
                     d.blend = e.blend;
                     d.clip = clip;
+                    if let Some(v) = &view {
+                        v.apply(&mut d);
+                    }
                     r.draw(d);
                 }
             }

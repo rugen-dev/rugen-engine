@@ -59,6 +59,11 @@ pub enum Mode {
 pub enum Transition {
     Title,
     Select(Mode),
+    /// Back from the stage select: the fighter select with these picks
+    /// (manifest ids) locked again.
+    SelectAgain(Mode, [Option<String>; 2]),
+    /// Both fighters picked: choose the stage (`ui/stages.toml`).
+    StageSelect(Box<crate::stagesel::StagePlan>),
     /// Online match from the `[net]` section of rugen.toml.
     Netplay,
     /// ONLINE menu: rooms, ranked, leaderboard (needs `[net] server`).
@@ -709,6 +714,16 @@ impl Shell {
     fn transition(&mut self, t: Transition) {
         // every new screen fades in from black
         self.fade = 1.0;
+        // the screen being left gives back its textures (a pause menu keeps
+        // the match underneath, so only replaced UI screens)
+        if let (Screen::Ui(u), Some(g)) = (&mut self.screen, self.gpu.as_mut())
+            && !matches!(
+                t,
+                Transition::Controls(_) | Transition::Resume | Transition::Restart
+            )
+        {
+            u.release_gpu(&mut g.renderer);
+        }
         // BUTTON CONFIG opened from the pause menu: leaving it goes straight
         // back to the paused match, not through the options
         let t = match t {
@@ -1021,6 +1036,46 @@ impl Shell {
                     }
                 }
             }
+            Transition::SelectAgain(mode, picks) => {
+                self.transition(Transition::Select(mode));
+                if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
+                    u.restore_picks(&picks, sys);
+                }
+            }
+            Transition::StageSelect(plan) => {
+                self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Stages) => {
+                        match UiScreen::load_stages(
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            &self.lib,
+                            *plan,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/stages.toml: {e:#}");
+                                self.transition(Transition::Title);
+                                return;
+                            }
+                        }
+                    }
+                    // a theme without a stage screen: a random stage, straight to the VS screen
+                    _ => {
+                        let mut plan = *plan;
+                        let stages = self.lib.stages();
+                        let k = (self.ticks as usize) % stages.len().max(1);
+                        plan.setup.stage = stages
+                            .get(k)
+                            .and_then(|e| self.lib.prepare_stage(e).ok())
+                            .map(|(d, m)| m.def_path(&d))
+                            .or_else(|| self.lib.default_stage());
+                        self.transition(Transition::Versus(plan.setup, plan.portraits));
+                        return;
+                    }
+                };
+            }
             Transition::Select(mode) => {
                 self.play_system_music("select");
                 self.screen = match self.system.as_ref() {
@@ -1281,6 +1336,7 @@ impl Shell {
                 {
                     u.set_pads(self.input.pads(), sys);
                 }
+                u.set_held(self.prev);
                 if let (Some(sys), Some(g)) = (self.system.as_mut(), self.gpu.as_mut()) {
                     next = u.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)

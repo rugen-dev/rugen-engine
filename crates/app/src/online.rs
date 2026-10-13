@@ -4343,6 +4343,7 @@ impl OnlineScreen {
                 motif: &self.motif,
                 mem: Some(&self.mem),
                 rot: None,
+                stages: None,
             };
             self.ui.tick(nav, &mut host)
         };
@@ -4425,6 +4426,7 @@ impl OnlineScreen {
                 motif: &self.motif,
                 mem: Some(&self.mem),
                 rot: None,
+                stages: None,
             };
             self.ui.draw(&mut host);
         }

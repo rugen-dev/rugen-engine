@@ -1,0 +1,432 @@
+# rugen STAGE SELECT — Dojo theme. Coordinates are 1280x720.
+# Fighter select → STAGE SELECT → versus → fight. Player 1 picks: ◀▶ (held:
+# repeats, then faster), X / Z or Page Up / Down a strip-width, Home / End,
+# a letter jumps by name; A / Enter fights, B / Esc goes back to the fighters.
+# Data: title, sub, p1, p2, cur {name author has_author tags[] {t} music
+# has_music width has_width random note}, preview_ready, preview_wait,
+# strip[] {x name thumb has_thumb placeholder random sel idle} (only the tiles
+# on screen: the strip is virtualised), pos, track {x w scrolls}, keys.
+# `stage_preview` is a slot: the stage under the cursor, live, drawn by rugen.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/hall.webp"
+w = "100%"
+h = "100%"
+
+# header under the beam: STAGE, who picks, the matchup on plaques
+[[node]]
+kind = "text"
+dock = "left top"
+text = "{title}"
+x = 44
+y = 30
+font = 3
+bank = 14
+enter = "down"
+enter_time = 12
+
+[[node]]
+kind = "text"
+dock = "left top"
+text = "{sub}"
+x = 200
+y = 42
+font = 2
+bank = 16
+enter = "down"
+enter_time = 12
+
+[[node]]
+kind = "hbox"
+dock = "right top"
+x = 620
+y = 30
+w = 616
+h = 40
+gap = 12
+justify = "end"
+align = "center"
+enter = "down"
+enter_time = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1}"
+  h = 40
+  pad = 16
+  image = "ui/plaque9_red.webp"
+  nine = [8, 8, 8, 10]
+  font = 6
+  bank = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "VS"
+  font = 6
+  bank = 15
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2}"
+  h = 40
+  pad = 16
+  image = "ui/plaque9_gold.webp"
+  nine = [8, 8, 8, 10]
+  font = 6
+  bank = 12
+
+# live preview in a lacquer frame, the stage inside
+[[node]]
+kind = "panel"
+x = 48
+y = 84
+w = 820
+h = 396
+image = "ui/lacq9.webp"
+nine = [12, 12, 12, 12]
+enter = "left"
+enter_time = 14
+
+  [[node.children]]
+  kind = "panel"
+  x = 12
+  y = 12
+  w = 796
+  h = 372
+  color = [0.047, 0.031, 0.027, 1.0]
+
+  [[node.children]]
+  kind = "slot"
+  id = "stage_preview"
+  x = 12
+  y = 12
+  w = 796
+  h = 372
+  visible = "preview_ready"
+
+  [[node.children]]
+  kind = "text"
+  text = "?"
+  w = 820
+  h = 396
+  align = "center"
+  font = 3
+  scale = 2
+  bank = 16
+  visible = "cur.random"
+
+  [[node.children]]
+  kind = "text"
+  text = "LOADING..."
+  w = 820
+  h = 396
+  align = "center"
+  font = 2
+  bank = 16
+  visible = "preview_wait"
+
+  [[node.children]]
+  kind = "text"
+  text = "LIVE PREVIEW"
+  x = 24
+  y = 24
+  h = 28
+  pad = 10
+  image = "ui/plaque9_dark.webp"
+  nine = [8, 8, 8, 10]
+  font = 2
+  bank = 14
+  visible = "preview_ready"
+
+# stage facts on a washi sheet
+[[node]]
+kind = "panel"
+x = 888
+y = 84
+w = 344
+h = 396
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+enter = "right"
+enter_time = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{cur.name}"
+  x = 22
+  y = 24
+  w = 300
+  h = 60
+  wrap = true
+  line_h = 28
+  max_lines = 2
+  font = 6
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "BY {cur.author}"
+  x = 22
+  y = 92
+  w = 300
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "cur.has_author"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 22
+  y = 118
+  w = 300
+  h = 24
+  gap = 8
+  items = "cur.tags"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.t}"
+    h = 24
+    pad = 8
+    color = [0.706, 0.188, 0.102, 1.0]
+    font = 2
+    bank = 14
+
+  [[node.children]]
+  kind = "panel"
+  x = 22
+  y = 158
+  w = 300
+  h = 3
+  color = [0.341, 0.2, 0.122, 0.5]
+
+  [[node.children]]
+  kind = "text"
+  text = "MUSIC"
+  x = 22
+  y = 178
+  font = 2
+  bank = 13
+  visible = "cur.has_music"
+
+  [[node.children]]
+  kind = "text"
+  text = "{cur.music}"
+  x = 112
+  y = 178
+  w = 210
+  ellipsis = true
+  font = 2
+  bank = 17
+  visible = "cur.has_music"
+
+  [[node.children]]
+  kind = "text"
+  text = "WIDTH"
+  x = 22
+  y = 206
+  font = 2
+  bank = 13
+  visible = "cur.has_width"
+
+  [[node.children]]
+  kind = "text"
+  text = "{cur.width}"
+  x = 112
+  y = 206
+  w = 210
+  font = 2
+  bank = 17
+  visible = "cur.has_width"
+
+  [[node.children]]
+  kind = "text"
+  text = "{cur.note}"
+  x = 22
+  y = 330
+  w = 300
+  h = 56
+  wrap = true
+  line_h = 18
+  font = 2
+  bank = 17
+
+# the strip: RANDOM first, the selection kept near the middle
+[[node]]
+kind = "panel"
+id = "strip"
+x = 48
+y = 500
+w = 1184
+h = 124
+cut = [0, 0, 0, 0]
+items = "strip"
+enter = "up"
+enter_time = 14
+
+  [[node.children]]
+  kind = "panel"
+  x = "{item.x}"
+  y = 0
+  w = 184
+  h = 118
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 184
+    h = 118
+    color = [0.078, 0.051, 0.043, 1.0]
+    border = 3
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    visible = "item.idle"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 184
+    h = 118
+    color = [0.16, 0.09, 0.06, 1.0]
+    border = 5
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    visible = "item.sel"
+
+    [[node.children.children]]
+    kind = "image"
+    image = "{item.thumb}"
+    x = 6
+    y = 6
+    w = 172
+    h = 76
+    fit = "cover"
+    visible = "item.has_thumb"
+
+    # not decoded yet (or no thumbnail): the name on a tinted tile
+    [[node.children.children]]
+    kind = "panel"
+    x = 6
+    y = 6
+    w = 172
+    h = 76
+    color = [0.239, 0.141, 0.086, 1.0]
+    visible = "item.placeholder"
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 6
+    y = 6
+    w = 172
+    h = 76
+    color = [0.047, 0.031, 0.027, 1.0]
+    visible = "item.random"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    x = 6
+    y = 6
+    w = 172
+    h = 76
+    align = "center"
+    font = 3
+    bank = 15
+    visible = "item.random"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.name}"
+    x = 12
+    y = 90
+    w = 160
+    ellipsis = true
+    font = 2
+    bank = 14
+
+# where in the list: a thin track with the visible window on it
+[[node]]
+kind = "panel"
+x = 48
+y = 632
+w = 1184
+h = 4
+color = [0.239, 0.141, 0.086, 1.0]
+visible = "track.scrolls"
+
+  [[node.children]]
+  kind = "panel"
+  x = "{track.x}"
+  y = 0
+  w = "{track.w}"
+  h = 4
+  color = [0.89, 0.702, 0.298, 1.0]
+
+[[node]]
+kind = "text"
+text = "{pos}"
+x = 48
+y = 662
+font = 2
+bank = 16
+
+[[node]]
+kind = "hbox"
+x = 560
+y = 652
+w = 672
+h = 36
+gap = 8
+justify = "end"
+align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "◀ ▶"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "STAGE  "
+  font = 2
+  bank = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "ENTER"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "FIGHT!  "
+  font = 2
+  bank = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "ESC"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "BACK TO FIGHTERS"
+  font = 2
+  bank = 16

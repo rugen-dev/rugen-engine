@@ -67,6 +67,7 @@ mod smooth;
 mod sprites;
 mod stage;
 mod stagegen;
+mod stagesel;
 mod system;
 mod title;
 mod tutorial;

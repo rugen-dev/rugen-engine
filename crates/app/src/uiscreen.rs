@@ -36,6 +36,8 @@ pub enum UiKind {
     Pause,
     /// Key bindings page for one player (`ui/controls.toml`).
     Controls,
+    /// Stage select between the fighter select and the VS screen (`ui/stages.toml`).
+    Stages,
 }
 
 /// A decoded RGBA image kept in memory and drawn through a `mem:<name>` asset key.
@@ -253,6 +255,10 @@ pub struct UiScreen {
     pending: Option<Transition>,
     /// Select screens only.
     roster: Option<Roster>,
+    /// Stage select only.
+    stages: Option<crate::stagesel::StageSel>,
+    /// Buttons held this tick (auto-repeat on the stage strip).
+    held: [Buttons; 2],
     room: String,
     /// VS screen: the fight to start and the ticks left.
     versus: Option<(FightSetup, i32)>,
@@ -274,6 +280,8 @@ pub struct UiScreen {
     /// Title: stage for the featured fighter's training run.
     try_stage: Option<PathBuf>,
     ticks: u64,
+    /// Stage select: the library (default stage for an empty RANDOM).
+    lib: Option<rugen_content::Library>,
 }
 
 /// What the pause menu shows.
@@ -462,6 +470,7 @@ impl UiScreen {
             UiKind::Result => "result.toml",
             UiKind::Pause => "pause.toml",
             UiKind::Controls => "controls.toml",
+            UiKind::Stages => "stages.toml",
         }
     }
 
@@ -499,6 +508,50 @@ impl UiScreen {
         s.versus = Some((setup, sys.versus.time.max(60)));
         s.refresh_data(sys);
         Ok(s)
+    }
+
+    /// Stage select for the fight the fighter select lined up.
+    pub fn load_stages(
+        motif: &Path,
+        root: &Path,
+        sys: &SystemData,
+        config: &Config,
+        lib: &rugen_content::Library,
+        plan: crate::stagesel::StagePlan,
+    ) -> anyhow::Result<Self> {
+        let mut s = Self::load(UiKind::Stages, motif, root, sys, config, lib)?;
+        s.stages = Some(crate::stagesel::StageSel::new(plan, lib));
+        s.lib = Some(lib.clone());
+        s.refresh_data(sys);
+        Ok(s)
+    }
+
+    /// Back on the fighter select from the stage select: both picks locked again.
+    pub fn restore_picks(&mut self, picks: &[Option<String>; 2], sys: &SystemData) {
+        if let Some(r) = self.roster.as_mut() {
+            r.restore(picks);
+        }
+        self.refresh_data(sys);
+    }
+
+    /// Buttons held this tick (before [`tick`](Self::tick)).
+    pub fn set_held(&mut self, held: [Buttons; 2]) {
+        self.held = held;
+    }
+
+    /// Free the GPU textures this screen uploaded (it is being replaced);
+    /// sprite-sheet entries belong to the system sheet and stay.
+    pub fn release_gpu(&mut self, r: &mut Renderer) {
+        if let Some(st) = self.stages.as_mut() {
+            st.release(r, &mut self.textures);
+        }
+        for (key, c) in self.textures.drain() {
+            if let Some((tex, ..)) = c
+                && !key.starts_with("sff:")
+            {
+                r.free_texture(tex);
+            }
+        }
     }
 
     /// Result screen after a match.
@@ -643,6 +696,18 @@ impl UiScreen {
 
     /// Function keys a screen handles itself (TAB search / F1 sort on the roster).
     pub fn hotkey(&mut self, key: &Key, sys: &SystemData) -> bool {
+        // stage strip: Page Up / Down, Home / End, a letter jumps by name
+        if let Some(st) = self.stages.as_mut() {
+            return match st.key(key) {
+                Some(moved) => {
+                    if moved {
+                        self.refresh_data(sys);
+                    }
+                    true
+                }
+                None => false,
+            };
+        }
         if self.roster.is_none() {
             return false;
         }
@@ -696,6 +761,8 @@ impl UiScreen {
                 UiKind::Select(mode) => Some(Roster::new(mode, lib, config.game.ai_level)),
                 _ => None,
             },
+            stages: None,
+            held: [Buttons::default(); 2],
             room: if kind == UiKind::Select(Mode::Online) {
                 "ONLINE".into()
             } else {
@@ -716,6 +783,7 @@ impl UiScreen {
             arenas: Value::Null,
             try_stage: None,
             ticks: 0,
+            lib: None,
         };
         if kind == UiKind::Title {
             s.load_title_facts(lib);
@@ -766,6 +834,14 @@ impl UiScreen {
                     };
                     d["pick_key"] = Value::from(pick);
                     d["searching"] = json!(self.ui.text_focused());
+                    d
+                }
+                None => Value::Null,
+            },
+            UiKind::Stages => match &self.stages {
+                Some(st) => {
+                    let mut d = st.data();
+                    d["keys"] = self.keys_json();
                     d
                 }
                 None => Value::Null,
@@ -1078,9 +1154,13 @@ impl UiScreen {
                 None
             }
             UiKind::Controls => Some(Transition::Options),
+            // back to the fighters, both picks still locked
+            UiKind::Stages => self.stages.as_mut().map(|s| s.back()),
             UiKind::Select(mode) => {
-                // take back the last pick first, leave when there is none
-                if self.roster.as_mut().is_some_and(|r| r.cancel(None)) {
+                // Esc is player 1's: take back their pick (one cursor: the
+                // last pick), leave when there is none
+                let side = self.roster.as_ref().is_some_and(|r| r.dual()).then_some(0);
+                if self.roster.as_mut().is_some_and(|r| r.cancel(side)) {
                     self.refresh_data(sys);
                     return None;
                 }
@@ -1137,7 +1217,9 @@ impl UiScreen {
             UiKind::Pause => Some(Transition::Resume),
             UiKind::Options => self.escape(sys),
             // B is a fight button: it must not quit the game, leave a result or the bindings page
-            UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus => None,
+            UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus | UiKind::Stages => {
+                None
+            }
         }
     }
 
@@ -1464,7 +1546,7 @@ impl UiScreen {
             .controls
             .as_ref()
             .is_some_and(|c| c.listen.is_some());
-        let (mut nav, nav2) = if listening {
+        let (mut nav, mut nav2) = if listening {
             (Nav::default(), Nav::default())
         } else if dual {
             (of(&pressed[0]), of(&pressed[1]))
@@ -1520,6 +1602,30 @@ impl UiScreen {
         if vs_refresh {
             self.refresh_data(sys);
         }
+        // stage select: player 1 drives the strip; the UI engine only draws it
+        let mut stage_out = None;
+        if self.stages.is_some() {
+            let strip_w = self.ui.rect_of("strip").map(|r| r.w);
+            if let (Some(st), Some(lib)) = (self.stages.as_mut(), self.lib.as_ref()) {
+                if let Some(w) = strip_w {
+                    st.set_strip_width(w);
+                }
+                st.upkeep(r, &mut self.textures);
+                if !self.ui.leaving() {
+                    let snd = &sys.select;
+                    stage_out = st.tick(pressed[0], self.held[0], lib, &mut |e| {
+                        sfx(match e {
+                            crate::stagesel::Sfx::Move => snd.stage_move_snd,
+                            crate::stagesel::Sfx::Done => snd.stage_done_snd,
+                            crate::stagesel::Sfx::Cancel => snd.cancel_snd,
+                        })
+                    });
+                }
+            }
+            nav = Nav::default();
+            nav2 = Nav::default();
+            self.refresh_data(sys);
+        }
         let events = {
             let mut host = Host {
                 r,
@@ -1529,6 +1635,7 @@ impl UiScreen {
                 motif: &self.motif,
                 mem: Some(&self.mem),
                 rot: None,
+                stages: None,
             };
             crate::framestats::time(crate::framestats::Phase::Layout, || {
                 self.ui.tick2(nav, nav2, &mut host)
@@ -1577,6 +1684,20 @@ impl UiScreen {
                         self.action(&format!("query:{text}"), sys);
                     }
                 }
+            }
+        }
+        if stage_out.is_some() {
+            return stage_out;
+        }
+        // everyone picked: after a beat, on to the stage select / VS screen
+        if out.is_none()
+            && !self.ui.leaving()
+            && let Some(r) = self.roster.as_mut()
+        {
+            match r.tick() {
+                Outcome::Go(t) => out = Some(*t),
+                Outcome::Refresh => self.refresh_data(sys),
+                Outcome::None => {}
             }
         }
         if dual
@@ -1637,6 +1758,7 @@ impl UiScreen {
                 motif: &self.motif,
                 mem: Some(&self.mem),
                 rot: None,
+                stages: self.stages.as_mut(),
             };
             self.ui.draw(&mut host);
         }
@@ -1757,12 +1879,18 @@ pub(crate) struct Host<'a> {
     pub(crate) mem: Option<&'a HashMap<String, MemImage>>,
     /// Rotation of the subtree being drawn (`angle` nodes).
     pub(crate) rot: Option<rugen_ui::Rot>,
+    /// Stage select: draws the `stage_preview` slot.
+    pub(crate) stages: Option<&'a mut crate::stagesel::StageSel>,
 }
 
 impl Host<'_> {
     fn texture(&mut self, key: &str) -> Cached {
         if let Some(c) = self.textures.get(key) {
             return *c;
+        }
+        // stage thumbnails are registered by the stage select (and freed by it)
+        if key.starts_with("stagethumb:") {
+            return None;
         }
         let loaded: Cached = if let Some(name) = key.strip_prefix("mem:") {
             self.mem
@@ -1907,6 +2035,15 @@ impl Painter for Host<'_> {
 
     fn set_transform(&mut self, rot: Option<rugen_ui::Rot>) {
         self.rot = rot;
+    }
+
+    fn draw_slot(&mut self, id: &str, dst: Rect, _alpha: f32, _clip: Option<Rect>) {
+        if id == "stage_preview" {
+            let dst = self.snap(dst);
+            if let Some(st) = self.stages.as_mut() {
+                st.draw_preview(self.r, dst);
+            }
+        }
     }
 
     fn draw_rect(&mut self, dst: Rect, color: [f32; 4], skew: f32, clip: Option<Rect>) {

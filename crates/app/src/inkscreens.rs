@@ -679,6 +679,7 @@ pub fn screens(ui: &Path) -> anyhow::Result<()> {
         ("pause.toml", PAUSE_TOML),
         ("result.toml", RESULT_TOML),
         ("online.toml", ONLINE_TOML),
+        ("stages.toml", STAGES_TOML),
     ] {
         std::fs::write(ui.join(name), text)?;
     }
@@ -693,3 +694,4 @@ const VS_TOML: &str = include_str!("inkscreens/vs.toml");
 const PAUSE_TOML: &str = include_str!("inkscreens/pause.toml");
 const RESULT_TOML: &str = include_str!("inkscreens/result.toml");
 const ONLINE_TOML: &str = include_str!("inkscreens/online.toml");
+const STAGES_TOML: &str = include_str!("inkscreens/stages.toml");

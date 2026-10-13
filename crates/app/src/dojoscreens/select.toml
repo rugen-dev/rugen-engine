@@ -593,7 +593,39 @@ enter_time = 16
   bank = 12
   visible = "card2.name_small"
 
-# stage picker: a lacquer panel
+# between the cards: VS, then a READY seal once both fighters are locked
+# (the stage is picked on its own screen next)
+[[node]]
+kind = "text"
+text = "VS"
+x = 460
+y = 510
+w = 366
+h = 90
+align = "center"
+font = 3
+scale = 2
+bank = 15
+visible = "!stage_strip"
+enter = "up"
+enter_time = 16
+enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "READY!"
+x = 566
+y = 606
+h = 44
+pad = 18
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+font = 6
+bank = 14
+angle = -3
+visible = "ready"
+
+# stage picker (online pick only: the host's stage travels with the fighter)
 [[node]]
 kind = "panel"
 x = 460
@@ -605,6 +637,7 @@ nine = [12, 12, 12, 12]
 enter = "up"
 enter_time = 16
 enter_delay = 4
+visible = "stage_strip"
 
   [[node.children]]
   kind = "panel"
@@ -706,25 +739,6 @@ enter_delay = 4
   bank = 14
   bank_focus = 14
   on_press = "stage:random"
-
-# fight! once everybody picked
-[[node]]
-kind = "button"
-id = "confirm"
-x = 470
-y = 452
-w = 346
-h = 44
-image = "ui/plaque9_red.webp"
-image_focus = "ui/plaque9_lit.webp"
-nine = [8, 8, 8, 10]
-text = "FIGHT!"
-font = 3
-bank = 14
-bank_focus = 14
-on_press = "confirm"
-visible = "ready"
-hover_scale = 1.04
 
 # key hints on the floor under the stage picker
 [[node]]

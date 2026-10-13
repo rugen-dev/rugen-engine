@@ -22,6 +22,10 @@ pub fn parse_key(name: &str) -> Key {
         "Escape" => Some(NamedKey::Escape),
         "Delete" => Some(NamedKey::Delete),
         "F5" => Some(NamedKey::F5),
+        "Home" => Some(NamedKey::Home),
+        "End" => Some(NamedKey::End),
+        "PageUp" => Some(NamedKey::PageUp),
+        "PageDown" => Some(NamedKey::PageDown),
         _ => None,
     };
     match named {
