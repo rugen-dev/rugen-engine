@@ -318,8 +318,8 @@ const MOVE_ROW_H: f32 = 38.0;
 const MOVE_TALL_H: f32 = 62.0;
 const MOVE_COL_W: f32 = 358.0;
 
-/// The move list as pages of two columns of rows: group labels (repeated
-/// at the top of a column that continues a group) and moves. `width(font,
+/// The move list as pages of two columns of rows: group labels (marked
+/// `(CONT.)` at the top of a column that continues a group) and moves. `width(font,
 /// text)` measures text (font 1 = small, 2 = caption).
 fn move_pages(
     moves: &[crate::screeninfo::Move],
@@ -372,7 +372,14 @@ fn layout_moves(
         }
         let col = cols.last_mut().expect("one column");
         if new_group || col.is_empty() {
-            col.push(json!({ "group": true, "label": m.group.label() }));
+            // a group carried over from the previous column says so
+            // instead of repeating its heading as if it started again
+            let label = if new_group {
+                m.group.label().to_string()
+            } else {
+                format!("{} (CONT.)", m.group.label())
+            };
+            col.push(json!({ "group": true, "label": label, "cont": !new_group }));
             used += MOVE_GROUP_H;
         }
         let parts: Vec<Value> = m
@@ -2134,6 +2141,26 @@ impl Painter for Host<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A group running into the next column is marked as continued, not repeated.
+    #[test]
+    fn continued_move_group_is_marked() {
+        use crate::screeninfo::{Group, Move, Part};
+        let moves: Vec<Move> = (0..20)
+            .map(|i| Move {
+                name: format!("MOVE {i}"),
+                notation: "X".into(),
+                parts: vec![Part::Button("X".into())],
+                group: Group::Special,
+                cost: None,
+            })
+            .collect();
+        let pages = move_pages(&moves, &|_, t: &str| t.len() as f32 * 9.0);
+        let [col1, col2] = &pages[0];
+        assert_eq!(col1[0]["label"], "SPECIALS");
+        assert_eq!(col2[0]["label"], "SPECIALS (CONT.)");
+        assert_eq!(col2[0]["cont"], true);
+    }
 
     #[test]
     fn plural_counts_one_and_many() {
