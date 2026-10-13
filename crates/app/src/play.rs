@@ -209,6 +209,8 @@ const EARLY_LINGER: u32 = 300;
 
 pub struct Match {
     pub world: World,
+    /// Draw the fight without its HUD (the pause menu's frozen backdrop).
+    pub hud_hidden: bool,
     /// Online menu over the running match (see [`FleeMenu`]).
     pub flee_menu: Option<FleeMenu>,
     /// Online: the match ended early, and ticks since.
@@ -376,6 +378,7 @@ impl Match {
             step: false,
             zoom: 1.0,
             show_boxes: false,
+            hud_hidden: false,
             debug: true,
             banner: None,
             stage_visual: visual,
@@ -400,6 +403,13 @@ impl Match {
             prev_start: false,
             stats_recorded: false,
         })
+    }
+
+    /// An arena fight (`[Arena]` stage rules or ARENA mode): the HUD shows
+    /// fighter cards along the bottom instead of the long life bars.
+    pub fn is_arena(&self) -> bool {
+        let a = &self.world.stage.arena;
+        self.setup.mode == Some(crate::game::Mode::Arena) || a.stocks > 0 || a.blastzone.is_some()
     }
 
     pub fn is_tutorial(&self) -> bool {
@@ -1558,7 +1568,8 @@ impl Match {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        if let Some(lb) = lifebar.as_mut() {
+        if self.hud_hidden {
+        } else if let Some(lb) = lifebar.as_mut() {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
             // never wider than the window: narrow windows shrink the HUD instead of cutting it
@@ -1566,7 +1577,16 @@ impl Match {
             let x_off = (screen_w - lc[0] * ratio) / 2.0;
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
             // wider than the fight.def: each side's bars move out to its edge
-            lb.draw(r, &self.world, &lb_hud, u * ratio, portraits, x_off / ratio);
+            let arena = self.is_arena();
+            lb.draw(
+                r,
+                &self.world,
+                &lb_hud,
+                u * ratio,
+                portraits,
+                x_off / ratio,
+                arena,
+            );
         } else {
             // life bars (screen units via `hud`)
             for (i, p) in self

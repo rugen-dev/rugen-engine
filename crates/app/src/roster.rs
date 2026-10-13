@@ -94,7 +94,10 @@ fn verdict_of(m: &Manifest) -> (&'static str, String) {
         Some(v) if v.verdict == "verified" => ("ui/badge_ok.webp", "VERIFIED".into()),
         Some(v) if v.verdict == "warn" => (
             "ui/badge_warn.webp",
-            format!("RUNS WITH {} ISSUES", v.issues.len()),
+            format!(
+                "RUNS WITH {}",
+                crate::uiscreen::plural(v.issues.len(), "ISSUE", "ISSUES")
+            ),
         ),
         Some(v) if v.verdict == "broken" => ("ui/badge_bad.webp", "BROKEN".into()),
         _ => ("", "NOT CHECKED".into()),
@@ -278,6 +281,11 @@ impl Roster {
         (0..2)
             .find(|&s| self.chooses[s] && self.picks[s].is_none())
             .unwrap_or(2)
+    }
+
+    /// Sides whose fighter is still to be picked on this screen.
+    pub fn open_picks(&self) -> [bool; 2] {
+        [0, 1].map(|s| self.chooses[s] && self.picks[s].is_none())
     }
 
     /// Both humans pick at the same time (each with their own cursor).
@@ -617,9 +625,8 @@ impl Roster {
             Some(v) if v.verdict == "verified" => ("✓ VERIFIED".to_string(), true),
             Some(v) if v.verdict == "warn" => (
                 format!(
-                    "⚠ {} KNOWN ISSUE{}",
-                    v.issues.len(),
-                    if v.issues.len() == 1 { "" } else { "S" }
+                    "⚠ {}",
+                    crate::uiscreen::plural(v.issues.len(), "KNOWN ISSUE", "KNOWN ISSUES")
                 ),
                 false,
             ),
@@ -642,7 +649,11 @@ impl Roster {
         v["status"] = Value::from(status);
         v["ok"] = Value::from(ok);
         v["bad"] = Value::from(!ok);
-        v["record"] = Value::from(format!("{plays} PLAYS · {wins} WINS"));
+        v["record"] = Value::from(format!(
+            "{} · {}",
+            crate::uiscreen::plural(plays as usize, "PLAY", "PLAYS"),
+            crate::uiscreen::plural(wins as usize, "WIN", "WINS")
+        ));
         v["picked"] = Value::from(self.picks[side].is_some());
         v["cpu"] = Value::from(!self.human[side]);
         v
@@ -676,7 +687,11 @@ impl Roster {
             "art": art,
             "verdict": verdict,
             "badge": badge,
-            "stats": format!("{plays} PLAYS   {wins} WINS"),
+            "stats": format!(
+                "{}   {}",
+                crate::uiscreen::plural(plays as usize, "PLAY", "PLAYS"),
+                crate::uiscreen::plural(wins as usize, "WIN", "WINS")
+            ),
             "present": true,
         })
     }

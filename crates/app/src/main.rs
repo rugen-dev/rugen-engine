@@ -20,6 +20,7 @@
 //!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
 //! rugen list [--root dir]                                       list chars/ and stages/
 //! rugen convert <folder|archive> [out.rgc] [--stage]            write a shareable .rgc / .rgs
+//! rugen fontgen --roles [--motif motif] [--out dir]             regenerate the motif's role fonts
 //! rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
@@ -154,7 +155,9 @@ fn main() -> anyhow::Result<()> {
             let frames = opt("--frames");
             let ai = opt("--ai");
             let record = opt("--record");
+            let keys = opt("--keys");
             let taken = [
+                keys.clone(),
                 stage.clone(),
                 shot.clone(),
                 root.clone(),
@@ -251,7 +254,21 @@ fn main() -> anyhow::Result<()> {
                 (p1.to_string(), rest.get(1).map(|s| s.to_string()));
             let p1 = resolve(&names.0)?;
             let p2 = names.1.as_deref().map(resolve).transpose()?;
-            let stage = stage.or_else(|| lib.default_stage().map(|p| p.display().to_string()));
+            // no --stage: the default (training) stage when it loads, else
+            // a plain floor; a stale cached path is not worth failing over
+            let fallback = match &stage {
+                Some(_) => None,
+                None => lib.default_stage().filter(|p| {
+                    let ok = rugen_formats::vfs::exists(p);
+                    if !ok {
+                        log::warn!(
+                            "default stage {} not found; fighting without one",
+                            p.display()
+                        );
+                    }
+                    ok
+                }),
+            };
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);
@@ -266,7 +283,8 @@ fn main() -> anyhow::Result<()> {
                     let (dir, m) = lib.prepare_stage(&entry)?;
                     Ok(m.def_path(&dir))
                 })
-                .transpose()?;
+                .transpose()?
+                .or(fallback);
             let net_mode = if let Some(remote) = net {
                 let remote: std::net::SocketAddr = remote
                     .parse()
@@ -307,7 +325,7 @@ fn main() -> anyhow::Result<()> {
                 script: script.as_deref().map(play::parse_script),
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
-                keys: Vec::new(),
+                keys: keys.as_deref().map(game::parse_keys).unwrap_or_default(),
                 in_match: false,
             };
             let shell = game::Shell::new(
@@ -454,6 +472,18 @@ fn main() -> anyhow::Result<()> {
                     .position(|a| a == name)
                     .and_then(|i| args.get(i + 1).cloned())
             };
+            // the motif's role fonts only (menu, small, title, numbers, code)
+            if args.iter().any(|a| a == "--roles") {
+                let motif = opt("--motif").unwrap_or_else(|| "motif".into());
+                let out = opt("--out").unwrap_or_else(|| format!("{motif}/font"));
+                fontgen::generate_roles_into(
+                    std::path::Path::new(&motif),
+                    std::path::Path::new(&out),
+                    None,
+                )?;
+                println!("wrote the role fonts to {out}/");
+                return Ok(());
+            }
             let ttf = args
                 .get(1)
                 .filter(|a| !a.starts_with("--"))

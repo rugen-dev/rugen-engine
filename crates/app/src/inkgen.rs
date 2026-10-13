@@ -784,8 +784,11 @@ fn fight_hud(fight: &mut Sff, ttf: &[u8]) -> anyhow::Result<()> {
     // name plate (3-slice)
     to_sprite(fight, (20, 0), &name_plate(), [0, 0]);
     // power: label (left / right anchored), segment frame and fills, level stamps
-    let (w, h, px) = small.text_rgba("POWER", 7, 3);
-    let label = Canvas::from_rgba(w, h, px);
+    // the label: paper type on an ink tab, doubled so it reads at 1280x720
+    let (w, h, px) = small.text_rgba("POWER", fontgen::BANK_PAPER, 2);
+    let mut tab = solid(w as i32 + 4, h as i32, INK);
+    tab.blit(&Canvas::from_rgba(w, h, px), 2, 0);
+    let label = x2(&tab);
     to_sprite(fight, (30, 0), &label, [0, 0]);
     to_sprite(fight, (30, 1), &label, [label.w as i16, 0]);
     to_sprite(fight, (31, 0), &solid(100, 26, INK), [0, 0]);
@@ -830,6 +833,7 @@ font1 = font/rugen-small.def
 font2 = font/rugen-menu.def
 font3 = font/rugen-title.def
 font4 = font/rugen-num.def
+font5 = font/rugen-code.def
 
 [Music]
 title.bgm =

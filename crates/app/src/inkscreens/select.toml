@@ -66,7 +66,6 @@ enter_time = 12
     h = 26
     pad = 8
     image = "ui/key9_dark.webp"
-    text_dy = -3
     nine = [4, 4, 4, 8]
     font = 2
     bank = 11
@@ -83,7 +82,6 @@ enter_time = 12
     h = 26
     pad = 8
     image = "ui/key9_dark.webp"
-    text_dy = -3
     nine = [4, 4, 4, 8]
     font = 2
     bank = 11
@@ -703,21 +701,22 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "{keys.a}"
+  text = "{pick_key}"
   h = 36
   pad = 10
   image = "ui/key9.webp"
-  text_dy = -5
   nine = [4, 4, 4, 8]
   font = 1
   scale = 2
   bank = 9
+  visible = "pick_key"
 
   [[node.children]]
   kind = "text"
   text = "PICK  "
   font = 2
   bank = 9
+  visible = "pick_key"
 
   [[node.children]]
   kind = "text"
@@ -725,7 +724,6 @@ align = "center"
   h = 36
   pad = 10
   image = "ui/key9.webp"
-  text_dy = -5
   nine = [4, 4, 4, 8]
   font = 1
   scale = 2
