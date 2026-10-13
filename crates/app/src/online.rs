@@ -2280,6 +2280,9 @@ impl OnlineScreen {
                         "SIGNED IN",
                         true,
                     ),
+                    AcctState::Anonymous if !self.has_accounts(addr) => {
+                        ("ANONYMOUS: NO USERNAMES HERE".into(), "", false)
+                    }
                     AcctState::Anonymous => ("NO USERNAME YET".into(), "CLAIM ▶", false),
                     AcctState::Checking => ("CHECKING...".into(), "", false),
                     _ if offline => (

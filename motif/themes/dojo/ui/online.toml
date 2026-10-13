@@ -881,7 +881,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 856
+  x = 836
   y = 16
   alpha = 0.72
   bank = 8
@@ -891,7 +891,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 940
+  x = 914
   y = 16
   alpha = 0.72
   bank = 8
@@ -997,7 +997,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       kind = "text"
       x = 512
       y = 27
-      w = 330
+      w = 310
       alpha = 0.72
       bank = 8
       ellipsis = true
@@ -1007,7 +1007,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 856
+      x = 836
       y = 21
       bank = 8
       font = 1
@@ -1016,7 +1016,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 940
+      x = 914
       y = 21
       bank = 8
       font = 1
