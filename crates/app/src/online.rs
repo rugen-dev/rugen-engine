@@ -3145,7 +3145,12 @@ impl OnlineScreen {
             Err(OnlineError::Server(e)) => {
                 self.status = kind.title().into();
                 self.acct_error = if e == "no such route" {
-                    "THIS SERVER HAS NO USERNAMES YET".into()
+                    // an older server: anonymous accounts only (entering it registers one)
+                    self.accounts
+                        .entry(addr.to_string())
+                        .or_default()
+                        .unsupported = true;
+                    "THIS SERVER HAS NO USERNAMES YET: GO BACK AND ENTER IT".into()
                 } else {
                     e.to_uppercase()
                 };
