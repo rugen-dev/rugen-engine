@@ -213,10 +213,13 @@ box) and screenshots.
 - [x] **Input display.** (75f60c7) A scrolling column per player with the direction
   arrow and the bound button keys, the hold length in frames; reads the same
   input buffer the sim uses.
-- [ ] **Record and playback dummy.** Training menu: RECORD (take control of
+- [x] **Record and playback dummy.** (aeba62c) Training menu: RECORD (take control of
   the dummy for up to 10 s), PLAY, LOOP; dummy options BLOCK: none / all /
   after first hit, and a reversal slot. Recordings are input lists, so they
   are deterministic.
+  Also STANCE stand / crouch / jump, BLOCK random, three slots. Not built
+  from the mockup: STANCE CPU and LIFE / POWER REFILL, which would change
+  the simulation (AI level, life) rather than the dummy's inputs.
 
 ### Team modes
 - [ ] **Turns.** Pick 1–4 fighters per side on fighter select; the winner of
