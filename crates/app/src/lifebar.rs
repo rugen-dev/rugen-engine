@@ -787,6 +787,178 @@ impl Lifebar {
         }
     }
 
+    /// Arena HUD (approved mockup "Arena HUD"): one card per fighter centred
+    /// along the bottom — portrait over the card's top edge, P1 / P2 tag,
+    /// stock (or round) pips, name, life in percent, a 10-segment life bar
+    /// and the power bars — and a small clock box at the top. Laid out in
+    /// 1280x720 design pixels scaled to the fight.def's height.
+    fn draw_arena(
+        &mut self,
+        r: &mut Renderer,
+        w: &World,
+        roots: &[usize],
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        portraits: [Option<Portrait>; 2],
+    ) {
+        const INK: [f32; 4] = [0.078, 0.071, 0.063, 1.0];
+        const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+        const RED: [f32; 4] = [0.784, 0.063, 0.102, 1.0];
+        const AMBER: [f32; 4] = [0.706, 0.325, 0.035, 1.0];
+        const EMPTY: [f32; 4] = [0.227, 0.216, 0.196, 1.0];
+        const BLUE: [f32; 4] = [0.184, 0.435, 0.82, 1.0];
+        const PIP_OFF: [f32; 4] = [0.839, 0.816, 0.769, 1.0];
+        const FACE_BG: [f32; 4] = [0.914, 0.89, 0.839, 1.0];
+        let lc = self.localcoord;
+        let k = lc[1] / 720.0;
+        let at = |x: f32, y: f32| hud(lc[0] / 2.0 + (x - 640.0) * k, y * k);
+        let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
+            r.rect(at(x0, y0), at(x1, y1), c);
+        };
+        let us = u * k;
+        // card geometry (outer box with its 4 px border)
+        let (card_w, card_h, gap, bottom) = (372.0, 112.0, 48.0, 26.0);
+        let top = 720.0 - bottom - card_h;
+        let left0 = 640.0 - card_w - gap / 2.0;
+        let stocks_max = w.stage.arena.stocks.max(0);
+        for (side, &pi) in roots.iter().enumerate().take(2) {
+            let p = &w.players[pi];
+            let x0 = left0 + side as f32 * (card_w + gap);
+            let (x1, y1) = (x0 + card_w, top + card_h);
+            // hard shadow, ink border, white face
+            let shadow = if side == 0 { RED } else { INK };
+            rect(r, x0 + 6.0, top + 6.0, x1 + 6.0, y1 + 6.0, shadow);
+            rect(r, x0, top, x1, y1, INK);
+            rect(r, x0 + 4.0, top + 4.0, x1 - 4.0, y1 - 4.0, WHITE);
+            let ix = x0 + 18.0;
+            // portrait square over the top edge
+            let (fx, fy, fs) = (ix, top - 18.0, 72.0);
+            rect(r, fx, fy, fx + fs, fy + fs, INK);
+            rect(r, fx + 3.0, fy + 3.0, fx + fs - 3.0, fy + fs - 3.0, FACE_BG);
+            if let Some((tex, pal, _)) = portraits[side] {
+                let inner = fs - 6.0;
+                let (tw, th) = r.texture_size(tex);
+                let (tw, th) = (tw.max(1) as f32, th.max(1) as f32);
+                let sc = (inner / tw).max(inner / th);
+                let (sw, sh) = ((inner / sc).min(tw), (inner / sc).min(th));
+                let centre = at(fx + fs / 2.0, fy + fs / 2.0);
+                let mut d = Draw::new(tex, pal, centre, [sw / 2.0, sh / 2.0]);
+                d.src = Some([
+                    ((tw - sw) / 2.0) as u32,
+                    ((th - sh) * 0.15) as u32,
+                    sw as u32,
+                    sh as u32,
+                ]);
+                d.scale = [sc * us, sc * us];
+                d.hflip = side == 1;
+                r.draw(d);
+            }
+            // tag, pips, name
+            let tx = fx + fs + 12.0;
+            let tag_c = if side == 0 { RED } else { INK };
+            rect(r, tx, top + 16.0, tx + 30.0, top + 32.0, tag_c);
+            if let Some(f) = self.fonts.get_mut(&1) {
+                f.draw(
+                    r,
+                    &format!("P{}", side + 1),
+                    at(tx + 15.0, top + 29.0),
+                    11,
+                    0,
+                    us,
+                );
+            }
+            let (filled, total) = if stocks_max > 0 {
+                (p.stocks.clamp(0, stocks_max), stocks_max)
+            } else {
+                let need = i32::from(w.round.config.match_wins).max(1);
+                (i32::from(w.round.wins[p.team as usize]).min(need), need)
+            };
+            // the life number keeps a fixed column (wide enough for 100)
+            let num_w = self.fonts.get(&2).map_or(96.0, |f| f.width("100", 2.0));
+            let num_x = x1 - 18.0;
+            let pip_right = num_x - num_w - 12.0;
+            for i in 0..total {
+                let px = pip_right - (total - i) as f32 * 14.0;
+                let (a0, a1) = (px, px + 10.0);
+                if i < filled {
+                    rect(r, a0, top + 19.0, a1, top + 29.0, INK);
+                } else {
+                    r.rect_outline(at(a0, top + 19.0), at(a1, top + 29.0), 2.0 * us, INK);
+                }
+            }
+            let mut name = w.data[p.data].display_name.to_uppercase();
+            // keep the name clear of the life number
+            let max_w = num_x - num_w - 10.0 - tx;
+            if let Some(f) = self.fonts.get(&1) {
+                while name.chars().count() > 3 && f.width(&name, 2.0) > max_w {
+                    name.pop();
+                }
+            }
+            if let Some(f) = self.fonts.get_mut(&1) {
+                f.draw(r, name.trim_end(), at(tx, top + 58.0), 9, 1, 2.0 * us);
+            }
+            // life in percent, big, at the right
+            let pct = if p.life <= 0 {
+                0
+            } else {
+                ((p.life as i64 * 100 + p.life_max.max(1) as i64 - 1) / p.life_max.max(1) as i64)
+                    .clamp(1, 100) as i32
+            };
+            let num_bank = if side == 0 { 10 } else { 9 };
+            if let Some(f) = self.fonts.get_mut(&2) {
+                f.draw(
+                    r,
+                    &pct.to_string(),
+                    at(num_x, top + 58.0),
+                    num_bank,
+                    -1,
+                    2.0 * us,
+                );
+            }
+            // 10-segment life bar
+            let (sx0, sx1, sy) = (x0 + 18.0, x1 - 18.0, top + 70.0);
+            let seg_w = (sx1 - sx0 - 9.0 * 3.0) / 10.0;
+            let lit = if p.life <= 0 {
+                0
+            } else {
+                ((pct + 5) / 10).clamp(1, 10)
+            };
+            let fill = if side == 0 { RED } else { AMBER };
+            for i in 0..10 {
+                let a = sx0 + i as f32 * (seg_w + 3.0);
+                let c = if i < lit { fill } else { EMPTY };
+                rect(r, a, sy, a + seg_w, sy + 12.0, c);
+            }
+            // power: one pip per bar, filling as power builds
+            if let Some(f) = self.fonts.get_mut(&1) {
+                f.draw(r, "POWER", at(sx0, top + 98.0), 8, 1, us);
+            }
+            let bars = (p.power_max / 1000).max(1);
+            let px0 = sx0 + 52.0;
+            for i in 0..bars {
+                let a = px0 + i as f32 * 46.0;
+                rect(r, a, top + 90.0, a + 40.0, top + 98.0, PIP_OFF);
+                let part = ((p.power - i * 1000) as f32 / 1000.0).clamp(0.0, 1.0);
+                if part > 0.0 {
+                    rect(r, a, top + 90.0, a + 40.0 * part, top + 98.0, BLUE);
+                }
+            }
+        }
+        // the clock: a small black box with a red shadow, top centre
+        let clock = w.round.clock();
+        if clock >= 0 {
+            let line = format!("{clock:02}");
+            let tw = self.fonts.get(&2).map_or(40.0, |f| f.width(&line, 2.0));
+            let (bw, bh) = (tw + 36.0, 46.0);
+            let (bx, by) = (640.0 - bw / 2.0, 20.0);
+            rect(r, bx + 4.0, by + 4.0, bx + bw + 4.0, by + bh + 4.0, RED);
+            rect(r, bx, by, bx + bw, by + bh, INK);
+            if let Some(f) = self.fonts.get_mut(&2) {
+                f.draw(r, &line, at(640.0, by + 38.0), 11, 0, 2.0 * us);
+            }
+        }
+    }
+
     /// Draw everything. `hud(x, y)` maps fight.def coordinates to world
     /// space, `u` is world units per HUD pixel. `portraits[i]` is player i's
     /// 9000,0 sprite if the app uploaded it. `spread` (fight.def units) moves
@@ -802,6 +974,7 @@ impl Lifebar {
         u: f32,
         portraits: [Option<Portrait>; 2],
         spread: f32,
+        arena: bool,
     ) {
         let lc = self.localcoord;
         let spread = if lc[0] >= lc[1] * 1.7 { spread } else { 0.0 };
@@ -813,7 +986,10 @@ impl Lifebar {
             .map(|(i, _)| i)
             .take(2)
             .collect();
-        for (side, &pi) in roots.iter().enumerate() {
+        if arena {
+            self.draw_arena(r, w, &roots, hud, u, portraits);
+        }
+        for (side, &pi) in roots.iter().enumerate().filter(|_| !arena) {
             let dx = if side == 0 { -spread } else { spread };
             let side_hud = move |x: f32, y: f32| hud(x + dx, y);
             let hud: &dyn Fn(f32, f32) -> [f32; 2] = &side_hud;
@@ -952,7 +1128,8 @@ impl Lifebar {
         // clock
         let clock = w.round.clock();
         let (off, font) = self.time_counter;
-        if self.time_bg.present() {
+        if arena {
+        } else if self.time_bg.present() {
             let e = self.time_bg.clone();
             let base = hud(self.time_pos[0], self.time_pos[1]);
             self.draw_elem(r, &e, base, u, None);
@@ -963,10 +1140,12 @@ impl Lifebar {
         } else {
             format!("{clock:02}")
         };
-        self.text(r, font, &line, base, u);
+        if !arena {
+            self.text(r, font, &line, base, u);
+        }
         // round tag under the clock
         let rt = self.round_tag.clone();
-        if rt.font.is_some() || rt.bg.present() {
+        if !arena && (rt.font.is_some() || rt.bg.present()) {
             let base = hud(self.time_pos[0], self.time_pos[1]);
             self.draw_elem(r, &rt.bg, base, u, None);
             let line = rt.text.replace("%i", &w.round.round_no.max(1).to_string());

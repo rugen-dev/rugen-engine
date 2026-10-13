@@ -405,6 +405,13 @@ impl Match {
         })
     }
 
+    /// An arena fight (`[Arena]` stage rules or ARENA mode): the HUD shows
+    /// fighter cards along the bottom instead of the long life bars.
+    pub fn is_arena(&self) -> bool {
+        let a = &self.world.stage.arena;
+        self.setup.mode == Some(crate::game::Mode::Arena) || a.stocks > 0 || a.blastzone.is_some()
+    }
+
     pub fn is_tutorial(&self) -> bool {
         self.tutorial.is_some()
     }
@@ -1570,7 +1577,16 @@ impl Match {
             let x_off = (screen_w - lc[0] * ratio) / 2.0;
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
             // wider than the fight.def: each side's bars move out to its edge
-            lb.draw(r, &self.world, &lb_hud, u * ratio, portraits, x_off / ratio);
+            let arena = self.is_arena();
+            lb.draw(
+                r,
+                &self.world,
+                &lb_hud,
+                u * ratio,
+                portraits,
+                x_off / ratio,
+                arena,
+            );
         } else {
             // life bars (screen units via `hud`)
             for (i, p) in self
