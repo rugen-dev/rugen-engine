@@ -1,0 +1,257 @@
+# rugen RESULT — Dojo theme. Coordinates are 1280x720.
+# Data: winner, winner_line (NAME WINS), winner_big / winner_small, winner_art, has_art, draw, quote, stats[] {label value},
+# loser {name art has_art}, menu[] {id label action}, rounds, rating.
+# The winner stands before a vermilion noren; the WIN seal, a quote on a
+# washi slip, the match report on a washi sheet and plaque buttons.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/hall_result.webp"
+w = "100%"
+h = "100%"
+
+[[node]]
+kind = "image"
+dock = "left bottom"
+image = "{winner_art}"
+x = 40
+y = 120
+w = 560
+h = 540
+fit = "contain"
+fit_y = 1
+visible = "has_art"
+enter = "left"
+enter_time = 16
+
+[[node]]
+kind = "image"
+dock = "left"
+image = "ui/win_seal.webp"
+x = 44
+y = 40
+visible = "!draw"
+enter = "down"
+enter_time = 14
+ease = "back"
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "DRAW"
+x = 44
+y = 40
+h = 96
+pad = 30
+image = "ui/plaque9_dark.webp"
+nine = [8, 8, 8, 10]
+font = 3
+scale = 2
+bank = 14
+visible = "draw"
+
+# the winner's quote on a washi slip
+[[node]]
+kind = "panel"
+dock = "left"
+x = 470
+y = 150
+w = 300
+h = 150
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+visible = "!draw"
+enter = "fade"
+enter_delay = 10
+
+  [[node.children]]
+  kind = "text"
+  text = "{quote}"
+  x = 22
+  y = 18
+  w = 256
+  h = 114
+  wrap = true
+  line_h = 26
+  max_lines = 4
+  align = "center"
+  font = 2
+  bank = 12
+
+# who won, on a plaque under the portrait (smaller for long names)
+[[node]]
+kind = "text"
+dock = "left"
+text = "{winner_line}"
+x = 40
+y = 610
+h = 62
+pad = 24
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+font = 3
+bank = 14
+visible = "winner_big"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "{winner_line}"
+x = 40
+y = 622
+h = 48
+pad = 20
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+font = 6
+bank = 14
+visible = "winner_small"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+# match report
+[[node]]
+kind = "panel"
+dock = "right"
+x = 800
+y = 44
+w = 440
+h = 420
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+enter = "right"
+enter_time = 16
+
+  [[node.children]]
+  kind = "text"
+  text = "MATCH REPORT"
+  x = 28
+  y = 22
+  font = 6
+  bank = 13
+
+  [[node.children]]
+  kind = "vbox"
+  x = 28
+  y = 66
+  w = 384
+  gap = 10
+  items = "stats"
+  stagger = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 384
+    h = 34
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      h = 28
+      font = 2
+      bank = 17
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.value}"
+      w = 384
+      h = 28
+      align = "right"
+      font = 6
+      bank = 12
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 32
+      w = 384
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+  [[node.children]]
+  kind = "image"
+  image = "{loser.art}"
+  x = 28
+  y = 326
+  w = 64
+  h = 64
+  fit = "cover"
+  fit_y = 0.1
+  grey = true
+  outline = [0.341, 0.2, 0.122, 1.0]
+  outline_w = 3
+  visible = "loser.has_art"
+
+  [[node.children]]
+  kind = "text"
+  text = "{loser.name}"
+  x = 106
+  y = 330
+  w = 180
+  ellipsis = true
+  font = 6
+  bank = 17
+  visible = "!draw"
+
+  [[node.children]]
+  kind = "text"
+  text = "LOSE"
+  x = 300
+  y = 344
+  h = 36
+  pad = 12
+  image = "ui/seal9.webp"
+  nine = [6, 6, 6, 6]
+  font = 6
+  bank = 14
+  angle = -6
+  visible = "!draw"
+
+# buttons
+[[node]]
+kind = "vbox"
+dock = "right"
+id = "menu"
+x = 800
+y = 488
+w = 440
+gap = 10
+items = "menu"
+stagger = 2
+enter = "up"
+enter_time = 14
+
+  [[node.children]]
+  kind = "button"
+  id = "slab"
+  w = 400
+  h = 44
+  w_focus = 440
+  h_focus = 50
+  image = "ui/plaque9.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
+  text = "{item.label}"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  align = "left"
+  pad = 40
+  on_press = "{item.action}"
+
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 19
+  w = 12
+  h = 12
+  color = [0.89, 0.702, 0.298, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  when = "focus"

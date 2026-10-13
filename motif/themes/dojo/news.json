@@ -1,0 +1,5 @@
+[
+  { "title": "WELCOME TO RUGEN", "subtitle": "Drop .zip or .rar chars into chars/ and go", "image": "ui/news1.webp" },
+  { "title": "ARENAS", "subtitle": "Platforms, pits and blast zones", "image": "ui/news2.webp" },
+  { "title": "ONLINE", "subtitle": "Rooms, ranked and rollback", "image": "ui/news3.webp" }
+]

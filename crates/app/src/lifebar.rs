@@ -35,6 +35,13 @@
 //!   `pN.name.upper = 1` shows the name in capitals.
 //! - `[WinIcon]` `pN.follow = 1`: `pN.pos` x is measured from the name
 //!   plate's outer end (P1 right end, P2 left end) instead of the screen.
+//!   `pN.label.text = WINS` with `pN.label.font` / `.scale`: a caption after
+//!   the last round slot, `pN.label.offset` from that slot.
+//! - `[ArenaHUD]` colours (`r,g,b`) and font banks of the arena cards:
+//!   `card.color`, `card.border`, `pN.accent`, `pN.shadow`, `face.bg`,
+//!   `face.border`, `life.pN`, `life.empty`, `pip.color`, `power.off`,
+//!   `power.on`, `clock.color`, `clock.shadow`, `tag.pN.bank`, `name.bank`,
+//!   `num.pN.bank`, `label.bank`, `clock.bank`. Unset keys keep the ink look.
 //! - `[Time]` round tag: `round.text = ROUND %i`, `round.offset`,
 //!   `round.font`, `round.scale`, `round.bg.*` (all relative to `pos`).
 //! - `[Combo]` `teamN.angle = deg`: tilt counter and label counter-clockwise
@@ -283,6 +290,96 @@ enum Shown {
     Anim { elem: Elem, pos: [f32; 2] },
 }
 
+/// Colours (RGBA 0..1) and font banks of the arena HUD cards.
+#[derive(Clone, Debug)]
+struct ArenaStyle {
+    card: [f32; 4],
+    border: [f32; 4],
+    accent: [[f32; 4]; 2],
+    shadow: [[f32; 4]; 2],
+    face_bg: [f32; 4],
+    face_border: [f32; 4],
+    life: [[f32; 4]; 2],
+    life_empty: [f32; 4],
+    pip: [f32; 4],
+    power_off: [f32; 4],
+    power_on: [f32; 4],
+    clock: [f32; 4],
+    clock_shadow: [f32; 4],
+    tag_bank: [i32; 2],
+    name_bank: i32,
+    num_bank: [i32; 2],
+    label_bank: i32,
+    clock_bank: i32,
+}
+
+impl Default for ArenaStyle {
+    /// The Shonen Ink look (approved mockup "Arena HUD").
+    fn default() -> Self {
+        const INK: [f32; 4] = [0.078, 0.071, 0.063, 1.0];
+        const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+        const RED: [f32; 4] = [0.784, 0.063, 0.102, 1.0];
+        Self {
+            card: WHITE,
+            border: INK,
+            accent: [RED, INK],
+            shadow: [RED, INK],
+            face_bg: [0.914, 0.89, 0.839, 1.0],
+            face_border: INK,
+            life: [RED, [0.706, 0.325, 0.035, 1.0]],
+            life_empty: [0.227, 0.216, 0.196, 1.0],
+            pip: INK,
+            power_off: [0.839, 0.816, 0.769, 1.0],
+            power_on: [0.184, 0.435, 0.82, 1.0],
+            clock: INK,
+            clock_shadow: RED,
+            tag_bank: [11, 11],
+            name_bank: 9,
+            num_bank: [10, 9],
+            label_bank: 8,
+            clock_bank: 11,
+        }
+    }
+}
+
+impl ArenaStyle {
+    fn parse(s: &Section) -> Self {
+        let d = Self::default();
+        let col = |k: &str, d: [f32; 4]| {
+            s.f32s(k)
+                .filter(|v| v.len() >= 3)
+                .map_or(d, |v| [v[0] / 255.0, v[1] / 255.0, v[2] / 255.0, 1.0])
+        };
+        let bank = |k: &str, d: i32| s.i32(k).unwrap_or(d);
+        Self {
+            card: col("card.color", d.card),
+            border: col("card.border", d.border),
+            accent: [col("p1.accent", d.accent[0]), col("p2.accent", d.accent[1])],
+            shadow: [col("p1.shadow", d.shadow[0]), col("p2.shadow", d.shadow[1])],
+            face_bg: col("face.bg", d.face_bg),
+            face_border: col("face.border", d.face_border),
+            life: [col("life.p1", d.life[0]), col("life.p2", d.life[1])],
+            life_empty: col("life.empty", d.life_empty),
+            pip: col("pip.color", d.pip),
+            power_off: col("power.off", d.power_off),
+            power_on: col("power.on", d.power_on),
+            clock: col("clock.color", d.clock),
+            clock_shadow: col("clock.shadow", d.clock_shadow),
+            tag_bank: [
+                bank("tag.p1.bank", d.tag_bank[0]),
+                bank("tag.p2.bank", d.tag_bank[1]),
+            ],
+            name_bank: bank("name.bank", d.name_bank),
+            num_bank: [
+                bank("num.p1.bank", d.num_bank[0]),
+                bank("num.p2.bank", d.num_bank[1]),
+            ],
+            label_bank: bank("label.bank", d.label_bank),
+            clock_bank: bank("clock.bank", d.clock_bank),
+        }
+    }
+}
+
 pub struct Lifebar {
     sheet: SpriteSheet,
     air: Air,
@@ -305,6 +402,10 @@ pub struct Lifebar {
     time_bg: Elem,
     /// rugen: `pN.empty.spr` placeholder for rounds not yet won.
     winicon_empty: [Elem; 2],
+    /// rugen: `pN.label.*` caption after the round slots.
+    winicon_label: [(Option<Fnt>, String, [f32; 2]); 2],
+    /// rugen: `[ArenaHUD]` colours and banks.
+    arena: ArenaStyle,
     round_text: Text,
     round_offset_time: i32,
     fight: Elem,
@@ -411,6 +512,15 @@ impl Lifebar {
         let icon_kinds = [
             "n", "s", "h", "throw", "c", "t", "suicide", "teammate", "perfect",
         ];
+        let label = |p: &str| {
+            (
+                Fnt::parse(wi, &format!("{p}.label")),
+                wi.raw(&format!("{p}.label.text"))
+                    .map(|t| t.trim().to_string())
+                    .unwrap_or_default(),
+                pos2(wi, &format!("{p}.label.offset"), [0.0, 0.0]),
+            )
+        };
         let icons = |p: &str| -> HashMap<String, Elem> {
             icon_kinds
                 .iter()
@@ -456,6 +566,8 @@ impl Lifebar {
             time_pos: pos2(tm, "pos", [160.0, 23.0]),
             time_bg: Elem::parse(tm, "bg"),
             winicon_empty: [Elem::parse(wi, "p1.empty"), Elem::parse(wi, "p2.empty")],
+            winicon_label: [label("p1"), label("p2")],
+            arena: ArenaStyle::parse(sec("arenahud")),
             time_counter: (
                 pos2(tm, "counter.offset", [0.0, 0.0]),
                 Fnt::parse(tm, "counter"),
@@ -801,14 +913,7 @@ impl Lifebar {
         u: f32,
         portraits: [Option<Portrait>; 2],
     ) {
-        const INK: [f32; 4] = [0.078, 0.071, 0.063, 1.0];
-        const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-        const RED: [f32; 4] = [0.784, 0.063, 0.102, 1.0];
-        const AMBER: [f32; 4] = [0.706, 0.325, 0.035, 1.0];
-        const EMPTY: [f32; 4] = [0.227, 0.216, 0.196, 1.0];
-        const BLUE: [f32; 4] = [0.184, 0.435, 0.82, 1.0];
-        const PIP_OFF: [f32; 4] = [0.839, 0.816, 0.769, 1.0];
-        const FACE_BG: [f32; 4] = [0.914, 0.89, 0.839, 1.0];
+        let st = self.arena.clone();
         let lc = self.localcoord;
         let k = lc[1] / 720.0;
         let at = |x: f32, y: f32| hud(lc[0] / 2.0 + (x - 640.0) * k, y * k);
@@ -825,16 +930,22 @@ impl Lifebar {
             let p = &w.players[pi];
             let x0 = left0 + side as f32 * (card_w + gap);
             let (x1, y1) = (x0 + card_w, top + card_h);
-            // hard shadow, ink border, white face
-            let shadow = if side == 0 { RED } else { INK };
-            rect(r, x0 + 6.0, top + 6.0, x1 + 6.0, y1 + 6.0, shadow);
-            rect(r, x0, top, x1, y1, INK);
-            rect(r, x0 + 4.0, top + 4.0, x1 - 4.0, y1 - 4.0, WHITE);
+            // hard shadow, border, card face
+            rect(r, x0 + 6.0, top + 6.0, x1 + 6.0, y1 + 6.0, st.shadow[side]);
+            rect(r, x0, top, x1, y1, st.border);
+            rect(r, x0 + 4.0, top + 4.0, x1 - 4.0, y1 - 4.0, st.card);
             let ix = x0 + 18.0;
             // portrait square over the top edge
             let (fx, fy, fs) = (ix, top - 18.0, 72.0);
-            rect(r, fx, fy, fx + fs, fy + fs, INK);
-            rect(r, fx + 3.0, fy + 3.0, fx + fs - 3.0, fy + fs - 3.0, FACE_BG);
+            rect(r, fx, fy, fx + fs, fy + fs, st.face_border);
+            rect(
+                r,
+                fx + 3.0,
+                fy + 3.0,
+                fx + fs - 3.0,
+                fy + fs - 3.0,
+                st.face_bg,
+            );
             if let Some((tex, pal, _)) = portraits[side] {
                 let inner = fs - 6.0;
                 let (tw, th) = r.texture_size(tex);
@@ -855,14 +966,13 @@ impl Lifebar {
             }
             // tag, pips, name
             let tx = fx + fs + 12.0;
-            let tag_c = if side == 0 { RED } else { INK };
-            rect(r, tx, top + 16.0, tx + 30.0, top + 32.0, tag_c);
+            rect(r, tx, top + 16.0, tx + 30.0, top + 32.0, st.accent[side]);
             if let Some(f) = self.fonts.get_mut(&1) {
                 f.draw(
                     r,
                     &format!("P{}", side + 1),
                     at(tx + 15.0, top + 29.0),
-                    11,
+                    st.tag_bank[side],
                     0,
                     us,
                 );
@@ -881,9 +991,9 @@ impl Lifebar {
                 let px = pip_right - (total - i) as f32 * 14.0;
                 let (a0, a1) = (px, px + 10.0);
                 if i < filled {
-                    rect(r, a0, top + 19.0, a1, top + 29.0, INK);
+                    rect(r, a0, top + 19.0, a1, top + 29.0, st.pip);
                 } else {
-                    r.rect_outline(at(a0, top + 19.0), at(a1, top + 29.0), 2.0 * us, INK);
+                    r.rect_outline(at(a0, top + 19.0), at(a1, top + 29.0), 2.0 * us, st.pip);
                 }
             }
             // the name in the small font doubled; a long one in the narrower
@@ -905,7 +1015,14 @@ impl Lifebar {
                 }
             }
             if let Some(f) = self.fonts.get_mut(&font) {
-                f.draw(r, name.trim_end(), at(tx, top + 58.0), 9, 1, scale * us);
+                f.draw(
+                    r,
+                    name.trim_end(),
+                    at(tx, top + 58.0),
+                    st.name_bank,
+                    1,
+                    scale * us,
+                );
             }
             // life in percent, big, at the right
             let pct = if p.life <= 0 {
@@ -914,7 +1031,7 @@ impl Lifebar {
                 ((p.life as i64 * 100 + p.life_max.max(1) as i64 - 1) / p.life_max.max(1) as i64)
                     .clamp(1, 100) as i32
             };
-            let num_bank = if side == 0 { 10 } else { 9 };
+            let num_bank = st.num_bank[side];
             if let Some(f) = self.fonts.get_mut(&2) {
                 f.draw(
                     r,
@@ -933,25 +1050,28 @@ impl Lifebar {
             } else {
                 ((pct + 5) / 10).clamp(1, 10)
             };
-            let fill = if side == 0 { RED } else { AMBER };
             for i in 0..10 {
                 let a = sx0 + i as f32 * (seg_w + 3.0);
-                let c = if i < lit { fill } else { EMPTY };
+                let c = if i < lit {
+                    st.life[side]
+                } else {
+                    st.life_empty
+                };
                 rect(r, a, sy, a + seg_w, sy + 12.0, c);
             }
             // power: one pip per bar, filling as power builds
             if let Some(f) = self.fonts.get_mut(&1) {
-                f.draw(r, "POWER", at(sx0, top + 98.0), 8, 1, us);
+                f.draw(r, "POWER", at(sx0, top + 98.0), st.label_bank, 1, us);
             }
             let bars = (p.power_max / 1000).max(1);
             let label_w = self.fonts.get(&1).map_or(40.0, |f| f.width("POWER", 1.0));
             let px0 = sx0 + label_w + 10.0;
             for i in 0..bars {
                 let a = px0 + i as f32 * 46.0;
-                rect(r, a, top + 90.0, a + 40.0, top + 98.0, PIP_OFF);
+                rect(r, a, top + 90.0, a + 40.0, top + 98.0, st.power_off);
                 let part = ((p.power - i * 1000) as f32 / 1000.0).clamp(0.0, 1.0);
                 if part > 0.0 {
-                    rect(r, a, top + 90.0, a + 40.0 * part, top + 98.0, BLUE);
+                    rect(r, a, top + 90.0, a + 40.0 * part, top + 98.0, st.power_on);
                 }
             }
         }
@@ -962,10 +1082,17 @@ impl Lifebar {
             let tw = self.fonts.get(&2).map_or(40.0, |f| f.width(&line, 2.0));
             let (bw, bh) = (tw + 36.0, 46.0);
             let (bx, by) = (640.0 - bw / 2.0, 20.0);
-            rect(r, bx + 4.0, by + 4.0, bx + bw + 4.0, by + bh + 4.0, RED);
-            rect(r, bx, by, bx + bw, by + bh, INK);
+            rect(
+                r,
+                bx + 4.0,
+                by + 4.0,
+                bx + bw + 4.0,
+                by + bh + 4.0,
+                st.clock_shadow,
+            );
+            rect(r, bx, by, bx + bw, by + bh, st.clock);
             if let Some(f) = self.fonts.get_mut(&2) {
-                f.draw(r, &line, at(640.0, by + 38.0), 11, 0, 2.0 * us);
+                f.draw(r, &line, at(640.0, by + 38.0), st.clock_bank, 0, 2.0 * us);
             }
         }
     }
@@ -1119,6 +1246,12 @@ impl Lifebar {
                     self.draw_elem(r, &e, hud(pos[0], pos[1]), u, None);
                 }
             }
+            let (label_font, label, label_off) = self.winicon_label[side].clone();
+            if !label.is_empty() && needed > 0 {
+                let pos = at(needed);
+                let base = hud(pos[0] + label_off[0], pos[1] + label_off[1]);
+                self.text(r, label_font, &label, base, u);
+            }
             for k in 0..wins {
                 let kind = kinds.get(k).cloned().unwrap_or_else(|| "n".into());
                 let Some(e) = self.winicon[side].get(&kind).cloned() else {
@@ -1234,5 +1367,19 @@ mod tests {
         assert!(lb.round_tag.font.is_some());
         assert_eq!(lb.combo[0].angle, 6.0);
         assert_eq!(lb.time_counter.1.map(|f| f.scale), Some(5.0));
+        // no [ArenaHUD]: the ink defaults
+        assert_eq!(lb.arena.num_bank, [10, 9]);
+        assert!(lb.winicon_label[0].1.is_empty());
+    }
+
+    #[test]
+    fn dojo_fight_def_styles_the_arena_and_labels_wins() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif/themes/dojo");
+        let lb = Lifebar::load(&motif, &motif).expect("dojo fight.def loads");
+        assert_eq!(lb.localcoord, [1280.0, 720.0]);
+        assert_eq!(lb.winicon_label[0].1, "WINS");
+        assert!(lb.winicon_label[1].0.is_some());
+        assert_eq!(lb.arena.card[0], 238.0 / 255.0);
+        assert_eq!(lb.arena.tag_bank, [14, 12]);
     }
 }

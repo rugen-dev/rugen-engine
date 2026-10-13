@@ -39,6 +39,7 @@ use anyhow::Context;
 
 mod clipboard;
 mod config;
+mod dojogen;
 mod fontgen;
 mod game;
 mod gpu;
@@ -68,7 +69,6 @@ mod stagegen;
 mod system;
 mod title;
 mod tutorial;
-mod uigen;
 mod uiscreen;
 mod verify;
 mod versus;
@@ -350,7 +350,12 @@ fn main() -> anyhow::Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("no bold TTF found; pass --font file.ttf"))?;
             let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
             let motif = opt("--motif").unwrap_or_else(|| "motif".into());
-            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            // the classic MUGEN-style pack; it never overwrites a bundled theme
+            let out = opt("--out").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "usage: rugen screenpack-gen --out dir [--font file.ttf] [--motif motif]"
+                )
+            })?;
             screenpack::generate(
                 &bytes,
                 std::path::Path::new(&motif),
@@ -391,12 +396,12 @@ fn main() -> anyhow::Result<()> {
                     println!("wrote the Shonen Ink theme to {out}/");
                 }
                 Some("dojo") | None => {
-                    uigen::generate(
-                        bytes.as_deref(),
+                    dojogen::generate(
                         std::path::Path::new(&motif),
                         std::path::Path::new(&out),
+                        bytes.as_deref(),
                     )?;
-                    println!("wrote the Neon Dojo theme to {out}/ (fonts from {motif}/font/src)");
+                    println!("wrote the Dojo theme to {out}/ (fonts from {motif}/font/src)");
                 }
                 Some(other) => {
                     anyhow::bail!("unknown theme {other:?}: ui-gen knows `ink` and `dojo`")
@@ -411,7 +416,7 @@ fn main() -> anyhow::Result<()> {
                     .and_then(|i| args.get(i + 1).cloned())
             };
             let motif = opt("--motif").unwrap_or_else(|| "motif".into());
-            let out = opt("--out").unwrap_or_else(|| "motif/themes/dojo".into());
+            let out = opt("--out").unwrap_or_else(|| "kit-export".into());
             let n = kit::import(std::path::Path::new(&motif), std::path::Path::new(&out))?;
             println!("wrote {n} kit pieces to {out}/ui/kit/");
             Ok(())

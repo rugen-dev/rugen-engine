@@ -148,41 +148,6 @@ fn ink_preview(g: &Generator) -> Canvas {
     x2(&c)
 }
 
-/// Neon Dojo card for the theme picker.
-fn dojo_preview(g: &Generator) -> Canvas {
-    let (w, h) = (186i32, 103i32);
-    let mut c = Canvas::new(w as u32, h as u32);
-    for y in 0..h {
-        let t = y as f32 / (h - 1) as f32;
-        let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t) as u8;
-        c.rect(0, y, w, 1, [mix(20, 5), mix(26, 7), mix(43, 13), 255]);
-    }
-    for y in 0..h {
-        let x0 = -20 + (h - y) * 2 / 5;
-        c.rect(x0, y, 100, 1, [199, 31, 59, 34]);
-    }
-    let red = text(g, "RUGEN", fontgen::BANK_RED);
-    let white = text(g, "RUGEN", 7);
-    c.blit(&red, 10, 8);
-    c.blit(&white, 8, 6);
-    para(&mut c, 8, 32, 74, 11, 3, [199, 31, 59, 255]);
-    for y in [46, 59] {
-        para(&mut c, 8, y, 64, 10, 3, [59, 74, 107, 255]);
-        para(&mut c, 9, y + 1, 62, 8, 3, [28, 34, 54, 255]);
-    }
-    for y in 0..58 {
-        let dx = (58 - y) / 7;
-        c.put(106 + dx, 8 + y, [59, 74, 107, 255]);
-        c.put(106 + dx + 72, 8 + y, [59, 74, 107, 255]);
-        if y == 0 || y == 57 {
-            c.rect(106 + dx, 8 + y, 73, 1, [59, 74, 107, 255]);
-        } else {
-            c.rect(107 + dx, 8 + y, 71, 1, [11, 15, 26, 255]);
-        }
-    }
-    x2(&c)
-}
-
 fn preview_font(ttf: &[u8]) -> anyhow::Result<Generator<'_>> {
     Generator::new(
         ttf,
@@ -230,9 +195,8 @@ pub fn ink(ui: &Path, ttf: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Neon Dojo: options/controls TOML and the theme preview.
-pub fn dojo(ui: &Path, ttf: &[u8]) -> anyhow::Result<()> {
-    pixelize::write_webp(&ui.join("preview.webp"), &dojo_preview(&preview_font(ttf)?))?;
+/// Dojo: options/controls TOML (the pieces and preview come from `dojogen`).
+pub fn dojo(ui: &Path) -> anyhow::Result<()> {
     let [_, (_, options, controls)] = screens();
     std::fs::write(ui.join("options.toml"), options)?;
     std::fs::write(ui.join("controls.toml"), controls)?;
@@ -1431,657 +1395,8 @@ align = "center"
   bank = 9
 "##;
 
-const DOJO_OPTIONS: &str = r##"# rugen options — Neon Dojo. Coordinates are 1280x720; data in README.md.
-background = [0.03, 0.04, 0.08, 1.0]
-
-[[node]]
-kind = "image"
-fit = "cover"
-image = "ui/bg.webp"
-w = "100%"
-h = "100%"
-
-[[node]]
-kind = "text"
-dock = "left top"
-text = "OPTIONS"
-x = 60
-y = 34
-font = 3
-bank = 0
-scale = 2
-enter = "down"
-
-[[node]]
-kind = "text"
-dock = "right top"
-text = "SAVED TO RUGEN.TOML"
-anchor = "tr"
-x = 60
-y = 46
-font = 2
-bank = 6
-
-[[node]]
-kind = "vbox"
-dock = "left"
-id = "tabs"
-x = 60
-y = 120
-w = 260
-h = 470
-gap = 10
-items = "tabs"
-group = "tabs"
-enter = "left"
-
-  [[node.children]]
-  kind = "button"
-  id = "tab"
-  h = 54
-  image = "ui/button.webp"
-  image_focus = "ui/button_lit.webp"
-  selected = "item.active"
-  on_press = "{item.press}"
-
-    [[node.children.children]]
-    kind = "text"
-    text = "{item.label}"
-    anchor = "left"
-    x = 26
-    font = 2
-    bank = 7
-    bank_focus = 4
-    selected = "item.active"
-
-    [[node.children.children]]
-    kind = "icon"
-    glyph = "ext"
-    anchor = "right"
-    x = 24
-    w = 14
-    h = 14
-    color = [0.85, 0.87, 0.95, 1.0]
-    visible = "item.ext"
-
-[[node]]
-kind = "panel"
-dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 350
-y = 110
-w = 870
-h = 480
-pad = 24
-enter = "up"
-
-  [[node.children]]
-  kind = "text"
-  text = "{tab.title}"
-  x = 4
-  font = 2
-  bank = 4
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  text = "{tab.subtitle}"
-  x = 260
-  y = 10
-  font = 2
-  bank = 6
-  visible = "!show_themes"
-
-  [[node.children]]
-  kind = "list"
-  dock = "stretch-x"
-  id = "rows"
-  y = 54
-  w = 822
-  h = 370
-  gap = 6
-  items = "rows"
-  group = "rows"
-  visible = "show_rows"
-
-    [[node.children.children]]
-    kind = "button"
-    id = "row"
-    h = 44
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
-    on_press = "{item.press}"
-    on_left = "{item.left}"
-    on_right = "{item.right}"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.label}"
-      anchor = "left"
-      x = 22
-      font = 2
-      bank = 7
-
-      [[node.children.children.children]]
-      kind = "hbox"
-      anchor = "right"
-      x = 18
-      w = 600
-      gap = 10
-      justify = "end"
-      align = "center"
-
-        [[node.children.children.children.children]]
-        kind = "icon"
-        glyph = "tri_left"
-        w = 10
-        h = 10
-        color = [1.0, 0.8, 0.3, 1.0]
-        when = "focus"
-        visible = "item.adjustable"
-
-        [[node.children.children.children.children]]
-        kind = "pips"
-        h = 18
-        gap = 4
-        max_from = "item.max"
-        value = "item.on"
-        border = 2
-        color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [1.0, 0.75, 0.25, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
-        visible = "item.is_pips"
-
-        [[node.children.children.children.children]]
-        kind = "choice"
-        h = 28
-        pad = 12
-        border = 2
-        font = 2
-        bank = 7
-        bank_focus = 4
-        color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [0.6, 0.12, 0.2, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
-        text_color = [0.85, 0.87, 0.95, 1.0]
-        text_color_focus = [1.0, 0.8, 0.3, 1.0]
-        options = "item.options"
-        value = "item.sel"
-        visible = "item.is_choice"
-
-        [[node.children.children.children.children]]
-        kind = "slider"
-        w = 220
-        h = 12
-        min = 0
-        max = 1
-        value = "item.frac"
-        knob = [14, 24]
-        border = 2
-        track_color = [0.1, 0.12, 0.2, 1.0]
-        color2 = [0.6, 0.12, 0.2, 1.0]
-        knob_color = [1.0, 0.75, 0.25, 1.0]
-        border_color = [0.45, 0.55, 0.8, 1.0]
-        focus = false
-        visible = "item.is_slider"
-
-        [[node.children.children.children.children]]
-        kind = "text"
-        text = "{item.text}"
-        font = 2
-        bank = 4
-        visible = "item.has_text"
-
-        [[node.children.children.children.children]]
-        kind = "icon"
-        glyph = "ext"
-        w = 14
-        h = 14
-        color = [1.0, 0.8, 0.3, 1.0]
-        visible = "item.is_link"
-
-        [[node.children.children.children.children]]
-        kind = "icon"
-        glyph = "tri_right"
-        w = 10
-        h = 10
-        color = [1.0, 0.8, 0.3, 1.0]
-        when = "focus"
-        visible = "item.adjustable"
-
-  [[node.children]]
-  kind = "hbox"
-  id = "themes"
-  y = 60
-  w = 822
-  h = 320
-  gap = 30
-  items = "themes"
-  group = "themes"
-  visible = "show_themes"
-
-    [[node.children.children]]
-    kind = "button"
-    id = "card"
-    w = 390
-    h = 280
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
-    on_press = "{item.press}"
-
-      [[node.children.children.children]]
-      kind = "image"
-      image = "{item.preview}"
-      x = 9
-      y = 9
-      w = 372
-      h = 206
-      visible = "item.has_preview"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.label}"
-      x = 16
-      y = 232
-      font = 2
-      bank = 7
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "ACTIVE"
-      anchor = "tr"
-      x = 16
-      y = 232
-      font = 2
-      bank = 4
-      visible = "item.active"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "ENTER TO USE"
-      anchor = "tr"
-      x = 16
-      y = 232
-      font = 2
-      bank = 6
-      visible = "!item.active"
-
-[[node]]
-kind = "panel"
-dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 350
-y = 604
-w = 870
-h = 76
-
-  [[node.children]]
-  kind = "text"
-  dock = "stretch-x"
-  text = "{help}"
-  x = 24
-  w = 820
-  h = 76
-  wrap = true
-  font = 2
-  bank = 7
-
-[[node]]
-kind = "hbox"
-dock = "left"
-x = 60
-y = 640
-w = 280
-h = 34
-gap = 10
-align = "center"
-
-  [[node.children]]
-  kind = "keycap"
-  h = 30
-  text = "ESC"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-
-  [[node.children]]
-  kind = "text"
-  text = "BACK / SAVE"
-  font = 2
-  bank = 6
-"##;
-
-const DOJO_CONTROLS: &str = r##"# rugen controls — Neon Dojo. Coordinates are 1280x720; data in README.md.
-background = [0.03, 0.04, 0.08, 1.0]
-
-[[node]]
-kind = "image"
-fit = "cover"
-image = "ui/bg.webp"
-w = "100%"
-h = "100%"
-
-[[node]]
-kind = "text"
-dock = "left top"
-text = "CONTROLS"
-x = 60
-y = 34
-font = 3
-bank = 0
-scale = 2
-
-[[node]]
-kind = "hbox"
-dock = "top"
-x = 470
-y = 30
-w = 200
-h = 40
-gap = 8
-items = "players"
-group = "header"
-
-  [[node.children]]
-  kind = "button"
-  w = 72
-  h = 40
-  image = "ui/plate.webp"
-  image_focus = "ui/plate_lit.webp"
-  selected = "item.active"
-  text = "{item.label}"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  on_press = "{item.press}"
-
-[[node]]
-kind = "keycap"
-dock = "right top"
-anchor = "tr"
-x = 60
-y = 30
-h = 38
-pad = 12
-text = "{device.label}"
-font = 2
-bank = 7
-bank_focus = 4
-color = [0.1, 0.12, 0.2, 1.0]
-color_focus = [0.6, 0.12, 0.2, 1.0]
-border = 2
-border_color = [0.45, 0.55, 0.8, 1.0]
-focus = true
-on_press = "{device.press}"
-group = "header"
-
-[[node]]
-kind = "panel"
-dock = "left"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 110
-w = 560
-h = 440
-pad = 24
-
-  [[node.children]]
-  kind = "text"
-  text = "TEST PAD"
-  font = 2
-  bank = 4
-
-  [[node.children]]
-  kind = "keycap"
-  x = 110
-  y = 70
-  w = 50
-  h = 34
-  text = "{pad.up.cap}"
-  glyph = "{pad.up.glyph}"
-  selected = "pad.up.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-
-  [[node.children]]
-  kind = "keycap"
-  x = 110
-  y = 190
-  w = 50
-  h = 34
-  text = "{pad.down.cap}"
-  glyph = "{pad.down.glyph}"
-  selected = "pad.down.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-
-  [[node.children]]
-  kind = "keycap"
-  x = 40
-  y = 130
-  w = 50
-  h = 34
-  text = "{pad.left.cap}"
-  glyph = "{pad.left.glyph}"
-  selected = "pad.left.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-
-  [[node.children]]
-  kind = "keycap"
-  x = 180
-  y = 130
-  w = 50
-  h = 34
-  text = "{pad.right.cap}"
-  glyph = "{pad.right.glyph}"
-  selected = "pad.right.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-@DOJO_BUTTONS@
-  [[node.children]]
-  kind = "keycap"
-  x = 290
-  y = 320
-  w = 120
-  h = 34
-  text = "START {pad.start.cap}"
-  selected = "pad.start.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-
-[[node]]
-kind = "hbox"
-dock = "left"
-x = 60
-y = 580
-w = 600
-h = 44
-gap = 10
-items = "presets"
-group = "presets"
-
-  [[node.children]]
-  kind = "keycap"
-  h = 40
-  pad = 12
-  depth = 0
-  text = "{item.label}"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-  border_color_focus = [1.0, 0.8, 0.3, 1.0]
-  selected = "item.active"
-  focus = true
-  on_press = "{item.press}"
-
-[[node]]
-kind = "panel"
-dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 660
-y = 110
-w = 560
-h = 520
-pad = 20
-
-  [[node.children]]
-  kind = "text"
-  text = "BINDINGS"
-  font = 2
-  bank = 4
-
-  [[node.children]]
-  kind = "text"
-  text = "{conflicts.text}"
-  anchor = "tr"
-  font = 2
-  bank = 0
-  visible = "conflicts.any"
-
-  [[node.children]]
-  kind = "text"
-  text = "{conflicts.text}"
-  anchor = "tr"
-  font = 2
-  bank = 6
-  visible = "conflicts.none"
-
-  [[node.children]]
-  kind = "list"
-  dock = "stretch-x"
-  id = "binds"
-  y = 30
-  w = 520
-  h = 450
-  gap = 2
-  items = "binds"
-  group = "binds"
-
-    [[node.children.children]]
-    kind = "button"
-    id = "row"
-    h = 38
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
-    on_press = "{item.press}"
-
-      [[node.children.children.children]]
-      kind = "panel"
-      color = [0.6, 0.12, 0.2, 1.0]
-      visible = "item.hot"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.label}"
-      anchor = "left"
-      x = 18
-      font = 2
-      bank = 7
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.group}"
-      anchor = "left"
-      x = 130
-      font = 2
-      bank = 6
-      visible = "item.show_group"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "{item.conflict_text}"
-      anchor = "left"
-      x = 130
-      font = 2
-      bank = 0
-      visible = "item.show_conflict"
-
-      [[node.children.children.children]]
-      kind = "text"
-      text = "PRESS A KEY - ESC CANCEL"
-      anchor = "left"
-      x = 130
-      font = 2
-      bank = 4
-      blink = 40
-      visible = "item.listening"
-
-      [[node.children.children.children]]
-      kind = "keycap"
-      anchor = "right"
-      x = 10
-      w = 70
-      h = 30
-      text = "{item.cap}"
-      glyph = "{item.glyph}"
-      font = 2
-      bank = 7
-      color = [0.1, 0.12, 0.2, 1.0]
-      text_color = [0.85, 0.87, 0.95, 1.0]
-      border = 2
-      border_color = [0.45, 0.55, 0.8, 1.0]
-      visible = "item.clean"
-
-      [[node.children.children.children]]
-      kind = "keycap"
-      anchor = "right"
-      x = 10
-      w = 70
-      h = 30
-      text = "{item.cap}"
-      glyph = "{item.glyph}"
-      font = 2
-      bank = 0
-      color = [0.1, 0.12, 0.2, 1.0]
-      text_color = [1.0, 0.3, 0.3, 1.0]
-      border = 2
-      border_color = [1.0, 0.3, 0.3, 1.0]
-      visible = "item.conflict"
-
-[[node]]
-kind = "text"
-dock = "left"
-text = "ENTER REBIND   BACKSPACE CLEAR   F5 DEFAULTS   TAB 1P/2P   ESC BACK"
-x = 60
-y = 660
-font = 2
-bank = 6
-"##;
+const DOJO_OPTIONS: &str = include_str!("dojoscreens/options.toml");
+const DOJO_CONTROLS: &str = include_str!("dojoscreens/controls.toml");
 
 /// One arcade button (image, label, key cap) of the ink test pad at `(x, y)`.
 fn ink_button(id: &str, label: &str, x: i32, y: i32) -> String {
@@ -2131,36 +1446,54 @@ fn ink_button(id: &str, label: &str, x: i32, y: i32) -> String {
     )
 }
 
+/// One button of the dojo test pad: a wooden disc that turns vermilion.
 fn dojo_button(id: &str, label: &str, x: i32, y: i32) -> String {
     format!(
         r#"
   [[node.children]]
-  kind = "keycap"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
+  selected = "pad.{id}.lit"
   x = {x}
   y = {y}
-  w = 64
-  h = 64
-  text = "{label}"
-  selected = "pad.{id}.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
-  text = "{{pad.{id}.cap}}"
+  text = "{label}"
   x = {x}
-  y = {ty}
-  w = 64
+  y = {y}
+  w = 68
+  h = 68
   align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.{id}.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = {kx}
+  y = {ky}
+  w = 44
+  h = 32
+  text = "{{pad.{id}.cap}}"
+  glyph = "{{pad.{id}.glyph}}"
+  selected = "pad.{id}.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 "#,
-        ty = y + 72,
+        kx = x + 12,
+        ky = y + 84,
     )
 }
 
@@ -2178,12 +1511,12 @@ pub fn screens() -> [(&'static str, String, String); 2] {
     .map(|(id, l, x, y)| ink_button(id, l, *x, *y))
     .collect();
     let dojo_buttons: String = [
-        ("x", "X", 280, 60),
-        ("y", "Y", 360, 50),
-        ("z", "Z", 440, 50),
-        ("a", "A", 280, 170),
-        ("b", "B", 360, 160),
-        ("c", "C", 440, 160),
+        ("x", "X", 304, 90),
+        ("y", "Y", 394, 70),
+        ("z", "Z", 484, 70),
+        ("a", "A", 304, 214),
+        ("b", "B", 394, 194),
+        ("c", "C", 484, 194),
     ]
     .iter()
     .map(|(id, l, x, y)| dojo_button(id, l, *x, *y))
@@ -2197,7 +1530,7 @@ pub fn screens() -> [(&'static str, String, String); 2] {
         (
             "dojo",
             DOJO_OPTIONS.to_string(),
-            DOJO_CONTROLS.replace("@DOJO_BUTTONS@", &dojo_buttons),
+            DOJO_CONTROLS.replace("@BUTTONS@", &dojo_buttons),
         ),
     ]
 }

@@ -1,29 +1,31 @@
-# rugen controls — Neon Dojo. Coordinates are 1280x720; data in README.md.
-background = [0.03, 0.04, 0.08, 1.0]
+# rugen controls — Dojo. Coordinates are 1280x720; data in ../README.md.
+# A wooden test pad on a washi sheet, bindings as rows with seal bars.
+background = [0.078, 0.051, 0.043, 1.0]
+exit_time = 8
 
 [[node]]
 kind = "image"
 fit = "cover"
-image = "ui/bg.webp"
+image = "ui/hall.webp"
 w = "100%"
 h = "100%"
 
+# ---------------------------------------------------------------- header
 [[node]]
 kind = "text"
 dock = "left top"
 text = "CONTROLS"
-x = 60
-y = 34
+x = 44
+y = 30
 font = 3
-bank = 0
-scale = 2
+bank = 14
 
 [[node]]
 kind = "hbox"
 dock = "top"
-x = 470
+x = 300
 y = 30
-w = 200
+w = 300
 h = 40
 gap = 8
 items = "players"
@@ -33,297 +35,510 @@ group = "header"
   kind = "button"
   w = 72
   h = 40
-  image = "ui/plate.webp"
-  image_focus = "ui/plate_lit.webp"
+  image = "ui/plaque9_dark.webp"
+  image_focus = "ui/plaque9_lit.webp"
+  nine = [8, 8, 8, 10]
   selected = "item.active"
   text = "{item.label}"
-  font = 2
-  bank = 7
-  bank_focus = 4
+  font = 1
+  scale = 2
+  bank = 16
+  bank_focus = 14
   on_press = "{item.press}"
 
 [[node]]
-kind = "keycap"
+kind = "hbox"
 dock = "right top"
 anchor = "tr"
-x = 60
+x = 44
 y = 30
-h = 38
-pad = 12
-text = "{device.label}"
-font = 2
-bank = 7
-bank_focus = 4
-color = [0.1, 0.12, 0.2, 1.0]
-color_focus = [0.6, 0.12, 0.2, 1.0]
-border = 2
-border_color = [0.45, 0.55, 0.8, 1.0]
-focus = true
-on_press = "{device.press}"
+w = 520
+h = 40
+gap = 10
+justify = "end"
+align = "center"
 group = "header"
 
+  [[node.children]]
+  kind = "text"
+  text = "DEVICE"
+  font = 2
+  bank = 16
+
+  [[node.children]]
+  kind = "keycap"
+  h = 38
+  pad = 12
+  text = "{device.label}"
+  font = 2
+  bank = 14
+  bank_focus = 14
+  color = [0.478, 0.282, 0.161, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
+  focus = true
+  on_press = "{device.press}"
+
+  [[node.children]]
+  kind = "icon"
+  glyph = "tri_down"
+  w = 12
+  h = 12
+  color = [0.976, 0.945, 0.871, 1.0]
+
+# ---------------------------------------------------------------- test pad
 [[node]]
 kind = "panel"
 dock = "left"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 60
-y = 110
-w = 560
-h = 440
-pad = 24
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+x = 40
+y = 112
+w = 612
+h = 452
+enter = "up"
+enter_time = 14
 
   [[node.children]]
   kind = "text"
   text = "TEST PAD"
+  x = 26
+  y = 20
+  font = 6
+  bank = 13
+
+  [[node.children]]
+  kind = "text"
+  text = "PRESS YOUR KEYS, THEY LIGHT UP"
+  anchor = "tr"
+  x = 30
+  y = 28
   font = 2
-  bank = 4
+  bank = 17
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/pad_base.webp"
+  x = 76
+  y = 110
+  w = 152
+  h = 152
+
+  # the stick leans with the held directions
+  [[node.children]]
+  kind = "panel"
+  x = "{pad.dx}"
+  y = "{pad.dy}"
+  w = 600
+  h = 440
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 136
+    y = 124
+    w = 32
+    h = 76
+    color = [0.341, 0.2, 0.122, 1.0]
+
+    [[node.children.children]]
+    kind = "image"
+    image = "ui/pad_ball.webp"
+    x = 112
+    y = 88
+    w = 80
+    h = 80
 
   [[node.children]]
   kind = "keycap"
-  x = 110
-  y = 70
-  w = 50
-  h = 34
+  x = 130
+  y = 52
+  w = 44
+  h = 32
   text = "{pad.up.cap}"
   glyph = "{pad.up.glyph}"
   selected = "pad.up.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
   kind = "keycap"
-  x = 110
-  y = 190
-  w = 50
-  h = 34
+  x = 130
+  y = 278
+  w = 44
+  h = 32
   text = "{pad.down.cap}"
   glyph = "{pad.down.glyph}"
   selected = "pad.down.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
   kind = "keycap"
-  x = 40
-  y = 130
-  w = 50
-  h = 34
+  x = 20
+  y = 168
+  w = 44
+  h = 32
   text = "{pad.left.cap}"
   glyph = "{pad.left.glyph}"
   selected = "pad.left.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
   kind = "keycap"
-  x = 180
-  y = 130
-  w = 50
-  h = 34
+  x = 240
+  y = 168
+  w = 44
+  h = 32
   text = "{pad.right.cap}"
   glyph = "{pad.right.glyph}"
   selected = "pad.right.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  text_color = [0.85, 0.87, 0.95, 1.0]
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 280
-  y = 60
-  w = 64
-  h = 64
-  text = "X"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.x.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 304
+  y = 90
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
+  text = "X"
+  x = 304
+  y = 90
+  w = 68
+  h = 68
+  align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.x.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = 316
+  y = 174
+  w = 44
+  h = 32
   text = "{pad.x.cap}"
-  x = 280
-  y = 132
-  w = 64
-  align = "center"
+  glyph = "{pad.x.glyph}"
+  selected = "pad.x.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 360
-  y = 50
-  w = 64
-  h = 64
-  text = "Y"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.y.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 394
+  y = 70
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
+  text = "Y"
+  x = 394
+  y = 70
+  w = 68
+  h = 68
+  align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.y.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = 406
+  y = 154
+  w = 44
+  h = 32
   text = "{pad.y.cap}"
-  x = 360
-  y = 122
-  w = 64
-  align = "center"
+  glyph = "{pad.y.glyph}"
+  selected = "pad.y.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 440
-  y = 50
-  w = 64
-  h = 64
-  text = "Z"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.z.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 484
+  y = 70
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
+  text = "Z"
+  x = 484
+  y = 70
+  w = 68
+  h = 68
+  align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.z.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = 496
+  y = 154
+  w = 44
+  h = 32
   text = "{pad.z.cap}"
-  x = 440
-  y = 122
-  w = 64
-  align = "center"
+  glyph = "{pad.z.glyph}"
+  selected = "pad.z.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 280
-  y = 170
-  w = 64
-  h = 64
-  text = "A"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.a.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 304
+  y = 214
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
+  text = "A"
+  x = 304
+  y = 214
+  w = 68
+  h = 68
+  align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.a.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = 316
+  y = 298
+  w = 44
+  h = 32
   text = "{pad.a.cap}"
-  x = 280
-  y = 242
-  w = 64
-  align = "center"
+  glyph = "{pad.a.glyph}"
+  selected = "pad.a.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 360
-  y = 160
-  w = 64
-  h = 64
-  text = "B"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.b.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 394
+  y = 194
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
+  text = "B"
+  x = 394
+  y = 194
+  w = 68
+  h = 68
+  align = "center"
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.b.lit"
+
+  [[node.children]]
+  kind = "keycap"
+  x = 406
+  y = 278
+  w = 44
+  h = 32
   text = "{pad.b.cap}"
-  x = 360
-  y = 232
-  w = 64
-  align = "center"
+  glyph = "{pad.b.glyph}"
+  selected = "pad.b.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
   font = 2
-  bank = 6
+  bank = 12
+  bank_focus = 14
 
   [[node.children]]
-  kind = "keycap"
-  x = 440
-  y = 160
-  w = 64
-  h = 64
-  text = "C"
+  kind = "image"
+  image = "ui/pad_btn.webp"
+  image_focus = "ui/pad_btn_lit.webp"
   selected = "pad.c.lit"
-  font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  x = 484
+  y = 194
+  w = 68
+  h = 74
 
   [[node.children]]
   kind = "text"
-  text = "{pad.c.cap}"
-  x = 440
-  y = 232
-  w = 64
+  text = "C"
+  x = 484
+  y = 194
+  w = 68
+  h = 68
   align = "center"
-  font = 2
-  bank = 6
+  font = 6
+  bank = 14
+  bank_focus = 14
+  selected = "pad.c.lit"
 
   [[node.children]]
   kind = "keycap"
-  x = 290
-  y = 320
-  w = 120
-  h = 34
-  text = "START {pad.start.cap}"
-  selected = "pad.start.lit"
-  font = 2
-  bank = 7
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
+  x = 496
+  y = 278
+  w = 44
+  h = 32
+  text = "{pad.c.cap}"
+  glyph = "{pad.c.glyph}"
+  selected = "pad.c.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "STICK"
+  x = 112
+  y = 352
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "text"
+  text = "TOP ROW X Y Z - LOW ROW A B C"
+  x = 296
+  y = 352
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "image"
+  image = "ui/pill.webp"
+  image_focus = "ui/pill_lit.webp"
+  selected = "pad.start.lit"
+  x = 402
+  y = 392
+  w = 56
+  h = 22
+
+  [[node.children]]
+  kind = "keycap"
+  x = 468
+  y = 386
+  w = 44
+  h = 32
+  text = "{pad.start.cap}"
+  glyph = "{pad.start.glyph}"
+  selected = "pad.start.lit"
+  color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  text_color_focus = [0.976, 0.945, 0.871, 1.0]
+  font = 2
+  bank = 12
+  bank_focus = 14
+
+# ---------------------------------------------------------------- presets
+[[node]]
+kind = "text"
+dock = "left"
+text = "PRESETS"
+x = 40
+y = 578
+font = 2
+bank = 15
 
 [[node]]
 kind = "hbox"
 dock = "left"
-x = 60
-y = 580
-w = 600
+x = 40
+y = 604
+w = 620
 h = 44
 gap = 10
 items = "presets"
@@ -334,59 +549,124 @@ group = "presets"
   h = 40
   pad = 12
   depth = 0
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
   text = "{item.label}"
   font = 2
-  bank = 7
-  bank_focus = 4
-  color = [0.1, 0.12, 0.2, 1.0]
-  color_focus = [0.6, 0.12, 0.2, 1.0]
-  border = 2
-  border_color = [0.45, 0.55, 0.8, 1.0]
-  border_color_focus = [1.0, 0.8, 0.3, 1.0]
+  bank = 14
+  bank_focus = 14
+  color = [0.478, 0.282, 0.161, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   selected = "item.active"
   focus = true
   on_press = "{item.press}"
 
+    [[node.children.children]]
+    kind = "panel"
+    anchor = "bottom"
+    y = -8
+    h = 4
+    color = [0.89, 0.702, 0.298, 1.0]
+    when = "focus"
+
+[[node]]
+kind = "hbox"
+dock = "left"
+x = 40
+y = 664
+w = 600
+h = 34
+gap = 10
+align = "center"
+
+  [[node.children]]
+  kind = "keycap"
+  h = 30
+  text = "ESC"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "BACK TO OPTIONS"
+  font = 2
+  bank = 14
+
+# ---------------------------------------------------------------- bindings
 [[node]]
 kind = "panel"
 dock = "stretch-x"
-image = "ui/panel.webp"
-nine = [8, 8, 8, 8]
-x = 660
-y = 110
-w = 560
-h = 520
-pad = 20
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+x = 680
+y = 112
+w = 572
+h = 532
+enter = "up"
+enter_time = 18
 
   [[node.children]]
   kind = "text"
   text = "BINDINGS"
-  font = 2
-  bank = 4
+  x = 26
+  y = 20
+  font = 6
+  bank = 12
 
   [[node.children]]
-  kind = "text"
-  text = "{conflicts.text}"
+  kind = "hbox"
   anchor = "tr"
-  font = 2
-  bank = 0
-  visible = "conflicts.any"
+  x = 30
+  y = 22
+  w = 300
+  h = 26
+  gap = 8
+  justify = "end"
+  align = "center"
 
-  [[node.children]]
-  kind = "text"
-  text = "{conflicts.text}"
-  anchor = "tr"
-  font = 2
-  bank = 6
-  visible = "conflicts.none"
+    [[node.children.children]]
+    kind = "icon"
+    glyph = "warn"
+    w = 14
+    h = 14
+    color = [0.706, 0.188, 0.102, 1.0]
+    visible = "conflicts.any"
+
+    [[node.children.children]]
+    kind = "icon"
+    glyph = "check"
+    w = 14
+    h = 14
+    color = [0.365, 0.541, 0.227, 1.0]
+    visible = "conflicts.none"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{conflicts.text}"
+    font = 2
+    bank = 13
+    visible = "conflicts.any"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{conflicts.text}"
+    font = 2
+    bank = 17
+    visible = "conflicts.none"
 
   [[node.children]]
   kind = "list"
   dock = "stretch-x"
   id = "binds"
-  y = 30
-  w = 520
-  h = 450
+  x = 16
+  y = 60
+  w = 528
+  h = 456
   gap = 2
   items = "binds"
   group = "binds"
@@ -395,88 +675,248 @@ pad = 20
     kind = "button"
     id = "row"
     h = 38
-    image = "ui/row.webp"
-    image_focus = "ui/row_lit.webp"
     on_press = "{item.press}"
 
       [[node.children.children.children]]
       kind = "panel"
-      color = [0.6, 0.12, 0.2, 1.0]
-      visible = "item.hot"
+      color = [0.706, 0.188, 0.102, 1.0]
+      visible = "item.listening"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      color = [0.478, 0.282, 0.161, 1.0]
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = "100%"
+      h = "100%"
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 8
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      anchor = "bl"
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "keycap"
+      anchor = "left"
+      x = 14
+      w = 24
+      h = 24
+      pad = 0
+      depth = 0
+      color = [0.0, 0.0, 0.0, 0.0]
+      border = 2
+      border_color = [0.114, 0.09, 0.078, 1.0]
+      border_color_focus = [0.976, 0.945, 0.871, 1.0]
+      text_color = [0.114, 0.09, 0.078, 1.0]
+      text_color_focus = [0.976, 0.945, 0.871, 1.0]
+      text = "{item.icon}"
+      glyph = "{item.icon_glyph}"
+      font = 1
+      bank = 12
+      bank_focus = 14
+      selected = "item.hot"
+      visible = "item.square"
+
+      [[node.children.children.children]]
+      kind = "image"
+      image = "ui/ring.webp"
+      image_focus = "ui/ring_lit.webp"
+      selected = "item.hot"
+      anchor = "left"
+      x = 14
+      w = 24
+      h = 24
+      visible = "item.round"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.icon}"
+      anchor = "left"
+      x = 14
+      w = 24
+      align = "center"
+      font = 1
+      bank = 12
+      bank_focus = 14
+      selected = "item.hot"
+      visible = "item.round"
 
       [[node.children.children.children]]
       kind = "text"
       text = "{item.label}"
       anchor = "left"
-      x = 18
+      x = 52
       font = 2
-      bank = 7
+      bank = 12
+      bank_focus = 14
+      selected = "item.hot"
 
       [[node.children.children.children]]
       kind = "text"
       text = "{item.group}"
       anchor = "left"
-      x = 130
+      x = 160
       font = 2
-      bank = 6
+      bank = 12
+      bank_focus = 14
+      selected = "item.hot"
       visible = "item.show_group"
 
       [[node.children.children.children]]
       kind = "text"
       text = "{item.conflict_text}"
       anchor = "left"
-      x = 130
+      x = 160
       font = 2
-      bank = 0
+      bank = 13
+      bank_focus = 14
+      selected = "item.lit"
       visible = "item.show_conflict"
 
       [[node.children.children.children]]
       kind = "text"
       text = "PRESS A KEY - ESC CANCEL"
       anchor = "left"
-      x = 130
+      x = 160
       font = 2
-      bank = 4
+      bank = 14
       blink = 40
       visible = "item.listening"
 
       [[node.children.children.children]]
       kind = "keycap"
       anchor = "right"
-      x = 10
+      x = 12
       w = 70
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
-      font = 2
-      bank = 7
-      color = [0.1, 0.12, 0.2, 1.0]
-      text_color = [0.85, 0.87, 0.95, 1.0]
+      color = [0.933, 0.882, 0.769, 1.0]
       border = 2
-      border_color = [0.45, 0.55, 0.8, 1.0]
+      border_color = [0.078, 0.051, 0.043, 1.0]
+      text_color = [0.114, 0.09, 0.078, 1.0]
+      font = 2
+      bank = 12
       visible = "item.clean"
 
       [[node.children.children.children]]
       kind = "keycap"
       anchor = "right"
-      x = 10
+      x = 12
       w = 70
       h = 30
       text = "{item.cap}"
       glyph = "{item.glyph}"
-      font = 2
-      bank = 0
-      color = [0.1, 0.12, 0.2, 1.0]
-      text_color = [1.0, 0.3, 0.3, 1.0]
+      color = [0.976, 0.945, 0.871, 1.0]
       border = 2
-      border_color = [1.0, 0.3, 0.3, 1.0]
+      font = 2
+      bank = 13
+      border_color = [0.706, 0.188, 0.102, 1.0]
+      text_color = [0.706, 0.188, 0.102, 1.0]
       visible = "item.conflict"
 
+      [[node.children.children.children]]
+      kind = "keycap"
+      anchor = "right"
+      x = 12
+      w = 70
+      h = 30
+      text = "..."
+      color = [0.976, 0.945, 0.871, 1.0]
+      border = 2
+      border_color = [0.078, 0.051, 0.043, 1.0]
+      text_color = [0.114, 0.09, 0.078, 1.0]
+      font = 2
+      bank = 12
+      visible = "item.listening"
+
+# ---------------------------------------------------------------- footer
 [[node]]
-kind = "text"
+kind = "hbox"
 dock = "left"
-text = "ENTER REBIND   BACKSPACE CLEAR   F5 DEFAULTS   TAB 1P/2P   ESC BACK"
-x = 60
-y = 660
-font = 2
-bank = 6
+x = 680
+y = 656
+w = 580
+h = 34
+gap = 8
+align = "center"
+
+  [[node.children]]
+  kind = "keycap"
+  h = 30
+  text = "ENTER"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "REBIND"
+  font = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "keycap"
+  w = 40
+  h = 30
+  glyph = "back"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "CLEAR"
+  font = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "keycap"
+  h = 30
+  text = "F5"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "DEFAULTS"
+  font = 2
+  bank = 14
+
+  [[node.children]]
+  kind = "keycap"
+  h = 30
+  text = "TAB"
+  color = [0.933, 0.882, 0.769, 1.0]
+  border = 2
+  border_color = [0.078, 0.051, 0.043, 1.0]
+  text_color = [0.114, 0.09, 0.078, 1.0]
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "1P/2P"
+  font = 2
+  bank = 14
