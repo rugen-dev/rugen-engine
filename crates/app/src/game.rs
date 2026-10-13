@@ -711,6 +711,15 @@ impl Shell {
         audio.play(key, 0, -1, 100, 0.0, false);
     }
 
+    /// Close the pause menu and give back its textures.
+    fn drop_pause(&mut self) {
+        if let Some(mut p) = self.pause.take()
+            && let Some(g) = self.gpu.as_mut()
+        {
+            p.release_gpu(&mut g.renderer);
+        }
+    }
+
     fn transition(&mut self, t: Transition) {
         // every new screen fades in from black
         self.fade = 1.0;
@@ -789,11 +798,11 @@ impl Shell {
                 }));
             }
             Transition::Resume => {
-                self.pause = None;
+                self.drop_pause();
                 self.fade = 0.0;
             }
             Transition::Restart => {
-                self.pause = None;
+                self.drop_pause();
                 self.fade = 0.0;
                 if let Screen::Match(m) = &mut self.screen {
                     m.world.start_round();
@@ -939,7 +948,7 @@ impl Shell {
                 self.parked_online = None;
                 self.online_match = None;
                 self.save_replay();
-                self.pause = None;
+                self.drop_pause();
                 self.arcade = None;
                 self.play_system_music("title");
                 let netplay = !self.config.net.remote.trim().is_empty();
@@ -1018,6 +1027,7 @@ impl Shell {
                         ) {
                             Ok(mut u) => {
                                 u.set_player(player, sys);
+                                u.set_from_pause(self.parked.is_some(), sys);
                                 Some(u)
                             }
                             Err(e) => {
@@ -1138,7 +1148,7 @@ impl Shell {
                 };
             }
             Transition::Fight(setup) => {
-                self.pause = None;
+                self.drop_pause();
                 self.parked = None;
                 self.match_stats = Default::default();
                 // online: both sides must simulate with the same settings
@@ -1422,7 +1432,7 @@ impl Shell {
                         {
                             self.parked = Some(m);
                         }
-                        self.pause = None;
+                        self.drop_pause();
                         next = Some(t);
                     }
                     other => next = other,
@@ -1830,7 +1840,7 @@ impl Shell {
             }
             Screen::Match(ref m) if self.pause.is_some() => {
                 let _ = m;
-                self.pause = None;
+                self.drop_pause();
             }
             // netplay: the online menu (RESUME / FLEE); once the match is
             // over, Esc leaves the normal way (the result is reported)

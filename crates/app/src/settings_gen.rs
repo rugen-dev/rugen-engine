@@ -1097,7 +1097,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK TO OPTIONS"
+  text = "{back_to}"
   font = 2
   bank = 9
 

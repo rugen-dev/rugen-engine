@@ -282,6 +282,8 @@ pub struct UiScreen {
     ticks: u64,
     /// Stage select: the library (default stage for an empty RANDOM).
     lib: Option<rugen_content::Library>,
+    /// Controls page opened from the pause menu (Esc goes back to the match).
+    from_pause: bool,
 }
 
 /// What the pause menu shows.
@@ -531,6 +533,12 @@ impl UiScreen {
         if let Some(r) = self.roster.as_mut() {
             r.restore(picks);
         }
+        self.refresh_data(sys);
+    }
+
+    /// The controls page was opened from the pause menu.
+    pub fn set_from_pause(&mut self, from_pause: bool, sys: &SystemData) {
+        self.from_pause = from_pause;
         self.refresh_data(sys);
     }
 
@@ -784,6 +792,7 @@ impl UiScreen {
             try_stage: None,
             ticks: 0,
             lib: None,
+            from_pause: false,
         };
         if kind == UiKind::Title {
             s.load_title_facts(lib);
@@ -1078,6 +1087,13 @@ impl UiScreen {
                 if let Value::Object(m) = &mut d {
                     m.insert("profile".into(), self.profile_json());
                     m.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
+                    // where Esc goes: opened from the pause menu it resumes the match
+                    let back = if self.from_pause {
+                        "BACK TO THE MATCH"
+                    } else {
+                        "BACK TO OPTIONS"
+                    };
+                    m.insert("back_to".into(), json!(back));
                 }
                 d
             }
