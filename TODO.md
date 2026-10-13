@@ -19,9 +19,16 @@ later section while an earlier one has open boxes:
 
 ## Launch readiness
 
-- [ ] **Arena AI merged.** The `arena-ai` branch (worktree
-  `~/.cache/rugen-work/wt-arenaai`) is reviewed, merged and its numbers
-  checked: CPU fighters on Ink Arena almost never self-destruct.
+- [x] **Arena AI merged** (2da53a2): self-KOs on Ink Arena 230 → 10 over 80
+  CPU matches at level 4.
+- [ ] **Server sim must match 0.6.2.** 0.6.2 changes the simulation (one-way
+  platforms, `airjump.neu` one-value fix), and the server re-simulates ranked
+  matches with the engine tag it was built against (v0.6.0). Before
+  releasing: check how the resim verifier treats a client whose sim differs
+  (it must not flag honest 0.6.2 players as desyncs or liars), then tag
+  v0.6.2, rebuild the server against it, deploy the server first, then
+  publish the client. Decide what happens to 0.6.0 / 0.6.1 clients' ranked
+  results (verify with the matching sim, or ask them to update).
 - [ ] **Fresh install, every package.** Install the rpm, the deb and the
   tarball in a clean user (no `~/.local/share/rugen`, no `rugen.toml`):
   first launch, drop a zip into `chars/` and a stage into `stages/`,
