@@ -1566,11 +1566,12 @@ impl Shell {
             start_now[0] |= spare & crate::input::START_BIT != 0;
             let extra = self.menu_keys.bits() | menu_taps.bits() | spare;
             now[0] = Buttons::from_bits(now[0].bits() | extra);
-            // START confirms in menus, as the s button always did (the pause
-            // menu is the exception: there START resumes)
+            // START confirms in menus as A does (the pause menu is the
+            // exception: there START resumes); S (a pad's L1) stays itself,
+            // the stage strip pages with it
             if self.pause.is_none() {
                 for (b, start) in now.iter_mut().zip(start_now) {
-                    b.s |= start;
+                    b.a |= start;
                 }
             }
         }

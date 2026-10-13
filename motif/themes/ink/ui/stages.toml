@@ -1,6 +1,7 @@
 # rugen STAGE SELECT — Shonen Ink theme. Coordinates are 1280x720.
 # Fighter select → STAGE SELECT → versus → fight. Player 1 picks: ◀▶ (held:
-# repeats, then faster), X / Z or Page Up / Down a strip-width, Home / End,
+# repeats, then faster), X or S / Z (pad L1 / R1) or Page Up / Down a
+# strip-width, Home / End,
 # a letter jumps by name; A / Enter fights, B / Esc goes back to the fighters.
 # Data: title, sub, go, p1, p2, cur {name author has_author tags[] {t} music
 # has_music width has_width random note}, preview_ready, preview_wait,

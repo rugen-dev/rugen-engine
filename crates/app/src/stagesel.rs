@@ -528,9 +528,9 @@ impl StageSel {
         if pressed.r {
             moved |= self.step(1);
         }
-        // X / Z (pad West / R1): a page back / forward
+        // X or S / Z (a pad's West or L1 / R1): a page back / forward
         let page = self.page() as i64;
-        if pressed.x {
+        if pressed.x || pressed.s {
             moved |= self.step(-page);
         }
         if pressed.z {
@@ -543,7 +543,7 @@ impl StageSel {
             sfx(Sfx::Cancel);
             return Some(self.back());
         }
-        if pressed.a || pressed.c || pressed.y || pressed.s {
+        if pressed.a || pressed.c || pressed.y {
             sfx(Sfx::Done);
             return self.confirm(|| lib.default_stage());
         }
@@ -1070,6 +1070,25 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // a pad pages with L1 (S) / R1 (Z) and never picks with them
+        let page = s.page();
+        let mut quiet = |_: Sfx| {};
+        let start = s.sel;
+        let z = Buttons {
+            z: true,
+            ..Default::default()
+        };
+        assert!(s.tick(z, z, &lib, &mut quiet).is_none());
+        assert_eq!(s.sel, start + page);
+        let l1 = Buttons {
+            s: true,
+            ..Default::default()
+        };
+        assert!(
+            s.tick(l1, l1, &lib, &mut quiet).is_none(),
+            "L1 is not a pick"
+        );
+        assert_eq!(s.sel, start);
         // a rendered snapshot, once written, is the strip thumbnail
         let item = &s.items[0];
         let snap = item.snapshot().expect("prepared stages have a cache dir");
