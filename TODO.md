@@ -112,21 +112,29 @@ later section while an earlier one has open boxes:
 
 ## Gameplay
 
-- [ ] **Hit sparks and fighter size.** fightfx hit sparks are not zoomed with
-  the fighter size, so they look large on chibi-sized fighters.
-- [ ] **Ranked balance and fighter size.** The balance verdict is computed
+- [x] **Hit sparks and fighter size.** (88f615c) fightfx hit sparks are not zoomed with
+  the fighter size, so they look large on chibi-sized fighters. Drawing only:
+  fightfx explods follow their owner's size (`World::fx_scale`).
+- [x] **Ranked balance and fighter size.** (f028b53, 8cabb2c) The balance verdict is computed
   from content only and ignores the size factor (×1.3 against ÷1.3 changes
-  reach). Add the size to the verdict inputs.
-- [ ] **Arena clock.** Show m:ss in the arena HUD instead of MUGEN seconds
+  reach). Add the size to the verdict inputs. Profiles (FAIR_VERSION 2)
+  carry the standing height; `verdict()` takes the match's size and weighs
+  (taller / shorter)^0.5. The server must pass `rules.fighter_size` when it
+  moves past the 0.6.2 engine tag (one-line change in `recompute_verdict`).
+- [x] **Arena clock.** (5ec81fc) Show m:ss in the arena HUD instead of MUGEN seconds
   ("97").
-- [ ] **Arena zoom.** Fully zoomed out, fighters are about 25 px tall on Ink
+- [x] **Arena zoom.** (c970f86) Fully zoomed out, fighters are about 25 px tall on Ink
   Arena; respect a minimum on-screen size or the user's zoom-out setting.
+  Arena stages stop pulling back once the shortest fighter would drop below
+  a tenth of the screen height (sim change on arena stages).
 
 ## Online
 
-- [ ] **Host picks the stage.** Online rooms still keep the old stage strip
+- [x] **Host picks the stage.** (289661a) Online rooms still keep the old stage strip
   on the fighter pick; move it to the new stage select screen, host picks,
-  the other side watches the choice.
+  the other side watches the choice. No protocol change (the server already
+  takes P1's stage); checked with two clients on a local server, P2
+  downloading the host's stage.
 
 ## UI
 
