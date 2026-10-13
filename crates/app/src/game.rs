@@ -63,6 +63,8 @@ pub enum Transition {
     Netplay,
     /// ONLINE menu: rooms, ranked, leaderboard (needs `[net] server`).
     Online,
+    /// PROFILE: accounts on the online servers (the ONLINE screen's page).
+    Profile,
     /// The online screen wants the fighter pick (select screen in online mode).
     OnlineSelect,
     /// Back from the online fighter pick: character id and P1's stage choice.
@@ -866,6 +868,22 @@ impl Shell {
                     Ok(o) => Screen::Online(Box::new(o)),
                     Err(e) => {
                         log::error!("online: {e:#}");
+                        self.transition(Transition::Title);
+                        return;
+                    }
+                };
+            }
+            Transition::Profile => {
+                let r = OnlineScreen::load_profile(
+                    &self.motif_dir,
+                    &self.lib.root,
+                    &self.lib,
+                    &self.config,
+                );
+                self.screen = match r {
+                    Ok(o) => Screen::Online(Box::new(o)),
+                    Err(e) => {
+                        log::error!("profile: {e:#}");
                         self.transition(Transition::Title);
                         return;
                     }

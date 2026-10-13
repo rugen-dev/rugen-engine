@@ -94,9 +94,15 @@ symmetric NATs (some mobile / CGNAT networks) play over TURN. Lag hiding:
 input delay only beyond what the 12-frame rollback window hides (1 frame up
 to ~300 ms ping), smooth time sync (a few percent slower ticks instead of
 freezes), rollback corrections eased on screen, cheap rollbacks, and a
-low-latency renderer. Accounts are anonymous keys per server in
-`profile.json`. Both sides report results with their input streams; they
-only count when they agree.
+low-latency renderer. **Accounts**: offline play needs none; online play
+needs one per server, made on the PROFILE page (home menu or server list):
+a username unique on that server and a password (6+ characters, no e-mail,
+so keep it safe; the server's operator can reset it). Log in with it on
+your other devices; an account from rugen 0.5 (no username yet) can be
+claimed and keeps its rating. Only the account key is kept in
+`profile.json`, never the password. Usernames show a ✓ on leaderboards and
+in rooms. Both sides report results with their input streams; they only
+count when they agree.
 
 **Bring your own character**: the machines do not need the same characters.
 Every online match opens a **matchup**: you pick a fighter from your own

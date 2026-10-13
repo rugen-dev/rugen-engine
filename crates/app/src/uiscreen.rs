@@ -95,9 +95,14 @@ pub struct Profile {
     /// Character brought into online matches (empty = `[net] p1`).
     #[serde(default)]
     pub main_char: String,
-    /// Accounts on other servers, keyed by server address: (id, key).
+    /// Accounts on other servers, keyed by server address: (id, key). The
+    /// key is all this file holds of an account: passwords are never stored.
     #[serde(default)]
     pub online_accounts: std::collections::BTreeMap<String, (u64, String)>,
+    /// Username of the named account each server address is logged in to
+    /// (shown offline; absent = an anonymous account or none).
+    #[serde(default)]
+    pub online_names: std::collections::BTreeMap<String, String>,
     /// Last known online rating per server address.
     #[serde(default)]
     pub online_ranks: std::collections::BTreeMap<String, RankSnap>,
@@ -118,6 +123,7 @@ impl Default for Profile {
             online_id: 0,
             main_char: String::new(),
             online_accounts: Default::default(),
+            online_names: Default::default(),
             online_ranks: Default::default(),
         }
     }
@@ -324,6 +330,7 @@ fn menu_desc(id: &str) -> &'static str {
         "tutorial" => "Learn the basics step by step",
         "watch" => "Sit back: CPU vs CPU",
         "online" => "Room codes, ranked and LAN play",
+        "profile" => "Your online accounts: username and password",
         "netplay" => "Direct match over the network",
         "options" => "Video, audio and controls",
         "exit" => "See you next chapter",
@@ -795,6 +802,10 @@ impl UiScreen {
                         at,
                         json!({ "id": "online", "label": "ONLINE", "action": "online" }),
                     );
+                    menu.insert(
+                        at + 1,
+                        json!({ "id": "profile", "label": "PROFILE", "action": "profile" }),
+                    );
                 }
                 let can_try = !self.featured.is_empty();
                 for m in &mut menu {
@@ -1171,6 +1182,7 @@ impl UiScreen {
             "quit" => Some(Transition::Quit),
             "netplay" => Some(Transition::Netplay),
             "online" => Some(Transition::Online),
+            "profile" => Some(Transition::Profile),
             "back" | "title" => Some(Transition::Title),
             "mode" => Some(match arg {
                 "arcade" => Transition::Select(Mode::Arcade),
