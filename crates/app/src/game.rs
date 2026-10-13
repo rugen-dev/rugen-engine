@@ -1406,8 +1406,13 @@ impl Shell {
                         }
                         // the training lab: local TRAINING matches only
                         if crate::training::applies(&setup) {
-                            m.training =
-                                Some(crate::training::Training::new(self.training_cfg.clone()));
+                            let mut t = crate::training::Training::new(self.training_cfg.clone());
+                            let devices = self.input.devices();
+                            let labels = [0, 1].map(|i| {
+                                crate::keylabel::Labels::new(&self.config.input, i, devices[i])
+                            });
+                            t.set_labels([&labels[0], &labels[1]]);
+                            m.training = Some(t);
                         }
                         if setup.net.is_none() {
                             m.record = Some(crate::replay::Replay::new(

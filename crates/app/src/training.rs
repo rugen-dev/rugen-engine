@@ -16,6 +16,8 @@ pub struct TrainingCfg {
     pub hitboxes: bool,
     /// Startup / active / recovery and advantage of each fighter's last move.
     pub frame_data: bool,
+    /// A column per fighter with its inputs and how long each was held.
+    pub inputs: bool,
 }
 
 /// One adjustable row of a training panel: `(id, label, options, selected)`.
@@ -38,6 +40,12 @@ impl TrainingCfg {
                 ON_OFF.to_vec(),
                 usize::from(self.frame_data),
             ),
+            (
+                "inputs",
+                "INPUT DISPLAY",
+                ON_OFF.to_vec(),
+                usize::from(self.inputs),
+            ),
         ]
     }
 
@@ -46,6 +54,7 @@ impl TrainingCfg {
         match id {
             "hitboxes" => self.hitboxes = index % 2 == 1,
             "frame_data" => self.frame_data = index % 2 == 1,
+            "inputs" => self.inputs = index % 2 == 1,
             _ => return false,
         }
         true
@@ -299,12 +308,79 @@ impl FrameMeter {
     }
 }
 
+/// One line of the input display: a direction and buttons held together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Held {
+    /// Numpad notation relative to facing: 6 forward, 4 back, 2 down, 5 neutral.
+    pub dir: u8,
+    /// A B C X Y Z S held.
+    pub buttons: [bool; 7],
+    /// Ticks this combination has been held.
+    pub frames: u32,
+}
+
+impl Held {
+    /// What a fighter's input buffer (the one its commands read) holds now.
+    pub fn of(b: &rugen_sim::input::InputBuffer) -> Self {
+        let (u, d) = (b.ub > 0, b.db > 0);
+        let (back, fwd) = (b.bb > 0, b.fb > 0);
+        let row = if u {
+            6
+        } else if d {
+            0
+        } else {
+            3
+        };
+        let col = if back {
+            1
+        } else if fwd {
+            3
+        } else {
+            2
+        };
+        Self {
+            dir: row + col,
+            buttons: [b.ab, b.btb, b.cb, b.xb, b.yb, b.zb, b.sb].map(|v| v > 0),
+            frames: 1,
+        }
+    }
+
+    fn same(&self, o: &Held) -> bool {
+        self.dir == o.dir && self.buttons == o.buttons
+    }
+}
+
+/// Lines the input display keeps per fighter.
+pub const INPUT_LINES: usize = 10;
+
+/// A fighter's recent inputs, newest first; a combination held on extends its line.
+#[derive(Clone, Debug, Default)]
+pub struct InputLog {
+    pub lines: std::collections::VecDeque<Held>,
+}
+
+impl InputLog {
+    pub fn push(&mut self, h: Held) {
+        match self.lines.front_mut() {
+            Some(top) if top.same(&h) => top.frames = top.frames.saturating_add(1),
+            _ => {
+                self.lines.push_front(h);
+                self.lines.truncate(INPUT_LINES);
+            }
+        }
+    }
+}
+
 /// Live training state of one match.
 #[derive(Clone, Debug, Default)]
 pub struct Training {
     pub cfg: TrainingCfg,
     /// Frame data of P1's and P2's moves.
     pub meters: [FrameMeter; 2],
+    /// Inputs of P1 and P2, as their input buffers saw them.
+    pub inputs: [InputLog; 2],
+    /// What each player presses for A B C X Y Z S (their own keys or pad).
+    pub labels: [[String; 7]; 2],
 }
 
 impl Training {
@@ -322,6 +398,16 @@ impl Training {
         };
         self.meters[0].observe(world.frame, a, b);
         self.meters[1].observe(world.frame, b, a);
+        for (log, p) in self.inputs.iter_mut().zip(&world.players) {
+            log.push(Held::of(&p.input));
+        }
+    }
+
+    /// Button names as each player presses them (`J`, a pad's `A`...).
+    pub fn set_labels(&mut self, labels: [&crate::keylabel::Labels; 2]) {
+        for (out, l) in self.labels.iter_mut().zip(labels) {
+            *out = std::array::from_fn(|i| l.text(4 + i));
+        }
     }
 }
 
@@ -345,12 +431,115 @@ pub struct Hud<'a> {
 const PANEL_BG: [f32; 4] = [0.0, 0.0, 0.0, 0.62];
 const INK: [f32; 4] = [1.0, 1.0, 1.0, 0.96];
 const DIM: [f32; 4] = [0.75, 0.78, 0.85, 0.9];
+const KEYS: [f32; 4] = [1.0, 0.82, 0.3, 1.0];
+
+/// 7x7 arrows: right and down-right; the others are mirrors.
+const ARROW_RIGHT: [u8; 7] = [
+    0b0001000, 0b0001100, 0b1111110, 0b1111111, 0b1111110, 0b0001100, 0b0001000,
+];
+const ARROW_DOWN_RIGHT: [u8; 7] = [
+    0b0000000, 0b1000000, 0b0100010, 0b0010010, 0b0001010, 0b0000110, 0b0111110,
+];
+
+/// Numpad direction `dir` (relative to facing, 5 = neutral: a dot) as a
+/// 7x7 pixel arrow with its top left at `(x, y)` (screen units).
+fn draw_arrow(r: &mut Renderer, hud: &Hud, dir: u8, x: f32, y: f32, px: f32, c: [f32; 4]) {
+    // (bitmap, mirror x, mirror y, transpose)
+    let (bits, fx, fy, tr) = match dir {
+        6 => (ARROW_RIGHT, false, false, false),
+        4 => (ARROW_RIGHT, true, false, false),
+        2 => (ARROW_RIGHT, false, false, true),
+        8 => (ARROW_RIGHT, false, true, true),
+        3 => (ARROW_DOWN_RIGHT, false, false, false),
+        1 => (ARROW_DOWN_RIGHT, true, false, false),
+        9 => (ARROW_DOWN_RIGHT, false, true, false),
+        7 => (ARROW_DOWN_RIGHT, true, true, false),
+        _ => {
+            let a = (hud.at)(x + 2.0 * px, y + 2.0 * px);
+            let b = (hud.at)(x + 5.0 * px, y + 5.0 * px);
+            r.rect(a, b, [c[0], c[1], c[2], c[3] * 0.6]);
+            return;
+        }
+    };
+    for row in 0..7 {
+        for col in 0..7 {
+            let (br, bc) = if tr { (col, row) } else { (row, col) };
+            if bits[br] & (0b1000000 >> bc) == 0 {
+                continue;
+            }
+            let cx = if fx { 6 - col } else { col } as f32;
+            let cy = if fy { 6 - row } else { row } as f32;
+            let a = (hud.at)(x + cx * px, y + cy * px);
+            let b = (hud.at)(x + (cx + 1.0) * px, y + (cy + 1.0) * px);
+            r.rect(a, b, c);
+        }
+    }
+}
 
 impl Training {
     /// The overlays the settings ask for (drawing only).
     pub fn draw(&self, r: &mut Renderer, hud: &Hud) {
         if self.cfg.frame_data {
             self.draw_frame_data(r, hud);
+        }
+        if self.cfg.inputs {
+            self.draw_inputs(r, hud);
+        }
+    }
+
+    /// INPUT DISPLAY: a column per fighter at the screen edge, newest on top.
+    fn draw_inputs(&self, r: &mut Renderer, hud: &Hud) {
+        let k = (hud.screen_h / 240.0).max(0.5);
+        let px = k;
+        let line = 8.5 * k;
+        let pad = 3.0 * k;
+        // under the combo counter and the frame data panel, above the power bars
+        let top = 108.0 * k;
+        for side in 0..2 {
+            let log = &self.inputs[side];
+            let labels = &self.labels[side];
+            let rows: Vec<(String, u8, String)> = log
+                .lines
+                .iter()
+                .map(|h| {
+                    let keys: Vec<&str> = h
+                        .buttons
+                        .iter()
+                        .zip(labels)
+                        .filter(|(on, _)| **on)
+                        .map(|(_, l)| l.as_str())
+                        .collect();
+                    (format!("{:>3}", h.frames.min(999)), h.dir, keys.join(" "))
+                })
+                .collect();
+            let widest = rows
+                .iter()
+                .map(|(_, _, keys)| keys.chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(4) as f32;
+            // frames, a gap, the arrow cell, a gap, the keys
+            let w = (3.0 * 4.0 + 4.0 + 7.0 + 4.0 + widest * 4.0) * px + 2.0 * pad;
+            let h = INPUT_LINES as f32 * line + 2.0 * pad;
+            let (x0, x1) = if side == 0 {
+                (6.0 * k, 6.0 * k + w)
+            } else {
+                (hud.screen_w - 6.0 * k - w, hud.screen_w - 6.0 * k)
+            };
+            r.rect((hud.at)(x0, top), (hud.at)(x1, top + h), PANEL_BG);
+            for (n, (frames, dir, keys)) in rows.iter().enumerate() {
+                let y = top + pad + n as f32 * line;
+                // older lines fade
+                let fade = 1.0 - n as f32 / (INPUT_LINES as f32 * 1.6);
+                let col = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * fade];
+                let x = x0 + pad;
+                let p = (hud.at)(x, y + px);
+                text_at(r, frames, p[0], p[1], px * hud.u, false, col(DIM));
+                let ax = x + 16.0 * px;
+                draw_arrow(r, hud, *dir, ax, y, px, col(INK));
+                let p = (hud.at)(ax + 11.0 * px, y + px);
+                text_at(r, keys, p[0], p[1], px * hud.u, false, col(KEYS));
+            }
         }
     }
 
@@ -605,6 +794,43 @@ mod tests {
             (fd.startup, fd.active, fd.recovery),
             (Some(1), Some(1), None)
         );
+    }
+
+    /// The input display reads the sim's input buffer: directions relative
+    /// to facing in numpad notation, a held combination extends its line.
+    #[test]
+    fn inputs_come_from_the_buffer_and_merge_while_held() {
+        use rugen_sim::input::InputBuffer;
+        let mut buf = InputBuffer::default();
+        let mut log = InputLog::default();
+        let tick = |buf: &mut InputBuffer, log: &mut InputLog, d: bool, f: bool, a: bool| {
+            buf.update(
+                false, d, false, f, a, false, false, false, false, false, false,
+            );
+            log.push(Held::of(buf));
+        };
+        for _ in 0..3 {
+            tick(&mut buf, &mut log, false, false, false);
+        }
+        tick(&mut buf, &mut log, true, false, false);
+        tick(&mut buf, &mut log, true, true, false);
+        tick(&mut buf, &mut log, false, true, true);
+        tick(&mut buf, &mut log, false, true, true);
+        let got: Vec<(u8, bool, u32)> = log
+            .lines
+            .iter()
+            .map(|h| (h.dir, h.buttons[0], h.frames))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(6, true, 2), (3, false, 1), (2, false, 1), (5, false, 3)],
+            "newest first: 6+A held 2, 3, 2, neutral 3"
+        );
+        for _ in 0..40 {
+            tick(&mut buf, &mut log, true, false, false);
+            tick(&mut buf, &mut log, false, false, false);
+        }
+        assert_eq!(log.lines.len(), INPUT_LINES, "a fixed number of lines");
     }
 
     #[test]

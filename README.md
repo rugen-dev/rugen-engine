@@ -70,10 +70,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Arena AI**: CPU fighters stay on stage, recover and use platforms.
 - [x] **Hitbox display**: see the attack and hurt boxes in Training.
 - [x] **Frame data**: startup, active and recovery frames for every move.
+- [x] **Input display**: the inputs of both players on screen.
 
 ### Planned
 
-- [ ] **Input display**: the inputs of both players on screen.
 - [ ] **Record and playback dummy**: record a sequence and practise against it.
 - [ ] **Simul**: two against two, all on screen at once.
 - [ ] **Turns**: teams fight one after another, the winner stays in.
