@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 rugen-formats.workspace = true
 rugen-cns.workspace = true
+rugen-proto.workspace = true
 indexmap = { workspace = true, features = ["serde"] }
 serde.workspace = true
 log.workspace = true

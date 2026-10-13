@@ -1009,9 +1009,42 @@ impl Library {
             author: m.author.clone(),
             def: m.package_def.clone().unwrap_or_else(|| m.def.clone()),
             size,
-            profile: if m.stage { None } else { m.fair_profile() },
+            profile: if m.stage {
+                None
+            } else {
+                Self::current_profile(dir, m)
+            },
             portrait,
         })
+    }
+
+    /// The entry's fairness profile, analysed again (and saved) when the
+    /// cached one predates this engine's [`rugen_fair::FAIR_VERSION`], so
+    /// the server's verdict gets the fields it now weighs (height).
+    fn current_profile(dir: &Path, m: &Manifest) -> Option<rugen_proto::FairnessProfile> {
+        if m.profile
+            .as_ref()
+            .is_some_and(|p| p.version == rugen_fair::FAIR_VERSION)
+        {
+            return m.fair_profile();
+        }
+        let files =
+            rugen_fair::files::content_files(rugen_fair::Kind::Char, &m.def_path(dir), None)
+                .ok()?;
+        match rugen_fair::profile::analyze(&files) {
+            Ok(p) => {
+                let mut fresh = m.clone();
+                fresh.profile = Some(p);
+                if let Err(e) = Self::save_manifest(dir, &fresh) {
+                    log::debug!("{}: refreshed profile not saved: {e}", m.id);
+                }
+                fresh.fair_profile()
+            }
+            Err(e) => {
+                log::debug!("{}: profile not refreshed: {e}", m.id);
+                m.fair_profile()
+            }
+        }
     }
 
     /// Main .def of the prepared entry (local or downloaded) with this fingerprint.

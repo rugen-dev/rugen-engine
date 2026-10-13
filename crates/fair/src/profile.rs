@@ -35,7 +35,9 @@ use std::path::Path;
 
 use rugen_cns::code::Op;
 use rugen_cns::state::{Controller, StateDef};
+use rugen_formats::air::Air;
 use rugen_formats::def::Def;
+use rugen_formats::sff::Sff;
 use rugen_formats::text::decode;
 use rugen_proto::{CheatFlag, FAIR_VERSION, FairnessProfile, Severity};
 
@@ -87,12 +89,15 @@ pub fn analyze(files: &ContentFiles) -> Result<FairnessProfile> {
         &rugen_formats::vfs::read(&def_entry.source).map_err(|e| Error::Content(e.to_string()))?,
     ));
     let root = def_entry.source.parent().unwrap_or(Path::new("."));
-    let read = |name: &str| -> Option<String> {
+    let path_of = |name: &str| -> Option<std::path::PathBuf> {
         let canon = crate::files::canon(name);
         files
             .get(&canon)
             .map(|e| e.source.clone())
             .or_else(|| resolve(root, name))
+    };
+    let read = |name: &str| -> Option<String> {
+        path_of(name)
             .and_then(|p| rugen_formats::vfs::read(&p).ok())
             .map(|b| decode(&b))
     };
@@ -133,8 +138,41 @@ pub fn analyze(files: &ContentFiles) -> Result<FairnessProfile> {
     }
     let common = get("stcommon").unwrap_or("common1.cns");
     texts.push((common.to_string(), read(common).unwrap_or_default()));
-    let consts = Consts::from_cns(&Def::parse(&cns_text), localcoord);
-    Ok(analyze_texts(consts, &texts))
+    let cns_def = Def::parse(&cns_text);
+    let consts = Consts::from_cns(&cns_def, localcoord);
+    let mut p = analyze_texts(consts, &texts);
+    let yscale = cns_def
+        .section("size")
+        .and_then(|s| s.f32s("yscale"))
+        .and_then(|v| v.first().copied())
+        .unwrap_or(1.0);
+    let sff = get("sprite")
+        .and_then(path_of)
+        .and_then(|p| rugen_formats::vfs::open_sff(&p, true).ok());
+    let air = get("anim")
+        .and_then(read)
+        .map(|t| rugen_formats::air::Air::parse(&t));
+    p.height = sff.and_then(|sff| standing_height(&sff, air.as_ref(), yscale, localcoord));
+    Ok(p)
+}
+
+/// The standing height FIGHTER SIZE measures (`rugen_sim::scale`): the axis
+/// y of sprite 0,0, else of the first frame of action 0, in 320x240 units.
+pub fn standing_height(
+    sff: &Sff,
+    air: Option<&Air>,
+    yscale: f32,
+    localcoord_w: f32,
+) -> Option<f32> {
+    let axis_y = |g: i32, n: i32| {
+        let s = sff.get(u16::try_from(g).ok()?, u16::try_from(n).ok()?)?;
+        Some(f32::from(s.offset[1]))
+    };
+    let y = axis_y(0, 0).filter(|y| *y > 0.0).or_else(|| {
+        let f = air?.get(0)?.frames.first()?;
+        axis_y(f.group, f.number)
+    })?;
+    rugen_proto::size::height_from_axis(y, yscale, localcoord_w)
 }
 
 /// [`analyze`] on a def path (resolving files like [`crate::files::char_files`]).
@@ -785,6 +823,29 @@ type = ChangeState
 trigger1 = AnimTime = 0
 value = 0
 ";
+
+    /// The profile measures the standing height FIGHTER SIZE uses (Kung Fu
+    /// Man: sprite 0,0 axis 105 at localcoord 320).
+    #[test]
+    fn kfm_profile_knows_its_height() {
+        let def = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1/chars/kfm/kfm.def");
+        if !def.exists() {
+            return;
+        }
+        let data = def
+            .parent()
+            .and_then(|d| d.parent())
+            .map(|d| d.join("../data"));
+        let p = analyze_def(&def, data.as_deref()).expect("kfm analyses");
+        let h = p.height.expect("kfm has sprite 0,0");
+        assert!((100.0..110.0).contains(&h), "kfm stands ~105: {h}");
+        assert_eq!(p.version, FAIR_VERSION);
+        assert!(
+            (p.power_score - 100.0).abs() < 1.0,
+            "size stays out of the score"
+        );
+    }
 
     #[test]
     fn clean_char_has_no_flags() {

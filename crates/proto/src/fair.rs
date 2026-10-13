@@ -12,7 +12,7 @@ use crate::{Rules, SessionTicket};
 
 /// Version of the [`FairnessProfile`] analysis. Profiles of different
 /// versions are never compared field by field (the server recomputes).
-pub const FAIR_VERSION: u32 = 1;
+pub const FAIR_VERSION: u32 = 2;
 
 /// Largest card portrait (base64 WebP) a client may attach.
 pub const MAX_PORTRAIT_B64: usize = 24 * 1024;
@@ -69,6 +69,10 @@ pub struct FairnessProfile {
     /// `rugen verify` verdict (`verified` / `warn` / `broken`) when known;
     /// client-side only, never part of a server comparison.
     pub verify: Option<String>,
+    /// Standing height in 320x240 units (what FIGHTER SIZE measures, see
+    /// [`crate::size`]); `None` when unknown (profiles before version 2).
+    /// The verdict weighs the heights both fighters end up at.
+    pub height: Option<f32>,
     /// ≈100 for Kung Fu Man.
     pub power_score: f32,
     pub reasons: Vec<String>,
