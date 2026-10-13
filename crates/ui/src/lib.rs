@@ -2687,6 +2687,8 @@ impl Ui {
                 clip,
             );
         }
+        // a placeholder reads as a hint, not as typed text
+        let mut alpha = alpha;
         let text = match n.kind {
             Kind::Input => {
                 let id = n.id.clone().unwrap_or_else(|| inst.key.clone());
@@ -2703,6 +2705,7 @@ impl Ui {
                     t.push('_');
                 }
                 if t.is_empty() && !editing {
+                    alpha *= 0.45;
                     n.placeholder.clone()
                 } else {
                     Some(t)
