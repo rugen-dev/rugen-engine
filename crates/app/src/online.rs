@@ -80,6 +80,8 @@ pub struct LastResult {
     pub me: u64,
     pub ranked: bool,
     pub won: bool,
+    /// The match ended early (a flee or a disconnect).
+    pub ending: Option<rugen_proto::Ending>,
     pub ack: Option<ResultAck>,
 }
 
@@ -493,7 +495,13 @@ impl OnlineScreen {
             return String::new();
         };
         let what = if r.ranked { "RANKED" } else { "MATCH" };
-        let outcome = if r.won { "WIN" } else { "LOSS" };
+        let outcome = match (r.won, r.ending) {
+            (true, Some(rugen_proto::Ending::Disconnect)) => "WIN (OPPONENT DISCONNECTED)",
+            (true, Some(_)) => "WIN (OPPONENT FLED)",
+            (false, Some(_)) => "LOSS (YOU FLED)",
+            (true, None) => "WIN",
+            (false, None) => "LOSS",
+        };
         match &r.ack {
             None => format!("LAST {what}: {outcome} - REPORTING..."),
             Some(a) if a.disputed => format!("LAST {what}: {outcome} - DISPUTED, NOT COUNTED"),
@@ -603,7 +611,9 @@ impl OnlineScreen {
                 && mx.snap.downloads.iter().all(Xfer::finished)
                 && !mx.snap.downloads.is_empty());
         let t = at.elapsed().as_secs_f32();
-        t >= 1.0 && (blocked || synced || t >= 20.0)
+        // harness: the confirm step is the picture
+        let hold = std::env::var_os("RUGEN_HARNESS_NO_CONFIRM").is_some() && t >= 2.0;
+        t >= 1.0 && (blocked || synced || hold || t >= 20.0)
     }
 
     /// Open the matchup phase of match `id`.
@@ -791,10 +801,12 @@ impl OnlineScreen {
                     .as_ref()
                     .and_then(|m| m.profile.as_ref())
                     .is_some_and(|p| p.blocked());
+                // harness: RUGEN_HARNESS_NO_CONFIRM keeps the confirm step on screen
                 if v.phase == "confirm"
                     && !mx.snap.accepted
                     && !blocked
                     && tick >= mx.auto_confirm_at + 120
+                    && std::env::var_os("RUGEN_HARNESS_NO_CONFIRM").is_none()
                 {
                     mx.auto_confirm_at = tick;
                     mx.driver.accept();
@@ -918,10 +930,15 @@ impl OnlineScreen {
         }
         let official_block = official::blocked(&d.fingerprint);
         let name = d.name.to_uppercase();
+        let len = name.chars().count();
         json!({
             "present": true,
             "name": name,
-            "long": name.chars().count() > 14,
+            "long": len > 14,
+            // matchup header: three sizes so any name fits its column
+            "name_big": len <= 10,
+            "name_mid": (11..=17).contains(&len),
+            "name_small": len > 17,
             "author": if d.author.is_empty() { "BY UNKNOWN".to_string() } else { format!("BY {}", d.author.to_uppercase()) },
             "portrait": format!("mem:{key}"),
             "has_portrait": has_portrait,
@@ -939,35 +956,38 @@ impl OnlineScreen {
         })
     }
 
-    fn xfer_json(rows: &[Xfer], what: &str) -> Value {
-        if rows.is_empty() {
-            return json!({ "visible": false, "pct": 0, "text": "" });
-        }
-        let total: u64 = rows
-            .iter()
-            .map(|x| x.progress.total.load(std::sync::atomic::Ordering::Relaxed))
-            .sum();
-        let frac = rows.iter().map(Xfer::fraction).sum::<f32>() / rows.len() as f32;
-        let failed = rows.iter().find_map(|x| match &x.state {
-            XferState::Failed(e) => Some(e.clone()),
-            _ => None,
-        });
-        let text = if let Some(e) = failed {
-            format!("{what}: FAILED - {}", e.to_uppercase())
-        } else if rows.iter().all(|x| x.state == XferState::Cached) {
-            format!("{what}: ALREADY THERE (CACHED)")
-        } else if rows.iter().all(Xfer::finished) {
-            format!("{what}: DONE")
-        } else if rows.iter().any(|x| x.state == XferState::Checking) && frac == 0.0 {
-            format!("{what}: PREPARING")
+    /// One side's transfer / server check on the matchup panel: a short
+    /// line and a 0-100 bar. `xfer` is this side's transfer (our upload,
+    /// their download), `sending` names it.
+    fn side_xfer(card: Option<&FighterCard>, xfer: &[Xfer], sending: &str) -> Value {
+        let Some(c) = card else {
+            return json!({ "text": "", "pct": 0 });
+        };
+        let blocked = c.decl.profile.as_ref().is_some_and(|p| p.blocked())
+            || official::blocked(&c.decl.fingerprint).is_some();
+        let failed = xfer.iter().any(|x| matches!(x.state, XferState::Failed(_)));
+        let moving = !xfer.is_empty() && !xfer.iter().all(Xfer::finished);
+        let frac = if xfer.is_empty() {
+            0.0
         } else {
-            format!(
-                "{what}: {:.0}%  OF {:.1} MB",
-                frac * 100.0,
-                total as f64 / 1048576.0
+            xfer.iter().map(Xfer::fraction).sum::<f32>() / xfer.len() as f32
+        };
+        let (text, pct) = if blocked {
+            ("BLOCKED".to_string(), 0)
+        } else if failed {
+            (format!("{sending} FAILED"), (frac * 100.0) as u32)
+        } else if moving {
+            let pct = (frac * 100.0) as u32;
+            (format!("{sending} {pct}%"), pct)
+        } else if c.verified {
+            ("FILES CHECKED".to_string(), 100)
+        } else {
+            (
+                "WAITING FOR SERVER CHECK".to_string(),
+                (frac * 100.0) as u32,
             )
         };
-        json!({ "visible": true, "pct": (frac * 100.0) as u32, "text": text })
+        json!({ "text": text, "pct": pct })
     }
 
     /// The `mx` block of the data context (matchup screen).
@@ -1022,44 +1042,11 @@ impl OnlineScreen {
         let verdict = v.verdict.clone();
         let kind = verdict.as_ref().map(|v| v.kind);
         let both = v.fighters.iter().all(Option::is_some);
-        let reasons: Vec<Value> = verdict
-            .as_ref()
-            .map(|v| {
-                v.reasons
-                    .iter()
-                    .take(3)
-                    .map(|r| json!({ "text": r.to_uppercase() }))
-                    .collect()
-            })
-            .unwrap_or_default();
         let mine_blocked = snap
             .mine
             .as_ref()
             .and_then(|m| m.profile.as_ref())
             .is_some_and(|p| p.blocked());
-        let hint = match (kind, phase) {
-            _ if spectator => "WATCHING: THE FIGHT STARTS ONCE BOTH PLAYERS ARE READY".to_string(),
-            _ if !both => {
-                "THE SERVER JUDGES THE MATCHUP AS SOON AS BOTH FIGHTERS ARE PICKED".to_string()
-            }
-            (Some(VerdictKind::Blocked), _) if mine_blocked => {
-                "YOUR FIGHTER IS BLOCKED: CHANGE FIGHTER".to_string()
-            }
-            (Some(VerdictKind::Blocked), _) => {
-                "THEIR FIGHTER IS BLOCKED: WAITING FOR A NEW PICK".to_string()
-            }
-            (Some(VerdictKind::Unbalanced), _) if ranked => {
-                "RANKED NEEDS A FAIR FIGHT: CHANGE FIGHTER".to_string()
-            }
-            (Some(VerdictKind::Unbalanced), "confirm") if !snap.accepted => {
-                "UNBALANCED: BOTH PLAYERS MUST ACCEPT IT".to_string()
-            }
-            (_, "confirm") if snap.accepted => "WAITING FOR YOUR OPPONENT TO CONFIRM".to_string(),
-            (_, "confirm") => "CONFIRM THE MATCHUP OR CHANGE FIGHTER".to_string(),
-            (_, "sync") => "SYNCING FILES - THE FIGHT STARTS WHEN BOTH ARE READY".to_string(),
-            (_, "started") => "MATCH STARTING".to_string(),
-            _ => String::new(),
-        };
         let stamp = if both && kind.is_some() {
             official::verdict_stamp(&v)
         } else {
@@ -1072,6 +1059,55 @@ impl OnlineScreen {
             && phase == "confirm"
             && !snap.accepted
             && !(ranked && kind == Some(VerdictKind::Unbalanced));
+        // the stat face-off: left = us (P1 when watching)
+        let (li, ri) = if spectator { (0, 1) } else { (me, opp) };
+        let stats = stat_rows(
+            v.fighters[li]
+                .as_ref()
+                .and_then(|c| c.decl.profile.as_ref()),
+            v.fighters[ri]
+                .as_ref()
+                .and_then(|c| c.decl.profile.as_ref()),
+        );
+        let (left_xfer, right_xfer) = if spectator {
+            (
+                Self::side_xfer(v.fighters[0].as_ref(), &[], ""),
+                Self::side_xfer(v.fighters[1].as_ref(), &[], ""),
+            )
+        } else {
+            (
+                Self::side_xfer(v.fighters[me].as_ref(), &snap.uploads, "SENDING FIGHTER"),
+                Self::side_xfer(
+                    v.fighters[opp].as_ref(),
+                    &snap.downloads,
+                    "RECEIVING FIGHTER",
+                ),
+            )
+        };
+        let state_of = |s: String| s.trim_end_matches('.').to_string();
+        let (left_state, right_state) = if spectator {
+            (status_of(0), status_of(1))
+        } else {
+            (my_status.clone(), status_of(opp))
+        };
+        // a short rule only when this verdict needs something from someone
+        let both_ok = v.accepted.iter().all(|a| *a);
+        let rule = match kind {
+            _ if spectator || !both => "",
+            Some(VerdictKind::Blocked) if mine_blocked => "YOUR FIGHTER IS BLOCKED",
+            Some(VerdictKind::Blocked) => "THEIR FIGHTER IS BLOCKED",
+            Some(VerdictKind::Unbalanced) if ranked => "RANKED NEEDS A FAIR FIGHT",
+            Some(VerdictKind::Unbalanced) if !both_ok => "UNBALANCED: BOTH MUST ACCEPT",
+            _ => "",
+        };
+        let note = if snap.verdict_changed {
+            "THE VERDICT CHANGED: CONFIRM AGAIN".to_string()
+        } else if !snap.notice.is_empty() {
+            snap.notice.to_uppercase()
+        } else {
+            rule.to_string()
+        };
+        let room = self.mx.as_ref().and_then(|m| m.room.clone());
         json!({
             "title": if spectator { "WATCHING".to_string() } else if ranked { format!("RANKED MATCHUP · {}", if self.trust_of(&self.client.server).is_official() { "OFFICIAL" } else { "COMMUNITY" }) } else { "MATCHUP".to_string() },
             "left": left,
@@ -1084,22 +1120,25 @@ impl OnlineScreen {
             "fair": both && kind == Some(VerdictKind::Fair),
             "unbalanced": both && kind == Some(VerdictKind::Unbalanced),
             "blocked": both && kind == Some(VerdictKind::Blocked),
-            "ratio": verdict.as_ref().filter(|v| v.ratio > 0.0).map(|v| format!("POWER RATIO {:.2}", v.ratio)).unwrap_or_default(),
             "stamp": if both && kind.is_some() { stamp.label("VERDICT") } else { String::new() },
             "stamp_official": stamp.is_official(),
             "stamp_other": both && kind.is_some() && !stamp.is_official(),
-            "reasons": reasons,
-            "no_reasons": reasons.is_empty(),
-            "hint": hint,
-            "net": if spectator { String::new() } else { self.net_line() },
-            "can_confirm": can_confirm,
-            "confirm_label": if kind == Some(VerdictKind::Unbalanced) { "ACCEPT UNBALANCED" } else { "CONFIRM" },
+                        "can_confirm": can_confirm,
+            // the stamp already says UNBALANCED; the label must fit its button
+            "confirm_label": if kind == Some(VerdictKind::Unbalanced) { "ACCEPT" } else { "CONFIRM" },
             "can_change": !spectator && matches!(phase, "pick" | "confirm" | "") && !snap.preparing,
             "changed": snap.verdict_changed,
             "notice": if snap.verdict_changed { "THE VERDICT CHANGED: CONFIRM AGAIN".to_string() } else { snap.notice.to_uppercase() },
             "has_notice": !snap.notice.is_empty() || snap.verdict_changed,
-            "up": Self::xfer_json(&snap.uploads, "UPLOADING YOURS"),
-            "down": Self::xfer_json(&snap.downloads, "DOWNLOADING THEIRS"),
+            "st": stats,
+            "left_xfer": left_xfer,
+            "right_xfer": right_xfer,
+            "left_state": state_of(left_state),
+            "right_state": state_of(right_state),
+            "note": note,
+            "has_note": !note.is_empty(),
+            "pending_label": if both { "JUDGING" } else { "WAITING FOR PICKS" },
+            "conn": if spectator { json!({ "line": "WATCHING", "high_ping": false, "sub": "" }) } else { self.conn_json(ranked, room.as_deref()) },
         })
     }
 
@@ -1211,26 +1250,40 @@ impl OnlineScreen {
         })
     }
 
-    /// Matchup screen: how the match will connect, with the estimated
-    /// ping and the input delay it would get.
-    fn net_line(&self) -> String {
-        let how = if self.config.net.direct {
-            "DIRECT PEER-TO-PEER (YOUR OPPONENT'S GAME SEES YOUR IP)"
-        } else {
-            "RELAYED, PRIVATE (TURN OR THE SERVER)"
-        };
-        match self.est_ping() {
+    /// Matchup screen, bottom left: how the match will connect, on one
+    /// line (`DIRECT 492 MS  DELAY 7F`), whether the ping is high, and the
+    /// small line under it (room, mode, what the path reveals).
+    fn conn_json(&self, ranked: bool, room: Option<&str>) -> Value {
+        let direct = self.config.net.direct;
+        let how = if direct { "DIRECT" } else { "RELAYED" };
+        let ping = self.est_ping();
+        let line = match ping {
             Some(ms) => {
                 let d = self
                     .config
                     .net
                     .input_delay
                     .frames(Some(ms), &self.config.net.delay_policy());
-                let high = if ms > 200 { "  HIGH PING" } else { "" };
-                format!("{how} · ~{ms} MS · DELAY {d}F{high}")
+                format!("{how} {ms} MS DELAY {d}F")
             }
             None => how.to_string(),
+        };
+        let mut sub = Vec::new();
+        match room {
+            Some(code) => sub.push(format!("ROOM {code}")),
+            None => sub.push("QUICK MATCH".into()),
         }
+        sub.push(if ranked { "RANKED" } else { "CASUAL" }.into());
+        sub.push(if direct {
+            "PEER-TO-PEER, OPPONENT SEES YOUR IP".into()
+        } else {
+            "RELAYED THROUGH THE SERVER".into()
+        });
+        json!({
+            "line": line,
+            "high_ping": ping.is_some_and(|ms| ms > HIGH_PING_MS),
+            "sub": sub.join(" · "),
+        })
     }
 
     fn refresh(&mut self) {
@@ -2498,6 +2551,68 @@ impl OnlineScreen {
     }
 }
 
+/// A ping above this is flagged on the matchup screen.
+const HIGH_PING_MS: u32 = 200;
+/// Matchup stat panel (1280-wide layout, panel-relative): the centre line,
+/// the half-width of the label column and the longest bar.
+const STAT_CX: f32 = 600.0;
+const STAT_GAP: f32 = 100.0;
+const STAT_BAR: f32 = 300.0;
+
+/// One mirrored stat row: values, bar lengths scaled to the larger value
+/// (the left bar grows leftward from the label column), and which side is
+/// higher (red), lower (ink) or equal (grey).
+fn stat_row(a: Option<f64>, b: Option<f64>, fmt: &dyn Fn(f64) -> String) -> Value {
+    let (Some(a), Some(b)) = (a, b) else {
+        let txt = |v: Option<f64>| v.map_or_else(|| "-".to_string(), fmt);
+        return json!({
+            "l": txt(a), "r": txt(b), "lx": STAT_CX - STAT_GAP, "lw": 0, "rw": 0,
+            "l_hi": false, "l_lo": false, "l_eq": false, "l_plain": true,
+            "r_hi": false, "r_lo": false, "r_eq": false, "r_plain": true,
+        });
+    };
+    let (a0, b0) = (a.max(0.0), b.max(0.0));
+    let m = a0.max(b0);
+    let len = |v: f64| {
+        if m > 0.0 {
+            (STAT_BAR as f64 * v / m).round() as f32
+        } else {
+            0.0
+        }
+    };
+    let (lw, rw) = (len(a0), len(b0));
+    let eq = (a - b).abs() < 1e-6;
+    json!({
+        "l": fmt(a), "r": fmt(b),
+        "lx": STAT_CX - STAT_GAP - lw, "lw": lw, "rw": rw,
+        "l_hi": a > b && !eq, "l_lo": a < b && !eq, "l_eq": eq, "l_plain": a <= b || eq,
+        "r_hi": b > a && !eq, "r_lo": b < a && !eq, "r_eq": eq, "r_plain": b <= a || eq,
+    })
+}
+
+/// The matchup's stat face-off, power first.
+fn stat_rows(
+    a: Option<&rugen_proto::FairnessProfile>,
+    b: Option<&rugen_proto::FairnessProfile>,
+) -> Value {
+    let int = |v: f64| format!("{v:.0}");
+    let approx = |v: f64| format!("~{v:.0}");
+    let row = |f: &dyn Fn(&rugen_proto::FairnessProfile) -> f64, fmt: &dyn Fn(f64) -> String| {
+        stat_row(a.map(f), b.map(f), fmt)
+    };
+    json!({
+        "power": row(&|p| f64::from(p.power_score), &int),
+        "life": row(&|p| f64::from(p.life), &int),
+        "attack": row(&|p| f64::from(p.attack), &int),
+        "defence": row(&|p| f64::from(p.defence), &int),
+        "best_hit": row(&|p| f64::from(p.max_hit_damage), &int),
+        "combo": row(&|p| f64::from(p.est_combo_damage), &approx),
+        "supers": row(&|p| f64::from(p.supers), &int),
+        "projectiles": row(&|p| f64::from(p.projectiles), &int),
+        "throws": row(&|p| f64::from(p.throws), &int),
+    })
+}
+
 /// Game settings both sides of an online match must share (determinism):
 /// defaults, plus the room's round time and mode.
 pub fn match_config(base: &Config, rules: &Rules) -> Config {
@@ -2542,6 +2657,7 @@ pub fn report_result(
             me: m.players[m.my_side],
             ranked: m.ranked,
             won: winner_side == m.my_side,
+            ending: evidence.ending,
             ack: None,
         });
     }
@@ -2594,6 +2710,45 @@ mod tests {
             api_min,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn stat_rows_scale_to_the_larger_side() {
+        let int = |v: f64| format!("{v:.0}");
+        // 134 vs 109: the right bar is full length and red, the left shorter, ink
+        let r = stat_row(Some(109.0), Some(134.0), &int);
+        assert_eq!(r["l"], "109");
+        assert_eq!(r["rw"], STAT_BAR as f64);
+        let lw = r["lw"].as_f64().unwrap();
+        assert!((lw - (STAT_BAR as f64 * 109.0 / 134.0).round()).abs() < 0.5);
+        // the left bar ends at the label column
+        assert_eq!(
+            r["lx"].as_f64().unwrap() + lw,
+            f64::from(STAT_CX - STAT_GAP)
+        );
+        assert_eq!(
+            (r["r_hi"].as_bool(), r["l_lo"].as_bool()),
+            (Some(true), Some(true))
+        );
+        assert_eq!(r["l_plain"], true);
+        assert_eq!(r["r_plain"], false);
+        // equal: both grey, nobody bold
+        let e = stat_row(Some(100.0), Some(100.0), &int);
+        assert_eq!(
+            (e["l_eq"].as_bool(), e["r_eq"].as_bool()),
+            (Some(true), Some(true))
+        );
+        assert_eq!(
+            (e["l_hi"].as_bool(), e["r_hi"].as_bool()),
+            (Some(false), Some(false))
+        );
+        // both zero: no bars, no division by zero
+        let z = stat_row(Some(0.0), Some(0.0), &int);
+        assert_eq!((z["lw"].as_f64(), z["rw"].as_f64()), (Some(0.0), Some(0.0)));
+        // one fighter not picked yet: values only
+        let m = stat_row(Some(5.0), None, &int);
+        assert_eq!((m["l"].as_str(), m["r"].as_str()), (Some("5"), Some("-")));
+        assert_eq!(m["lw"], 0);
     }
 
     #[test]

@@ -296,6 +296,16 @@ impl InputState {
     }
 }
 
+/// Netplay: this machine plays one fighter, on whichever seat the server
+/// (or `--p2`) gave it, so both players' controls (P1 / P2 keyboard
+/// layouts, both gamepad slots) drive it. Without this, the P2 seat only
+/// listened to the P2 bindings: a player on its usual P1 keys or its only
+/// gamepad lost buttons it had no P2 binding for (Start: power charge).
+pub fn seat_inputs(now: [Buttons; 2]) -> [Buttons; 2] {
+    let merged = Buttons::from_bits(now[0].bits() | now[1].bits());
+    [merged; 2]
+}
+
 fn set(b: &mut Buttons, i: usize, v: bool) {
     let slot = match i {
         0 => &mut b.u,
@@ -336,5 +346,31 @@ mod tests {
         // focus loss forgets it (its release never comes)
         s.release_all();
         assert!(!s.buttons()[1].r);
+    }
+
+    #[test]
+    fn a_netplay_seat_hears_every_local_control() {
+        // default bindings: P1 Start is `m`, P2 Start is Enter
+        let mut s = InputState::new(&config::Input::default());
+        for (key, name) in [
+            (Key::Character("m".into()), "P1 start"),
+            (Key::Named(NamedKey::Enter), "P2 start"),
+        ] {
+            s.key(&key, true);
+            let seats = seat_inputs(s.buttons());
+            assert!(seats[0].s && seats[1].s, "{name} reaches both seats");
+            s.key(&key, false);
+            s.end_tick();
+        }
+        // every button of the P1 layout reaches the P2 seat
+        let p1 = config::PlayerKeys::p1();
+        for (i, name) in p1.names().iter().enumerate() {
+            let key = parse_key(name);
+            s.key(&key, true);
+            let seat2 = seat_inputs(s.buttons())[1];
+            assert_eq!(seat2.bits(), 1 << i, "{name}");
+            s.key(&key, false);
+            s.end_tick();
+        }
     }
 }

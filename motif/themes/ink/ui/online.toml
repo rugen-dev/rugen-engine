@@ -1088,472 +1088,303 @@ enter_time = 16
   pad = 26
   on_press = "form:go"
 
-# ---- MATCHUP (bring your own character): both cards, the server's verdict,
-# confirm / change fighter, transfer bars. Data: is_matchup, mx.* (title,
-# left/right {present name long author portrait has_portrait power stats1..3
-# rating verified size status}, left_tag right_tag, pending has_verdict fair
-# unbalanced blocked verdict ratio reasons[] (text) no_reasons hint notice
-# has_notice can_confirm confirm_label can_change, up/down {visible pct text}).
-[[node]]
-kind = "text"
-dock = "top"
-visible = "is_matchup"
-text = "{mx.title}"
-x = 0
-w = "100%"
-y = 22
-font = 1
-bank = 9
-scale = 3
-align = "center"
-enter = "down"
-enter_time = 12
-
-# ---- matchup: left card
+# ---- MATCHUP (bring your own character): stat face-off. Top row: both
+# fighters (portrait, YOU / OPPONENT, name, author, rating) and the server's
+# verdict stamp; one panel with the mirrored stats (power first; bars scaled to
+# the larger value, the higher side in the accent colour, equal values grey) and
+# each side's transfer / check and decision; bottom row: the connection on one
+# line (+ HIGH PING), room / mode / IP note, CONFIRM / CHANGE FIGHTER / LEAVE.
+# Data: is_matchup, mx.* (title, left/right {present name name_big name_mid
+# name_small author portrait has_portrait rating official_block has_official_block},
+# left_tag right_tag, pending pending_label has_verdict fair unbalanced blocked
+# verdict stamp stamp_official stamp_other note has_note, st.<stat> {l r lx lw rw
+# l_hi l_lo l_eq l_plain r_hi r_lo r_eq r_plain}, left_xfer/right_xfer {text pct},
+# left_state right_state, conn {line high_ping sub}, can_confirm confirm_label
+# can_change). Stat panel geometry matches STAT_CX / STAT_GAP / STAT_BAR in online.rs.
 [[node]]
 kind = "panel"
-dock = "left"
 visible = "is_matchup"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-anchor = "tl"
 x = 40
-y = 86
-w = 400
-h = 420
+y = 30
+w = 104
+h = 104
+color = [0.97, 0.96, 0.92, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
 enter = "left"
-enter_time = 16
+enter_time = 14
 
   [[node.children]]
-  kind = "button"
-  focus = false
-  image = "ui/slab_red.webp"
-  x = 14
-  y = -16
-  w = 190
-  h = 38
-  text = "{mx.left_tag}"
-  font = 1
-  bank = 11
-  scale = 2
-
-  [[node.children]]
-  kind = "panel"
-  x = 20
-  y = 36
-  w = 160
-  h = 160
-  color = [0.97, 0.96, 0.92, 1.0]
-  border = 3
-  border_color = [0.07, 0.07, 0.07, 1.0]
-
-    [[node.children.children]]
-    kind = "image"
-    visible = "mx.left.has_portrait"
-    image = "{mx.left.portrait}"
-    fit = "contain"
-    x = 8
-    y = 8
-    w = 144
-    h = 144
-
-    [[node.children.children]]
-    kind = "text"
-    visible = "!mx.left.has_portrait"
-    text = "?"
-    x = 0
-    y = 44
-    w = 160
-    font = 1
-    bank = 10
-    scale = 5
-    align = "center"
+  kind = "image"
+  visible = "mx.left.has_portrait"
+  image = "{mx.left.portrait}"
+  fit = "contain"
+  x = 4
+  y = 4
+  w = 96
+  h = 96
 
   [[node.children]]
   kind = "text"
-  visible = "!mx.left.long"
-  text = "{mx.left.name}"
-  x = 194
-  y = 40
-  w = 196
-  font = 1
-  bank = 9
-  scale = 2
-  wrap = true
-  line_gap = 6
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.long"
-  text = "{mx.left.name}"
-  x = 194
-  y = 40
-  w = 196
-  font = 2
-  bank = 9
-  scale = 2
-  wrap = true
-  line_gap = 0
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.author}"
-  x = 194
-  y = 134
-  w = 196
-  font = 2
-  bank = 9
-  scale = 1
-  wrap = true
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.power}"
-  x = 194
-  y = 164
-  font = 1
-  bank = 10
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.stats1}"
-  x = 22
-  y = 210
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.stats2}"
-  x = 22
-  y = 236
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.stats3}"
-  x = 22
-  y = 262
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.rating}"
-  x = 22
-  y = 292
-  font = 2
-  bank = 10
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.left.present"
-  text = "{mx.left.verified}  -  {mx.left.size}"
-  x = 22
-  y = 318
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "button"
-  focus = false
-  image = "ui/slab.webp"
-  x = 20
-  y = 356
-  w = 360
-  h = 44
-  text = "{mx.left.status}"
-  font = 2
-  bank = 11
-  scale = 2
-
-# left transfer bar
-[[node]]
-kind = "text"
-dock = "left"
-visible = "mx.up.visible"
-text = "{mx.up.text}"
-anchor = "tl"
-x = 40
-y = 516
-w = 400
-font = 2
-bank = 9
-scale = 1
-
-[[node]]
-kind = "panel"
-dock = "left"
-visible = "mx.up.visible"
-anchor = "tl"
-x = 40
-y = 542
-w = 400
-h = 20
-color = [0.97, 0.96, 0.92, 1.0]
-border = 3
-border_color = [0.07, 0.07, 0.07, 1.0]
-
-  [[node.children]]
-  kind = "panel"
+  visible = "!mx.left.has_portrait"
+  text = "?"
   x = 0
-  y = 0
-  w = "{mx.up.pct}%"
-  h = 20
-  color = [0.86, 0.13, 0.13, 1.0]
-
-# ---- matchup: right card
-[[node]]
-kind = "panel"
-dock = "right"
-visible = "is_matchup"
-image = "ui/panel9.webp"
-nine = [12, 12, 24, 24]
-anchor = "tr"
-x = 40
-y = 86
-w = 400
-h = 420
-enter = "right"
-enter_time = 16
-
-  [[node.children]]
-  kind = "button"
-  focus = false
-  image = "ui/slab_red.webp"
-  x = 14
-  y = -16
-  w = 190
-  h = 38
-  text = "{mx.right_tag}"
-  font = 1
-  bank = 11
-  scale = 2
-
-  [[node.children]]
-  kind = "panel"
-  x = 20
-  y = 36
-  w = 160
-  h = 160
-  color = [0.97, 0.96, 0.92, 1.0]
-  border = 3
-  border_color = [0.07, 0.07, 0.07, 1.0]
-
-    [[node.children.children]]
-    kind = "image"
-    visible = "mx.right.has_portrait"
-    image = "{mx.right.portrait}"
-    fit = "contain"
-    x = 8
-    y = 8
-    w = 144
-    h = 144
-
-    [[node.children.children]]
-    kind = "text"
-    visible = "!mx.right.has_portrait"
-    text = "?"
-    x = 0
-    y = 44
-    w = 160
-    font = 1
-    bank = 10
-    scale = 5
-    align = "center"
-
-  [[node.children]]
-  kind = "text"
-  visible = "!mx.right.long"
-  text = "{mx.right.name}"
-  x = 194
-  y = 40
-  w = 196
-  font = 1
-  bank = 9
-  scale = 2
-  wrap = true
-  line_gap = 6
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.long"
-  text = "{mx.right.name}"
-  x = 194
-  y = 40
-  w = 196
-  font = 2
-  bank = 9
-  scale = 2
-  wrap = true
-  line_gap = 0
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.author}"
-  x = 194
-  y = 134
-  w = 196
-  font = 2
-  bank = 9
-  scale = 1
-  wrap = true
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.power}"
-  x = 194
-  y = 164
+  y = 30
+  w = 104
   font = 1
   bank = 10
-  scale = 2
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.stats1}"
-  x = 22
-  y = 210
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.stats2}"
-  x = 22
-  y = 236
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.stats3}"
-  x = 22
-  y = 262
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.rating}"
-  x = 22
-  y = 292
-  font = 2
-  bank = 10
-  scale = 1
-
-  [[node.children]]
-  kind = "text"
-  visible = "mx.right.present"
-  text = "{mx.right.verified}  -  {mx.right.size}"
-  x = 22
-  y = 318
-  font = 2
-  bank = 9
-  scale = 1
-
-  [[node.children]]
-  kind = "button"
-  focus = false
-  image = "ui/slab.webp"
-  x = 20
-  y = 356
-  w = 360
-  h = 44
-  text = "{mx.right.status}"
-  font = 2
-  bank = 11
-  scale = 2
-
-# right transfer bar
-[[node]]
-kind = "text"
-dock = "right"
-visible = "mx.down.visible"
-text = "{mx.down.text}"
-anchor = "tr"
-x = 40
-y = 516
-w = 400
-font = 2
-bank = 9
-scale = 1
-
-[[node]]
-kind = "panel"
-dock = "right"
-visible = "mx.down.visible"
-anchor = "tr"
-x = 40
-y = 542
-w = 400
-h = 20
-color = [0.97, 0.96, 0.92, 1.0]
-border = 3
-border_color = [0.07, 0.07, 0.07, 1.0]
-
-  [[node.children]]
-  kind = "panel"
-  x = 0
-  y = 0
-  w = "{mx.down.pct}%"
-  h = 20
-  color = [0.86, 0.13, 0.13, 1.0]
-
-[[node]]
-kind = "image"
-visible = "is_matchup"
-image = "ui/vs.webp"
-x = 573
-y = 92
-w = 134
-h = 86
-enter = "fade"
+  scale = 4
+  align = "center"
 
 [[node]]
 kind = "text"
-visible = "mx.pending"
-text = "WAITING FOR BOTH PICKS"
-x = 470
-y = 230
-w = 340
-font = 2
-bank = 9
+visible = "is_matchup"
+text = "{mx.left_tag}"
+x = 160
+y = 30
+w = 330
+font = 1
+bank = 10
 scale = 2
-align = "center"
-blink = 60
+align = "left"
+enter = "left"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.left.name_big"
+text = "{mx.left.name}"
+y = 54
+font = 1
+scale = 3
+x = 160
+w = 330
+bank = 9
+align = "left"
+enter = "left"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.left.name_mid"
+text = "{mx.left.name}"
+y = 60
+font = 1
+scale = 2
+x = 160
+w = 330
+bank = 9
+align = "left"
+enter = "left"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.left.name_small"
+text = "{mx.left.name}"
+y = 52
+font = 1
+scale = 2
+wrap = true
+line_gap = 4
+x = 160
+w = 330
+bank = 9
+align = "left"
+enter = "left"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.left.present"
+text = "{mx.left.author}"
+x = 160
+y = 100
+w = 330
+font = 2
+bank = 9
+scale = 1
+align = "left"
+
+[[node]]
+kind = "text"
+visible = "!mx.left.has_official_block"
+text = "{mx.left.rating}"
+x = 160
+y = 118
+w = 330
+font = 2
+bank = 9
+scale = 1
+align = "left"
+
+[[node]]
+kind = "text"
+visible = "mx.left.has_official_block"
+text = "{mx.left.official_block}"
+x = 160
+y = 118
+w = 330
+font = 2
+bank = 10
+scale = 1
+align = "left"
+
+
+[[node]]
+kind = "panel"
+visible = "is_matchup"
+x = 1136
+y = 30
+w = 104
+h = 104
+color = [0.97, 0.96, 0.92, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+enter = "right"
+enter_time = 14
+
+  [[node.children]]
+  kind = "image"
+  visible = "mx.right.has_portrait"
+  image = "{mx.right.portrait}"
+  fit = "contain"
+  x = 4
+  y = 4
+  w = 96
+  h = 96
+
+  [[node.children]]
+  kind = "text"
+  visible = "!mx.right.has_portrait"
+  text = "?"
+  x = 0
+  y = 30
+  w = 104
+  font = 1
+  bank = 10
+  scale = 4
+  align = "center"
+
+[[node]]
+kind = "text"
+visible = "is_matchup"
+text = "{mx.right_tag}"
+x = 790
+y = 30
+w = 330
+font = 1
+bank = 10
+scale = 2
+align = "right"
+enter = "right"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.right.name_big"
+text = "{mx.right.name}"
+y = 54
+font = 1
+scale = 3
+x = 790
+w = 330
+bank = 9
+align = "right"
+enter = "right"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.right.name_mid"
+text = "{mx.right.name}"
+y = 60
+font = 1
+scale = 2
+x = 790
+w = 330
+bank = 9
+align = "right"
+enter = "right"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.right.name_small"
+text = "{mx.right.name}"
+y = 52
+font = 1
+scale = 2
+wrap = true
+line_gap = 4
+x = 790
+w = 330
+bank = 9
+align = "right"
+enter = "right"
+enter_time = 14
+
+[[node]]
+kind = "text"
+visible = "mx.right.present"
+text = "{mx.right.author}"
+x = 790
+y = 100
+w = 330
+font = 2
+bank = 9
+scale = 1
+align = "right"
+
+[[node]]
+kind = "text"
+visible = "!mx.right.has_official_block"
+text = "{mx.right.rating}"
+x = 790
+y = 118
+w = 330
+font = 2
+bank = 9
+scale = 1
+align = "right"
+
+[[node]]
+kind = "text"
+visible = "mx.right.has_official_block"
+text = "{mx.right.official_block}"
+x = 790
+y = 118
+w = 330
+font = 2
+bank = 10
+scale = 1
+align = "right"
+
+
+# verdict stamp: black box, hard accent shadow
+[[node]]
+kind = "panel"
+visible = "mx.fair"
+x = 498
+y = 34
+w = 300
+h = 78
+color = [0.86, 0.13, 0.13, 1.0]
+angle = -4
+enter = "fade"
+enter_time = 6
 
 [[node]]
 kind = "panel"
 visible = "mx.fair"
-image = "ui/panel9_black.webp"
-nine = [12, 12, 24, 24]
-x = 476
-y = 196
-w = 328
-h = 100
-angle = -6
+x = 490
+y = 26
+w = 300
+h = 78
+color = [0.07, 0.07, 0.07, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+angle = -4
 enter = "fade"
 enter_time = 6
 
@@ -1561,23 +1392,36 @@ enter_time = 6
   kind = "text"
   text = "FAIR"
   x = 0
-  y = 10
-  w = 328
+  y = 18
+  w = 300
   font = 1
   bank = 11
-  scale = 5
+  scale = 4
   align = "center"
 
 [[node]]
 kind = "panel"
 visible = "mx.unbalanced"
-image = "ui/stamp9.webp"
-nine = [5, 5, 5, 5]
-x = 476
-y = 196
-w = 328
-h = 100
-angle = -6
+x = 498
+y = 34
+w = 300
+h = 78
+color = [0.86, 0.13, 0.13, 1.0]
+angle = -4
+enter = "fade"
+enter_time = 6
+
+[[node]]
+kind = "panel"
+visible = "mx.unbalanced"
+x = 490
+y = 26
+w = 300
+h = 78
+color = [0.07, 0.07, 0.07, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+angle = -4
 enter = "fade"
 enter_time = 6
 
@@ -1585,24 +1429,36 @@ enter_time = 6
   kind = "text"
   text = "UNBALANCED"
   x = 0
-  y = 26
-  w = 328
+  y = 29
+  w = 300
   font = 1
-  bank = 10
-  scale = 3
+  bank = 11
+  scale = 2
   align = "center"
 
 [[node]]
 kind = "panel"
 visible = "mx.blocked"
+x = 498
+y = 34
+w = 300
+h = 78
 color = [0.86, 0.13, 0.13, 1.0]
-border = 5
+angle = -4
+enter = "fade"
+enter_time = 6
+
+[[node]]
+kind = "panel"
+visible = "mx.blocked"
+x = 490
+y = 26
+w = 300
+h = 78
+color = [0.07, 0.07, 0.07, 1.0]
+border = 3
 border_color = [0.07, 0.07, 0.07, 1.0]
-x = 476
-y = 196
-w = 328
-h = 100
-angle = -6
+angle = -4
 enter = "fade"
 enter_time = 6
 
@@ -1610,21 +1466,43 @@ enter_time = 6
   kind = "text"
   text = "BLOCKED"
   x = 0
-  y = 18
-  w = 328
+  y = 25
+  w = 300
   font = 1
   bank = 11
-  scale = 4
+  scale = 3
   align = "center"
 
-# who signed the verdict: OFFICIAL (official key) or COMMUNITY (key fingerprint)
+[[node]]
+kind = "panel"
+visible = "mx.pending"
+x = 490
+y = 26
+w = 300
+h = 78
+color = [0.97, 0.96, 0.92, 1.0]
+border = 3
+border_color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.pending_label}"
+  x = 0
+  y = 30
+  w = 300
+  font = 2
+  bank = 9
+  scale = 2
+  align = "center"
+  blink = 60
+
 [[node]]
 kind = "text"
 visible = "mx.stamp_official"
 text = "{mx.stamp}"
-x = 470
-y = 160
-w = 340
+x = 440
+y = 120
+w = 400
 font = 2
 bank = 10
 scale = 1
@@ -1634,9 +1512,9 @@ align = "center"
 kind = "text"
 visible = "mx.stamp_other"
 text = "{mx.stamp}"
-x = 470
-y = 160
-w = 340
+x = 440
+y = 120
+w = 400
 font = 2
 bank = 9
 scale = 1
@@ -1644,138 +1522,1309 @@ align = "center"
 
 [[node]]
 kind = "text"
-visible = "is_matchup"
-text = "{mx.hint}"
-x = 470
-y = 316
-w = 340
+visible = "mx.has_note"
+text = "{mx.note}"
+x = 440
+y = 140
+w = 400
 font = 2
-bank = 9
+bank = 10
 scale = 1
 align = "center"
-wrap = true
-line_gap = 4
 
-# how the match will connect (direct / relayed), estimated ping and delay
+# stat panel (hard shadow, thick border)
 [[node]]
-kind = "text"
+kind = "panel"
 visible = "is_matchup"
-text = "{mx.net}"
-x = 470
-y = 482
-w = 340
-font = 2
-bank = 9
-scale = 1
-align = "center"
-wrap = true
+x = 48
+y = 176
+w = 1200
+h = 392
+color = [0.07, 0.07, 0.07, 1.0]
+enter = "up"
+enter_time = 14
 
 [[node]]
-kind = "vbox"
-visible = "mx.has_verdict"
-x = 478
-y = 412
-w = 324
-gap = 4
-items = "mx.reasons"
+kind = "panel"
+visible = "is_matchup"
+x = 40
+y = 168
+w = 1200
+h = 392
+color = [0.97, 0.96, 0.92, 1.0]
+border = 4
+border_color = [0.07, 0.07, 0.07, 1.0]
+enter = "up"
+enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "- {item.text}"
-  w = 324
+  text = "POWER"
+  x = 500
+  y = 14
+  w = 200
+  h = 40
+  font = 1
+  bank = 9
+  scale = 2
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.l_hi"
+  x = "{mx.st.power.lx}"
+  y = 23
+  w = "{mx.st.power.lw}"
+  h = 22
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.l_lo"
+  x = "{mx.st.power.lx}"
+  y = 23
+  w = "{mx.st.power.lw}"
+  h = 22
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.l_eq"
+  x = "{mx.st.power.lx}"
+  y = 23
+  w = "{mx.st.power.lw}"
+  h = 22
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.r_hi"
+  x = 700
+  y = 23
+  w = "{mx.st.power.rw}"
+  h = 22
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.r_lo"
+  x = 700
+  y = 23
+  w = "{mx.st.power.rw}"
+  h = 22
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.power.r_eq"
+  x = 700
+  y = 23
+  w = "{mx.st.power.rw}"
+  h = 22
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.power.l_hi"
+  text = "{mx.st.power.l}"
+  x = 68
+  y = 14
+  w = 120
+  h = 40
+  font = 1
+  bank = 10
+  scale = 2
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.power.l_plain"
+  text = "{mx.st.power.l}"
+  x = 68
+  y = 14
+  w = 120
+  h = 40
+  font = 1
+  bank = 9
+  scale = 2
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.power.r_hi"
+  text = "{mx.st.power.r}"
+  x = 1012
+  y = 14
+  w = 120
+  h = 40
+  font = 1
+  bank = 10
+  scale = 2
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.power.r_plain"
+  text = "{mx.st.power.r}"
+  x = 1012
+  y = 14
+  w = 120
+  h = 40
+  font = 1
+  bank = 9
+  scale = 2
+  align = "left"
+
+  [[node.children]]
+  kind = "panel"
+  x = 24
+  y = 62
+  w = 1152
+  h = 2
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "LIFE"
+  x = 500
+  y = 72
+  w = 200
+  h = 26
   font = 2
   bank = 9
   scale = 1
-  wrap = true
-  line_gap = 4
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.l_hi"
+  x = "{mx.st.life.lx}"
+  y = 79
+  w = "{mx.st.life.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.l_lo"
+  x = "{mx.st.life.lx}"
+  y = 79
+  w = "{mx.st.life.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.l_eq"
+  x = "{mx.st.life.lx}"
+  y = 79
+  w = "{mx.st.life.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.r_hi"
+  x = 700
+  y = 79
+  w = "{mx.st.life.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.r_lo"
+  x = 700
+  y = 79
+  w = "{mx.st.life.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.life.r_eq"
+  x = 700
+  y = 79
+  w = "{mx.st.life.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.life.l_hi"
+  text = "{mx.st.life.l}"
+  x = 68
+  y = 72
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.life.l_plain"
+  text = "{mx.st.life.l}"
+  x = 68
+  y = 72
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.life.r_hi"
+  text = "{mx.st.life.r}"
+  x = 1012
+  y = 72
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.life.r_plain"
+  text = "{mx.st.life.r}"
+  x = 1012
+  y = 72
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "ATTACK"
+  x = 500
+  y = 102
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.l_hi"
+  x = "{mx.st.attack.lx}"
+  y = 109
+  w = "{mx.st.attack.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.l_lo"
+  x = "{mx.st.attack.lx}"
+  y = 109
+  w = "{mx.st.attack.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.l_eq"
+  x = "{mx.st.attack.lx}"
+  y = 109
+  w = "{mx.st.attack.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.r_hi"
+  x = 700
+  y = 109
+  w = "{mx.st.attack.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.r_lo"
+  x = 700
+  y = 109
+  w = "{mx.st.attack.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.attack.r_eq"
+  x = 700
+  y = 109
+  w = "{mx.st.attack.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.attack.l_hi"
+  text = "{mx.st.attack.l}"
+  x = 68
+  y = 102
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.attack.l_plain"
+  text = "{mx.st.attack.l}"
+  x = 68
+  y = 102
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.attack.r_hi"
+  text = "{mx.st.attack.r}"
+  x = 1012
+  y = 102
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.attack.r_plain"
+  text = "{mx.st.attack.r}"
+  x = 1012
+  y = 102
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "DEFENCE"
+  x = 500
+  y = 132
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.l_hi"
+  x = "{mx.st.defence.lx}"
+  y = 139
+  w = "{mx.st.defence.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.l_lo"
+  x = "{mx.st.defence.lx}"
+  y = 139
+  w = "{mx.st.defence.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.l_eq"
+  x = "{mx.st.defence.lx}"
+  y = 139
+  w = "{mx.st.defence.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.r_hi"
+  x = 700
+  y = 139
+  w = "{mx.st.defence.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.r_lo"
+  x = 700
+  y = 139
+  w = "{mx.st.defence.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.defence.r_eq"
+  x = 700
+  y = 139
+  w = "{mx.st.defence.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.defence.l_hi"
+  text = "{mx.st.defence.l}"
+  x = 68
+  y = 132
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.defence.l_plain"
+  text = "{mx.st.defence.l}"
+  x = 68
+  y = 132
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.defence.r_hi"
+  text = "{mx.st.defence.r}"
+  x = 1012
+  y = 132
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.defence.r_plain"
+  text = "{mx.st.defence.r}"
+  x = 1012
+  y = 132
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "BEST HIT"
+  x = 500
+  y = 162
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.l_hi"
+  x = "{mx.st.best_hit.lx}"
+  y = 169
+  w = "{mx.st.best_hit.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.l_lo"
+  x = "{mx.st.best_hit.lx}"
+  y = 169
+  w = "{mx.st.best_hit.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.l_eq"
+  x = "{mx.st.best_hit.lx}"
+  y = 169
+  w = "{mx.st.best_hit.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.r_hi"
+  x = 700
+  y = 169
+  w = "{mx.st.best_hit.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.r_lo"
+  x = 700
+  y = 169
+  w = "{mx.st.best_hit.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.best_hit.r_eq"
+  x = 700
+  y = 169
+  w = "{mx.st.best_hit.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.best_hit.l_hi"
+  text = "{mx.st.best_hit.l}"
+  x = 68
+  y = 162
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.best_hit.l_plain"
+  text = "{mx.st.best_hit.l}"
+  x = 68
+  y = 162
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.best_hit.r_hi"
+  text = "{mx.st.best_hit.r}"
+  x = 1012
+  y = 162
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.best_hit.r_plain"
+  text = "{mx.st.best_hit.r}"
+  x = 1012
+  y = 162
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "COMBO"
+  x = 500
+  y = 192
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.l_hi"
+  x = "{mx.st.combo.lx}"
+  y = 199
+  w = "{mx.st.combo.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.l_lo"
+  x = "{mx.st.combo.lx}"
+  y = 199
+  w = "{mx.st.combo.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.l_eq"
+  x = "{mx.st.combo.lx}"
+  y = 199
+  w = "{mx.st.combo.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.r_hi"
+  x = 700
+  y = 199
+  w = "{mx.st.combo.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.r_lo"
+  x = 700
+  y = 199
+  w = "{mx.st.combo.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.combo.r_eq"
+  x = 700
+  y = 199
+  w = "{mx.st.combo.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.combo.l_hi"
+  text = "{mx.st.combo.l}"
+  x = 68
+  y = 192
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.combo.l_plain"
+  text = "{mx.st.combo.l}"
+  x = 68
+  y = 192
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.combo.r_hi"
+  text = "{mx.st.combo.r}"
+  x = 1012
+  y = 192
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.combo.r_plain"
+  text = "{mx.st.combo.r}"
+  x = 1012
+  y = 192
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "SUPERS"
+  x = 500
+  y = 222
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.l_hi"
+  x = "{mx.st.supers.lx}"
+  y = 229
+  w = "{mx.st.supers.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.l_lo"
+  x = "{mx.st.supers.lx}"
+  y = 229
+  w = "{mx.st.supers.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.l_eq"
+  x = "{mx.st.supers.lx}"
+  y = 229
+  w = "{mx.st.supers.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.r_hi"
+  x = 700
+  y = 229
+  w = "{mx.st.supers.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.r_lo"
+  x = 700
+  y = 229
+  w = "{mx.st.supers.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.supers.r_eq"
+  x = 700
+  y = 229
+  w = "{mx.st.supers.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.supers.l_hi"
+  text = "{mx.st.supers.l}"
+  x = 68
+  y = 222
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.supers.l_plain"
+  text = "{mx.st.supers.l}"
+  x = 68
+  y = 222
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.supers.r_hi"
+  text = "{mx.st.supers.r}"
+  x = 1012
+  y = 222
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.supers.r_plain"
+  text = "{mx.st.supers.r}"
+  x = 1012
+  y = 222
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "PROJECTILES"
+  x = 500
+  y = 252
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.l_hi"
+  x = "{mx.st.projectiles.lx}"
+  y = 259
+  w = "{mx.st.projectiles.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.l_lo"
+  x = "{mx.st.projectiles.lx}"
+  y = 259
+  w = "{mx.st.projectiles.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.l_eq"
+  x = "{mx.st.projectiles.lx}"
+  y = 259
+  w = "{mx.st.projectiles.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.r_hi"
+  x = 700
+  y = 259
+  w = "{mx.st.projectiles.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.r_lo"
+  x = 700
+  y = 259
+  w = "{mx.st.projectiles.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.projectiles.r_eq"
+  x = 700
+  y = 259
+  w = "{mx.st.projectiles.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.projectiles.l_hi"
+  text = "{mx.st.projectiles.l}"
+  x = 68
+  y = 252
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.projectiles.l_plain"
+  text = "{mx.st.projectiles.l}"
+  x = 68
+  y = 252
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.projectiles.r_hi"
+  text = "{mx.st.projectiles.r}"
+  x = 1012
+  y = 252
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.projectiles.r_plain"
+  text = "{mx.st.projectiles.r}"
+  x = 1012
+  y = 252
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  text = "THROWS"
+  x = 500
+  y = 282
+  w = 200
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "center"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.l_hi"
+  x = "{mx.st.throws.lx}"
+  y = 289
+  w = "{mx.st.throws.lw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.l_lo"
+  x = "{mx.st.throws.lx}"
+  y = 289
+  w = "{mx.st.throws.lw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.l_eq"
+  x = "{mx.st.throws.lx}"
+  y = 289
+  w = "{mx.st.throws.lw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.r_hi"
+  x = 700
+  y = 289
+  w = "{mx.st.throws.rw}"
+  h = 12
+  color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.r_lo"
+  x = 700
+  y = 289
+  w = "{mx.st.throws.rw}"
+  h = 12
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "mx.st.throws.r_eq"
+  x = 700
+  y = 289
+  w = "{mx.st.throws.rw}"
+  h = 12
+  color = [0.66, 0.64, 0.6, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.throws.l_hi"
+  text = "{mx.st.throws.l}"
+  x = 68
+  y = 282
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.throws.l_plain"
+  text = "{mx.st.throws.l}"
+  x = 68
+  y = 282
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.throws.r_hi"
+  text = "{mx.st.throws.r}"
+  x = 1012
+  y = 282
+  w = 120
+  h = 26
+  font = 2
+  bank = 10
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "text"
+  visible = "mx.st.throws.r_plain"
+  text = "{mx.st.throws.r}"
+  x = 1012
+  y = 282
+  w = 120
+  h = 26
+  font = 2
+  bank = 9
+  scale = 1
+  align = "left"
+
+  [[node.children]]
+  kind = "panel"
+  x = 24
+  y = 318
+  w = 1152
+  h = 2
+  color = [0.07, 0.07, 0.07, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.left_xfer.text}"
+  x = 24
+  y = 332
+  w = 382
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.left_state}"
+  x = 376
+  y = 332
+  w = 200
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "panel"
+  x = 24
+  y = 356
+  w = 552
+  h = 18
+  color = [0.9, 0.89, 0.85, 1.0]
+  border = 2
+  border_color = [0.07, 0.07, 0.07, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 0
+    y = 0
+    w = "{mx.left_xfer.pct}%"
+    h = 18
+    color = [0.86, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.right_xfer.text}"
+  x = 624
+  y = 332
+  w = 382
+  font = 2
+  bank = 9
+  scale = 1
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.right_state}"
+  x = 976
+  y = 332
+  w = 200
+  font = 2
+  bank = 10
+  scale = 1
+  align = "right"
+
+  [[node.children]]
+  kind = "panel"
+  x = 624
+  y = 356
+  w = 552
+  h = 18
+  color = [0.9, 0.89, 0.85, 1.0]
+  border = 2
+  border_color = [0.07, 0.07, 0.07, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 0
+    y = 0
+    w = "{mx.right_xfer.pct}%"
+    h = 18
+    color = [0.86, 0.13, 0.13, 1.0]
+
+
+# connection on one line, HIGH PING tag, room / mode / what the path reveals
+[[node]]
+kind = "hbox"
+visible = "is_matchup"
+x = 40
+y = 588
+w = 540
+h = 30
+gap = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "{mx.conn.line}"
+  font = 1
+  bank = 9
+  scale = 2
+
+  [[node.children]]
+  kind = "button"
+  visible = "mx.conn.high_ping"
+  focus = false
+  w = 104
+  h = 26
+  color = [0.95, 0.5, 0.08, 1.0]
+  border = 2
+  border_color = [0.07, 0.07, 0.07, 1.0]
+  text = "HIGH PING"
+  font = 1
+  bank = 11
+  scale = 1
 
 [[node]]
 kind = "text"
-visible = "mx.has_verdict"
-text = "{mx.ratio}"
-x = 470
-y = 382
-w = 340
+visible = "is_matchup"
+text = "{mx.conn.sub}"
+x = 40
+y = 628
+w = 540
 font = 2
-bank = 10
+bank = 9
 scale = 1
-align = "center"
-
-[[node]]
-kind = "text"
-visible = "mx.has_notice"
-text = "{mx.notice}"
-x = 470
-y = 512
-w = 340
-font = 2
-bank = 10
-scale = 1
-align = "center"
-wrap = true
 
 [[node]]
 kind = "hbox"
 visible = "is_matchup"
-x = 240
-y = 572
-w = 800
-h = 46
-gap = 18
-justify = "center"
+x = 600
+y = 586
+w = 640
+h = 52
+gap = 14
+justify = "end"
 
   [[node.children]]
   kind = "button"
   id = "mx_confirm"
   visible = "mx.can_confirm"
-  w = 320
-  h = 46
-  image = "ui/slab_red_wide.webp"
-  image_focus = "ui/slab_red_wide.webp"
+  w = 200
+  color = [0.86, 0.13, 0.13, 1.0]
+  color_focus = [1.0, 0.3, 0.25, 1.0]
   text = "{mx.confirm_label}"
-  font = 1
   bank = 11
   bank_focus = 11
-  scale = 2
-  hover_scale = 1.05
   on_press = "mx:confirm"
+  h = 52
+  font = 2
+  scale = 2
+  hover_scale = 1.04
+  border = 3
+  border_color = [0.07, 0.07, 0.07, 1.0]
 
   [[node.children]]
   kind = "button"
   id = "mx_change"
   visible = "mx.can_change"
-  w = 260
-  h = 46
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
+  w = 290
+  color = [0.97, 0.96, 0.92, 1.0]
+  color_focus = [1.0, 0.9, 0.55, 1.0]
   text = "CHANGE FIGHTER"
+  bank = 9
+  bank_focus = 9
+  on_press = "mx:change"
+  h = 52
   font = 2
-  bank = 11
-  bank_focus = 11
   scale = 2
   hover_scale = 1.04
-  on_press = "mx:change"
+  border = 3
+  border_color = [0.07, 0.07, 0.07, 1.0]
 
   [[node.children]]
   kind = "button"
   id = "mx_leave"
-  w = 160
-  h = 46
-  image = "ui/slab.webp"
-  image_focus = "ui/slab_lit.webp"
+  w = 120
+  color = [0.07, 0.07, 0.07, 1.0]
+  color_focus = [0.3, 0.3, 0.3, 1.0]
   text = "LEAVE"
-  font = 2
   bank = 11
   bank_focus = 11
+  on_press = "mx:leave"
+  h = 52
+  font = 2
   scale = 2
   hover_scale = 1.04
-  on_press = "mx:leave"
+  border = 3
+  border_color = [0.07, 0.07, 0.07, 1.0]
 
 # status / error footer
 [[node]]
 kind = "text"
 dock = "right bottom"
 text = "{status}"
+visible = "not_matchup"
 anchor = "br"
 x = 24
 y = 64
@@ -1799,6 +2848,7 @@ scale = 2
 kind = "text"
 dock = "right bottom"
 text = "ENTER  SELECT     ESC  BACK"
+visible = "not_matchup"
 anchor = "br"
 x = 24
 y = 16

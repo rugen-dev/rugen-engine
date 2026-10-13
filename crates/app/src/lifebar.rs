@@ -627,6 +627,12 @@ impl Lifebar {
         }
     }
 
+    /// Unscaled width and height of `line` in fight.def font `index`.
+    pub fn text_size(&self, index: i32, line: &str) -> Option<[f32; 2]> {
+        let f = self.fonts.get(&index)?;
+        Some([f.width(line, 1.0), f32::from(f.font.size[1])])
+    }
+
     fn draw_elem(
         &mut self,
         r: &mut Renderer,

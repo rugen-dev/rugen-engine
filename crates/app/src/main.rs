@@ -225,6 +225,13 @@ fn main() -> anyhow::Result<()> {
                 };
                 let harness = game::Harness {
                     shot: shot.map(std::path::PathBuf::from),
+                    frames: frames
+                        .as_deref()
+                        .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                        .transpose()?,
+                    script: script.as_deref().map(play::parse_script),
+                    script2: script2.as_deref().map(play::parse_script),
+                    in_match: true,
                     ..Default::default()
                 };
                 return game::Shell::new(
@@ -246,7 +253,7 @@ fn main() -> anyhow::Result<()> {
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);
-                    if p.exists() && p.extension().is_some_and(|e| e == "def") {
+                    if rugen_formats::vfs::exists(p) && p.extension().is_some_and(|e| e == "def") {
                         return Ok(p.to_path_buf());
                     }
                     let entry = lib
@@ -299,6 +306,7 @@ fn main() -> anyhow::Result<()> {
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
                 keys: Vec::new(),
+                in_match: false,
             };
             let shell = game::Shell::new(
                 config,
@@ -509,6 +517,7 @@ fn main() -> anyhow::Result<()> {
                 script2: None,
                 record: None,
                 keys: Vec::new(),
+                in_match: false,
             };
             let mut setup = r.setup();
             // recordings made before content files point into old cache folders
@@ -730,6 +739,7 @@ fn main() -> anyhow::Result<()> {
                     .as_deref()
                     .map(game::parse_keys)
                     .unwrap_or_default(),
+                in_match: false,
             };
             game::Shell::new(config, lib, game::Transition::Title, false, harness, None).run()
         }

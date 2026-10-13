@@ -332,6 +332,9 @@ impl OnlineClient {
         if let Some((rx, tx)) = evidence.turn_bytes {
             b["turn"] = json!({ "rx": rx, "tx": tx });
         }
+        if let Some(e) = evidence.ending {
+            b["ending"] = json!(e.as_str());
+        }
         Self::decode(self.call("POST", "/result", Some(b))?)
     }
 
@@ -698,6 +701,8 @@ pub struct Evidence {
     pub compact: bool,
     /// Bytes received / sent through TURN (wire estimate), if used.
     pub turn_bytes: Option<(u64, u64)>,
+    /// The match ended early: our forfeit or the other player's exit.
+    pub ending: Option<rugen_proto::Ending>,
 }
 
 /// A call running on a worker thread; poll with [`Pending::take`].
