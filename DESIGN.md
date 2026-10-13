@@ -154,8 +154,9 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
   a mismatch, so a match it never saw is still verified.
 - Ending early: an online match cannot pause, so Esc / a pad's Select opens
   a RESUME / FLEE menu over the running fight (the local fighter stands
-  still while it is open). Start is never a menu key in a fight: it belongs
-  to the fighters (power charge, taunts, awakenings), online and offline. FLEE sends a flee message on every path and a
+  still while it is open), and so does START. START has its own binding
+  and never reaches the simulation (not sent, not recorded); MUGEN's s
+  button belongs to the fighters (power charge, taunts, awakenings). FLEE sends a flee message on every path and a
   forfeit report (the other player wins, `ending = "flee"`), which the
   server settles at once: a normal loss, no extra penalty. The player left
   behind sees the flee message, or the relay's announcement of the other

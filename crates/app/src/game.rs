@@ -1147,6 +1147,12 @@ impl Shell {
                 };
                 match Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg) {
                     Ok(mut m) => {
+                        m.start_label = crate::keylabel::Labels::new(
+                            &self.config.input,
+                            0,
+                            self.input.devices()[0],
+                        )
+                        .start();
                         if setup.tutorial {
                             let keys = crate::keylabel::Labels::new(
                                 &self.config.input,

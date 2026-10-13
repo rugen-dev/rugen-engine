@@ -257,6 +257,8 @@ pub struct Match {
     /// Stage music file, if any.
     pub bgm: Option<PathBuf>,
     pub tutorial: Option<crate::tutorial::Tutorial>,
+    /// What this player presses for START (hints in the fight overlays).
+    pub start_label: String,
     /// Profile stats already written for this match.
     pub stats_recorded: bool,
 }
@@ -429,6 +431,7 @@ impl Match {
             gpu_dirty: Vec::new(),
             bgm,
             tutorial: None,
+            start_label: "START".into(),
             stats_recorded: false,
         })
     }
@@ -874,7 +877,13 @@ impl Match {
             text(r, "YOU WIN", top + 20.0, 0, [1.0, 0.85, 0.3, 1.0]);
             text(r, e.message(), top + 42.0, 1, white);
             if self.early.is_some_and(|(_, t)| t > 60) {
-                text(r, "PRESS START", top + 62.0, 2, grey);
+                text(
+                    r,
+                    &format!("PRESS {}", self.start_label),
+                    top + 62.0,
+                    2,
+                    grey,
+                );
             }
             return;
         }

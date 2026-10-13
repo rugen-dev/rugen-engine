@@ -42,9 +42,12 @@ whenever one of its files changes (see below). `data/` holds the screenpack
 1.1 data in `reference/` is used. Format: [docs/rgc-format.md](docs/rgc-format.md).
 
 Keys live in `rugen.toml` (written on first run). Defaults: P1 `z q s d` to
-move, `j k l` = a b c, `u i o` = x y z, `m` = start (`p` is free); P2 arrows +
-numpad `1 2 3` / `4 5 6`, Enter = start. Gamepads
-work out of the box. In a match: Space pause, `.` step, F2 hitboxes and
+move, `j k l` = a b c, `u i o` = x y z, `m` = s (the fighters' seventh
+button), `p` = START; P2 arrows + numpad `1 2 3` / `4 5 6`, `7` = s, Enter =
+START. START pauses and confirms menus and is never a fighter input; older
+configs keep their old start key as s and get a free START key. Gamepads
+work out of the box (LB = s, Start = START). OPTIONS / CONTROLS preview
+changes live and write them only on SAVE (F2). In a match: Space pause, `.` step, F2 hitboxes and
 platforms, F3 state / frame data / input overlay, F1 debug title, +/- zoom,
 Esc back.
 
@@ -56,7 +59,7 @@ and Enter are P2's, which on single-cursor screens (title, options, arcade /
 training / arena select, pause, result) drives the same focus, while in the VS
 MODE select they move P2's own cursor and P1 uses its bound keys. Unbound
 arrows / Enter, and gamepads without a player slot, act as P1. In menus A (and
-the other attack buttons, Start) confirm and **B cancels** (pad South / East).
+the other attack buttons, s, START) confirm and **B cancels** (pad South / East).
 The mouse is off by default (cursor hidden, no hover): `[input] mouse = true`
 or OPTIONS > VIDEO > MOUSE IN MENUS turns it on.
 

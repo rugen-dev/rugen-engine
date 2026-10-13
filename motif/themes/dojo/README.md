@@ -38,6 +38,12 @@ offset), `presets[]` (`label active press`), `listening`, `fixed`. Keep
 `binds[i].row` as the row id (Backspace clears the focused row). Actions:
 `listen:<i>`, `preset:<i>`, `player:<n>`, `device:next`, `defaults`, `back`.
 
+Both pages also bind `save` (`unsaved clean toast confirm status`): edits
+preview live and only the `save` action (F2 / Ctrl+S) writes rugen.toml.
+Leaving with unsaved edits sets `save.confirm`: a modal with the actions
+`leave:save`, `leave:discard`, `leave:cancel` (keep the id `dlg_save` on the
+first button, it takes the focus).
+
 Widgets used here: `pips` (`max`/`max_from`, `value`, `color` / `color2`,
 `border`), `choice` (`options`, `value`, `pad`, `bank` / `bank_focus`,
 `color` / `color2`), `slider` with `knob = [w, h]`, `knob_color`,
