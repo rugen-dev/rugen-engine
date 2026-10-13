@@ -326,14 +326,8 @@ impl Archive {
         let raw = self.read_raw(e)?;
         match e.codec {
             Codec::Stored => Ok(raw),
-            Codec::Zstd => {
-                let out = zstd::bulk::decompress(&raw, e.raw_len as usize)
-                    .map_err(|err| Error::fmt(F, format!("{}: {err}", e.path)))?;
-                if out.len() as u64 != e.raw_len {
-                    return Err(Error::fmt(F, format!("{}: short section", e.path)));
-                }
-                Ok(out)
-            }
+            Codec::Zstd => crate::pack::unzstd(&raw, e.raw_len as usize)
+                .ok_or_else(|| Error::fmt(F, format!("{}: bad zstd section", e.path))),
         }
     }
 
@@ -524,7 +518,7 @@ impl Writer {
         raw.extend_from_slice(payload);
         let mut e = Entry::new(SectionKind::Logic, "");
         e.hash = sha256(&raw);
-        self.add(e, &raw, 9)
+        self.add(e, &raw, LEVEL)
     }
 
     pub fn entries(&self) -> &[Entry] {

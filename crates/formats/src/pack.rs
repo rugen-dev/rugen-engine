@@ -30,7 +30,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-fn unzstd(src: &[u8], n: usize) -> Option<Vec<u8>> {
+/// Decompress a zstd frame of exactly `n` bytes, reusing this thread's context.
+pub(crate) fn unzstd(src: &[u8], n: usize) -> Option<Vec<u8>> {
     DCTX.with(|d| {
         let mut d = d.borrow_mut();
         if d.is_none() {

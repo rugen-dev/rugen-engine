@@ -287,7 +287,7 @@ pub fn decode(bytes: Arc<Vec<u8>>) -> Result<Snd> {
             0 => Sound::lazy(Box::new(move || {
                 let src = &buf[start..start + len];
                 if zstd {
-                    zstd::bulk::decompress(src, raw_len).unwrap_or_default()
+                    crate::pack::unzstd(src, raw_len).unwrap_or_default()
                 } else {
                     src.to_vec()
                 }
