@@ -159,12 +159,15 @@ impl World {
             let data = self.data[self.players[p.owner].data].clone();
             if !paused && p.hitpause == 0 {
                 if p.status == ProjStatus::Active {
+                    // bounds are stage units, the projectile its owner's units
+                    let s = self.local_scale(p.owner);
+                    let x = p.pos[0] * s;
                     let out = p.removetime == 0
                         || (p.removetime <= -2 && p.anim.loop_end)
-                        || p.pos[0] < xmin - sl - p.edgebound
-                        || p.pos[0] > xmax + sr + p.edgebound
-                        || (p.velocity[0] * p.facing < 0.0 && p.pos[0] < cam_min - p.stagebound)
-                        || (p.velocity[0] * p.facing > 0.0 && p.pos[0] > cam_max + p.stagebound)
+                        || x < xmin - sl - p.edgebound * s
+                        || x > xmax + sr + p.edgebound * s
+                        || (p.velocity[0] * p.facing < 0.0 && x < cam_min - p.stagebound * s)
+                        || (p.velocity[0] * p.facing > 0.0 && x > cam_max + p.stagebound * s)
                         || (p.velocity[1] > 0.0 && p.pos[1] > p.heightbound[1])
                         || (p.velocity[1] < 0.0 && p.pos[1] < p.heightbound[0]);
                     if out {

@@ -3012,11 +3012,14 @@ impl World {
         if p.mhv.cornerpush_veloff == 0.0 {
             return 0.0;
         }
-        let (xmin, xmax) = self.play_bounds();
-        for o in &self.players {
+        let (bmin, bmax) = self.play_bounds();
+        for (k, o) in self.players.iter().enumerate() {
             if o.move_type != MoveType::H || o.ghv.playerid != p.id {
                 continue;
             }
+            // the opponent's own units
+            let s = self.local_scale(k);
+            let (xmin, xmax) = (bmin / s, bmax / s);
             if o.ghv.hitshaketime > 0 {
                 continue;
             }
@@ -3455,15 +3458,20 @@ impl World {
         let st = &self.stage;
         let (mut leftest, mut rightest, mut highest, mut lowest) =
             (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
-        for p in self
+        // the camera works in stage units; positions are in each fighter's
+        // own (localcoord) units
+        for (i, p) in self
             .players
             .iter()
-            .filter(|p| !p.removed && p.helper_index == 0 && p.player_type)
+            .enumerate()
+            .filter(|(_, p)| !p.removed && p.helper_index == 0 && p.player_type)
         {
-            leftest = leftest.min(p.pos[0]);
-            rightest = rightest.max(p.pos[0]);
-            highest = highest.min(p.pos[1]);
-            lowest = lowest.max(p.pos[1].min(500.0));
+            let s = self.local_scale(i);
+            let (x, y) = (p.pos[0] * s, p.pos[1] * s);
+            leftest = leftest.min(x);
+            rightest = rightest.max(x);
+            highest = highest.min(y);
+            lowest = lowest.max(y.min(500.0));
         }
         if leftest > rightest {
             return;
@@ -3558,7 +3566,10 @@ impl World {
     }
 
     pub(crate) fn screen_bound(&mut self, i: usize) {
+        // bounds are stage units, the position the fighter's own units
+        let s = self.local_scale(i);
         let (xmin, xmax) = self.play_bounds();
+        let (xmin, xmax) = (xmin / s, xmax / s);
         let p = &self.players[i];
         let mut x = p.pos[0];
         if p.screen_bound && p.player_type && self.stage.arena.walls {
@@ -3568,7 +3579,7 @@ impl World {
             }
             x = x.clamp(lo + xmin, hi + xmax);
         }
-        x = x.clamp(self.stage.left_bound, self.stage.right_bound);
+        x = x.clamp(self.stage.left_bound / s, self.stage.right_bound / s);
         let p = &mut self.players[i];
         if x != p.pos[0] {
             p.pos[0] = x;
@@ -4894,6 +4905,48 @@ mod tests {
             assert_eq!([a[0] * 2.0, a[1] * 0.5, a[2] * 2.0, a[3] * 0.5], *b);
         }
         assert_eq!(w2.players[0].size.xscale, 2.0);
+    }
+
+    /// On a stage whose localcoord differs from the fighter's (a 320 fighter
+    /// on a 1280 stage), the camera and the screen bounds work in stage units:
+    /// a fighter walking away stays inside the visible screen.
+    #[test]
+    fn camera_and_screen_bounds_follow_fighter_units() {
+        let Some(d) = kfm() else { return };
+        let stage = Stage {
+            width: 1280.0,
+            height: 720.0,
+            zoffset: 650.0,
+            bound_left: -860.0,
+            bound_right: 760.0,
+            left_bound: -2000.0,
+            right_bound: 1800.0,
+            p1_start_x: -500.0,
+            p2_start_x: 500.0,
+            zoom_out: 0.65,
+            ..Stage::default()
+        };
+        let mut w = World::new(stage, 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        w.start_round();
+        let s = w.local_scale(1);
+        assert!(s > 2.0, "a 320 fighter on a 1280 stage: {s}");
+        // P2 walks back (right) for 20 seconds
+        let back = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        for _ in 0..1200 {
+            w.step(&[Buttons::default(), back]);
+            let x = w.players[1].pos[0] * s;
+            assert!(
+                x <= w.screen_right() + 1.0,
+                "P2 at {x} past the screen edge {}",
+                w.screen_right()
+            );
+        }
+        assert!(w.cam_zoom < 1.0, "pulled back to keep both in view");
     }
 
     /// FIGHTER SIZE zooms a fighter as a smaller localcoord would: stage
