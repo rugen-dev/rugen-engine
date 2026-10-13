@@ -293,11 +293,18 @@ impl Library {
     pub fn stages_dir(&self) -> PathBuf {
         self.root.join("stages")
     }
-    /// `data/` next to the content, falling back to the MUGEN 1.1b1 reference tree during development.
+    /// `data/` next to the content (a player's own MUGEN data), else the
+    /// one the release ships with the assets (`/usr/share/rugen/data` for a
+    /// system package), falling back to the MUGEN 1.1b1 reference tree
+    /// during development.
     pub fn data_dir(&self) -> PathBuf {
         let d = self.root.join("data");
         if d.join("common1.cns").exists() {
             return d;
+        }
+        let shipped = self.assets.join("data");
+        if shipped.join("common1.cns").exists() {
+            return shipped;
         }
         let fallback = self.root.join("reference/mugen-1.1b1/data");
         if fallback.join("common1.cns").exists() {

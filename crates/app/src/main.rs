@@ -32,7 +32,8 @@
 //! `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 //! ```
 
-#![forbid(unsafe_code)]
+// unsafe only for the exported libm symbols of glibc_compat
+#![deny(unsafe_code)]
 // the ONLINE screen's data context is one large json! literal
 #![recursion_limit = "256"]
 
@@ -44,6 +45,8 @@ mod dojogen;
 mod fontgen;
 mod framestats;
 mod game;
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod glibc_compat;
 mod gpu;
 mod inkgen;
 mod inkscreens;

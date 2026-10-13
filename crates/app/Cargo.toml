@@ -48,7 +48,9 @@ extended-description = """\
 MUGEN-compatible 2D fighting game engine with rollback netplay. \
 Put characters and stages (.zip / .rar / .rgc / .rgs) in \
 ~/.local/share/rugen/chars and ~/.local/share/rugen/stages."""
-depends = "$auto"
+# explicit: `$auto` needs dpkg-shlibdeps, which the (Fedora) release machine
+# lacks, and then ships no Depends at all. glibc 2.34+ (see glibc_compat.rs).
+depends = "libc6 (>= 2.34), libgcc-s1, libasound2t64 | libasound2, libudev1"
 assets = [
   ["target/release/rugen", "usr/bin/", "755"],
   ["../../README.md", "usr/share/doc/rugen/README.md", "644"],
@@ -57,11 +59,17 @@ assets = [
   ["../../packaging/rugen.desktop", "usr/share/applications/", "644"],
   ["../../motif/brand/rugen.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
   ["../../motif/**/*", "usr/share/rugen/motif/", "644"],
+  # MUGEN base data (common1.cns, sparks, sounds): scripts/stage-data.sh
+  ["../../dist/pkgdata/*", "usr/share/rugen/data/", "644"],
 ]
 
 [package.metadata.generate-rpm]
 summary = "MUGEN-compatible 2D fighting game engine"
 license = "MIT OR Apache-2.0"
+# explicit requires: the automatic ones ask for libc.so.6(GLIBC_2.39) from
+# weak symbols the binary does without (glibc 2.34+, see glibc_compat.rs);
+# library capabilities rather than package names work on Fedora and openSUSE
+auto-req = "no"
 assets = [
   { source = "target/release/rugen", dest = "/usr/bin/rugen", mode = "755" },
   { source = "LICENSE-MIT", dest = "/usr/share/licenses/rugen/LICENSE-MIT", mode = "644", doc = true },
@@ -70,7 +78,12 @@ assets = [
   { source = "packaging/rugen.desktop", dest = "/usr/share/applications/rugen.desktop", mode = "644" },
   { source = "motif/brand/rugen.png", dest = "/usr/share/icons/hicolor/256x256/apps/rugen.png", mode = "644" },
   { source = "motif/**/*", dest = "/usr/share/rugen/motif/", mode = "644" },
+  # MUGEN base data (common1.cns, sparks, sounds): scripts/stage-data.sh
+  { source = "dist/pkgdata/*", dest = "/usr/share/rugen/data/", mode = "644" },
 ]
 [package.metadata.generate-rpm.requires]
-systemd-libs = "*"
-alsa-lib = "*"
+"libc.so.6(GLIBC_2.34)(64bit)" = "*"
+"libm.so.6()(64bit)" = "*"
+"libgcc_s.so.1()(64bit)" = "*"
+"libasound.so.2()(64bit)" = "*"
+"libudev.so.1()(64bit)" = "*"

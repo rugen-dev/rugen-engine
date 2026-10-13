@@ -35,6 +35,12 @@ cargo test --workspace -q 2>&1 | grep -E "FAILED|panicked" && { echo "tests fail
 
 echo "== build"
 cargo build --release -p rugen --bin rugen
+# glibc_compat.rs keeps the binary at glibc 2.34; fail rather than ship one
+# that only starts on the newest distributions
+need=$(objdump -T target/release/rugen | grep -v ' w ' | grep -oE 'GLIBC_[0-9.]+' | sort -V | tail -1)
+[ "$need" = GLIBC_2.34 ] || { echo "the binary needs $need (expected GLIBC_2.34): see crates/app/src/glibc_compat.rs"; exit 1; }
+# MUGEN base data every package ships (common states, sparks, sounds)
+scripts/stage-data.sh >/dev/null
 out=dist/$tag
 rm -rf "$out"; mkdir -p "$out"
 d=$out/rugen-$v-linux-x86_64
@@ -43,6 +49,7 @@ cp README.md LICENSE-MIT LICENSE-APACHE packaging/rugen.desktop "$d/"
 cp -r motif "$d/"
 cp chars/README.md "$d/chars/"; cp stages/README.md "$d/stages/"
 cp target/release/rugen "$d/"
+cp -r dist/pkgdata "$d/data"
 tar -C "$out" -czf "$d.tar.gz" "rugen-$v-linux-x86_64"
 rm -rf "$d"
 cargo deb -p rugen --no-build -o "$out/" >/dev/null
