@@ -214,7 +214,10 @@ focused row) and `keys` (`left right left_glyph right_glyph`: P1's change
 keys). A row has `id label help widget` plus, per widget: `is_pips max on`,
 `is_choice options sel`, `is_slider frac`, `is_text`, `is_link`, and `text`
 / `has_text` (value shown next to it), `adjustable`, `press left right`
-actions (`cycle:<id>`, `adjust:<id>:<±1>`, `open:keys1|keys2`). Keep the
+actions (`cycle:<id>`, `adjust:<id>:<±1>`, `open:keys1|keys2`); a row's
+`on_pick = "pick:{item.id}:{value}"` lets the mouse click (or drag) its
+pips, choice or slider (`{value}` = pips filled up to the cursor, the
+choice index, the slider fraction). Keep the
 ids `tabs[i].tab`, `rows[i].row` and `themes[i].card`: the engine follows the
 focus through them (active tab, help line, Esc back to the tab column).
 
@@ -243,6 +246,10 @@ pad`; a choice option or keycap text of `@name` draws that glyph. `when =
 "focus"|"idle"` shows a node only while its row is (not) focused, `group`
 keeps up/down inside a column, `tile = true` repeats an image, `wrap = true`
 wraps text, `blink = <ticks>` blinks, and `x`/`y` may bind (`"{pad.dx}"`).
+
+Every UI screen also binds `hint` (`ok back pad`): the confirm / back key
+names of player 1's last device, `ENTER` / `ESC` on the keyboard, the pad's
+buttons (`A` / `B`, `X` / `O`...) after pad input.
 "#;
 
 const INK_OPTIONS: &str = r##"# rugen options — Shonen Ink. Coordinates are 1280x720; data in ../README.md.

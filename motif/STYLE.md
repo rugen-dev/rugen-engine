@@ -1,77 +1,99 @@
 # rugen art direction
 
-Pixel arena fighter. Night sky, slanted maroon panels, gold accents, 1-px
-rims, 45° light shafts. Brawlhalla composition, retro execution: everything is
-drawn on a **640x360 pixel canvas and shown at 2x** (the screens' virtual
-space is 1280x720, so a 1x asset of `w x h` pixels is placed with `w*2 x h*2`
-or `scale = 2`). No anti-aliasing, no soft glows, no smooth gradients:
-dithered gradients (4x4 Bayer), hard highlights, dark outlines.
+rugen ships two UI themes, picked in OPTIONS → INTERFACE or with
+`[video] theme = "ink" | "dojo"` in `rugen.toml`:
 
-## Palette — `palette.gpl`
+- **Shonen Ink** (`themes/ink/`, the default): a manga page.
+- **Dojo** (`themes/dojo/`): a training hall at night.
 
-Five ramps plus black and white, dark → light:
+Both are pixel art drawn in code and share the same screens, data and
+behaviour; only the skin differs. The fight HUD (`fight.def`) and the
+screenpack (`system.def`) come with each theme.
+
+## Shared rules
+
+- **Canvas.** Screens are laid out in a 1280x720 virtual space. Art is drawn
+  at half resolution (640x360) and doubled with nearest neighbour, so a
+  pixel is 2x2 on screen. No anti-aliasing, no soft glows, no smooth
+  gradients: dithering or screentone, hard highlights, dark outlines.
+- **Generated, then editable.** `rugen ui-gen --theme ink` and
+  `rugen ui-gen --theme dojo` draw every WebP, write the fonts, the
+  screenpack and copy the screen TOMLs into `motif/themes/<theme>/`. The
+  sources are `crates/app/src/inkgen.rs` / `dojogen.rs` (art) and
+  `crates/app/src/inkscreens/` / `dojoscreens/` (screens); the options and
+  controls pages come from `crates/app/src/settings_gen.rs`. Hand-edit the
+  output if you like, but a regeneration overwrites it: change the source.
+- **Fonts.** `font/src/` holds the two OFL pixel fonts (Press Start 2P and
+  Jersey 10); `rugen fontgen` cuts them into role fonts (title, menu, small,
+  numbers, code) with one colour bank per ink of each theme. Banks are listed
+  in each theme's `README.md`.
+- **One accent per screen.** A red stamp, a vermilion seal, the focused
+  slab: one thing pulls the eye, everything else stays quiet.
+- **Focus is always visible.** The focused element changes colour *and*
+  shape (a slab grows, a frame thickens, a row gets a bar); the mouse
+  hovers the same focus the keys move.
+- **Hints name real keys.** Key caps show the player's own bindings, or the
+  pad's button names once a pad was used (`hint.ok`, `hint.back`,
+  `keys.*`).
+- **Files missing in a theme** fall back to the flat `motif/` (fonts,
+  `news.json`, the kit tiles, the brand icon).
+
+## Shonen Ink
+
+Paper, screentone dots, black ink panels with hard offset shadows, red
+stamps and "!!" marks, speed-line fans, skewed slabs.
+
+| colour | RGB | use |
+|---|---|---|
+| paper | 243 239 228 | page background, light panels |
+| paper dark | 214 208 194 | hatching, idle tiles |
+| ink | 17 17 17 | panels, slabs, outlines, text on paper |
+| ink soft | 60 58 54 | secondary text |
+| red | 224 32 32 | the accent: focus, P1, stamps, alerts |
+| white | 255 255 255 | text on ink slabs, cards |
+
+- Headings in the title font, slanted; menus are black slabs that turn red
+  and grow when focused, with a `▶` and a one-line description under them.
+- Panels: white or paper with a 3 px ink border and a hard ink (or red)
+  shadow offset down-right. Screentone (`dots`, `hatch`) fills empty paper.
+- Stamps (`stamp9`, `stamp_chapter`) for verdicts, READY!, ranks.
+- Font banks on paper: 9 ink, 10 red, 11 paper (text on slabs), 8 soft grey.
+
+## Dojo
+
+Dark lacquer walls, wooden pillars, beams and plaques, washi sheets in
+wooden frames, sumi type, vermilion hanko seals and a brass focus. The full
+palette is `themes/dojo/palette.gpl` (written from `dojogen.rs`):
 
 | ramp | use |
 |---|---|
-| `navy` | backgrounds, panels, cells, rows |
-| `maroon` | buttons, name plates, P1 accents, selected rows |
-| `gold` | highlights, frames of the focused element, the logo, bars |
-| `steel` | neutral text, icons, rims |
-| `teal` | online / network accents |
-| `red` `green` `blue` | status (broken / verified / P2) |
+| lacquer 0-2 | the hall: page background, dark panels |
+| wood 0-3 | frames, pillars, plaques (buttons) |
+| washi 0-2 | paper sheets: content panels, cards |
+| sumi, sumi soft | text on washi |
+| vermilion 0-2 | the accent: seals, P1, the focused plaque |
+| gold 0-2 | brass: the focus edge, P2, values |
+| moss, amber, muted | status (verified / warning) and hints on lacquer |
 
-Load it in Aseprite or GIMP (`File → Open` the `.gpl`). Keep art in these
-colours; `rugen pixelize` snaps anything else to them.
-
-## Where things come from
-
-| asset | source |
-|---|---|
-| `font/rugen-*.def` | `font/src/*.ttf` (OFL pixel fonts) through `rugen fontgen` roles: title = Press Start 2P 16 px, menu / captions = Jersey 10 at 20 px (2x its grid), small = Press Start 2P 8 px, numbers = Press Start 2P 16 px |
-| `ui/kit/*.webp` | `kit/kenney-pixel-adventure/` (CC0) tiles recoloured by luminance onto a ramp (`rugen kit-import`) |
-| `ui/button*.webp`, `panel`, `row*`, `plate*`, `cell*`, `art_frame`, `card` | kit tiles 9-sliced (edges repeated, never stretched) and sheared into parallelograms |
-| `ui/bg_sky.webp` `bg_far.webp` `bg_near.webp` | drawn: dithered sky + moon + stars, two ridge silhouettes with fog, arena floor + torii gates + light shafts; `bg.webp` is the merge |
-| `ui/logo.webp` | the title font at 32 px, gold two-tone bevel, slash highlight, navy drop shadow |
-| `ui/news*.webp` | drawn placeholders (dusk arena, platforms, network) — replace with hero art |
-| `ui/art/*.webp` | anything you put in `art/`, pixelized |
-
-Everything regenerates with `rugen ui-gen`; hand-edit the WebPs afterwards if
-you want, they are just files.
+- Text sits on washi in sumi, or on lacquer in washi / muted; buttons are
+  wooden plaques that turn vermilion with a brass edge when focused.
+- Frames are 9-sliced wood; sheets never touch the screen edge.
+- Font banks: 12 sumi, 13 vermilion, 14 washi, 15 brass, 16 muted on
+  lacquer, 17 soft sumi on washi. Body text uses Jersey (fonts 2, 3, 6),
+  tags and numbers Press Start (1, 4).
 
 ## Hero art
 
-AI-generated or painted images go to `motif/art/<name>.png|webp` and come out
-as `motif/ui/art/<name>.webp` at 640 px wide, palette-quantised and dithered.
-Reference them from the TOML screens (`image = "ui/art/<name>.webp"`) or
-from `news.json`.
+News panels and featured art are plain images referenced from the screen
+TOMLs or `news.json` (`"image": "ui/news1.webp"`). To bring outside art into
+a theme's palette, run `rugen pixelize in.png out.webp --width 320
+--palette motif/themes/dojo/palette.gpl --dither` and point the TOML at the
+result. Keep compositions simple: one subject, strong silhouette, no text.
+Character portraits come from the fighters themselves (sprite 9000,0 and the
+select portraits), stage thumbnails are rendered from the stages.
 
-Sizes that fit the default screens (final pixel size, so source images at
-2–4x these are ideal):
+## Stages
 
-| slot | pixels |
-|---|---|
-| featured news panel | 244 x 129 |
-| small news panels | 114 x 60 |
-| big character plate (select) | 200 x 200 |
-| full-screen background | 640 x 360 |
-
-Prompt scaffolding that lands in the palette after pixelizing:
-
-> `<subject>`, night sky, deep navy and maroon, warm gold rim light from the
-> right, strong silhouette, flat shading, high contrast, wide shot, no text,
-> no watermark
-
-For character splash art ask for "bust shot, three-quarter view, looking
-left, dark background"; for stages "wide establishing shot, horizon in the
-lower third".
-
-## Composition rules
-
-- Left column: logo top-left, menu as a stack of slanted buttons.
-- Right side: panels for content; the selected item is maroon-lit, others
-  dark navy.
-- One accent per screen (the moon, a plate, a focused frame) — not three.
-- Text: title font for headings only, menu font for buttons and names, small
-  font for everything else; white (bank 7) on dark, gold (bank 4) for values
-  and the focused label, grey (bank 6) for hints.
-- Keep 1-px dark outlines on everything that sits on the background.
+`motif/stages/` holds the bundled stages (`training`, `ink_dojo`,
+`ink_arena`), drawn by `rugen stage-gen`. See
+`stages/README.md` for the `[Arena]` section the arena uses.
