@@ -138,7 +138,7 @@ later section while an earlier one has open boxes:
 
 ## UI
 
-- [ ] **Mouse cursor in menus, alongside the keyboard.** The mouse was
+- [x] **Mouse cursor in menus, alongside the keyboard.** (6eea26e) The mouse was
   turned off (`[input] mouse = false`) because it fought the keyboard. Make
   it work and turn it back on by default:
   - hover moves the focus and click activates, on every screen (title,
@@ -150,22 +150,29 @@ later section while an earlier one has open boxes:
     fights;
   - the wheel scrolls lists and the stage strip; sliders and toggles work by
     click and drag.
-- [ ] **Held direction repeats in menus.** Holding ↑ / ↓ (or ← / →) moves
+  On by default for new configs; an existing `rugen.toml` keeps the
+  `mouse = false` the old default wrote (OPTIONS > VIDEO turns it on).
+- [x] **Held direction repeats in menus.** (255c78a) Holding ↑ / ↓ (or ← / →) moves
   only once; it should repeat: first repeat after about 0.4 s, then every
   ~0.08 s, on keyboard and pad, on every list, grid and slider (the stage
   strip already does this; share one repeat helper).
-- [ ] **Pad labels outside fights.** Hints on menu screens (select
+- [x] **Pad labels outside fights.** (00371e8) Hints on menu screens (select
   `pick_key`, title) always show keyboard keys; switch to the pad's button
   names when the last input came from a gamepad, as fight overlays do.
-- [ ] **Stage thumbnails.** Bundled ink stages look plain on the strip
+- [x] **Stage thumbnails.** (37dde52) Bundled ink stages look plain on the strip
   (first background sprite only); render a small real preview once and cache
   it.
-- [ ] **Gamepad paging on the stage strip.** L1 isn't mapped; page with
+- [x] **Gamepad paging on the stage strip.** (2bc300e) L1 isn't mapped; page with
   L1 / R1.
-- [ ] **Controls dropdown arrow** sits just outside its box.
-- [ ] **Help text** repeats the panel subtitle on some options tabs.
-- [ ] **Online opponent card screenshot.** The opponent name on the online
+- [x] **Controls dropdown arrow** (dd28904) sits just outside its box. Also
+  fixed: a wide START key (2P `ENTER`) covered its label on the test pad
+  (836884e).
+- [x] **Help text** (e7d1643) repeats the panel subtitle on some options tabs.
+- [x] **Online opponent card screenshot.** (08e588d) The opponent name on the online
   fighter pick is covered by a unit test only; check it with two clients.
+  The name showed, but the card kept "THEY ARE PICKING..." after the
+  opponent picked (the online screen is not ticked while the pick is open);
+  fixed, checked in both themes.
 
 ## Docs and repo
 
