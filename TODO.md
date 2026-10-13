@@ -115,6 +115,14 @@ later section while an earlier one has open boxes:
   settings could desync. Every online session (LAN netplay, rooms, quick
   match, ranked, spectating) now uses `rugen_sim::headless::ONLINE_ZOOM`
   (0.6 / 1.25); offline and the sync test keep the player's settings.
+- [x] **LAN netplay settings desync.** (c2134fb) LAN P2P (`--net`, the `[net]
+  remote` NETPLAY entry) took air jumps, air dash and fast fall from each
+  player's own `[game]` options: two players with different settings could
+  desync. The host's values now ride the handshake next to the fighter
+  size and the guest simulates with them; every punch carries a LAN
+  protocol number (2), and a peer without it (0.6.1 and earlier, which
+  would use its own settings) is refused with "the other player runs an
+  older rugen".
 
 ## Gameplay
 
