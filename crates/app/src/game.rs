@@ -2043,7 +2043,20 @@ impl ApplicationHandler for Shell {
             self.dirty = true;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                // unsaved options / controls: ask SAVE / DISCARD / CANCEL
+                // first, as leaving the screen does (the classic options
+                // screen saves on the way out, as leaving it does)
+                self.track_unsaved();
+                let ask = match (&mut self.screen, self.system.as_ref()) {
+                    (Screen::Ui(u), Some(sys)) => u.ask_before_quit(sys),
+                    _ => false,
+                };
+                if !ask {
+                    self.save_classic_options();
+                    event_loop.exit();
+                }
+            }
             WindowEvent::Resized(s) => {
                 if let Some(g) = &mut self.gpu {
                     g.renderer.resize(s.width, s.height);

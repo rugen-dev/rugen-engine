@@ -1262,6 +1262,13 @@ impl UiScreen {
         None
     }
 
+    /// The window is being closed: with unsaved options / controls the
+    /// SAVE / DISCARD / CANCEL dialog opens (true) and the game quits once
+    /// SAVE or DISCARD is picked; false = nothing to ask, close now.
+    pub fn ask_before_quit(&mut self, sys: &SystemData) -> bool {
+        self.guard(Transition::Quit, sys).is_none()
+    }
+
     /// `save`, `leave:save|discard|cancel`; None when `a` is not one of them.
     fn save_action(&mut self, a: &str, sys: &SystemData) -> Option<Option<Transition>> {
         let st = &mut self.settings;
@@ -2316,6 +2323,39 @@ mod tests {
         assert_eq!(col1[0]["label"], "SPECIALS");
         assert_eq!(col2[0]["label"], "SPECIALS (CONT.)");
         assert_eq!(col2[0]["cont"], true);
+    }
+
+    /// Closing the window with unsaved options asks SAVE / DISCARD /
+    /// CANCEL like leaving the screen, and quits once it is answered.
+    #[test]
+    fn window_close_asks_before_dropping_unsaved_options() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lib = rugen_content::Library::discover(Some(&root));
+        let config = Config::default();
+        for theme in ["ink", "dojo"] {
+            let motif = lib.motif_dir_for(theme);
+            let Ok(sys) = SystemData::load(&motif, &lib.data_dir()) else {
+                return; // no MUGEN data (reference/ not fetched)
+            };
+            let mut ui = UiScreen::load(UiKind::Options, &motif, &root, &sys, &config, &lib)
+                .unwrap_or_else(|e| panic!("{theme}: {e:#}"));
+            assert!(!ui.ask_before_quit(&sys), "{theme}: nothing to save, close");
+            ui.set_unsaved(true, &sys);
+            assert!(ui.ask_before_quit(&sys), "{theme}: unsaved, ask first");
+            assert!(matches!(ui.save_action("leave:cancel", &sys), Some(None)));
+            assert!(ui.ask_before_quit(&sys));
+            assert!(matches!(
+                ui.save_action("leave:discard", &sys),
+                Some(Some(Transition::Quit))
+            ));
+            assert_eq!(ui.take_request(), Some(SaveRequest::Discard));
+            assert!(ui.ask_before_quit(&sys));
+            assert!(matches!(
+                ui.save_action("leave:save", &sys),
+                Some(Some(Transition::Quit))
+            ));
+            assert_eq!(ui.take_request(), Some(SaveRequest::Save));
+        }
     }
 
     #[test]
