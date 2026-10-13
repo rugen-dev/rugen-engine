@@ -1,13 +1,25 @@
-# Release builds, tags only (free tier). One job per OS, several targets
-# per job (Windows / macOS runners bill 2x / 10x minutes).
+# Release builds for every platform (free tier). One job per OS, several
+# targets per job (Windows / macOS runners bill 2x / 10x minutes).
+#
+# Started by hand from main with the tag to build:
+#   gh workflow run release.yml --ref main -f tag=v0.6.2
+# Running on main (not on the tag) lets each release reuse the previous one's
+# dependency cache: GitHub never shares caches between tags.
 name: Release
-# Manual only: releases are built locally with scripts/release-local.sh; run
-# this by hand on a tag when the Windows and macOS packages are needed.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: tag to build and publish (vX.Y.Z, already pushed)
+        required: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag }}
   # official server baked into the game (BUILDING.md#official-server): set the
   # repository variables before releasing; the public key is required
   RUGEN_OFFICIAL_SERVER: ${{ vars.RUGEN_OFFICIAL_SERVER || 'https://play.rugen.dev' }}
@@ -16,12 +28,15 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - name: Official server key is set
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc
@@ -29,7 +44,7 @@ jobs:
       - name: Build and package
         shell: bash
         run: |
-          v=${GITHUB_REF_NAME#v}
+          v=${TAG#v}
           for pair in x86_64-pc-windows-msvc:x64 i686-pc-windows-msvc:x86 aarch64-pc-windows-msvc:arm64; do
             target=${pair%%:*}; arch=${pair##*:}
             cargo build --release -p rugen --bin rugen --target $target
@@ -47,28 +62,33 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Official server key is set
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libudev-dev libasound2-dev
       - run: cargo build --release -p rugen --bin rugen
       - name: Portable tarball
         run: |
-          v=${GITHUB_REF_NAME#v}
+          v=${TAG#v}
           d=rugen-$v-linux-x86_64; mkdir -p $d/chars $d/stages
           cp README.md LICENSE-MIT LICENSE-APACHE packaging/rugen.desktop $d/
           cp -r motif $d/
           cp chars/README.md $d/chars/; cp stages/README.md $d/stages/
           cp target/release/rugen $d/
           tar -czf $d.tar.gz $d
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
       - name: .deb and .rpm
         run: |
-          cargo install --locked cargo-deb cargo-generate-rpm
           cargo deb -p rugen --no-build
           cargo generate-rpm -p crates/app
           cp target/debian/*.deb target/generate-rpm/*.rpm .
@@ -82,19 +102,22 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - name: Official server key is set
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - name: Build and package
         run: |
-          v=${GITHUB_REF_NAME#v}
+          v=${TAG#v}
           for pair in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x64; do
             target=${pair%%:*}; arch=${pair##*:}
             cargo build --release -p rugen --bin rugen --target $target
@@ -111,7 +134,6 @@ jobs:
           path: rugen-*.tar.gz
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
     needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
@@ -122,8 +144,8 @@ jobs:
           merge-multiple: true
       - name: Release notes
         run: |
-          v=${GITHUB_REF_NAME#v}
-          url=https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME
+          v=${TAG#v}
+          url=https://github.com/${{ github.repository }}/releases/download/$TAG
           link() { f=$(ls $1 | head -1); echo "[\`$f\`]($url/$f)"; }
           cat > notes.md <<NOTES
           ## Downloads
@@ -165,6 +187,8 @@ jobs:
           sed -i 's/^          //' notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag }}
+          name: rugen ${{ inputs.tag }}
           body_path: notes.md
           generate_release_notes: true
           files: |
