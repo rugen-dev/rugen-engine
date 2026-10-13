@@ -780,6 +780,10 @@ impl Match {
         if !advanced {
             return false;
         }
+        // the training lab measures what the step did (reads the world only)
+        if let Some(t) = self.training.as_mut() {
+            t.observe(&self.world);
+        }
         if let Some(sv) = self.stage_visual.as_mut() {
             sv.step();
         }
@@ -1684,6 +1688,17 @@ impl Match {
         if self.overlay {
             self.draw_overlay(r, &hud, u, screen_w);
         }
+        if let Some(t) = self.training.as_ref().filter(|_| !self.hud_hidden) {
+            t.draw(
+                r,
+                &crate::training::Hud {
+                    at: &hud,
+                    u,
+                    screen_w,
+                    screen_h: stage.height,
+                },
+            );
+        }
         if let Some(t) = self.tutorial.as_ref() {
             let lines = t.text();
             // screenpack fonts when the fight.def has them, else the built-in
@@ -1888,6 +1903,9 @@ fn glyph(c: char) -> [u8; 5] {
         'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
         '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
         '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+        '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
+        '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+        ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
         _ => [0; 5],
     }
 }
@@ -1960,7 +1978,7 @@ fn tutorial_layout(inks: &[[f32; 3]; 3]) -> TutorialLayout {
     }
 }
 
-fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f32; 4]) {
+pub(crate) fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f32; 4]) {
     let w = text.chars().count() as f32 * 4.0 * px;
     let mut x = center[0] - w / 2.0;
     for c in text.chars() {
