@@ -133,6 +133,49 @@ pub struct StagePlan {
     pub names: [String; 2],
     /// Both picks (manifest ids), to go back to the fighter select with them locked.
     pub picks: [String; 2],
+    /// Online: the host picks the stage for the matchup instead of a fight.
+    pub online: Option<OnlineStage>,
+}
+
+/// The host's stage pick in an online matchup: ENTER goes back to the
+/// matchup with the fighter and the stage, ESC back to the fighter pick.
+#[derive(Debug, Clone)]
+pub struct OnlineStage {
+    /// The fighter just picked (manifest id).
+    pub char_id: String,
+    /// An arena room: only stages with an `[Arena]` section.
+    pub arena: bool,
+}
+
+impl StagePlan {
+    /// The online host's stage pick, after fighter `char_id`; `names` are
+    /// our fighter and the opponent (or their fighter once known).
+    pub fn online(char_id: String, arena: bool, names: [String; 2]) -> Self {
+        let setup = FightSetup {
+            p1: PathBuf::new(),
+            p2: PathBuf::new(),
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [char_id.clone(), String::new()],
+            mode: Some(Mode::Online),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+        };
+        Self {
+            mode: Mode::Online,
+            setup,
+            portraits: [
+                Portrait::new(names[0].clone(), None),
+                Portrait::new(names[1].clone(), None),
+            ],
+            names,
+            picks: [char_id.clone(), String::new()],
+            online: Some(OnlineStage { char_id, arena }),
+        }
+    }
 }
 
 /// The stage under the cursor, loaded for the preview.
@@ -232,7 +275,10 @@ fn stage_info(def: &Path, stage: &rugen_sim::Stage, item_arena: bool, bundled: b
 impl StageSel {
     pub fn new(plan: StagePlan, lib: &Library) -> Self {
         let t = std::time::Instant::now();
-        let items = load_stages(lib, plan.mode);
+        let mut items = load_stages(lib, plan.mode);
+        if plan.online.as_ref().is_some_and(|o| o.arena) {
+            items.retain(StageItem::is_arena);
+        }
         log::debug!(
             "stage select: {} stages listed in {:?}",
             items.len(),
@@ -280,7 +326,11 @@ impl StageSel {
             ticks: 0,
         };
         // a lone arena stage is shown by name rather than as RANDOM
-        if s.items.len() == 1 && s.plan.as_ref().is_some_and(|p| p.mode == Mode::Arena) {
+        let arena = s
+            .plan
+            .as_ref()
+            .is_some_and(|p| p.mode == Mode::Arena || p.online.as_ref().is_some_and(|o| o.arena));
+        if s.items.len() == 1 && arena {
             s.sel = 1;
         }
         s.scroll = s.target_scroll();
@@ -362,15 +412,19 @@ impl StageSel {
         if n == 0 { 0 } else { (self.seed as usize) % n }
     }
 
-    /// Back to the fighter select with both picks still locked.
+    /// Back to the fighter select with both picks still locked (online:
+    /// the fighter pick again).
     pub fn back(&mut self) -> Transition {
         match self.plan.take() {
+            Some(p) if p.online.is_some() => Transition::OnlineSelect,
             Some(p) => Transition::SelectAgain(p.mode, p.picks.map(Some)),
             None => Transition::Title,
         }
     }
 
-    /// ENTER: the versus screen with the chosen (or a random) stage.
+    /// ENTER: the versus screen with the chosen (or a random) stage; online,
+    /// back to the matchup with the fighter and the stage (RANDOM settled
+    /// here so a real stage travels).
     fn confirm(&mut self, lib_default: impl FnOnce() -> Option<PathBuf>) -> Option<Transition> {
         let i = if self.sel == 0 {
             let n = self.items.len();
@@ -378,6 +432,13 @@ impl StageSel {
         } else {
             Some(self.sel - 1)
         };
+        if let Some(o) = self.plan.as_ref().and_then(|p| p.online.clone()) {
+            self.plan = None;
+            let stage = i
+                .and_then(|i| self.items.get(i))
+                .map(|s| s.entry.id.clone());
+            return Some(Transition::OnlinePicked(o.char_id, stage));
+        }
         let stage = i
             .and_then(|i| self.items.get(i)?.def())
             .or_else(lib_default);
@@ -677,6 +738,7 @@ impl StageSel {
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
         let names = plan.map(|p| p.names.clone()).unwrap_or_default();
+        let online = plan.is_some_and(|p| p.online.is_some());
         let n = self.items.len();
         let cur = match self.sel.checked_sub(1).and_then(|i| self.items.get(i)) {
             None => json!({
@@ -686,7 +748,7 @@ impl StageSel {
                 "tags": [{ "t": "SURPRISE" }],
                 "music": "", "has_music": false, "width": "", "has_width": false,
                 "random": true,
-                "note": "A STAGE IS DRAWN AT RANDOM WHEN THE FIGHT STARTS.",
+                "note": if online { "A STAGE IS DRAWN AT RANDOM FOR THE MATCH." } else { "A STAGE IS DRAWN AT RANDOM WHEN THE FIGHT STARTS." },
             }),
             Some(s) => {
                 let author = s.author();
@@ -758,7 +820,8 @@ impl StageSel {
         };
         json!({
             "title": "STAGE",
-            "sub": format!("P1 PICKS · {mode_name}"),
+            "go": if online { "PICK" } else { "FIGHT!" },
+            "sub": if online { "YOU PICK FOR THE MATCH · ONLINE".to_string() } else { format!("P1 PICKS · {mode_name}") },
             "p1": names[0].to_uppercase(),
             "p2": names[1].to_uppercase(),
             "cur": cur,
@@ -841,6 +904,7 @@ mod tests {
             ],
             names: ["A".into(), "B".into()],
             picks: ["a".into(), "b".into()],
+            online: None,
         };
         let mut s = StageSel::new(plan, &lib);
         assert!(s.count() >= 41, "RANDOM + 40 stages, got {}", s.count());
@@ -869,6 +933,34 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // online: the host's pick goes back to the matchup with the stage id
+        let names = ["KFM".to_string(), "AYAME".to_string()];
+        let mut s = StageSel::new(StagePlan::online("kfm".into(), false, names.clone()), &lib);
+        assert_eq!(s.data()["sub"], "YOU PICK FOR THE MATCH · ONLINE");
+        assert_eq!(s.key(&Key::Named(NamedKey::End)), Some(true));
+        let want = s.items.last().map(|i| i.entry.id.clone());
+        match s.confirm(|| None) {
+            Some(Transition::OnlinePicked(id, stage)) => {
+                assert_eq!(id, "kfm");
+                assert_eq!(stage, want);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut s = StageSel::new(StagePlan::online("kfm".into(), false, names.clone()), &lib);
+        match s.confirm(|| None) {
+            Some(Transition::OnlinePicked(_, Some(stage))) => {
+                assert!(
+                    s.items.iter().any(|i| i.entry.id == stage),
+                    "RANDOM settled"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut s = StageSel::new(StagePlan::online("kfm".into(), false, names.clone()), &lib);
+        assert!(matches!(s.back(), Transition::OnlineSelect));
+        // an arena room lists arena stages only (none here)
+        let s = StageSel::new(StagePlan::online("kfm".into(), true, names), &lib);
+        assert_eq!(s.count(), 1, "just RANDOM");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

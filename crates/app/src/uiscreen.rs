@@ -1788,7 +1788,7 @@ impl UiScreen {
         if vs_refresh {
             self.refresh_data(sys);
         }
-        // stage select: player 1 drives the strip; the UI engine only draws it
+        // stage select: the players drive the strip; the UI engine only draws it
         let mut stage_out = None;
         if self.stages.is_some() {
             let strip_w = self.ui.rect_of("strip").map(|r| r.w);
@@ -1799,7 +1799,10 @@ impl UiScreen {
                 st.upkeep(r, &mut self.textures);
                 if !self.ui.leaving() {
                     let snd = &sys.select;
-                    stage_out = st.tick(pressed[0], self.held[0], lib, &mut |e| {
+                    // one cursor: either player's keys drive it (the
+                    // keyboard's arrows / Enter belong to P2 by default)
+                    let any = |b: &[Buttons; 2]| Buttons::from_bits(b[0].bits() | b[1].bits());
+                    stage_out = st.tick(any(&pressed), any(&self.held), lib, &mut |e| {
                         sfx(match e {
                             crate::stagesel::Sfx::Move => snd.stage_move_snd,
                             crate::stagesel::Sfx::Done => snd.stage_done_snd,
@@ -1857,8 +1860,8 @@ impl UiScreen {
                         if let Some(t) = self.action("random2", sys) {
                             out = Some(t);
                         }
-                    } else if a == "confirm" || a.starts_with("stage:") {
-                        // FIGHT!! and the stage picker answer either player
+                    } else if a == "confirm" {
+                        // FIGHT!! answers either player
                         sfx(sys.title.done_snd);
                         if let Some(t) = self.action(&a, sys) {
                             out = Some(t);

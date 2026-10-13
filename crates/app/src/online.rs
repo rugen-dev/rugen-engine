@@ -81,6 +81,8 @@ static RESUME: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
 
 /// Fighter brought to the last matchup (picked again for a rematch).
 static LAST_PICK: Mutex<Option<String>> = Mutex::new(None);
+/// The host's last stage pick, brought again by a rematch.
+static LAST_STAGE: Mutex<Option<String>> = Mutex::new(None);
 
 /// The last reported online result: (server, match id, my account, ack).
 /// Shown on the ONLINE screen with its signature stamp; fetched again
@@ -1191,7 +1193,11 @@ impl OnlineScreen {
             .map(|a| a.char_id.clone())
             .or_else(|| LAST_PICK.lock().ok().and_then(|l| l.clone()))
             .filter(|c| self.lib.find_char(c).is_some());
-        let stage = self.auto.as_ref().and_then(|a| a.stage.clone());
+        let stage = self
+            .auto
+            .as_ref()
+            .and_then(|a| a.stage.clone())
+            .or_else(|| LAST_STAGE.lock().ok().and_then(|l| l.clone()));
         if let Some(c) = &preset {
             driver.pick(c, stage);
         }
@@ -1263,11 +1269,51 @@ impl OnlineScreen {
         self.want_select = false;
         if let Some(mx) = self.mx.as_mut() {
             mx.need_pick = false;
+            if stage.is_some()
+                && let Ok(mut l) = LAST_STAGE.lock()
+            {
+                l.clone_from(&stage);
+            }
             mx.driver.pick(char_id, stage);
             if let Ok(mut l) = LAST_PICK.lock() {
                 *l = Some(char_id.to_string());
             }
         }
+    }
+
+    /// Do we pick the stage of this matchup? The host (P1) does (the server
+    /// ignores P2's stage).
+    pub fn hosts_stage(&self) -> bool {
+        let Some(m) = self.mx.as_ref() else {
+            return false;
+        };
+        match m.snap.view.as_ref() {
+            Some(v) => v.side == 1,
+            // before the first view: the match announcement's P1
+            None => m.players[0] == self.my_id() || m.players == [0, 0],
+        }
+    }
+
+    /// The matchup is an arena room (only arena stages).
+    pub fn arena_room(&self) -> bool {
+        self.mx
+            .as_ref()
+            .and_then(|m| m.snap.view.as_ref())
+            .is_some_and(|v| v.rules.mode == "arena")
+    }
+
+    /// Names the host's stage pick shows: our fighter `char_id`, then the
+    /// opponent's fighter (or the opponent).
+    pub fn stage_names(&self, char_id: &str) -> [String; 2] {
+        let mine = self
+            .lib
+            .find_char(char_id)
+            .and_then(|e| self.lib.prepare_char(&e).ok())
+            .map(|(_, m)| m.display_name)
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| char_id.to_string());
+        let (name, fighter) = self.opponent();
+        [mine, fighter.unwrap_or(name)]
     }
 
     /// The pick screen was left without a pick: keep the previous fighter,
@@ -1689,7 +1735,9 @@ impl OnlineScreen {
             rule.to_string()
         };
         let room = self.mx.as_ref().and_then(|m| m.room.clone());
+        let stage = stage_line(&v, spectator);
         json!({
+            "stage": stage,
             "title": if spectator { "WATCHING".to_string() } else if ranked { format!("RANKED MATCHUP · {}", if self.trust_of(&self.client.server).is_official() { "OFFICIAL" } else { "COMMUNITY" }) } else { "MATCHUP".to_string() },
             "left": left,
             "right": right,
@@ -4547,6 +4595,23 @@ fn stat_rows(
 
 /// Game settings both sides of an online match must share (determinism):
 /// defaults, plus the room's round time and mode.
+/// The matchup's stage line: the host's pick once declared, else who is
+/// still to pick it.
+fn stage_line(v: &rugen_net::online::MatchupView, spectator: bool) -> String {
+    match &v.stage {
+        Some(c) => {
+            let name = if c.decl.name.trim().is_empty() {
+                c.decl.id.as_str()
+            } else {
+                c.decl.name.as_str()
+            };
+            format!("STAGE: {}", fit(&name.to_uppercase(), 28))
+        }
+        None if v.side == 1 && !spectator => "STAGE: YOU PICK IT AFTER YOUR FIGHTER".into(),
+        None => "STAGE: THE HOST PICKS IT".into(),
+    }
+}
+
 pub fn match_config(base: &Config, rules: &Rules) -> Config {
     let mut c = base.clone();
     c.game = crate::config::GameCfg {
@@ -4637,6 +4702,38 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The host picks the stage; both sides read the pick (or who makes it).
+    #[test]
+    fn matchup_shows_the_hosts_stage() {
+        use rugen_net::online::{FighterCard, FighterDecl, MatchupView};
+        let mut v = MatchupView {
+            side: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            stage_line(&v, false),
+            "STAGE: YOU PICK IT AFTER YOUR FIGHTER"
+        );
+        v.side = 2;
+        assert_eq!(stage_line(&v, false), "STAGE: THE HOST PICKS IT");
+        v.stage = Some(FighterCard {
+            decl: FighterDecl {
+                kind: "stage".into(),
+                id: "Hidden_Sand".into(),
+                name: "Hidden Sand".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert_eq!(stage_line(&v, false), "STAGE: HIDDEN SAND");
+        v.side = 3;
+        assert_eq!(stage_line(&v, true), "STAGE: HIDDEN SAND");
+        if let Some(c) = v.stage.as_mut() {
+            c.decl.name.clear();
+        }
+        assert_eq!(stage_line(&v, true), "STAGE: HIDDEN_SAND");
+    }
 
     #[test]
     fn rooms_carry_their_fighter_size() {

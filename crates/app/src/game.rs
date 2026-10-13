@@ -71,7 +71,10 @@ pub enum Transition {
     Profile,
     /// The online screen wants the fighter pick (select screen in online mode).
     OnlineSelect,
-    /// Back from the online fighter pick: character id and P1's stage choice.
+    /// The online fighter pick came back with this character: the host goes
+    /// on to the stage select, the other side straight back to the matchup.
+    OnlineFighter(String),
+    /// Back to the matchup with the character id and the host's stage choice.
     OnlinePicked(String, Option<String>),
     Options,
     /// Key bindings page for player 0 / 1 (`ui/controls.toml`).
@@ -933,6 +936,15 @@ impl Shell {
                     self.screen = Screen::Online(o);
                 }
             }
+            Transition::OnlineFighter(id) => match self.parked_online.as_ref() {
+                Some(o) if o.hosts_stage() => {
+                    let names = o.stage_names(&id);
+                    let plan = crate::stagesel::StagePlan::online(id, o.arena_room(), names);
+                    self.transition(Transition::StageSelect(Box::new(plan)));
+                }
+                Some(_) => self.transition(Transition::OnlinePicked(id, None)),
+                None => self.transition(Transition::Online),
+            },
             Transition::OnlinePicked(id, stage) => match self.parked_online.take() {
                 Some(mut o) => {
                     o.picked(&id, stage);
@@ -941,9 +953,16 @@ impl Shell {
                 None => self.transition(Transition::Online),
             },
             Transition::OnlineSelect => {
-                let Screen::Online(mut o) = std::mem::replace(&mut self.screen, Screen::Blank)
-                else {
-                    return;
+                // from the online screen, or back from the host's stage pick
+                let mut o = match self.parked_online.take() {
+                    Some(o) => o,
+                    None => match std::mem::replace(&mut self.screen, Screen::Blank) {
+                        Screen::Online(o) => o,
+                        other => {
+                            self.screen = other;
+                            return;
+                        }
+                    },
                 };
                 let ui = self
                     .system

@@ -1,6 +1,6 @@
 //! Roster state behind the TOML-driven character select (`motif/ui/select.toml`):
-//! the character list with search/sort, both players' picks, the stage strip
-//! and the data context the screen binds to. Drawing is the UI engine's job.
+//! the character list with search/sort, both players' picks and the data
+//! context the screen binds to. Drawing is the UI engine's job.
 
 use std::path::PathBuf;
 
@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::game::{Mode, Transition};
 use crate::play::FightSetup;
-use crate::stagesel::{StageItem, StagePlan};
+use crate::stagesel::StagePlan;
 use crate::uiscreen::Profile;
 use crate::versus::Portrait;
 
@@ -51,7 +51,6 @@ pub struct Roster {
     cells: Vec<RosterCell>,
     /// Indices into `cells` after filter + sort.
     order: Vec<usize>,
-    stages: Vec<StageItem>,
     lib: Library,
     /// Sides a player controls in the fight (the others are the CPU).
     human: [bool; 2],
@@ -61,8 +60,6 @@ pub struct Roster {
     picks: [Option<usize>; 2],
     /// Which side the next pick goes to (2 = everyone picked).
     picking: usize,
-    /// 0 = random, else `stages[i - 1]`.
-    stage_idx: usize,
     pub query: String,
     sort: Sort,
     /// Cell under the cursor / focus (index into `cells`).
@@ -117,13 +114,6 @@ impl Roster {
                 Err(err) => log::warn!("{}: {err}", e.id),
             }
         }
-        // the stage is picked on its own screen; only the online pick (the
-        // host's stage travels with the fighter) keeps a stage strip here
-        let stages = if mode == Mode::Online {
-            crate::stagesel::load_stages(lib, mode)
-        } else {
-            Vec::new()
-        };
         let human = match mode {
             Mode::Versus => [true, true],
             Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena | Mode::Online => {
@@ -141,13 +131,11 @@ impl Roster {
             mode,
             cells,
             order: Vec::new(),
-            stages,
             lib: lib.clone(),
             human,
             chooses,
             picks: [None, None],
             picking: if chooses[0] { 0 } else { 1 },
-            stage_idx: 0,
             query: String::new(),
             sort: Sort::Name,
             hover: None,
@@ -362,11 +350,6 @@ impl Roster {
         self.foe = (name, fighter);
     }
 
-    /// Where a stage is chosen. Online keeps the strip on this screen.
-    pub fn stage_strip(&self) -> bool {
-        self.mode == Mode::Online
-    }
-
     /// Everyone picked: start (VS screen or straight into the fight).
     fn go(&mut self) -> Outcome {
         match self.setup() {
@@ -475,20 +458,6 @@ impl Roster {
                 }
                 Outcome::Refresh
             }
-            "stage" => {
-                let n = self.stages.len() + 1;
-                match arg {
-                    "prev" => self.stage_idx = (self.stage_idx + n - 1) % n,
-                    "next" => self.stage_idx = (self.stage_idx + 1) % n,
-                    "random" => self.stage_idx = 0,
-                    other => {
-                        if let Ok(i) = other.parse::<usize>() {
-                            self.stage_idx = i.min(n - 1);
-                        }
-                    }
-                }
-                Outcome::Refresh
-            }
             // an empty slot: nothing to pick
             "search" | "empty" => Outcome::None,
             "sort" => {
@@ -524,17 +493,9 @@ impl Roster {
 
     fn setup(&mut self) -> Option<Transition> {
         if self.mode == Mode::Online {
+            // the host picks the stage on its own screen next
             let id = self.cells.get(self.picks[0]?)?.manifest.id.clone();
-            // RANDOM stage: settle it here so it travels as a real stage
-            let stage = if self.stage_idx == 0 {
-                let n = self.stages.len();
-                (n > 0).then(|| self.rand(n))
-            } else {
-                Some(self.stage_idx - 1)
-            }
-            .and_then(|i| self.stages.get(i))
-            .map(|s| s.entry.id.clone());
-            return Some(Transition::OnlinePicked(id, stage));
+            return Some(Transition::OnlineFighter(id));
         }
         let def = |me: &Self, side: usize| -> Option<(PathBuf, String)> {
             let c = me.cells.get(me.picks[side]?)?;
@@ -590,6 +551,7 @@ impl Roster {
             picks: [setup.ids[0].clone(), setup.ids[1].clone()],
             setup,
             portraits,
+            online: None,
         })))
     }
 
@@ -810,25 +772,6 @@ impl Roster {
             .enumerate()
             .map(|(i, &c)| self.cell_json(i, c))
             .collect();
-        let stage_item = self
-            .stage_idx
-            .checked_sub(1)
-            .and_then(|i| self.stages.get(i));
-        let stage_name = match stage_item {
-            None => "RANDOM".to_string(),
-            Some(s) => s
-                .manifest
-                .as_ref()
-                .map(|m| m.display_name.clone())
-                .unwrap_or_else(|| s.entry.id.clone())
-                .to_uppercase(),
-        };
-        let stage_thumb = stage_item
-            .and_then(|s| {
-                let t = s.manifest.as_ref()?.thumb.as_ref()?;
-                Some(s.dir.as_ref()?.join(&t.file).display().to_string())
-            })
-            .unwrap_or_default();
         let title = match self.mode {
             Mode::Arcade => "ARCADE",
             Mode::Versus => "VS MODE",
@@ -902,20 +845,12 @@ impl Roster {
             "p2": self.char_json(self.picks[1], profile),
             "versus": self.human[1] || self.picks[1].is_some(),
             "ready": self.all_picked(),
-            "stage_strip": self.stage_strip(),
             "dual": self.dual(),
             "query": self.query,
             "sort": match self.sort {
                 Sort::Name => "NAME",
                 Sort::Author => "AUTHOR",
                 Sort::Recent => "RECENT",
-            },
-            "stage": {
-                "name": stage_name,
-                "thumb": stage_thumb,
-                "has_thumb": !stage_thumb.is_empty(),
-                "index": self.stage_idx,
-                "count": self.stages.len(),
             },
             "profile": serde_json::to_value(profile).unwrap_or(Value::Null),
             "rating": profile.rating_text(),
@@ -972,7 +907,7 @@ mod tests {
 
     /// Online pick: one cursor, no CPU opponent, one press goes back to the matchup.
     #[test]
-    fn online_mode_picks_one_fighter_and_a_stage() {
+    fn online_mode_picks_one_fighter() {
         let reference =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1");
         if !reference.join("chars/kfm/kfm.def").exists() {
@@ -1005,16 +940,10 @@ mod tests {
         assert_eq!(d["card2"]["name_up"], "AYAME");
         assert_eq!(d["card2"]["name_big"], true);
         assert_eq!(d["card2"]["status"], "BRINGS SASUKE");
-        match r.action("stage:next") {
-            Outcome::Refresh => {}
-            _ => panic!("stage strip"),
-        }
+        assert!(d.get("stage").is_none(), "the stage has its own screen");
         match r.action("pick:0") {
             Outcome::Go(t) => match *t {
-                Transition::OnlinePicked(id, stage) => {
-                    assert_eq!(id, "kfm");
-                    assert_eq!(stage.as_deref(), Some("stage0"));
-                }
+                Transition::OnlineFighter(id) => assert_eq!(id, "kfm"),
                 other => panic!("{other:?}"),
             },
             _ => panic!("one pick goes back to the matchup"),

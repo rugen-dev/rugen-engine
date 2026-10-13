@@ -3,7 +3,7 @@
 # grid pages (`paged`), PAGE n / N comes from `pages.grid`.
 # Data: title, prompt, grid[] {index kind press name face has_face warn broken
 # random empty p1 p2}, roster_line, filter, card1/card2 {name_up name_big name_small author portrait
-# status ok bad record picked cpu present}, stage {name thumb has_thumb index count},
+# status ok bad record picked cpu present},
 # ready, query, sort, keys {a b start}.
 background = [0.95, 0.94, 0.89, 1.0]
 exit_time = 8
@@ -617,7 +617,6 @@ align = "center"
 font = 1
 scale = 6
 bank = 9
-visible = "!stage_strip"
 enter = "up"
 enter_time = 16
 enter_delay = 4
@@ -637,126 +636,7 @@ bank = 10
 angle = -4
 visible = "ready"
 
-# stage picker (online pick only: the host's stage travels with the fighter)
-[[node]]
-kind = "panel"
-x = 460
-y = 486
-w = 366
-h = 156
-enter = "up"
-enter_time = 16
-enter_delay = 4
-visible = "stage_strip"
-
-  [[node.children]]
-  kind = "image"
-  image = "ui/stage_panel.webp"
-  w = 366
-  h = 156
-
-  [[node.children]]
-  kind = "panel"
-  x = 10
-  y = 10
-  w = 150
-  h = 130
-  color = [0.07, 0.07, 0.07, 1.0]
-
-    [[node.children.children]]
-    kind = "image"
-    image = "{stage.thumb}"
-    x = 3
-    y = 3
-    w = 144
-    h = 124
-    fit = "cover"
-    visible = "stage.has_thumb"
-
-    [[node.children.children]]
-    kind = "text"
-    text = "?"
-    w = 150
-    h = 130
-    align = "center"
-    font = 1
-    scale = 4
-    bank = 11
-    visible = "!stage.has_thumb"
-
-  [[node.children]]
-  kind = "text"
-  text = "STAGE"
-  x = 174
-  y = 12
-  font = 1
-  scale = 2
-  bank = 10
-
-  [[node.children]]
-  kind = "text"
-  text = "{stage.name}"
-  x = 174
-  y = 36
-  w = 180
-  h = 52
-  wrap = true
-  line_h = 22
-  font = 1
-  scale = 2
-  bank = 9
-
-  [[node.children]]
-  kind = "button"
-  id = "stage_prev"
-  x = 172
-  y = 102
-  w = 38
-  h = 34
-  image = "ui/key9.webp"
-  image_focus = "ui/key9_dark.webp"
-  nine = [4, 4, 4, 8]
-  text = "◀"
-  font = 1
-  scale = 2
-  bank = 9
-  bank_focus = 11
-  on_press = "stage:prev"
-
-  [[node.children]]
-  kind = "button"
-  id = "stage_next"
-  x = 216
-  y = 102
-  w = 38
-  h = 34
-  image = "ui/key9.webp"
-  image_focus = "ui/key9_dark.webp"
-  nine = [4, 4, 4, 8]
-  text = "▶"
-  font = 1
-  scale = 2
-  bank = 9
-  bank_focus = 11
-  on_press = "stage:next"
-
-  [[node.children]]
-  kind = "button"
-  id = "stage_random"
-  x = 260
-  y = 102
-  w = 92
-  h = 34
-  image = "ui/key9.webp"
-  image_focus = "ui/key9_dark.webp"
-  nine = [4, 4, 4, 8]
-  text = "RANDOM"
-  font = 2
-  bank = 9
-  bank_focus = 11
-  on_press = "stage:random"
-
-# key hints under the stage picker
+# key hints under VS
 [[node]]
 kind = "hbox"
 x = 460

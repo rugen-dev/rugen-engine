@@ -3851,7 +3851,7 @@ nine = [12, 12, 12, 12]
 # left_tag right_tag, pending pending_label has_verdict fair unbalanced blocked
 # verdict stamp stamp_official stamp_other note has_note, st.<stat> {l r lx lw rw
 # l_hi l_lo l_eq l_plain r_hi r_lo r_eq r_plain}, left_xfer/right_xfer {text pct},
-# left_state right_state, conn {line high_ping sub}, can_confirm confirm_label
+# left_state right_state, conn {line high_ping sub}, stage, can_confirm confirm_label
 # can_change). Stat panel geometry matches STAT_CX / STAT_GAP / STAT_BAR in online.rs.
 [[node]]
 kind = "panel"
@@ -5397,7 +5397,7 @@ enter_time = 14
 kind = "hbox"
 visible = "is_matchup"
 x = 40
-y = 588
+y = 576
 w = 540
 h = 30
 gap = 12
@@ -5426,10 +5426,22 @@ kind = "text"
 visible = "is_matchup"
 text = "{mx.conn.sub}"
 x = 40
-y = 628
+y = 614
 w = 540
 font = 2
 bank = 14
+scale = 1
+
+# the stage: the host's pick, or who picks it
+[[node]]
+kind = "text"
+visible = "is_matchup"
+text = "{mx.stage}"
+x = 40
+y = 632
+w = 540
+font = 2
+bank = 13
 scale = 1
 
 [[node]]
