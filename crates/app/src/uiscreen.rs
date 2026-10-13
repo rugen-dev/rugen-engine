@@ -428,7 +428,8 @@ fn menu_desc(id: &str) -> &'static str {
     }
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
+/// `1 ROOM`, `2 ROOMS`: a count with its noun in the right number.
+pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
@@ -599,6 +600,22 @@ impl UiScreen {
         ));
     }
 
+    /// The profile for screens, plus `record` (`LV 3 · 1 WIN`).
+    fn profile_json(&self) -> Value {
+        let mut v = serde_json::to_value(&self.profile).unwrap_or(Value::Null);
+        if let Value::Object(m) = &mut v {
+            m.insert(
+                "record".into(),
+                Value::from(format!(
+                    "LV {} · {}",
+                    self.profile.level,
+                    plural(self.profile.wins as usize, "WIN", "WINS")
+                )),
+            );
+        }
+        v
+    }
+
     /// Fighter on the title's feature panel.
     fn featured_json(&self) -> Value {
         match self.featured.get(self.feature_at) {
@@ -754,7 +771,7 @@ impl UiScreen {
                     "p2": side(2),
                     "stage": { "name": stage_name, "thumb": stage_thumb, "has_thumb": !stage_thumb.is_empty() },
                     "countdown": (left + 59) / 60,
-                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    "profile": self.profile_json(),
                 })
             }
             UiKind::Result => match &self.result {
@@ -782,7 +799,7 @@ impl UiScreen {
                         "can_select": !r.quick && !r.arcade && r.setup.mode.is_some(),
                         "can_rematch": !r.arcade,
                         "can_title": !r.quick,
-                        "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                        "profile": self.profile_json(),
                         "quote": r.quote,
                         "stats": r.stats.iter().map(|(k, v)| json!({ "label": k, "value": v })).collect::<Vec<_>>(),
                         "loser": match w {
@@ -832,7 +849,7 @@ impl UiScreen {
                     format!("NO SPECIAL MOVES FOUND IN {cmd}")
                 };
                 json!({
-                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    "profile": self.profile_json(),
                     "version": env!("CARGO_PKG_VERSION"),
                     "menu": menu,
                     "who": format!("P{} · {name}", info.map_or(1, |p| p.side + 1)),
@@ -941,7 +958,7 @@ impl UiScreen {
                     "keys": self.keys_json(),
                     "menu": menu,
                     "news": self.news,
-                    "profile": serde_json::to_value(&self.profile).unwrap_or(Value::Null),
+                    "profile": self.profile_json(),
                     "version": env!("CARGO_PKG_VERSION"),
                 })
             }
@@ -957,10 +974,7 @@ impl UiScreen {
                     ),
                 };
                 if let Value::Object(m) = &mut d {
-                    m.insert(
-                        "profile".into(),
-                        serde_json::to_value(&self.profile).unwrap_or(Value::Null),
-                    );
+                    m.insert("profile".into(), self.profile_json());
                     m.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
                 }
                 d
@@ -1898,5 +1912,17 @@ impl Painter for Host<'_> {
             );
             f.snap = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plural_counts_one_and_many() {
+        assert_eq!(plural(1, "ROOM", "ROOMS"), "1 ROOM");
+        assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
+        assert_eq!(plural(2, "ISSUE", "ISSUES"), "2 ISSUES");
     }
 }
