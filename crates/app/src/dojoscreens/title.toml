@@ -191,7 +191,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "DROP .ZIP OR .RAR FIGHTERS INTO CHARS/"
+  text = "{arenas.drop}"
   x = 44
   y = 190
   font = 6
