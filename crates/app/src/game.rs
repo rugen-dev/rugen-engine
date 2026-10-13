@@ -887,7 +887,11 @@ impl Shell {
                         .ok()
                     });
                 match ui {
-                    Some(u) => {
+                    Some(mut u) => {
+                        if let Some(sys) = self.system.as_ref() {
+                            let (name, fighter) = o.opponent();
+                            u.set_online_foe(name, fighter, sys);
+                        }
                         self.parked_online = Some(o);
                         self.screen = Screen::Ui(Box::new(u));
                     }

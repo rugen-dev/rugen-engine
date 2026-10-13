@@ -77,6 +77,8 @@ pub struct Roster {
     /// Everyone picked: ticks left before the screen moves on (cleared by
     /// an unpick; not started when the picks came back from the stage select).
     ready_in: Option<u32>,
+    /// Online: the opponent's name and their fighter once picked.
+    foe: (String, Option<String>),
 }
 
 /// Why the official server blocks this fighter (cached, verified feed).
@@ -153,6 +155,7 @@ impl Roster {
             hover_slot: [Slot::Empty; 2],
             ai_level,
             ready_in: None,
+            foe: (String::new(), None),
             // a fresh CPU opponent / random stage every visit
             seed: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -352,6 +355,11 @@ impl Roster {
         } else {
             Outcome::Refresh
         }
+    }
+
+    /// Online: who the opponent card shows.
+    pub fn set_foe(&mut self, name: String, fighter: Option<String>) {
+        self.foe = (name, fighter);
     }
 
     /// Where a stage is chosen. Online keeps the strip on this screen.
@@ -683,12 +691,29 @@ impl Roster {
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
             let online_foe = self.mode == Mode::Online && side == 1;
             v["status"] = Value::from(if self.human[side] {
-                ""
+                String::new()
             } else if online_foe {
-                "OPPONENT: AT THE MATCHUP"
+                // their fighter once they picked, else a waiting line
+                match &self.foe.1 {
+                    Some(f) => format!("BRINGS {f}"),
+                    None => "WAITING FOR THEIR PICK...".to_string(),
+                }
             } else {
-                "CPU"
+                "CPU".to_string()
             });
+            if online_foe {
+                let name = if self.foe.0.is_empty() {
+                    "OPPONENT".to_string()
+                } else {
+                    self.foe.0.to_uppercase()
+                };
+                let long = name.chars().count() > 12;
+                v["name_up"] = Value::from(name);
+                v["name_big"] = Value::from(!long);
+                v["name_small"] = Value::from(long);
+                v["ok"] = Value::from(true);
+                v["bad"] = Value::from(false);
+            }
             v["picked"] = Value::from(false);
             v["cpu"] = Value::from(!self.human[side] && !online_foe);
             v["portrait"] = Value::from("");
@@ -970,6 +995,14 @@ mod tests {
         let d = r.data(&Profile::default(), "ONLINE");
         assert_eq!(d["title"], "ONLINE");
         assert_eq!(d["card2"]["cpu"], false);
+        // the opponent card names them and waits for their pick
+        assert_eq!(d["card2"]["name_up"], "OPPONENT");
+        assert_eq!(d["card2"]["status"], "WAITING FOR THEIR PICK...");
+        r.set_foe("Ayame".into(), Some("SASUKE".into()));
+        let d = r.data(&Profile::default(), "ONLINE");
+        assert_eq!(d["card2"]["name_up"], "AYAME");
+        assert_eq!(d["card2"]["name_big"], true);
+        assert_eq!(d["card2"]["status"], "BRINGS SASUKE");
         match r.action("stage:next") {
             Outcome::Refresh => {}
             _ => panic!("stage strip"),

@@ -549,6 +549,14 @@ impl UiScreen {
         self.refresh_data(sys);
     }
 
+    /// Online fighter pick: who the opponent is (and their fighter once picked).
+    pub fn set_online_foe(&mut self, name: String, fighter: Option<String>, sys: &SystemData) {
+        if let Some(r) = self.roster.as_mut() {
+            r.set_foe(name, fighter);
+        }
+        self.refresh_data(sys);
+    }
+
     /// Buttons held this tick (before [`tick`](Self::tick)).
     pub fn set_held(&mut self, held: [Buttons; 2]) {
         self.held = held;

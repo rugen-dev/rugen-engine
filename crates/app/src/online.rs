@@ -138,6 +138,8 @@ struct Mx {
     settled_ticks: u32,
     /// Auto mode: last confirm sent (tick).
     auto_confirm_at: u32,
+    /// The other player's name (ranked match found; rooms know it too).
+    foe: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1208,6 +1210,7 @@ impl OnlineScreen {
             verdict_at: None,
             settled_ticks: 0,
             auto_confirm_at: 0,
+            foe: String::new(),
         });
         self.error.clear();
         self.state = State::Matchup;
@@ -1253,6 +1256,7 @@ impl OnlineScreen {
             verdict_at: None,
             settled_ticks: 0,
             auto_confirm_at: 0,
+            foe: String::new(),
         });
         self.state = State::Matchup;
         self.status = format!("ROOM {} - FETCHING THE FIGHTERS", r.code);
@@ -1277,6 +1281,29 @@ impl OnlineScreen {
         if self.mx.as_ref().is_some_and(|m| m.need_pick) {
             self.leave_matchup("YOU LEFT THE MATCHUP");
         }
+    }
+
+    /// The opponent as the fighter pick shows them: their name and, once
+    /// they picked, their fighter.
+    pub fn opponent(&self) -> (String, Option<String>) {
+        let mx = self.mx.as_ref();
+        let view = mx.and_then(|m| m.snap.view.as_ref());
+        let me = view.map_or(0, |v| usize::from(v.side == 2));
+        let fighter = view
+            .and_then(|v| v.fighters[1 - me].as_ref())
+            .map(|c| c.decl.name.to_uppercase())
+            .filter(|n| !n.is_empty());
+        let name = mx
+            .map(|m| m.foe.clone())
+            .filter(|n| !n.is_empty())
+            .or_else(|| {
+                self.room
+                    .as_ref()
+                    .and_then(|r| r.opponent.as_ref())
+                    .map(badge_name)
+            })
+            .unwrap_or_default();
+        (name, fighter)
     }
 
     /// The pick screen could not open (theme without one): bring the main fighter.
@@ -3836,6 +3863,9 @@ impl OnlineScreen {
             return;
         }
         self.start_matchup(mv.id, players, mi.ranked, None);
+        if let Some(mx) = self.mx.as_mut() {
+            mx.foe = badge_name(&mi.opponent);
+        }
         self.status = format!(
             "MATCH FOUND: {} ({})  {}",
             mi.opponent.name,
