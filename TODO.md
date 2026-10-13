@@ -63,12 +63,15 @@ later section while an earlier one has open boxes:
 
 ## Bugs
 
-- [ ] **Mixed localcoords between fighters.** P2Dist, collision and push
+- [x] **Mixed localcoords between fighters.** (70c1393) P2Dist, collision and push
   compare raw positions of two fighters whose localcoord (or FIGHTER SIZE)
   differ; convert through `local_scale` like the camera now does.
-- [ ] **Offline replays do not record the round time** (online matches are
+  Push and Clsn already converted; P2Dist / P2BodyDist, Parent/RootDist,
+  the nearest enemy, auto-turn, guard distance and hit order now go
+  through `World::rel_pos` (sim change).
+- [x] **Offline replays do not record the round time** (2f4ee5d) (online matches are
   not recorded): a replay played after changing ROUND TIME may diverge.
-- [ ] **Windows / macOS packages lack data/.** release.yml (manual run)
+- [x] **Windows / macOS packages lack data/.** (7d251e6) release.yml (manual run)
   does not ship the MUGEN base data that scripts/stage-data.sh adds to the
   Linux packages.
 
@@ -87,12 +90,24 @@ later section while an earlier one has open boxes:
     flattens alpha or palette index 0.
   Compare a frame against the original files with `rugen view` before and
   after conversion. Add a regression test for the path that was broken.
-- [ ] **Tutorial text overlap.** The step title and the hint line overlap
+  Status (6cc4d37): not reproduced on 0.6.2. Goku's ki blast, Super Energy
+  Blast, Kamehameha, explosions and auras blend correctly (Linux / Vulkan,
+  training and Hidden Sand, quick play and through the menus with stage
+  previews; 4000-frame CPU soaks logging every opaque draw found no lost
+  AIR blend and no effect drawn opaque; Naruto / Sasuke too). Goku's SFF is
+  v2.01 with index 0 at alpha 0 in every palette, PNG32 sprites keep their
+  alpha, the `.rgc` pack is pixel-exact. The one blend mapping every path
+  shares is now pinned by a test; fixed on the way: an explod alpha
+  computed below 0 snapped back to full strength, `rugen view` drew every
+  frame opaque. Not checked: blend interpolation (Goku has none). Also
+  noticed: PalFX adds after multiplying (MUGEN adds first). Reopen with the
+  move, stage, OS / GPU and a screenshot.
+- [x] **Tutorial text overlap.** (b1428fb) The step title and the hint line overlap
   ("JUMP" over "PRESS ↑").
-- [ ] **Unsaved settings on window close.** Closing the window with unsaved
+- [x] **Unsaved settings on window close.** (45bcd99) Closing the window with unsaved
   options or controls loses them silently; ask SAVE / DISCARD / CANCEL, as
   leaving the screen already does.
-- [ ] **Stage preview palettes leak.** Palettes of replaced stage previews
+- [x] **Stage preview palettes leak.** (f9af2f0) Palettes of replaced stage previews
   on the stage select are never freed.
 
 ## Gameplay
