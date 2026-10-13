@@ -255,6 +255,7 @@ CI: GitHub Actions matrix on all three OS, artifacts per commit. macOS universal
 - ✅ Triggers `GroundY` and `OnPlatform` for new characters (legacy characters never use them).
 - ✅ Arcade ladder (six random opponents), stage / screen music, fullscreen toggle.
 - ✅ `[Arena]` stages: blast zones (ring-outs), stocks with respawn, floor spans (pits), no-wall mode; camera zooms out for height; engine air jumps / air dash / fast fall for legacy characters (`[game]` config, per-stage override). Sample: `examples/arena/arena.def`.
+- ✅ Arena AI (`crates/sim/src/arena_ai.rs`): CPU fighters on `[Arena]` stages keep off the pit edge, veto moves learned this match to carry them off, cancel moves that do, recover (air jumps, air dash, hit-fall tech, their own air moves) and follow the opponent across platform tiers. Filters the CPU's buttons and vets its AI `ChangeState`s inside `World::step` (deterministic; replays record it). `[game] arena_ai` (default on), `rugen play --arena-ai 0|1`; never online.
 - Open: `[Zone]` / `[Interact]`, stage transitions, tag/assist, scripting, mod packs, wasm.
 
 ## Open questions

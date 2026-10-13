@@ -46,6 +46,9 @@ pub struct GameCfg {
     pub air_dash: bool,
     /// Hold down while falling to drop faster.
     pub fast_fall: bool,
+    /// Arena AI: computer fighters on arena stages avoid the pit, recover
+    /// and use platforms (their own AI still picks the attacks).
+    pub arena_ai: bool,
     /// Seconds on the round clock in offline matches; 0 = no timer.
     pub round_time: i32,
     /// FIGHTER SIZE: fighters already inside the band keep their size, the
@@ -61,6 +64,7 @@ impl Default for GameCfg {
             air_jumps: 0,
             air_dash: false,
             fast_fall: false,
+            arena_ai: true,
             round_time: 99,
             fighter_size: rugen_sim::scale::FighterSize::Normal,
         }

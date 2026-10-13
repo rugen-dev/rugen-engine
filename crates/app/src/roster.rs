@@ -566,6 +566,7 @@ impl Roster {
             ids: [id1.clone(), if tutorial { id1 } else { id2 }],
             mode: Some(self.mode),
             fighter_size: None,
+            arena_ai: None,
         };
         if tutorial {
             let mut setup = setup;

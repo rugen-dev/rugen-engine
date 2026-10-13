@@ -16,6 +16,7 @@
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
+//!   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
 //!   --keys 90:Enter,120:k                                       harness: raw key presses at ticks
 //! rugen list [--root dir]                                       list chars/ and stages/
@@ -159,6 +160,7 @@ fn main() -> anyhow::Result<()> {
             let ai = opt("--ai");
             let record = opt("--record");
             let keys = opt("--keys");
+            let arena_ai = opt("--arena-ai");
             let taken = [
                 keys.clone(),
                 stage.clone(),
@@ -173,6 +175,7 @@ fn main() -> anyhow::Result<()> {
                 frames.clone(),
                 ai.clone(),
                 record.clone(),
+                arena_ai.clone(),
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let watch = args.iter().any(|a| a == "--watch");
@@ -187,7 +190,7 @@ fn main() -> anyhow::Result<()> {
                 .collect();
             let p1 = rest.first().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--net ip:port [--port n] [--p2]] [--server url --room CODE|new [--spectate] [--guest]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
+                    "usage: rugen play <char> [char2] [--stage s] [--root dir] [--ai 0..8] [--arena-ai 0|1] [--net ip:port [--port n] [--p2]] [--server url --room CODE|new [--spectate] [--guest]] [--synctest] [--shot out.png] [--script keys] [--script2 keys]"
                 )
             })?;
             let lib = library(root.as_deref());
@@ -320,6 +323,7 @@ fn main() -> anyhow::Result<()> {
                 ids: [String::new(), String::new()],
                 mode: None,
                 fighter_size: None,
+                arena_ai: arena_ai.map(|v| v != "0" && v != "off" && v != "false"),
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

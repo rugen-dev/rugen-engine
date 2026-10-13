@@ -1663,6 +1663,7 @@ impl UiScreen {
             ids: [id.clone(), id],
             mode: Some(Mode::Training),
             fighter_size: None,
+            arena_ai: None,
         }))
     }
 

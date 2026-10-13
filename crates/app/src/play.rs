@@ -63,6 +63,9 @@ pub struct FightSetup {
     /// FIGHTER SIZE to simulate with instead of the config's (a replay's
     /// recorded one); LAN matches take the host's from the handshake.
     pub fighter_size: Option<FighterSize>,
+    /// Arena AI plugin for CPU fighters instead of the config's (a replay's
+    /// recorded value, or `rugen play --arena-ai`). Never on online.
+    pub arena_ai: Option<bool>,
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -362,6 +365,8 @@ impl Match {
         };
         let mut world = rugen_sim::headless::build_world(&spec)
             .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        // a match rule for CPU sides; online rooms are human vs human
+        world.arena_ai = setup.net.is_none() && setup.arena_ai.unwrap_or(cfg.game.arena_ai);
         for d in &world.data {
             for w in &d.warnings {
                 log::warn!("{}: {w}", d.name);

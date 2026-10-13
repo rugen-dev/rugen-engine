@@ -26,13 +26,17 @@ pub struct Replay {
     /// option played every fighter at its own size.
     #[serde(default = "size_none")]
     pub fighter_size: FighterSize,
+    /// Arena AI plugin for the CPU sides; replays from before the option
+    /// played without it.
+    #[serde(default)]
+    pub arena_ai: bool,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
 
 impl Replay {
-    /// A recording of `setup`, simulated with `fighter_size`.
-    pub fn new(setup: &FightSetup, fighter_size: FighterSize) -> Self {
+    /// A recording of `setup`, simulated with `fighter_size` and `arena_ai`.
+    pub fn new(setup: &FightSetup, fighter_size: FighterSize, arena_ai: bool) -> Self {
         Self {
             version: REPLAY_VERSION,
             p1: setup.p1.clone(),
@@ -40,6 +44,7 @@ impl Replay {
             stage: setup.stage.clone(),
             ai: setup.ai,
             fighter_size,
+            arena_ai,
             inputs: Vec::new(),
         }
     }
@@ -55,6 +60,7 @@ impl Replay {
             ids: [String::new(), String::new()],
             mode: None,
             fighter_size: Some(self.fighter_size),
+            arena_ai: Some(self.arena_ai),
         }
     }
 
@@ -91,6 +97,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(old.fighter_size, FighterSize::None);
+        assert!(!old.arena_ai, "old replays played without the arena AI");
+        assert_eq!(old.setup().arena_ai, Some(false));
         assert_eq!(old.setup().fighter_size, Some(FighterSize::None));
         let r = Replay {
             fighter_size: FighterSize::Chibi,

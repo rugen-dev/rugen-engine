@@ -829,6 +829,7 @@ mod tests {
             ids: ["a".into(), "b".into()],
             mode: Some(Mode::Versus),
             fighter_size: None,
+            arena_ai: None,
         };
         let plan = StagePlan {
             mode: Mode::Versus,
