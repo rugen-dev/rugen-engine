@@ -209,7 +209,8 @@ pub struct Renderer {
     rgba_pipes: [wgpu::RenderPipeline; 3],
     sampler: wgpu::Sampler,
     textures: Vec<Tex>,
-    palettes: Vec<wgpu::TextureView>,
+    /// Palette views; freed slots ([`Renderer::free_palette`]) are reused.
+    palettes: Slots<wgpu::TextureView>,
     /// (tex, pal) → bind group, built lazily.
     indexed_binds: std::collections::HashMap<(usize, usize), wgpu::BindGroup>,
     white: TextureId,
@@ -235,8 +236,56 @@ pub struct RenderStats {
     /// Draw calls / quads of the last frame.
     pub draws: usize,
     pub quads: usize,
-    /// Textures alive (they are never freed).
+    /// Textures and palettes alive (freed ones not counted).
     pub textures: usize,
+    pub palettes: usize,
+}
+
+/// A list whose ids stay valid until removed; removed slots are handed out
+/// again (GPU resources that screens upload and release).
+struct Slots<T> {
+    items: Vec<Option<T>>,
+    free: Vec<usize>,
+}
+
+impl<T> Default for Slots<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            free: Vec::new(),
+        }
+    }
+}
+
+impl<T> Slots<T> {
+    fn insert(&mut self, v: T) -> usize {
+        match self.free.pop() {
+            Some(i) => {
+                self.items[i] = Some(v);
+                i
+            }
+            None => {
+                self.items.push(Some(v));
+                self.items.len() - 1
+            }
+        }
+    }
+    /// False when `i` was not alive.
+    fn remove(&mut self, i: usize) -> bool {
+        match self.items.get_mut(i).and_then(Option::take) {
+            Some(_) => {
+                self.free.push(i);
+                true
+            }
+            None => false,
+        }
+    }
+    fn get(&self, i: usize) -> Option<&T> {
+        self.items.get(i).and_then(Option::as_ref)
+    }
+    fn live(&self) -> usize {
+        self.items.len() - self.free.len()
+    }
 }
 
 /// How frames reach the screen.
@@ -469,7 +518,7 @@ impl Renderer {
             rgba_pipes,
             sampler,
             textures: Vec::new(),
-            palettes: Vec::new(),
+            palettes: Slots::default(),
             indexed_binds: Default::default(),
             white: TextureId(0),
             verts: Vec::new(),
@@ -657,8 +706,16 @@ impl Renderer {
             data[i * 4..i * 4 + 4].copy_from_slice(c);
         }
         let tex = self.make_texture(256, 1, wgpu::TextureFormat::Rgba8Unorm, 4, &data);
-        self.palettes.push(tex.create_view(&Default::default()));
-        PaletteId(self.palettes.len() - 1)
+        PaletteId(self.palettes.insert(tex.create_view(&Default::default())))
+    }
+
+    /// Release a palette's GPU memory (and the bind groups made with it);
+    /// its id may be handed out again by the next upload, so the caller
+    /// must forget it. Draws still naming it are skipped.
+    pub fn free_palette(&mut self, id: PaletteId) {
+        if self.palettes.remove(id.0) {
+            self.indexed_binds.retain(|&(_, p), _| p != id.0);
+        }
     }
 
     /// Profiling counters; resets the upload count.
@@ -670,6 +727,7 @@ impl Renderer {
             draws: self.last_frame.0,
             quads: self.last_frame.1,
             textures: self.textures.len() - self.free_slots.len(),
+            palettes: self.palettes.live(),
         }
     }
 
@@ -848,7 +906,9 @@ impl Renderer {
         self.last_frame = (self.runs.len(), self.verts.len() / 6);
         for r in &self.runs {
             let (t, p) = (r.tex, r.pal);
-            if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p) {
+            if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p)
+                && let Some(pal) = self.palettes.get(p)
+            {
                 let key = (t, p);
                 if !self.indexed_binds.contains_key(&key) {
                     let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -861,7 +921,7 @@ impl Renderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&self.palettes[p]),
+                                resource: wgpu::BindingResource::TextureView(pal),
                             },
                         ],
                     });
@@ -928,8 +988,12 @@ impl Renderer {
             let bi = r.blend.pipe_index();
             match (&self.textures[t].kind, p) {
                 (Kind::Indexed { .. }, Some(p)) => {
+                    // a freed palette has no bind group: skip the draw
+                    let Some(bind) = self.indexed_binds.get(&(t, p)) else {
+                        continue;
+                    };
                     pass.set_pipeline(&self.indexed_pipes[bi]);
-                    pass.set_bind_group(1, &self.indexed_binds[&(t, p)], &[]);
+                    pass.set_bind_group(1, bind, &[]);
                 }
                 (Kind::Rgba { bind }, _) => {
                     pass.set_pipeline(&self.rgba_pipes[bi]);
@@ -1040,3 +1104,29 @@ impl Renderer {
 }
 
 pub use wgpu::{SurfaceError, SurfaceTarget};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Released palettes give their slot back: replaced stage previews no
+    /// longer grow the palette list (and a stale id draws nothing).
+    #[test]
+    fn freed_slots_are_reused() {
+        let mut s: Slots<u32> = Slots::default();
+        let a = s.insert(1);
+        let b = s.insert(2);
+        assert_eq!(s.live(), 2);
+        assert!(s.remove(a));
+        assert!(!s.remove(a), "a second free is ignored");
+        assert_eq!(s.get(a), None, "a freed id resolves to nothing");
+        assert_eq!(s.live(), 1);
+        for round in 0..100 {
+            let c = s.insert(10 + round);
+            assert_eq!(c, a, "the freed slot is reused");
+            assert!(s.remove(c));
+        }
+        assert_eq!(s.items.len(), 2, "no growth over 100 replacements");
+        assert_eq!(s.get(b), Some(&2));
+    }
+}

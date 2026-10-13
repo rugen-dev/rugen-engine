@@ -338,13 +338,16 @@ impl StageVisual {
         self.draw_impl(r, layer, cam, scale, screen_w, Tint::default(), Some(view));
     }
 
-    /// Release the uploaded sprites (a preview that is replaced).
+    /// Release the uploaded sprites and palettes (a preview that is replaced).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
         let mut ids: std::collections::HashSet<TextureId> =
             self.textures.values().flatten().map(|t| t.0).collect();
         ids.extend(self.shared.values().copied());
         for id in ids {
             r.free_texture(id);
+        }
+        for p in self.palettes.drain(..) {
+            r.free_palette(p);
         }
         self.textures.clear();
         self.shared.clear();

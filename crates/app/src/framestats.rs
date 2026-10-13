@@ -84,12 +84,13 @@ impl Reporter {
             );
         }
         line += &format!(
-            " | draws {} quads {} | uploads {} ({} KiB) textures {}",
+            " | draws {} quads {} | uploads {} ({} KiB) textures {} palettes {}",
             st.draws,
             st.quads,
             st.uploads,
             st.upload_bytes / 1024,
-            st.textures
+            st.textures,
+            st.palettes
         );
         log::info!("{line}");
         self.since = Instant::now();
