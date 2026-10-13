@@ -131,19 +131,18 @@ impl SelectScreen {
     fn move_cursor(&mut self, sys: &SystemData, side: usize, d: [i32; 2]) {
         let s = &sys.select;
         let (rows, cols) = (s.rows as i32, s.columns as i32);
-        let mut c = self.cursor[side];
-        for _ in 0..(rows * cols) {
-            c = [c[0] + d[0], c[1] + d[1]];
-            if s.wrapping {
-                c = [(c[0] + rows) % rows, (c[1] + cols) % cols];
-            } else if c[0] < 0 || c[0] >= rows || c[1] < 0 || c[1] >= cols {
-                return;
-            }
-            if self.cell_index(sys, c).is_some() {
-                self.cursor[side] = c;
-                return;
-            }
+        if rows <= 0 || cols <= 0 {
+            return;
         }
+        // every slot of the grid is reachable, empty ones included (they
+        // show no face and cannot be picked)
+        let mut c = [self.cursor[side][0] + d[0], self.cursor[side][1] + d[1]];
+        if s.wrapping {
+            c = [(c[0] + rows) % rows, (c[1] + cols) % cols];
+        } else if c[0] < 0 || c[0] >= rows || c[1] < 0 || c[1] >= cols {
+            return;
+        }
+        self.cursor[side] = c;
     }
 
     fn setup(&mut self) -> Option<Transition> {
@@ -270,9 +269,12 @@ impl SelectScreen {
                         self.move_cursor(sys, side, [0, 1]);
                         sfx(sys.select.move_snd[side]);
                     }
-                    if (b.a || b.b || b.c || b.x || b.y || b.z || b.s)
-                        && let Some(i) = self.cell_index(sys, self.cursor[side])
-                    {
+                    let accept = b.a || b.b || b.c || b.x || b.y || b.z || b.s;
+                    if accept && self.cell_index(sys, self.cursor[side]).is_none() {
+                        // an empty slot: nothing to pick
+                        sfx(sys.select.cancel_snd);
+                    }
+                    if accept && let Some(i) = self.cell_index(sys, self.cursor[side]) {
                         let broken = self.cells[i]
                             .manifest
                             .verify

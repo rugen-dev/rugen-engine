@@ -329,6 +329,17 @@ enter_time = 16
   bank = 17
   visible = "card1.present"
 
+  # the cursor rests on an empty slot / the random cell
+  [[node.children]]
+  kind = "text"
+  text = "{card1.blank_text}"
+  x = 206
+  y = 22
+  w = 186
+  font = 1
+  bank = 17
+  visible = "card1.blank"
+
   [[node.children]]
   kind = "text"
   text = "{card1.record}"
@@ -487,6 +498,18 @@ enter_time = 16
   font = 2
   bank = 17
   visible = "card2.present"
+
+  # the cursor rests on an empty slot / the random cell
+  [[node.children]]
+  kind = "text"
+  text = "{card2.blank_text}"
+  x = 16
+  y = 22
+  w = 186
+  align = "right"
+  font = 1
+  bank = 17
+  visible = "card2.blank"
 
   [[node.children]]
   kind = "text"

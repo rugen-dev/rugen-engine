@@ -287,6 +287,20 @@ enter_time = 16
     fit_y = 1
     visible = "card1.present"
 
+    # the cursor rests on an empty slot / the random cell
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    x = 6
+    y = 6
+    w = 180
+    h = 210
+    align = "center"
+    font = 1
+    scale = 4
+    bank = 9
+    visible = "card1.blank"
+
   [[node.children]]
   kind = "image"
   image = "ui/card1_frame.webp"
@@ -315,6 +329,16 @@ enter_time = 16
   font = 2
   bank = 9
   visible = "card1.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.blank_text}"
+  x = 196
+  y = 26
+  w = 180
+  font = 2
+  bank = 9
+  visible = "card1.blank"
 
   [[node.children]]
   kind = "text"
@@ -433,6 +457,20 @@ enter_time = 16
     flip = true
     visible = "card2.present"
 
+    # the cursor rests on an empty slot / the random cell
+    [[node.children.children]]
+    kind = "text"
+    text = "?"
+    x = 214
+    y = 6
+    w = 180
+    h = 210
+    align = "center"
+    font = 1
+    scale = 4
+    bank = 9
+    visible = "card2.blank"
+
   [[node.children]]
   kind = "image"
   image = "ui/card2_frame.webp"
@@ -463,6 +501,17 @@ enter_time = 16
   font = 2
   bank = 9
   visible = "card2.present"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.blank_text}"
+  x = 24
+  y = 26
+  w = 180
+  align = "right"
+  font = 2
+  bank = 9
+  visible = "card2.blank"
 
   [[node.children]]
   kind = "text"

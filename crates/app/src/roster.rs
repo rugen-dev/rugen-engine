@@ -40,6 +40,14 @@ impl StageItem {
     }
 }
 
+/// What a grid slot holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    Char(usize),
+    Random,
+    Empty,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sort {
     Name,
@@ -77,6 +85,9 @@ pub struct Roster {
     hover: Option<usize>,
     /// Cell under the second player's cursor (dual select).
     hover2: Option<usize>,
+    /// The slot under each cursor (an empty slot or the random cell show a
+    /// blank card instead of the last fighter).
+    hover_slot: [Slot; 2],
     ai_level: i32,
     seed: u32,
 }
@@ -170,6 +181,7 @@ impl Roster {
             sort: Sort::Name,
             hover: None,
             hover2: None,
+            hover_slot: [Slot::Empty; 2],
             ai_level,
             // a fresh CPU opponent / random stage every visit
             seed: std::time::SystemTime::now()
@@ -190,6 +202,7 @@ impl Roster {
         }
         r.picking = r.next_picking();
         r.hover = r.order.first().copied();
+        r.hover_slot = [r.hover.map_or(Slot::Random, Slot::Char); 2];
         r
     }
 
@@ -250,24 +263,41 @@ impl Roster {
         self.cells.is_empty()
     }
 
-    /// Focus moved onto `cells[i]` of the filtered list: remember which character to show.
-    pub fn hover_order(&mut self, i: usize) -> bool {
-        let new = self.order.get(i).copied();
-        if new.is_some() && new != self.hover {
-            self.hover = new;
-            return true;
+    /// What grid slot `i` holds: a fighter (`cells` index), the random
+    /// cell or an empty filler.
+    fn slot_of(&self, i: usize) -> Slot {
+        match self.order.get(i) {
+            Some(&c) => Slot::Char(c),
+            None if i == self.order.len() => Slot::Random,
+            None => Slot::Empty,
         }
-        false
     }
 
-    /// The second player's focus moved onto `cells[i]` of the filtered list.
+    /// Focus moved onto grid slot `i`: remember what to show on the card.
+    pub fn hover_order(&mut self, i: usize) -> bool {
+        self.set_hover(0, i)
+    }
+
+    /// The second player's focus moved onto grid slot `i`.
     pub fn hover2_order(&mut self, i: usize) -> bool {
-        let new = self.order.get(i).copied();
-        if new.is_some() && new != self.hover2 {
-            self.hover2 = new;
-            return true;
-        }
-        false
+        self.set_hover(1, i)
+    }
+
+    fn set_hover(&mut self, side: usize, i: usize) -> bool {
+        let slot = self.slot_of(i);
+        let cell = match slot {
+            Slot::Char(c) => Some(c),
+            Slot::Random | Slot::Empty => None,
+        };
+        let (hover, at) = if side == 0 {
+            (&mut self.hover, &mut self.hover_slot[0])
+        } else {
+            (&mut self.hover2, &mut self.hover_slot[1])
+        };
+        let changed = *hover != cell || *at != slot;
+        *hover = cell;
+        *at = slot;
+        changed
     }
 
     fn all_picked(&self) -> bool {
@@ -432,7 +462,8 @@ impl Roster {
                 }
                 Outcome::Refresh
             }
-            "search" => Outcome::None,
+            // an empty slot: nothing to pick
+            "search" | "empty" => Outcome::None,
             "sort" => {
                 self.sort = match self.sort {
                     Sort::Name => Sort::Author,
@@ -584,7 +615,7 @@ impl Roster {
         while grid.len() < total {
             let i = grid.len();
             grid.push(json!({
-                "index": i, "kind": "empty", "press": "", "name": "",
+                "index": i, "kind": "empty", "press": "empty", "name": "",
                 "face": "", "has_face": false, "warn": false, "broken": false,
             }));
         }
@@ -593,7 +624,12 @@ impl Roster {
 
     /// A player's card: their pick, else what their cursor is on.
     fn card_json(&self, side: usize, profile: &Profile) -> Value {
-        let hover = if side == 0 { self.hover } else { self.hover2 };
+        // one cursor picks every side; two cursors each fill their own card
+        let (hover, slot) = if self.dual() && side == 1 {
+            (self.hover2, self.hover_slot[1])
+        } else {
+            (self.hover, self.hover_slot[0])
+        };
         let cursor = if self.dual() {
             true
         } else {
@@ -601,6 +637,14 @@ impl Roster {
         };
         let cell = self.picks[side].or(if cursor { hover } else { None });
         let mut v = self.char_json(cell, profile);
+        // a cursor on an empty slot / the random cell: a blank card
+        let blank = match (self.picks[side], cursor, slot) {
+            (None, true, Slot::Empty) => "NO FIGHTER",
+            (None, true, Slot::Random) => "RANDOM",
+            _ => "",
+        };
+        v["blank"] = Value::from(!blank.is_empty());
+        v["blank_text"] = Value::from(blank);
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
             let online_foe = self.mode == Mode::Online && side == 1;
             v["status"] = Value::from(if self.human[side] {
@@ -822,6 +866,38 @@ mod tests {
                 std::fs::copy(e.path(), dst.join(e.file_name())).unwrap();
             }
         }
+    }
+
+    /// Cursors may rest on empty slots and the random cell: blank card, no pick.
+    #[test]
+    fn empty_slots_show_a_blank_card() {
+        let reference =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1");
+        if !reference.join("chars/kfm/kfm.def").exists() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("rugen-roster-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        copy_dir(&reference.join("chars/kfm"), &root.join("chars/kfm"));
+        copy_dir(&reference.join("data"), &root.join("data"));
+        let lib = Library::discover(Some(&root));
+        let mut r = Roster::new(Mode::Versus, &lib, 4);
+        let p = Profile::default();
+        assert_eq!(r.data(&p, "")["card1"]["present"], true);
+        // slot 0 = kfm, 1 = random, 2.. = empty
+        assert!(r.hover_order(5));
+        assert!(r.hover2_order(1));
+        let d = r.data(&p, "");
+        assert_eq!(d["card1"]["present"], false);
+        assert_eq!(d["card1"]["blank_text"], "NO FIGHTER");
+        assert_eq!(d["card2"]["blank_text"], "RANDOM");
+        assert_eq!(d["grid"][5]["press"], "empty");
+        assert!(matches!(r.action("empty"), Outcome::None));
+        assert!(r.picks == [None, None], "an empty slot picks nobody");
+        // back onto the fighter: the card fills in again
+        assert!(r.hover_order(0));
+        assert_eq!(r.data(&p, "")["card1"]["present"], true);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Online pick: one cursor, no CPU opponent, one press goes back to the matchup.
