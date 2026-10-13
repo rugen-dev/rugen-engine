@@ -126,7 +126,10 @@ later section while an earlier one has open boxes:
 
 ## Roadmap plan
 
-The *Planned* list in the README, with an approach for each. Build in this
+The *Planned* list in the README, with an approach for each. Screen
+mockups (ink theme) for every item with a UI are on the design canvas
+https://claude.ai/artifact/EzYKJY1QXwfNLLpncKHKrV, with local copies in
+`~/.cache/rugen-work/roadmap-mockups/`; build both themes from them. Build in this
 order; each item is one branch, with tests, docs (rugen.dev page plus README
 box) and screenshots.
 
