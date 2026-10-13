@@ -66,12 +66,8 @@ rugen play kfm        # a quick match against the computer
 - [x] **Dojo theme**: a lacquer-and-washi training hall.
 - [x] **Keyboard, gamepad and mouse**: with your own keys shown everywhere.
 - [x] **Server backups**: daily copies to any S3-compatible bucket.
-
-### Next (0.6.2)
-
-- [ ] **Sound fix**: earlier fighters' voices no longer play in later fights.
-- [ ] **One-way platforms**: jump up through them, double-tap down to drop.
-- [ ] **Arena AI**: CPU fighters stay on stage, recover and use platforms.
+- [x] **One-way platforms**: jump up through them, double-tap down to drop.
+- [x] **Arena AI**: CPU fighters stay on stage, recover and use platforms.
 
 ### Planned
 
