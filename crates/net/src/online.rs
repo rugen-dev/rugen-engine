@@ -42,7 +42,12 @@ impl Transfer {
         }
     }
 }
+use rugen_proto::API_HEADER;
 use serde_json::{Value, json};
+
+/// Every request says which lobby API it speaks ([`API_HEADER`]): servers
+/// serving several APIs keep players of different versions apart.
+const API: u32 = rugen_proto::API_VERSION;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OnlineError {
@@ -136,10 +141,10 @@ impl OnlineClient {
         let url = format!("{}{path}", self.base()?);
         let agent = self.agent();
         let res = match (method, body) {
-            ("GET", _) => agent.get(&url).call(),
-            ("DELETE", _) => agent.delete(&url).call(),
-            (_, Some(b)) => agent.post(&url).send_json(&b),
-            (_, None) => agent.post(&url).send_empty(),
+            ("GET", _) => agent.get(&url).header(API_HEADER, API).call(),
+            ("DELETE", _) => agent.delete(&url).header(API_HEADER, API).call(),
+            (_, Some(b)) => agent.post(&url).header(API_HEADER, API).send_json(&b),
+            (_, None) => agent.post(&url).header(API_HEADER, API).send_empty(),
         };
         let mut resp = res.map_err(|e| OnlineError::Http(format!("{url}: {e}")))?;
         let status = resp.status().as_u16();
@@ -405,6 +410,7 @@ impl OnlineClient {
             let res = self
                 .agent_with(Duration::from_secs(120))
                 .post(&url)
+                .header(API_HEADER, API)
                 .header("Content-Type", "application/octet-stream")
                 .send(&buf[..n]);
             let mut resp = match res {
@@ -489,7 +495,11 @@ impl OnlineClient {
             }
             progress.done.store(have, Ordering::Relaxed);
             let url = format!("{base}/pkg/{fp}/data?key={key}&offset={have}&len={CHUNK}");
-            let res = self.agent_with(Duration::from_secs(120)).get(&url).call();
+            let res = self
+                .agent_with(Duration::from_secs(120))
+                .get(&url)
+                .header(API_HEADER, API)
+                .call();
             let mut resp = match res {
                 Ok(r) => r,
                 Err(e) if retries < 5 => {

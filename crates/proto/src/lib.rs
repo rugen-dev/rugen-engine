@@ -23,6 +23,20 @@ use serde::{Deserialize, Serialize};
 /// cannot share fighters.
 pub const API_VERSION: u32 = 5;
 
+/// Request header carrying the client's [`API_VERSION`] on every HTTP call.
+/// Servers that serve several APIs ([`ServerInfo::api_min`]) treat a
+/// request without it as API 4 (clients up to 0.5 never sent it).
+pub const API_HEADER: &str = "X-Rugen-Api";
+
+/// The game release players know a lobby API by (for messages).
+pub fn release_of(api: u32) -> &'static str {
+    match api {
+        0..=4 => "0.5",
+        5 => "0.6",
+        _ => "a newer version",
+    }
+}
+
 /// Rank band name for a rating.
 pub fn rank_name(rating: i32) -> &'static str {
     match rating {
@@ -177,6 +191,27 @@ pub struct ServerInfo {
     /// The server claims to be the official one (API 4; verified by key).
     #[serde(default)]
     pub official: bool,
+    /// The oldest API the server still serves next to `api` (players of
+    /// different APIs never meet there). 0 from servers that serve `api`
+    /// only.
+    #[serde(default)]
+    pub api_min: u32,
+}
+
+impl ServerInfo {
+    /// The oldest API this server serves.
+    pub fn min_api(&self) -> u32 {
+        if self.api_min == 0 || self.api_min > self.api {
+            self.api
+        } else {
+            self.api_min
+        }
+    }
+
+    /// Whether clients of `api` can play here.
+    pub fn serves(&self, api: u32) -> bool {
+        (self.min_api()..=self.api).contains(&api)
+    }
 }
 
 /// Room rules chosen by the host.
@@ -247,6 +282,17 @@ pub struct RoomSummary {
     pub max_spectators: u8,
     pub locked: bool,
     pub in_match: bool,
+    /// The host's API on servers serving several ([`ServerInfo::api_min`]);
+    /// only players of the same API can join. 0 when the server does not say.
+    #[serde(default)]
+    pub api: u32,
+}
+
+impl RoomSummary {
+    /// Whether a client of `api` can join (unknown counts as yes).
+    pub fn joinable_by(&self, api: u32) -> bool {
+        self.api == 0 || self.api == api
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -447,6 +493,30 @@ mod tests {
             serde_json::from_str(r#"{"api":1,"name":"x","udp_port":7777,"online":0,"queued":0}"#)
                 .unwrap();
         assert!(i.udp.is_none() && i.motd.is_empty());
+    }
+
+    #[test]
+    fn servers_say_which_apis_they_serve() {
+        let info = |json: &str| serde_json::from_str::<ServerInfo>(json).unwrap();
+        // an API 4 server of the 0.5 era: 4 only
+        let old = info(r#"{"api":4,"name":"x","online":0,"queued":0}"#);
+        assert!(old.serves(4) && !old.serves(5));
+        // a transition server: 4 and 5
+        let both = info(r#"{"api":5,"api_min":4,"name":"x","online":0,"queued":0}"#);
+        assert!(both.serves(4) && both.serves(5) && !both.serves(6));
+        // nonsense api_min is ignored
+        let odd = info(r#"{"api":5,"api_min":9,"name":"x","online":0,"queued":0}"#);
+        assert!(odd.serves(5) && !odd.serves(4));
+        assert_eq!(release_of(4), "0.5");
+        assert_eq!(release_of(API_VERSION), "0.6");
+        // rooms of servers that do not say are joinable
+        let r: RoomSummary = serde_json::from_str(
+            r#"{"code":"A","name":"n","host":"h","rules":{},"players":1,"spectators":0,"max_spectators":2,"locked":false,"in_match":false}"#,
+        )
+        .unwrap();
+        assert!(r.joinable_by(API_VERSION));
+        let r = RoomSummary { api: 4, ..r };
+        assert!(!r.joinable_by(5) && r.joinable_by(4));
     }
 
     #[test]
