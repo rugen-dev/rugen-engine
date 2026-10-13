@@ -1025,7 +1025,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "hbox"
-      visible = "item.on"
+      visible = "item.open"
       when = "focus"
       anchor = "right"
       x = 16
@@ -1038,19 +1038,43 @@ color = [1.0, 1.0, 1.0, 1.0]
 
         [[node.children.children.children.children]]
         kind = "text"
-        visible = "item.open"
         h = 32
         align = "center"
         bank = 11
         color = [0.784, 0.063, 0.102, 1.0]
         font = 1
-        pad = 10
+        pad = 12
         scale = 1
-        text = "ENTER JOIN"
+        text = "JOIN"
 
         [[node.children.children.children.children]]
         kind = "text"
-        visible = "item.full"
+        visible = "item.can_watch"
+        h = 32
+        align = "center"
+        bank = 9
+        border = 3
+        border_color = [0.078, 0.071, 0.063, 1.0]
+        color = [1.0, 1.0, 1.0, 1.0]
+        font = 1
+        pad = 12
+        scale = 1
+        text = "WATCH"
+
+      [[node.children.children.children]]
+      kind = "hbox"
+      visible = "item.full"
+      anchor = "right"
+      x = 16
+      y = 0
+      w = 176
+      h = 64
+      align = "center"
+      gap = 8
+      justify = "end"
+
+        [[node.children.children.children.children]]
+        kind = "text"
         alpha = 0.72
         bank = 9
         font = 1
