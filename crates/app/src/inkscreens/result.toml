@@ -1,5 +1,5 @@
 # rugen RESULT — Shonen Ink theme (UI book P.06). Coordinates are 1280x720.
-# Data: winner, winner_art, has_art, draw, quote, stats[] {label value},
+# Data: winner, winner_line (NAME WINS), winner_big / winner_small, winner_art, has_art, draw, quote, stats[] {label value},
 # loser {name art has_art}, menu[] {id label action}, rounds, rating.
 background = [0.95, 0.94, 0.89, 1.0]
 exit_time = 8
@@ -79,10 +79,11 @@ enter_delay = 10
   font = 2
   bank = 9
 
+# who won, on the slab under the portrait (smaller for long names)
 [[node]]
 kind = "text"
 dock = "left"
-text = "{winner_up}"
+text = "{winner_line}"
 x = 40
 y = 620
 h = 64
@@ -94,7 +95,27 @@ font = 1
 scale = 4
 bank = 11
 angle = -3
-visible = "!draw"
+visible = "winner_big"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+[[node]]
+kind = "text"
+dock = "left"
+text = "{winner_line}"
+x = 40
+y = 636
+h = 48
+pad = 26
+color = [0.07, 0.07, 0.07, 1.0]
+outline = [1.0, 1.0, 1.0, 1.0]
+outline_w = 4
+font = 1
+scale = 2
+bank = 11
+angle = -3
+visible = "winner_small"
 enter = "left"
 enter_time = 14
 enter_delay = 6
@@ -167,7 +188,7 @@ enter_time = 16
   [[node.children]]
   kind = "image"
   image = "{loser.art}"
-  x = 258
+  x = 230
   y = 316
   w = 64
   h = 64
@@ -180,7 +201,7 @@ enter_time = 16
   [[node.children]]
   kind = "text"
   text = "LOSE"
-  x = 334
+  x = 306
   y = 330
   h = 34
   pad = 10

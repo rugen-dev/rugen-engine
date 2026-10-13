@@ -786,6 +786,9 @@ impl UiScreen {
                     json!({
                         "headline": headline,
                         "winner_up": winner_name.to_uppercase(),
+                        "winner_line": format!("{} WINS", winner_name.to_uppercase()),
+                        "winner_big": w.is_some() && winner_name.chars().count() <= 12,
+                        "winner_small": w.is_some() && winner_name.chars().count() > 12,
                         "winner": winner_name,
                         "winner_art": w.map(|i| format!("mem:p{}", i + 1)).unwrap_or_default(),
                         "has_art": has_art,
