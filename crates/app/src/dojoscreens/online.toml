@@ -27,6 +27,10 @@
 # side mine fighters netplay), toast.* (show title body retry error), dialog.*
 # (show kicker title body primary primary_action secondary secondary_action
 # has_secondary input), mx.* (matchup, below).
+# Focus (mouse hover moves it like the keys): buttons become the vermilion
+# plaque in a brass edge over a lacquer shadow (primaries rest on lacquer in a
+# vermilion edge), cards get the brass frame and a vermilion bar, rows tint
+# with the bar, inputs and choices get a thick vermilion edge and a shadow.
 background = [0.078, 0.051, 0.043, 1.0]
 
 [[node]]
@@ -90,16 +94,37 @@ gap = 12
 items = "servers"
 
   [[node.children]]
+  kind = "panel"
+  visible = "item.selected"
+  x = 6
+  y = 6
+  w = 520
+  h = 68
+  color = [0.635, 0.4, 0.227, 1.0]
+
+  [[node.children]]
   kind = "button"
   id = "row"
   visible = "item.on"
-  selected = "item.selected"
   w = 520
   h = 68
   on_press = "{item.action}"
+  shadow_focus = [8, 8]
   image = "ui/sheet9.webp"
   image_focus = "ui/sheet9_lit.webp"
   nine = [12, 12, 12, 12]
+  border = 4
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    when = "focus"
+    x = 0
+    y = 0
+    w = 10
+    h = 68
+    color = [0.706, 0.188, 0.102, 1.0]
 
     [[node.children.children]]
     kind = "hbox"
@@ -161,15 +186,23 @@ items = "servers"
   kind = "button"
   id = "row"
   visible = "item.off"
-  selected = "item.selected"
   w = 520
   h = 68
   border = 4
   border_color = [0.635, 0.4, 0.227, 1.0]
-  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.341, 0.2, 0.122, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
-  color_focus = [0.839, 0.769, 0.627, 1.0]
+  color_focus = [0.769, 0.69, 0.545, 1.0]
   on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "panel"
+    when = "focus"
+    x = 0
+    y = 0
+    w = 10
+    h = 68
+    color = [0.635, 0.4, 0.227, 1.0]
 
     [[node.children.children]]
     kind = "hbox"
@@ -241,13 +274,14 @@ items = "servers"
   bank_focus = 14
   border = 3
   border_color = [0.635, 0.4, 0.227, 1.0]
-  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
   color = [0.0, 0.0, 0.0, 0.0]
-  color_focus = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   font = 6
   on_press = "{item.action}"
   pad = 16
   text = "+ ADD SERVER"
+  shadow_focus = [6, 6]
 
 [[node]]
 kind = "panel"
@@ -493,9 +527,13 @@ nine = [12, 12, 12, 12]
     font = 6
     on_press = "retry:servers"
     text = "RETRY"
-    image = "ui/plaque9_red.webp"
+    shadow_focus = [6, 6]
+    image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
     [[node.children.children]]
     kind = "button"
@@ -510,9 +548,13 @@ nine = [12, 12, 12, 12]
     font = 6
     on_press = "server:{index}"
     text = "WHY?"
+    shadow_focus = [6, 6]
     image = "ui/plaque9.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.0, 0.0, 0.0, 0.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "text"
@@ -539,9 +581,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "hub:quick"
   text = "QUICK MATCH"
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -556,9 +602,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "hub:ranked"
   text = "RANKED"
+  shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -573,9 +623,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "hub:lobby"
   text = "ROOMS"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -590,9 +644,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "hub:board"
   text = "LEADERBOARD"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "text"
@@ -671,13 +729,14 @@ bank = 14
 bank_focus = 14
 border = 3
 border_color = [0.635, 0.4, 0.227, 1.0]
-border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_color_focus = [0.89, 0.702, 0.298, 1.0]
 color = [0.0, 0.0, 0.0, 0.0]
-color_focus = [0.976, 0.945, 0.871, 1.0]
+color_focus = [0.706, 0.188, 0.102, 1.0]
 font = 2
 on_press = "online:lan"
 pad = 10
 text = "LAN / DIRECT IP"
+shadow_focus = [4, 4]
 
   [[node.children]]
   kind = "keycap"
@@ -708,9 +767,13 @@ bank_focus = 14
 font = 6
 on_press = "online:create"
 text = "CREATE ROOM"
-image = "ui/plaque9_red.webp"
+shadow_focus = [6, 6]
+image = "ui/plaque9_dark.webp"
 image_focus = "ui/plaque9_lit.webp"
 nine = [8, 8, 8, 10]
+border = 3
+border_color = [0.706, 0.188, 0.102, 1.0]
+border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "button"
@@ -725,9 +788,13 @@ bank_focus = 14
 font = 6
 on_press = "online:join"
 text = "JOIN BY CODE"
+shadow_focus = [6, 6]
 image = "ui/plaque9.webp"
 image_focus = "ui/plaque9_lit.webp"
 nine = [8, 8, 8, 10]
+border = 3
+border_color = [0.0, 0.0, 0.0, 0.0]
+border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "panel"
@@ -801,8 +868,11 @@ nine = [12, 12, 12, 12]
     id = "row"
     w = 1176
     h = 64
+    border = 3
+    border_color = [0.0, 0.0, 0.0, 0.0]
+    border_color_focus = [0.706, 0.188, 0.102, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
-    color_focus = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [0.957, 0.788, 0.62, 1.0]
     on_press = "{item.action}"
 
       [[node.children.children.children]]
@@ -818,7 +888,7 @@ nine = [12, 12, 12, 12]
       when = "focus"
       x = 0
       y = 0
-      w = 8
+      w = 10
       h = 64
       color = [0.706, 0.188, 0.102, 1.0]
 
@@ -1270,9 +1340,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "room:copy"
   text = "COPY CODE"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "text"
@@ -1552,9 +1626,13 @@ justify = "end"
   grow = true
   on_press = "room:rematch"
   text = "REMATCH"
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -1567,9 +1645,13 @@ justify = "end"
   font = 6
   on_press = "room:kick"
   text = "KICK"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -1581,9 +1663,13 @@ justify = "end"
   font = 6
   on_press = "back"
   text = "LEAVE"
+  shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "panel"
@@ -1615,8 +1701,10 @@ nine = [12, 12, 12, 12]
   border = 4
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 5
   caret = [0.706, 0.188, 0.102, 1.0]
   color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [1.0, 0.925, 0.8, 1.0]
   font = 6
   max_len = 24
   on_change = "room_name:{value}"
@@ -1624,6 +1712,7 @@ nine = [12, 12, 12, 12]
   pad = 16
   placeholder = "NAME YOUR ROOM"
   value = "create.name"
+  shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -1653,8 +1742,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:rounds:-"
@@ -1665,6 +1756,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.rounds_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1686,8 +1778,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:time:-"
@@ -1698,6 +1792,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.times_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1719,8 +1814,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:mode:-"
@@ -1731,6 +1828,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.modes_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1752,8 +1850,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:chars:-"
@@ -1764,6 +1864,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.chars_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1785,8 +1886,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:size:-"
@@ -1797,6 +1900,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.sizes_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1818,8 +1922,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:public:-"
@@ -1830,6 +1936,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.joins_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1851,8 +1958,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "form:spect:-"
@@ -1863,6 +1972,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "create.spects_sel"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1883,13 +1993,16 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 5
   caret = [0.706, 0.188, 0.102, 1.0]
   color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [1.0, 0.925, 0.8, 1.0]
   font = 6
   max_len = 32
   on_change = "room_password:{value}"
   on_press = "form:go"
   pad = 12
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -1978,9 +2091,13 @@ bank_focus = 14
 font = 3
 on_press = "form:go"
 text = "CREATE"
-image = "ui/plaque9_red.webp"
+shadow_focus = [6, 6]
+image = "ui/plaque9_dark.webp"
 image_focus = "ui/plaque9_lit.webp"
 nine = [8, 8, 8, 10]
+border = 3
+border_color = [0.706, 0.188, 0.102, 1.0]
+border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "panel"
@@ -2341,14 +2458,17 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 5
   caret = [0.706, 0.188, 0.102, 1.0]
   color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [1.0, 0.925, 0.8, 1.0]
   font = 6
   mask = "join.need_password"
   max_len = 32
   on_change = "pw:{value}"
   on_press = "join:join"
   pad = 12
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "button"
@@ -2362,9 +2482,13 @@ nine = [12, 12, 12, 12]
   font = 3
   on_press = "join:join"
   text = "JOIN"
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -2378,9 +2502,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "join:watch"
   text = "WATCH"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 # ---- PROFILE: one card per server (left), its account (right)
 [[node]]
@@ -2395,16 +2523,37 @@ gap = 12
 items = "accts"
 
   [[node.children]]
+  kind = "panel"
+  visible = "item.selected"
+  x = 6
+  y = 6
+  w = 494
+  h = 84
+  color = [0.635, 0.4, 0.227, 1.0]
+
+  [[node.children]]
   kind = "button"
   id = "card"
   visible = "item.on"
-  selected = "item.selected"
   w = 494
   h = 84
   on_press = "{item.action}"
+  shadow_focus = [8, 8]
   image = "ui/sheet9.webp"
   image_focus = "ui/sheet9_lit.webp"
   nine = [12, 12, 12, 12]
+  border = 4
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    when = "focus"
+    x = 0
+    y = 0
+    w = 10
+    h = 84
+    color = [0.706, 0.188, 0.102, 1.0]
 
     [[node.children.children]]
     kind = "hbox"
@@ -2481,15 +2630,23 @@ items = "accts"
   kind = "button"
   id = "card"
   visible = "item.off"
-  selected = "item.selected"
   w = 494
   h = 84
   border = 4
   border_color = [0.635, 0.4, 0.227, 1.0]
-  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.341, 0.2, 0.122, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
-  color_focus = [0.839, 0.769, 0.627, 1.0]
+  color_focus = [0.769, 0.69, 0.545, 1.0]
   on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "panel"
+    when = "focus"
+    x = 0
+    y = 0
+    w = 10
+    h = 84
+    color = [0.635, 0.4, 0.227, 1.0]
 
     [[node.children.children]]
     kind = "text"
@@ -2614,9 +2771,13 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:password"
       text = "CHANGE PASSWORD"
+      shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -2628,9 +2789,13 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:logout"
       text = "LOG OUT"
+      shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -2642,9 +2807,13 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:logout_all"
       text = "LOG OUT EVERYWHERE"
+      shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
     [[node.children.children]]
     kind = "button"
@@ -2659,9 +2828,13 @@ nine = [12, 12, 12, 12]
     font = 3
     on_press = "acct:enter"
     text = "ENTER SERVER"
-    image = "ui/plaque9_red.webp"
+    shadow_focus = [6, 6]
+    image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "panel"
@@ -2691,9 +2864,13 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "{acct.tab0.action}"
       text = "{acct.tab0.label}"
+      shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -2702,15 +2879,16 @@ nine = [12, 12, 12, 12]
       w = 230
       h = 44
       bank = 12
-      bank_focus = 12
-      border = 0
-      border_color = [0.341, 0.2, 0.122, 1.0]
-      border_color_focus = [0.706, 0.188, 0.102, 1.0]
+      bank_focus = 14
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
       color = [0.0, 0.0, 0.0, 0.0]
-      color_focus = [0.976, 0.945, 0.871, 1.0]
+      color_focus = [0.706, 0.188, 0.102, 1.0]
       font = 2
       on_press = "{acct.tab0.action}"
       text = "{acct.tab0.label}"
+      shadow_focus = [6, 6]
 
       [[node.children.children.children]]
       kind = "button"
@@ -2723,9 +2901,13 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "{acct.tab1.action}"
       text = "{acct.tab1.label}"
+      shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -2734,15 +2916,16 @@ nine = [12, 12, 12, 12]
       w = 130
       h = 44
       bank = 12
-      bank_focus = 12
-      border = 0
-      border_color = [0.341, 0.2, 0.122, 1.0]
-      border_color_focus = [0.706, 0.188, 0.102, 1.0]
+      bank_focus = 14
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
       color = [0.0, 0.0, 0.0, 0.0]
-      color_focus = [0.976, 0.945, 0.871, 1.0]
+      color_focus = [0.706, 0.188, 0.102, 1.0]
       font = 2
       on_press = "{acct.tab1.action}"
       text = "{acct.tab1.label}"
+      shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -2782,13 +2965,16 @@ nine = [12, 12, 12, 12]
     border = 3
     border_color = [0.341, 0.2, 0.122, 1.0]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_focus = 5
     caret = [0.706, 0.188, 0.102, 1.0]
     color = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [1.0, 0.925, 0.8, 1.0]
     font = 6
     max_len = 16
     on_change = "acct_user:{value}"
     on_press = "acct:next:user"
     pad = 12
+    shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -2820,14 +3006,17 @@ nine = [12, 12, 12, 12]
     border = 3
     border_color = [0.341, 0.2, 0.122, 1.0]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_focus = 5
     caret = [0.706, 0.188, 0.102, 1.0]
     color = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [1.0, 0.925, 0.8, 1.0]
     font = 6
     mask = "acct.masked"
     max_len = 128
     on_change = "acct_pass:{value}"
     on_press = "acct:next:pass"
     pad = 12
+    shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -2850,14 +3039,17 @@ nine = [12, 12, 12, 12]
     border = 3
     border_color = [0.341, 0.2, 0.122, 1.0]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_focus = 5
     caret = [0.706, 0.188, 0.102, 1.0]
     color = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [1.0, 0.925, 0.8, 1.0]
     font = 6
     mask = "acct.masked"
     max_len = 128
     on_change = "acct_pass:{value}"
     on_press = "acct:next:pass"
     pad = 12
+    shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -2880,14 +3072,17 @@ nine = [12, 12, 12, 12]
     border = 3
     border_color = [0.341, 0.2, 0.122, 1.0]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_focus = 5
     caret = [0.706, 0.188, 0.102, 1.0]
     color = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [1.0, 0.925, 0.8, 1.0]
     font = 6
     mask = "acct.masked"
     max_len = 128
     on_change = "acct_new:{value}"
     on_press = "acct:next:new"
     pad = 12
+    shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "text"
@@ -2910,14 +3105,17 @@ nine = [12, 12, 12, 12]
     border = 3
     border_color = [0.341, 0.2, 0.122, 1.0]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_focus = 5
     caret = [0.706, 0.188, 0.102, 1.0]
     color = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [1.0, 0.925, 0.8, 1.0]
     font = 6
     mask = "acct.masked"
     max_len = 128
     on_change = "acct_again:{value}"
     on_press = "acct:next:again"
     pad = 12
+    shadow_focus = [6, 6]
 
     [[node.children.children]]
     kind = "button"
@@ -2927,15 +3125,16 @@ nine = [12, 12, 12, 12]
     w = 96
     h = 26
     bank = 12
-    bank_focus = 12
+    bank_focus = 14
     border = 2
     border_color = [0.341, 0.2, 0.122, 1.0]
-    border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
-    color_focus = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [0.706, 0.188, 0.102, 1.0]
     font = 2
     on_press = "acct:show"
     text = "{acct.show_label}"
+    shadow_focus = [4, 4]
 
     [[node.children.children]]
     kind = "text"
@@ -3022,9 +3221,13 @@ nine = [12, 12, 12, 12]
       grow = true
       on_press = "acct:submit"
       text = "{acct.submit}"
-      image = "ui/plaque9_red.webp"
+      shadow_focus = [6, 6]
+      image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.706, 0.188, 0.102, 1.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -3037,9 +3240,13 @@ nine = [12, 12, 12, 12]
       font = 6
       on_press = "acct:cancel_password"
       text = "CANCEL"
+      shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
       [[node.children.children.children]]
       kind = "button"
@@ -3052,9 +3259,13 @@ nine = [12, 12, 12, 12]
       font = 6
       on_press = "acct:enter"
       text = "ENTER"
+      shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
       nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "panel"
@@ -3101,9 +3312,13 @@ nine = [12, 12, 12, 12]
     font = 3
     on_press = "acct:enter"
     text = "ENTER SERVER"
-    image = "ui/plaque9_red.webp"
+    shadow_focus = [6, 6]
+    image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "text"
@@ -3201,9 +3416,21 @@ nine = [12, 12, 12, 12]
     id = "row"
     w = 1176
     h = 48
+    border = 3
+    border_color = [0.0, 0.0, 0.0, 0.0]
+    border_color_focus = [0.706, 0.188, 0.102, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
-    color_focus = [0.976, 0.945, 0.871, 1.0]
+    color_focus = [0.957, 0.788, 0.62, 1.0]
     on_press = "board:row"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      when = "focus"
+      x = 0
+      y = 0
+      w = 10
+      h = 48
+      color = [0.706, 0.188, 0.102, 1.0]
 
       [[node.children.children.children]]
       kind = "panel"
@@ -3444,9 +3671,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "online:cancel"
   text = "CANCEL"
+  shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 [[node]]
 kind = "panel"
@@ -3477,8 +3708,10 @@ nine = [12, 12, 12, 12]
   border = 3
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
   color = [0.976, 0.945, 0.871, 1.0]
-  color2 = [0.706, 0.188, 0.102, 1.0]
+  color2 = [0.227, 0.137, 0.094, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
   focus = true
   font = 6
   on_left = "direct_side:-"
@@ -3489,6 +3722,7 @@ nine = [12, 12, 12, 12]
   text_color = [0.114, 0.09, 0.078, 1.0]
   text_color_focus = [0.976, 0.945, 0.871, 1.0]
   value = "direct.side"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -3535,14 +3769,17 @@ nine = [12, 12, 12, 12]
   border = 4
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 5
   caret = [0.706, 0.188, 0.102, 1.0]
   color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [1.0, 0.925, 0.8, 1.0]
   font = 6
   max_len = 40
   on_change = "addr:{value}"
   on_press = "direct:go"
   pad = 14
   placeholder = "E.G. 192.168.1.20"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "text"
@@ -3574,9 +3811,13 @@ nine = [12, 12, 12, 12]
   font = 3
   on_press = "direct:go"
   text = "START"
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -3591,9 +3832,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "netplay"
   text = "NETPLAY (RUGEN.TOML)"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 # ---- MATCHUP (bring your own character): stat face-off. Top row: both
 # fighters (portrait, YOU / OPPONENT, name, author, rating) and the server's
@@ -5209,9 +5454,13 @@ justify = "end"
   h = 52
   font = 6
   hover_scale = 1.04
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -5225,9 +5474,13 @@ justify = "end"
   h = 52
   font = 6
   hover_scale = 1.04
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -5240,9 +5493,13 @@ justify = "end"
   h = 52
   font = 6
   hover_scale = 1.04
+  shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
 # key hints (data-driven: only keys that work)
 [[node]]
@@ -5630,9 +5887,13 @@ top = true
     font = 6
     on_press = "toast:retry"
     text = "RETRY"
-    image = "ui/plaque9_red.webp"
+    shadow_focus = [4, 4]
+    image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
     [[node.children.children]]
     kind = "button"
@@ -5643,12 +5904,13 @@ top = true
     bank_focus = 14
     border = 2
     border_color = [0.722, 0.627, 0.494, 1.0]
-    border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
-    color_focus = [0.933, 0.882, 0.769, 0.15]
+    color_focus = [0.706, 0.188, 0.102, 1.0]
     font = 6
     on_press = "toast:dismiss"
     text = "DISMISS"
+    shadow_focus = [4, 4]
 
 # dialog: another version, remove / add a server (keeps the focus)
 [[node]]
@@ -5739,14 +6001,17 @@ nine = [12, 12, 12, 12]
   border = 4
   border_color = [0.341, 0.2, 0.122, 1.0]
   border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 5
   caret = [0.706, 0.188, 0.102, 1.0]
   color = [0.976, 0.945, 0.871, 1.0]
+  color_focus = [1.0, 0.925, 0.8, 1.0]
   font = 6
   max_len = 80
   on_change = "server_addr:{value}"
   on_press = "server_add"
   pad = 14
   placeholder = "PLAY.EXAMPLE.COM"
+  shadow_focus = [6, 6]
 
   [[node.children]]
   kind = "button"
@@ -5760,9 +6025,13 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "{dialog.primary_action}"
   text = "{dialog.primary}"
-  image = "ui/plaque9_red.webp"
+  shadow_focus = [6, 6]
+  image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]
   kind = "button"
@@ -5777,6 +6046,10 @@ nine = [12, 12, 12, 12]
   font = 6
   on_press = "{dialog.secondary_action}"
   text = "{dialog.secondary}"
+  shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
   nine = [8, 8, 8, 10]
+  border = 3
+  border_color = [0.0, 0.0, 0.0, 0.0]
+  border_color_focus = [0.89, 0.702, 0.298, 1.0]
