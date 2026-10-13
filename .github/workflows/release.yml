@@ -1,9 +1,9 @@
 # Release builds, tags only (free tier). One job per OS, several targets
 # per job (Windows / macOS runners bill 2x / 10x minutes).
 name: Release
+# Manual only: releases are built locally with scripts/release-local.sh; run
+# this by hand on a tag when the Windows and macOS packages are needed.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 env:

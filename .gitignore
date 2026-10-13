@@ -19,3 +19,4 @@ rugen.toml
 replays/
 profile.json
 .claude/
+/dist/
