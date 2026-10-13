@@ -176,12 +176,15 @@ later section while an earlier one has open boxes:
 
 ## Docs and repo
 
-- [ ] **Fresh screenshots** of the Dojo and Ink themes for the docs themes
-  page and the README.
-- [ ] **`motif/STYLE.md`** still describes the old pixel-art Dojo; update it
+- [x] **Fresh screenshots** of the Dojo and Ink themes for the docs themes
+  page and the README. (no commit) Title, fighter select, stage select,
+  fight, arena, online hub, host stage pick and matchup in both themes, in
+  `~/.cache/rugen-work/polish/shots/` (1600x900); the README embeds no
+  screenshots and the themes page lives in rugen-docs.
+- [x] **`motif/STYLE.md`** (6c579a0) still describes the old pixel-art Dojo; update it
   to the current themes.
-- [ ] **`stages/README.md`** still shows the old `[Arena]` numbers.
-- [ ] **CONTRIBUTING.md** with the dual-licence clause ("contributions are
+- [x] **`stages/README.md`** (4aa13ed) still shows the old `[Arena]` numbers.
+- [x] **CONTRIBUTING.md** (15b6528) with the dual-licence clause ("contributions are
   licensed MIT OR Apache-2.0"), commit format, checks to run and "no
   copyrighted content in pull requests"; plus a pull-request template.
 
