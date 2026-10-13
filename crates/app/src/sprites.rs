@@ -42,6 +42,21 @@ pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Upl
     (tex, pal)
 }
 
+/// The blend an AIR frame asks for (`A`, `A1`, `S`, `AS<n>D<n>`).
+pub fn air_blend(f: &Frame) -> Blend {
+    match f.blend {
+        AirBlend::None => Blend::Alpha,
+        AirBlend::Add => Blend::Add {
+            src: f.src_alpha,
+            dst: f.dst_alpha,
+        },
+        AirBlend::Sub | AirBlend::SubAdd => Blend::Sub {
+            src: f.src_alpha,
+            dst: f.dst_alpha,
+        },
+    }
+}
+
 /// Uploaded sprite: texture, palette, axis, size.
 #[derive(Clone, Copy, Debug)]
 pub struct Placed {
@@ -121,17 +136,7 @@ impl SpriteSheet {
         d.scale = [scale[0] * f.xscale, scale[1] * f.yscale];
         d.hflip = (facing < 0.0) != f.hflip;
         d.vflip = f.vflip;
-        d.blend = match f.blend {
-            AirBlend::None => Blend::Alpha,
-            AirBlend::Add => Blend::Add {
-                src: f.src_alpha,
-                dst: f.dst_alpha,
-            },
-            AirBlend::Sub | AirBlend::SubAdd => Blend::Sub {
-                src: f.src_alpha,
-                dst: f.dst_alpha,
-            },
-        };
+        d.blend = air_blend(f);
         r.draw(d);
     }
 }

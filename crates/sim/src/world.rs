@@ -1521,7 +1521,9 @@ impl World {
             e.trans = t;
         }
         if let Some(v) = two(self, &spec.alpha) {
-            e.alpha = [v[0] as i32, v[1] as i32];
+            // a fade computed below 0 (`alpha = 256 - time*32`) is gone, not
+            // back at full strength: clamp like Ikemen (the -1 default = not given)
+            e.alpha = [(v[0] as i32).clamp(0, 255), (v[1] as i32).clamp(0, 255)];
         }
         if let Some(c) = &spec.angle {
             e.angle = self.eval(i, c).to_f();
@@ -4150,6 +4152,40 @@ mod tests {
             "held in the air by PosSet, not walked off"
         );
         assert_eq!(p.pos[1], -50.0);
+    }
+
+    /// An explod fading out by ModifyExplod (Goku: `alpha = 256-(time*32)`)
+    /// ends at 0, it does not jump back to full strength once the expression
+    /// goes below 0 (negative alphas used to read as "not given" = 255).
+    #[test]
+    fn explod_alpha_below_zero_is_faded_out() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n\
+                 [State 1001, e]\ntype = Explod\ntrigger1 = time = 0\nanim = 0\nid = 5\n\
+                 removetime = -1\ntrans = addalpha\nalpha = 256, 256\n\
+                 [State 1001, m]\ntype = ModifyExplod\ntrigger1 = time > 0\nid = 5\n\
+                 trans = addalpha\nalpha = 256 - time * 32, 256\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d, 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1001, None, None);
+        let alpha = |w: &World| {
+            w.explods
+                .iter()
+                .find(|e| !e.removed && e.id == 5)
+                .map(|e| e.alpha)
+                .expect("explod 5 exists")
+        };
+        run(&mut w, 1, Buttons::default());
+        assert_eq!(alpha(&w), [255, 255], "256 is full strength");
+        run(&mut w, 13, Buttons::default());
+        assert_eq!(alpha(&w), [0, 255], "faded out, not back at 255");
     }
 
     fn arena_world() -> Option<World> {

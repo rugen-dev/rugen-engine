@@ -274,6 +274,7 @@ impl App {
             d.hflip = frame.hflip;
             d.vflip = frame.vflip;
             d.scale = [frame.xscale, frame.yscale];
+            d.blend = crate::sprites::air_blend(&frame);
             r.draw(d);
         }
         if self.show_boxes {

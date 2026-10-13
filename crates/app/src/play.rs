@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use rugen_audio::{Audio, BankId, SoundKey};
-use rugen_formats::air::Blend as AirBlend;
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::explod::{AnimSrc, Trans};
@@ -98,17 +97,7 @@ struct Item {
 fn resolve_blend(frame: &rugen_formats::air::Frame, trans: Trans, alpha: [i32; 2]) -> Blend {
     let a = |v: i32, def: u8| if v < 0 { def } else { v.min(255) as u8 };
     match trans {
-        Trans::Default => match frame.blend {
-            AirBlend::None => Blend::Alpha,
-            AirBlend::Add => Blend::Add {
-                src: frame.src_alpha,
-                dst: frame.dst_alpha,
-            },
-            AirBlend::Sub | AirBlend::SubAdd => Blend::Sub {
-                src: frame.src_alpha,
-                dst: frame.dst_alpha,
-            },
-        },
+        Trans::Default => crate::sprites::air_blend(frame),
         Trans::None => Blend::Alpha,
         Trans::Add => Blend::Add { src: 255, dst: 255 },
         Trans::Add1 => Blend::Add { src: 255, dst: 128 },
@@ -2097,6 +2086,60 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Goku's ki blasts: AIR flags reach the draw (players, helpers,
+    /// explods, projectiles and afterimages all resolve through here), the
+    /// `Trans` controller wins over them, and a faded-out explod alpha (0)
+    /// stays faded.
+    #[test]
+    fn effect_blends_reach_the_draw() {
+        let air = rugen_formats::air::Air::parse(
+            "[Begin Action 410]\n411,0, 0,0, 2, , A\n411,1, 0,0, 2,, A1\n\
+             420,8, 0,0, 2,, S\n450,2, 0,0, 3,, AS200D256\n415,0, 0,0, 1\n",
+        );
+        let f = |i: usize| air.get(410).expect("action 410").frames[i].clone();
+        let none = [-1, 0];
+        assert_eq!(
+            resolve_blend(&f(0), Trans::Default, none),
+            Blend::Add { src: 255, dst: 255 }
+        );
+        assert_eq!(
+            resolve_blend(&f(1), Trans::Default, none),
+            Blend::Add { src: 255, dst: 128 }
+        );
+        assert_eq!(
+            resolve_blend(&f(2), Trans::Default, none),
+            Blend::Sub { src: 255, dst: 255 }
+        );
+        assert_eq!(
+            resolve_blend(&f(3), Trans::Default, none),
+            Blend::Add { src: 200, dst: 255 }
+        );
+        assert_eq!(resolve_blend(&f(4), Trans::Default, none), Blend::Alpha);
+        // Trans = add on a frame without flags, Trans = sub over an A frame
+        assert_eq!(
+            resolve_blend(&f(4), Trans::Add, none),
+            Blend::Add { src: 255, dst: 255 }
+        );
+        assert_eq!(
+            resolve_blend(&f(0), Trans::Sub, none),
+            Blend::Sub { src: 255, dst: 255 }
+        );
+        assert_eq!(
+            resolve_blend(&f(4), Trans::AddAlpha, [156, 255]),
+            Blend::Add { src: 156, dst: 255 }
+        );
+        assert_eq!(
+            resolve_blend(&f(4), Trans::AddAlpha, [0, 255]),
+            Blend::Add { src: 0, dst: 255 },
+            "a faded explod stays faded"
+        );
+        assert_eq!(
+            resolve_blend(&f(4), Trans::AddAlpha, none),
+            Blend::Add { src: 255, dst: 0 },
+            "addalpha without alpha"
+        );
+    }
 
     fn press(f: impl Fn(&mut Buttons)) -> Buttons {
         let mut b = Buttons::default();
