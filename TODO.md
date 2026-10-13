@@ -207,7 +207,7 @@ box) and screenshots.
 - [x] **Hitbox display.** (3af85f0) Toggle in the Training pause menu and on a key
   (F1). Draw Clsn1 red and Clsn2 blue from the sim's current frame, after the
   sprite, with the fighter-size zoom applied. Off in every other mode.
-- [ ] **Frame data.** For the last move, show startup / active / recovery and
+- [x] **Frame data.** (47e77cc) For the last move, show startup / active / recovery and
   advantage on hit and block, measured live from the sim (first frame with a
   Clsn1, last one, return to ctrl). Small panel in the corner, both fighters.
 - [ ] **Input display.** A scrolling column per player with the direction
