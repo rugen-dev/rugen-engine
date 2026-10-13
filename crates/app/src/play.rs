@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use rugen_audio::{Audio, SoundKey};
+use rugen_audio::{Audio, BankId, SoundKey};
 use rugen_formats::air::Blend as AirBlend;
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
@@ -211,8 +211,100 @@ impl EarlyEnd {
 /// Ticks the "opponent fled" victory stays up (skippable after a second).
 const EARLY_LINGER: u32 = 300;
 
+/// Sound banks of one fight: each loaded fighter, the common sounds and the
+/// announcer own their samples, so nothing cached by an earlier fight (or an
+/// earlier version of a hot-reloaded fighter) answers this fight's PlaySnd.
+#[derive(Debug)]
+pub struct SoundBanks {
+    common: BankId,
+    announcer: BankId,
+    /// One per `world.data` slot.
+    chars: Vec<BankId>,
+}
+
+impl SoundBanks {
+    pub fn new() -> Self {
+        Self {
+            common: rugen_audio::new_bank(),
+            announcer: rugen_audio::new_bank(),
+            chars: Vec::new(),
+        }
+    }
+
+    /// The bank of data slot `d` (fresh on first use).
+    fn char_bank(&mut self, d: usize) -> BankId {
+        while self.chars.len() <= d {
+            self.chars.push(rugen_audio::new_bank());
+        }
+        self.chars[d]
+    }
+
+    /// Slot `d` now holds different data (hot reload).
+    fn renew(&mut self, d: usize) {
+        self.char_bank(d);
+        self.chars[d] = rugen_audio::new_bank();
+    }
+}
+
+impl Default for SoundBanks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Which bank and bytes a sound event refers to: the announcer's fight.snd,
+/// the player's own `.snd` (`own`, PlaySnd without `F`), or common.snd.
+pub fn resolve_sound<'w>(
+    world: &'w World,
+    banks: &mut SoundBanks,
+    player: usize,
+    own: bool,
+    announcer: bool,
+    group: i32,
+    number: i32,
+) -> (SoundKey, Option<&'w [u8]>) {
+    let (bank, bytes) = if announcer {
+        (
+            banks.announcer,
+            world
+                .fx
+                .as_ref()
+                .and_then(|f| f.fight_snd.as_ref())
+                .and_then(|s| s.get(group, number)),
+        )
+    } else if own {
+        let d = world.players[player].data;
+        (
+            banks.char_bank(d),
+            world.data[d]
+                .snd
+                .as_ref()
+                .and_then(|s| s.get(group, number)),
+        )
+    } else {
+        (
+            banks.common,
+            world
+                .fx
+                .as_ref()
+                .and_then(|f| f.snd.as_ref())
+                .and_then(|s| s.get(group, number)),
+        )
+    };
+    (
+        SoundKey {
+            bank,
+            group,
+            number,
+        },
+        bytes,
+    )
+}
+
 pub struct Match {
     pub world: World,
+    /// Who owns which sounds (see [`SoundBanks`]).
+    banks: SoundBanks,
     /// Draw the fight without its HUD (the pause menu's frozen backdrop).
     pub hud_hidden: bool,
     /// Online menu over the running match (see [`FleeMenu`]).
@@ -398,6 +490,7 @@ impl Match {
         };
         Ok(Self {
             world,
+            banks: SoundBanks::new(),
             flee_menu: None,
             early: None,
             ranked: None,
@@ -521,6 +614,7 @@ impl Match {
                         if i == slot || (self.setup.p1 == self.setup.p2 && i < 2) {
                             *slot_data = d.clone();
                             self.gpu_dirty.push(i);
+                            self.banks.renew(i);
                         }
                     }
                 }
@@ -1059,39 +1153,15 @@ impl Match {
         let Some(audio) = audio.as_mut() else {
             return;
         };
-        let (source, bytes) = if announcer {
-            (
-                u32::MAX - 1,
-                self.world
-                    .fx
-                    .as_ref()
-                    .and_then(|f| f.fight_snd.as_ref())
-                    .and_then(|s| s.get(group, number)),
-            )
-        } else if own {
-            let d = self.world.players[player].data;
-            (
-                d as u32,
-                self.world.data[d]
-                    .snd
-                    .as_ref()
-                    .and_then(|s| s.get(group, number)),
-            )
-        } else {
-            (
-                u32::MAX,
-                self.world
-                    .fx
-                    .as_ref()
-                    .and_then(|f| f.snd.as_ref())
-                    .and_then(|s| s.get(group, number)),
-            )
-        };
-        let key = SoundKey {
-            source,
+        let (key, bytes) = resolve_sound(
+            &self.world,
+            &mut self.banks,
+            player,
+            own,
+            announcer,
             group,
             number,
-        };
+        );
         if !audio.is_loaded(key) {
             match bytes {
                 Some(b) => {
@@ -2064,5 +2134,79 @@ mod tests {
             EarlyEnd::PeerGone(PeerExit::Fled).message(),
             "YOUR OPPONENT FLED"
         );
+    }
+
+    /// A vs B, then C vs D in the same process (one audio cache, like the
+    /// game): C's PlaySnd must play C's sample, never the one A cached under
+    /// the same slot / group / number.
+    #[test]
+    fn a_later_fight_never_hears_an_earlier_fighters_sounds() {
+        use rugen_sim::world::Stage;
+        use std::sync::Arc;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1");
+        let def = root.join("chars/kfm/kfm.def");
+        if !def.exists() {
+            return;
+        }
+        let a = CharData::load(&def).expect("kfm loads");
+        let snd = a.snd.as_ref().expect("kfm has sounds");
+        // two sounds of different lengths: C plays the second under the first's number
+        let mut keys = snd.sounds.keys().copied();
+        let first = keys.next().expect("a sound");
+        let len = |k: (i32, i32)| snd.get(k.0, k.1).map(<[u8]>::len);
+        let second = keys
+            .find(|k| len(*k) != len(first))
+            .expect("two sounds of different sizes");
+        let mut c = (*a).clone();
+        let csnd = c.snd.as_mut().unwrap();
+        let swapped = csnd.sounds[&second].clone();
+        csnd.sounds.insert(first, swapped);
+        let c = Arc::new(c);
+
+        let fight = |p1: Arc<CharData>, p2: Arc<CharData>| {
+            let mut w = World::new(Stage::default(), 1);
+            w.add_player(p1, 0, 1);
+            w.add_player(p2, 1, 2);
+            w
+        };
+        let mut cache = rugen_audio::SampleCache::default();
+        let mut play = |w: &World, banks: &mut SoundBanks| {
+            let (key, bytes) = resolve_sound(w, banks, 0, true, false, first.0, first.1);
+            if !cache.is_loaded(key) {
+                cache.load(key, bytes.expect("sound found"));
+            }
+            (key, cache.get(key).expect("decoded").frames.len())
+        };
+        let frames_of = |k: (i32, i32)| {
+            let mut c = rugen_audio::SampleCache::default();
+            let key = SoundKey {
+                bank: 1,
+                group: k.0,
+                number: k.1,
+            };
+            c.load(key, snd.get(k.0, k.1).unwrap());
+            c.get(key).unwrap().frames.len()
+        };
+        assert_ne!(frames_of(first), frames_of(second));
+
+        // fight 1: A vs B
+        let w1 = fight(a.clone(), a.clone());
+        let mut banks1 = SoundBanks::new();
+        let (k1, f1) = play(&w1, &mut banks1);
+        assert_eq!(f1, frames_of(first), "A plays its own sound");
+        drop(w1);
+        // fight 2: C vs D, same slot, same group / number, cache still warm
+        let w2 = fight(c.clone(), a.clone());
+        let mut banks2 = SoundBanks::new();
+        let (k2, f2) = play(&w2, &mut banks2);
+        assert_ne!(k1.bank, k2.bank, "C's bank is not A's");
+        assert_eq!(f2, frames_of(second), "C hears C's sound, not A's");
+        // D (slot 1) has its own bank too, apart from C's
+        let (kd, _) = resolve_sound(&w2, &mut banks2, 1, true, false, first.0, first.1);
+        assert_ne!(kd.bank, k2.bank);
+        // common / announcer sounds of the two fights stay apart as well
+        let (c1, _) = resolve_sound(&w2, &mut banks1, 0, false, false, 0, 0);
+        let (c2, _) = resolve_sound(&w2, &mut banks2, 0, false, false, 0, 0);
+        assert_ne!(c1.bank, c2.bank);
     }
 }
