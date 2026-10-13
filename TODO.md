@@ -210,7 +210,7 @@ box) and screenshots.
 - [x] **Frame data.** (47e77cc) For the last move, show startup / active / recovery and
   advantage on hit and block, measured live from the sim (first frame with a
   Clsn1, last one, return to ctrl). Small panel in the corner, both fighters.
-- [ ] **Input display.** A scrolling column per player with the direction
+- [x] **Input display.** (75f60c7) A scrolling column per player with the direction
   arrow and the bound button keys, the hold length in frames; reads the same
   input buffer the sim uses.
 - [ ] **Record and playback dummy.** Training menu: RECORD (take control of
