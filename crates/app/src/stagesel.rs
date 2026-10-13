@@ -799,6 +799,8 @@ mod tests {
         }
         let root = std::env::temp_dir().join(format!("rugen-stagesel-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        // a `chars/` dir makes Library::discover take this root, not the cwd
+        std::fs::create_dir_all(root.join("chars")).unwrap();
         for (i, word) in ["apple", "birch", "cedar", "dune", "elm"]
             .iter()
             .cycle()
@@ -839,7 +841,7 @@ mod tests {
             picks: ["a".into(), "b".into()],
         };
         let mut s = StageSel::new(plan, &lib);
-        assert!(s.count() >= 41, "RANDOM + 40 stages");
+        assert!(s.count() >= 41, "RANDOM + 40 stages, got {}", s.count());
         assert_eq!(s.sel, 0);
         assert_eq!(s.target_scroll(), 0.0, "clamped at the start");
         // only the tiles on screen (plus a margin) are in the data
