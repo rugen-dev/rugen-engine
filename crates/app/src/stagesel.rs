@@ -830,6 +830,7 @@ mod tests {
             mode: Some(Mode::Versus),
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         };
         let plan = StagePlan {
             mode: Mode::Versus,

@@ -378,6 +378,7 @@ fn main() -> anyhow::Result<()> {
                 mode: None,
                 fighter_size: None,
                 arena_ai: arena_ai.map(|v| v != "0" && v != "off" && v != "false"),
+                round_time: None,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

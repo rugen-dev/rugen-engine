@@ -1462,6 +1462,7 @@ impl OnlineScreen {
             mode: None,
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         };
         self.used_ticket = Some(ready.ticket.session);
         self.pending_versus = Some((setup, portraits));
@@ -3674,6 +3675,7 @@ impl OnlineScreen {
             mode: None,
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         });
     }
 

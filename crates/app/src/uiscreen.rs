@@ -1676,6 +1676,7 @@ impl UiScreen {
             mode: Some(Mode::Training),
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         }))
     }
 

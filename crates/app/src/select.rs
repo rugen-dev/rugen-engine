@@ -189,6 +189,7 @@ impl SelectScreen {
             mode: Some(self.mode),
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         };
         if tutorial {
             return Some(Transition::Fight(setup));

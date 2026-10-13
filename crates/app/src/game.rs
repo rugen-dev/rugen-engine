@@ -704,6 +704,7 @@ impl Shell {
                 mode: Some(Mode::Arcade),
                 fighter_size: None,
                 arena_ai: None,
+                round_time: None,
             },
             [side(&p1), side(&p2)],
         ))
@@ -865,6 +866,7 @@ impl Shell {
                     mode: None,
                     fighter_size: None,
                     arena_ai: None,
+                    round_time: None,
                 }));
             }
             Transition::Resume => {
@@ -1266,6 +1268,7 @@ impl Shell {
                                 &setup,
                                 m.world.fighter_size,
                                 m.world.arena_ai,
+                                m.world.round.config.round_time,
                             ));
                         }
                         if let Some(r) = self.replay.take() {

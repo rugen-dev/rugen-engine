@@ -567,6 +567,7 @@ impl Roster {
             mode: Some(self.mode),
             fighter_size: None,
             arena_ai: None,
+            round_time: None,
         };
         if tutorial {
             let mut setup = setup;

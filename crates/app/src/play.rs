@@ -65,6 +65,9 @@ pub struct FightSetup {
     /// Arena AI plugin for CPU fighters instead of the config's (a replay's
     /// recorded value, or `rugen play --arena-ai`). Never on online.
     pub arena_ai: Option<bool>,
+    /// Round clock (seconds, <= 0 = no clock) instead of the options' (a
+    /// replay's recorded one).
+    pub round_time: Option<i32>,
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -435,10 +438,13 @@ impl Match {
                 air_dash: cfg.game.air_dash,
                 fast_fall: cfg.game.fast_fall,
             },
-            // offline: the options' round time; online rooms: the room's
-            // (both sides run `match_config`); LAN peers keep the motif's
-            round_time: (setup.net.is_none() || cfg.game.match_wins.is_some())
-                .then_some(cfg.game.round_time),
+            // a replay's recorded clock; offline: the options' round time;
+            // online rooms: the room's (both sides run `match_config`); LAN
+            // peers keep the motif's
+            round_time: setup.round_time.or_else(|| {
+                (setup.net.is_none() || cfg.game.match_wins.is_some())
+                    .then_some(cfg.game.round_time)
+            }),
             ai: if setup.net.is_none() {
                 setup.ai
             } else {
