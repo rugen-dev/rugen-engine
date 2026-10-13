@@ -161,13 +161,45 @@ enum Job {
     Done(Pending<()>),
 }
 
-/// Why an older server (API before .rgc) cannot be used.
-fn outdated_error(server: &str, api: u32) -> String {
-    format!(
-        "{} RUNS AN OLDER VERSION (API {api}, THIS GAME NEEDS {}): IT CANNOT TAKE .RGC FIGHTERS",
-        server.to_uppercase(),
-        rugen_proto::API_VERSION
-    )
+/// Why a server cannot be used by this game: too old for .rgc (API 4
+/// only), or newer than this game. `None` when it serves this API, which
+/// includes transition servers serving 0.5 players too (`api_min`).
+fn outdated_error(server: &str, info: &ServerInfo) -> Option<String> {
+    let mine = rugen_proto::API_VERSION;
+    if info.serves(mine) {
+        None
+    } else if info.api < mine {
+        Some(format!(
+            "{} RUNS AN OLDER VERSION (API {}, THIS GAME NEEDS {mine}): IT CANNOT TAKE .RGC FIGHTERS",
+            server.to_uppercase(),
+            info.api
+        ))
+    } else {
+        Some(format!(
+            "{} RUNS A NEWER VERSION (API {}, THIS GAME SPEAKS {mine}): UPDATE YOUR GAME",
+            server.to_uppercase(),
+            info.min_api()
+        ))
+    }
+}
+
+/// Why a lobby room cannot be joined by this game (its host runs another
+/// version), `None` when it can.
+fn room_error(room: &RoomSummary) -> Option<String> {
+    let mine = rugen_proto::API_VERSION;
+    if room.joinable_by(mine) {
+        None
+    } else if room.api < mine {
+        Some(format!(
+            "THIS ROOM'S HOST RUNS AN OLDER RUGEN ({}). BOTH PLAYERS NEED THE SAME VERSION.",
+            rugen_proto::release_of(room.api)
+        ))
+    } else {
+        Some(format!(
+            "THIS ROOM'S HOST RUNS A NEWER RUGEN ({}). UPDATE YOUR GAME TO JOIN.",
+            rugen_proto::release_of(room.api)
+        ))
+    }
 }
 
 /// One row of the server list.
@@ -1097,14 +1129,14 @@ impl OnlineScreen {
     /// Pick a server: account (register on first use), presence socket, menu.
     fn connect(&mut self, server: &str) {
         // fighters travel as .rgc files with rugen-fp-2 fingerprints since API 5
-        let api = self
+        let outdated = self
             .servers
             .iter()
             .find(|r| r.addr == server)
             .and_then(|r| r.info.as_ref())
-            .map(|i| i.api);
-        if let Some(api) = api.filter(|&a| a < rugen_proto::API_VERSION) {
-            self.error = outdated_error(server, api);
+            .and_then(|i| outdated_error(server, i));
+        if let Some(e) = outdated {
+            self.error = e;
             return;
         }
         let (id, key) = account_for(&self.profile, &self.config, server);
@@ -1336,7 +1368,12 @@ impl OnlineScreen {
             .iter()
             .map(|r| {
                 json!({
-                    "name": format!("{}{}", if r.locked { "[LOCKED] " } else { "" }, r.name.to_uppercase()),
+                    "name": format!(
+                        "{}{}{}",
+                        if r.joinable_by(rugen_proto::API_VERSION) { String::new() } else { format!("[{}] ", rugen_proto::release_of(r.api)) },
+                        if r.locked { "[LOCKED] " } else { "" },
+                        r.name.to_uppercase()
+                    ),
                     "host": r.host.to_uppercase(),
                     "rules": rules_line(&r.rules),
                     "count": format!(
@@ -1686,6 +1723,16 @@ impl OnlineScreen {
             }
             ("lobby", rest) => {
                 let (kind, code) = rest.split_once(':').unwrap_or(("join", rest));
+                // a host of another version: say so instead of trying
+                if let Some(e) = self
+                    .rooms
+                    .iter()
+                    .find(|r| r.code == code)
+                    .and_then(room_error)
+                {
+                    self.error = e;
+                    return None;
+                }
                 let locked = self.rooms.iter().any(|r| r.code == code && r.locked);
                 if locked && self.password.is_empty() {
                     // ask for the password first, then join
@@ -2136,10 +2183,10 @@ impl OnlineScreen {
                                     }
                                     // connected before the probe answered (resume, auto,
                                     // a quick pick): leave a server too old for .rgc
-                                    if info.api < rugen_proto::API_VERSION
-                                        && row.addr == self.client.server
+                                    if row.addr == self.client.server
+                                        && let Some(e) = outdated_error(&row.addr, &info)
                                     {
-                                        outdated = Some((row.addr.clone(), info.api));
+                                        outdated = Some(e);
                                     }
                                     row.info = Some(info);
                                     row.ping = Some(ping);
@@ -2256,11 +2303,11 @@ impl OnlineScreen {
         }
         keep.append(&mut self.jobs);
         self.jobs = keep;
-        if let Some((server, api)) = outdated {
+        if let Some(e) = outdated {
             self.presence = None;
             self.client = OnlineClient::new("", None);
             self.state = State::Servers;
-            self.error = outdated_error(&server, api);
+            self.error = e;
         }
     }
 
@@ -2534,5 +2581,46 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
             p.save(root);
         }
         Err(e) => log::warn!("online: result not accepted: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(api: u32, api_min: u32) -> ServerInfo {
+        ServerInfo {
+            api,
+            api_min,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn servers_of_other_versions_get_a_reason() {
+        // the 0.5-era server: too old for .rgc
+        let e = outdated_error("play.example", &info(4, 0)).unwrap();
+        assert!(e.contains("OLDER VERSION (API 4"), "{e}");
+        // a transition server serving 0.5 and 0.6 players: fine
+        assert!(outdated_error("play.example", &info(5, 4)).is_none());
+        assert!(outdated_error("play.example", &info(rugen_proto::API_VERSION, 0)).is_none());
+        // a server that dropped this API: update
+        let e = outdated_error("play.example", &info(7, 6)).unwrap();
+        assert!(e.contains("UPDATE YOUR GAME"), "{e}");
+    }
+
+    #[test]
+    fn rooms_of_other_versions_say_who_must_update() {
+        let room = |api| RoomSummary {
+            api,
+            ..Default::default()
+        };
+        assert!(room_error(&room(0)).is_none());
+        assert!(room_error(&room(rugen_proto::API_VERSION)).is_none());
+        assert_eq!(
+            room_error(&room(4)).unwrap(),
+            "THIS ROOM'S HOST RUNS AN OLDER RUGEN (0.5). BOTH PLAYERS NEED THE SAME VERSION."
+        );
+        assert!(room_error(&room(9)).unwrap().contains("UPDATE YOUR GAME"));
     }
 }
