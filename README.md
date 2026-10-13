@@ -95,7 +95,7 @@ rugen play kfm        # a quick match against the computer
 - [ ] **Shareable replays**: send a match to someone by code.
 - [ ] **User themes folder**: your own themes with live reload, no rebuild.
 - [ ] **Fighter debugger**: step through frames, states and variables.
-- [ ] **French translation**: the first language after English.
+- [ ] **Translations (i18n)**: the menus in 10+ languages, such as French, Spanish, Portuguese, Japanese and Arabic.
 - [ ] **Steam Deck layout**: a handheld-friendly screen and controls.
 
 ### Not planned for now
