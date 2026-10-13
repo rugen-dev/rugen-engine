@@ -7,6 +7,11 @@ use std::path::Path;
 use crate::world::Movement;
 use crate::{CharData, FxData, Stage, World};
 
+/// Camera limits (`zoom_out`, `zoom_in`) of every online match: the camera is
+/// part of the simulation, so both peers, spectators and `rugen-server`'s
+/// re-simulation must use the same ones, never a player's own settings.
+pub const ONLINE_ZOOM: (f32, f32) = (0.6, 1.25);
+
 /// Everything that shapes a match's simulation.
 #[derive(Clone, Debug)]
 pub struct MatchSpec<'a> {

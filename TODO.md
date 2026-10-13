@@ -109,6 +109,12 @@ later section while an earlier one has open boxes:
   leaving the screen already does.
 - [x] **Stage preview palettes leak.** (f9af2f0) Palettes of replaced stage previews
   on the stage select are never freed.
+- [ ] **Online camera determinism.** The camera is part of the sim, but
+  online sessions used each player's own `[camera] zoom_out / zoom_in` while
+  `rugen-server`'s re-simulation uses 0.6 / 1.25: two players with different
+  settings could desync. Every online session (LAN netplay, rooms, quick
+  match, ranked, spectating) now uses `rugen_sim::headless::ONLINE_ZOOM`
+  (0.6 / 1.25); offline and the sync test keep the player's settings.
 
 ## Gameplay
 

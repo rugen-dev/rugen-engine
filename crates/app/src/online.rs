@@ -4633,6 +4633,8 @@ pub fn match_config(base: &Config, rules: &Rules) -> Config {
     };
     c.game.fighter_size = room_size(rules);
     c.game.match_wins = Some(rules.rounds.clamp(1, 9));
+    // the camera is part of the simulation (`play::match_zoom` enforces it too)
+    (c.camera.zoom_out, c.camera.zoom_in) = rugen_sim::headless::ONLINE_ZOOM;
     if rules.mode == "arena" {
         c.game.air_jumps = 1;
         c.game.air_dash = true;
@@ -4791,6 +4793,12 @@ mod tests {
             (Some(3), -1),
             "no limit"
         );
+        // the camera is part of the simulation: never the player's own zoom
+        let mut zoomed = base.clone();
+        zoomed.camera.zoom_out = 0.3;
+        zoomed.camera.zoom_in = 1.6;
+        let z = match_config(&zoomed, &rules(3, 0)).camera;
+        assert_eq!((z.zoom_out, z.zoom_in), rugen_sim::headless::ONLINE_ZOOM);
         // quick match / ranked: the default rules
         let c = match_config(&base, &Rules::default());
         assert_eq!((c.game.match_wins, c.game.round_time), (Some(2), 99));

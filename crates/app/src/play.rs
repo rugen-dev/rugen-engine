@@ -44,6 +44,18 @@ pub enum NetMode {
     SyncTest,
 }
 
+/// Camera limits of a match: the player's own settings offline (and in a
+/// local sync test), [`rugen_sim::headless::ONLINE_ZOOM`] in every online
+/// session (LAN netplay, relay rooms, quick match, ranked, spectating), since
+/// the camera is part of the simulation and must match the peer's and the
+/// server's re-simulation.
+pub fn match_zoom(net: Option<&NetMode>, cam: &crate::config::CameraCfg) -> (f32, f32) {
+    match net {
+        None | Some(NetMode::SyncTest) => (cam.zoom_out, cam.zoom_in),
+        Some(NetMode::P2P { .. } | NetMode::Relay { .. }) => rugen_sim::headless::ONLINE_ZOOM,
+    }
+}
+
 /// Everything needed to start a match.
 #[derive(Clone, Debug)]
 pub struct FightSetup {
@@ -432,7 +444,7 @@ impl Match {
             stage: setup.stage.as_deref(),
             data_dir,
             motif,
-            zoom: (cfg.camera.zoom_out, cfg.camera.zoom_in),
+            zoom: match_zoom(setup.net.as_ref(), &cfg.camera),
             movement: rugen_sim::world::Movement {
                 air_jumps: cfg.game.air_jumps,
                 air_dash: cfg.game.air_dash,
@@ -2134,6 +2146,99 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Online camera determinism: the camera is part of the simulation, so
+    /// two players with different zoom settings (and the server's
+    /// re-simulation, which uses `ONLINE_ZOOM`) must simulate the same
+    /// match. Offline and in a local sync test the player's own settings stay.
+    #[test]
+    fn online_sessions_ignore_the_players_camera_settings() {
+        use crate::config::CameraCfg;
+        let wide = CameraCfg {
+            zoom_out: 0.3,
+            zoom_in: 0.7,
+        };
+        let close = CameraCfg {
+            zoom_out: 0.95,
+            zoom_in: 1.6,
+        };
+        let p2p = NetMode::P2P {
+            port: 7000,
+            remote: "127.0.0.1:7001".parse().unwrap(),
+            side: 1,
+        };
+        let relay = NetMode::Relay {
+            server: "http://127.0.0.1:8090".into(),
+            ticket: Default::default(),
+            websocket_only: false,
+        };
+        let spectator = NetMode::Relay {
+            server: "http://127.0.0.1:8090".into(),
+            ticket: rugen_net::online::SessionTicket {
+                slot: 2,
+                spectators: 1,
+                ..Default::default()
+            },
+            websocket_only: true,
+        };
+        for net in [&p2p, &relay, &spectator] {
+            assert_eq!(
+                match_zoom(Some(net), &wide),
+                rugen_sim::headless::ONLINE_ZOOM
+            );
+            assert_eq!(
+                match_zoom(Some(net), &close),
+                rugen_sim::headless::ONLINE_ZOOM
+            );
+        }
+        assert_eq!(match_zoom(None, &wide), (0.3, 0.7));
+        assert_eq!(match_zoom(Some(&NetMode::SyncTest), &close), (0.95, 1.6));
+        // the server's re-simulation (rugen-server src/resim.rs) uses these
+        assert_eq!(rugen_sim::headless::ONLINE_ZOOM, (0.6, 1.25));
+
+        // and the worlds really agree (bundled KFM, skipped when absent)
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        let stage = root.join("stages/kfm.def");
+        if !kfm.exists() || !stage.exists() {
+            return;
+        }
+        let run = |zoom: (f32, f32)| {
+            let spec = rugen_sim::headless::MatchSpec {
+                p1: &kfm,
+                p2: &kfm,
+                stage: Some(&stage),
+                data_dir: &root.join("data"),
+                motif: &root.join("data/system.def"),
+                zoom,
+                movement: rugen_sim::world::Movement::default(),
+                round_time: None,
+                ai: [0, 0],
+                fighter_size: Default::default(),
+            };
+            let mut w = rugen_sim::headless::build_world(&spec).expect("KFM world");
+            // walk apart, then together: the camera zooms with the distance
+            let mut inputs = Vec::new();
+            for f in 0..600u32 {
+                let (l, r) = (1u16 << 2, 1u16 << 3);
+                let (a, b) = if f < 300 { (l, r) } else { (r, l) };
+                inputs.extend_from_slice(&a.to_le_bytes());
+                inputs.extend_from_slice(&b.to_le_bytes());
+            }
+            rugen_sim::headless::replay(&mut w, &inputs, None).checksum
+        };
+        assert_eq!(
+            run(match_zoom(Some(&relay), &wide)),
+            run(match_zoom(Some(&relay), &close)),
+            "online worlds of two differently set players agree"
+        );
+        assert_ne!(
+            run(match_zoom(None, &wide)),
+            run(match_zoom(None, &close)),
+            "the settings do shape the camera (the test means something)"
+        );
+    }
 
     /// The tutorial's step title, hint and progress never overlap ("JUMP"
     /// sat on "PRESS ↑": fixed baselines ignored the font heights).
