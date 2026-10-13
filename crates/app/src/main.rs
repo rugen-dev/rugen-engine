@@ -246,7 +246,7 @@ fn main() -> anyhow::Result<()> {
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);
-                    if p.exists() && p.extension().is_some_and(|e| e == "def") {
+                    if rugen_formats::vfs::exists(p) && p.extension().is_some_and(|e| e == "def") {
                         return Ok(p.to_path_buf());
                     }
                     let entry = lib

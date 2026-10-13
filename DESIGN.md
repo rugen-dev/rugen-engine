@@ -152,6 +152,8 @@ Rule: `sim` must compile without `render`, `audio`, `app`. If it can't, netplay 
   a world checksum every 60 frames; the server compares both reports on the
   confirmed frames and disputes (and re-simulates, when built with `resim`) on
   a mismatch, so a match it never saw is still verified.
+- Netplay seat: the local fighter reads every local control (both keyboard
+  layouts, both gamepad slots), whichever side the server assigned.
 
 ### Cross-platform stack (no system libraries)
 

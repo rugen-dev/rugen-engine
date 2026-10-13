@@ -561,6 +561,14 @@ impl Match {
         self.net.is_some()
     }
 
+    /// We play one side of a netplay match against a remote player (not a
+    /// spectator, not a local sync test).
+    pub fn is_netplay_seat(&self) -> bool {
+        self.net
+            .as_ref()
+            .is_some_and(|n| !n.is_synctest() && !n.is_spectator())
+    }
+
     /// Length of the next tick (online: stretched while ahead of the peer).
     pub fn tick_duration(&self) -> std::time::Duration {
         self.net

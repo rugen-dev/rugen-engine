@@ -623,3 +623,23 @@ impl Netplay {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_button_survives_the_wire() {
+        // all 11 buttons (Start included: power charge, taunts), alone and
+        // in every combination, through the encoding ggrs sends
+        for bits in 0u16..(1 << 11) {
+            let b = Buttons::from_bits(bits);
+            assert_eq!(b.bits(), bits);
+            let n = NetInput::from(b);
+            let wire = bincode::serialize(&n).unwrap();
+            let back: NetInput = bincode::deserialize(&wire).unwrap();
+            assert_eq!(Buttons::from(back), b, "{bits:#013b}");
+        }
+        assert!(Buttons::from(NetInput(1 << 10)).s, "bit 10 is Start");
+    }
+}

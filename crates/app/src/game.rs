@@ -1327,6 +1327,13 @@ impl Shell {
                 {
                     open_pause = Some(side);
                 }
+                // netplay: one local fighter, every local control drives it,
+                // whichever seat the server gave us
+                let now = if m.is_netplay_seat() {
+                    crate::input::seat_inputs(now)
+                } else {
+                    now
+                };
                 advanced = m.tick(now, &mut self.audio);
                 if advanced {
                     self.match_stats.observe(&m.world);
