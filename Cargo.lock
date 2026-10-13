@@ -2900,6 +2900,7 @@ dependencies = [
  "log",
  "rugen-cns",
  "rugen-formats",
+ "rugen-proto",
  "serde",
  "thiserror 2.0.21",
 ]
