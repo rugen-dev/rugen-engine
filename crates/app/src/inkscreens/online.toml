@@ -88,7 +88,7 @@ visible = "is_hub"
 x = 48
 y = 98
 w = 532
-h = 542
+h = 548
 gap = 12
 items = "servers"
 
@@ -461,11 +461,24 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
+  visible = "sel.rated"
   x = 459
   y = 188
   w = 136
   bank = 10
   ellipsis = true
+  font = 1
+  scale = 3
+  text = "{sel.rating}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "sel.unrated"
+  x = 459
+  y = 188
+  w = 136
+  alpha = 0.72
+  bank = 9
   font = 1
   scale = 3
   text = "{sel.rating}"
@@ -6260,9 +6273,13 @@ top = true
   [[node.children]]
   kind = "text"
   x = 32
-  y = 28
-  bank = 10
+  y = 26
+  h = 20
+  align = "center"
+  bank = 11
+  color = [0.784, 0.063, 0.102, 1.0]
   font = 1
+  pad = 6
   scale = 1
   text = "{dialog.kicker}"
 
