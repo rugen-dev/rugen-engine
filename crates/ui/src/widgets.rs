@@ -318,6 +318,19 @@ pub(crate) fn draw_choice(
     let sel = choice_index(n, ctx, &opts);
     let segs = segments(p, n, &opts, r.h);
     let b = n.border.unwrap_or(3.0);
+    // a thicker focus edge is drawn inside the cells; they keep their places
+    let edge_b = if lit { n.border_focus.unwrap_or(b) } else { b };
+    if lit && let Some([dx, dy]) = n.shadow_focus {
+        let total: f32 = segs.iter().sum::<f32>() - b * (segs.len() as f32 - 1.0).max(0.0);
+        let c = n.shadow_color.unwrap_or(INK);
+        let sh = Rect {
+            x: r.x + dx,
+            y: r.y + dy,
+            w: total.max(0.0),
+            h: r.h,
+        };
+        p.draw_rect(sh, fade(c, alpha), 0.0, clip);
+    }
     let edge = if lit {
         n.border_color_focus.or(n.border_color)
     } else {
@@ -333,13 +346,15 @@ pub(crate) fn draw_choice(
             w,
             h: r.h,
         };
-        let fill = if on {
+        let fill = if on && lit {
+            n.color_focus.or(n.color2).unwrap_or(INK)
+        } else if on {
             n.color2.unwrap_or(INK)
         } else {
             n.color.unwrap_or(WHITE)
         };
         p.draw_rect(cell, fade(fill, alpha), 0.0, clip);
-        draw_border(p, cell, b, 0.0, edge, alpha, clip);
+        draw_border(p, cell, edge_b, 0.0, edge, alpha, clip);
         let (bank, gc) = if on {
             (
                 n.bank_focus.or(n.bank).unwrap_or(0),
