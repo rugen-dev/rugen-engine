@@ -243,7 +243,9 @@ impl Library {
     fn find(explicit: Option<&Path>) -> Self {
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(r) = explicit {
-            candidates.push(r.to_path_buf());
+            // absolute: paths derived from the root (cache files the UI
+            // loads) must not depend on where they are joined
+            candidates.push(std::path::absolute(r).unwrap_or_else(|_| r.to_path_buf()));
         }
         if let Ok(cwd) = std::env::current_dir() {
             candidates.push(cwd);
