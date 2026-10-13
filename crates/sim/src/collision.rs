@@ -227,10 +227,8 @@ pub fn eval_hitdef(w: &mut World, i: usize, spec: &HitDefSpec) -> HitDef {
 
 /// Size box `[back, top, front, bottom]` in the player's local space (facing-relative).
 pub fn size_box(w: &World, i: usize) -> [f32; 4] {
-    let p = &w.players[i];
-    let d = &w.data[p.data];
     let (front, back) = w.player_width(i);
-    let height = d.konst("size.height").unwrap_or(60.0);
+    let height = w.players[i].size.height;
     [-back, -height, front, 0.0]
 }
 
@@ -249,6 +247,10 @@ pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
         return out;
     };
     let anim_scale = w.stage.width / d.localcoord[0];
+    // Clsn scale is the animation owner's [Size] xscale / yscale constants, even
+    // for a helper with its own size.* (MUGEN; Ikemen `clsnScaleLocal`)
+    let sx = anim_scale * d.konst("size.xscale").unwrap_or(1.0);
+    let sy = anim_scale * d.konst("size.yscale").unwrap_or(1.0);
     let boxes = if group == 1 {
         &frame.clsn1
     } else {
@@ -256,10 +258,10 @@ pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
     };
     for b in boxes {
         out.push([
-            b[0] as f32 * anim_scale,
-            b[1] as f32 * anim_scale,
-            b[2] as f32 * anim_scale,
-            b[3] as f32 * anim_scale,
+            b[0] as f32 * sx,
+            b[1] as f32 * sy,
+            b[2] as f32 * sx,
+            b[3] as f32 * sy,
         ]);
     }
     out

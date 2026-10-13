@@ -231,6 +231,84 @@ pub struct Player {
     pub angle_scale: [f32; 2],
     pub palfx: PalFx,
     pub afterimage: Option<Box<AfterImage>>,
+    /// `[Size]` in effect: the cns constants for a root, the Helper's
+    /// `size.*` parameters (else the root's constants) for a helper.
+    pub size: Size,
+}
+
+/// A player's `[Size]` constants (char-local units), see [`Player::size`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Size {
+    pub xscale: f32,
+    pub yscale: f32,
+    pub ground_back: f32,
+    pub ground_front: f32,
+    pub air_back: f32,
+    pub air_front: f32,
+    pub height: f32,
+    pub proj_doscale: i32,
+    pub head_pos: [f32; 2],
+    pub mid_pos: [f32; 2],
+    pub shadowoffset: f32,
+}
+
+impl Default for Size {
+    fn default() -> Self {
+        Self {
+            xscale: 1.0,
+            yscale: 1.0,
+            ground_back: 15.0,
+            ground_front: 16.0,
+            air_back: 12.0,
+            air_front: 12.0,
+            height: 60.0,
+            proj_doscale: 0,
+            head_pos: [0.0; 2],
+            mid_pos: [0.0; 2],
+            shadowoffset: 0.0,
+        }
+    }
+}
+
+impl Size {
+    /// The `[Size]` constants of a character's cns.
+    pub fn from_data(d: &crate::CharData) -> Self {
+        let z = Self::default();
+        let k = |name: &str, def: f32| d.konst(name).unwrap_or(def);
+        Self {
+            xscale: k("size.xscale", z.xscale),
+            yscale: k("size.yscale", z.yscale),
+            ground_back: k("size.ground.back", z.ground_back),
+            ground_front: k("size.ground.front", z.ground_front),
+            air_back: k("size.air.back", z.air_back),
+            air_front: k("size.air.front", z.air_front),
+            height: k("size.height", z.height),
+            proj_doscale: k("size.proj.doscale", 0.0) as i32,
+            head_pos: [k("size.head.pos.x", 0.0), k("size.head.pos.y", 0.0)],
+            mid_pos: [k("size.mid.pos.x", 0.0), k("size.mid.pos.y", 0.0)],
+            shadowoffset: k("size.shadowoffset", 0.0),
+        }
+    }
+
+    /// `Const(name)` for the per-player size keys; `None` for any other name.
+    pub fn konst(&self, name: &str) -> Option<f32> {
+        Some(match name {
+            "size.xscale" => self.xscale,
+            "size.yscale" => self.yscale,
+            "size.ground.back" => self.ground_back,
+            "size.ground.front" => self.ground_front,
+            "size.air.back" => self.air_back,
+            "size.air.front" => self.air_front,
+            "size.height" => self.height,
+            "size.proj.doscale" => self.proj_doscale as f32,
+            "size.head.pos.x" => self.head_pos[0],
+            "size.head.pos.y" => self.head_pos[1],
+            "size.mid.pos.x" => self.mid_pos[0],
+            "size.mid.pos.y" => self.mid_pos[1],
+            "size.shadowoffset" => self.shadowoffset,
+            _ => return None,
+        })
+    }
 }
 
 impl Player {
@@ -351,6 +429,7 @@ impl Player {
             angle_scale: [1.0, 1.0],
             palfx: PalFx::default(),
             afterimage: None,
+            size: Size::default(),
         }
     }
 

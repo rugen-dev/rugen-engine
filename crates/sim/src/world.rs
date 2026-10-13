@@ -435,6 +435,7 @@ impl World {
             pal_no,
         );
         p.cmds = CommandList::compile(&data.cmd);
+        p.size = crate::player::Size::from_data(&data);
         // every root player is its own root (helpers inherit it)
         p.root = idx;
         self.players.push(p);
@@ -464,17 +465,10 @@ impl World {
     /// (front, back) widths in effect this tick.
     pub fn player_width(&self, i: usize) -> (f32, f32) {
         let p = &self.players[i];
-        let d = &self.data[p.data];
         let (f, b) = if p.state_type == StateType::A {
-            (
-                d.konst("size.air.front").unwrap_or(12.0),
-                d.konst("size.air.back").unwrap_or(12.0),
-            )
+            (p.size.air_front, p.size.air_back)
         } else {
-            (
-                d.konst("size.ground.front").unwrap_or(16.0),
-                d.konst("size.ground.back").unwrap_or(15.0),
-            )
+            (p.size.ground_front, p.size.ground_back)
         };
         (f + p.width_player[0], b + p.width_player[1])
     }
@@ -1023,7 +1017,10 @@ impl World {
         let img = AfterImg {
             pos: p.pos,
             facing: p.facing,
-            scale: p.angle_scale,
+            scale: [
+                p.angle_scale[0] * p.size.xscale,
+                p.angle_scale[1] * p.size.yscale,
+            ],
             angle: if p.angle_drawn { p.angle } else { 0.0 },
             anim_owner: p.anim_owner,
             sprite_data: p.data,
@@ -1137,7 +1134,16 @@ impl World {
             hitanim: one(self, &spec.projhitanim).map_or(-1, |v| v.to_i()),
             remanim: one(self, &spec.projremanim).map_or(i32::MIN, |v| v.to_i().max(-2)),
             cancelanim: one(self, &spec.projcancelanim).map_or(i32::MIN, |v| v.to_i().max(-1)),
-            scale: two(self, &spec.projscale).unwrap_or([1.0, 1.0]),
+            scale: {
+                let sc = two(self, &spec.projscale).unwrap_or([1.0, 1.0]);
+                // [Size] proj.doscale: the spawner's xscale / yscale apply too
+                let sz = self.players[i].size;
+                if sz.proj_doscale != 0 {
+                    [sc[0] * sz.xscale, sc[1] * sz.yscale]
+                } else {
+                    sc
+                }
+            },
             remove: one(self, &spec.projremove).is_none_or(|v| v.to_b()),
             removetime: one(self, &spec.projremovetime).map_or(-1, |v| v.to_i()),
             velocity: two(self, &spec.velocity).map_or([0.0, 0.0], |v| [v[0] * ls, v[1] * ls]),
@@ -1224,6 +1230,7 @@ impl World {
         h.pos[1] = p0[1];
         h.old_pos = h.pos;
         h.helper_index = helpers as i32 + 1;
+        h.size = crate::player::Size::from_data(&self.data[parent.data]);
         h.helper_id = helper_id.max(0);
         h.parent_id = parent.id;
         h.root = parent.root;
@@ -2576,7 +2583,30 @@ impl World {
                 player_type,
                 supermovetime,
                 pausemovetime,
+                size,
             } => {
+                // size.* in the parent's context; omitted ones are the root's constants
+                let mut sz = crate::player::Size::from_data(&self.data[self.players[i].data]);
+                for (key, codes) in size {
+                    let v: Vec<f32> = codes.iter().map(|c| self.eval(i, c).to_f()).collect();
+                    let v0 = v[0];
+                    match key.as_str() {
+                        "xscale" => sz.xscale = v0,
+                        "yscale" => sz.yscale = v0,
+                        "ground.back" => sz.ground_back = v0,
+                        "ground.front" => sz.ground_front = v0,
+                        "air.back" => sz.air_back = v0,
+                        "air.front" => sz.air_front = v0,
+                        "height" => sz.height = v0,
+                        "proj.doscale" => sz.proj_doscale = v0 as i32,
+                        "head.pos" => {
+                            sz.head_pos = [v0, v.get(1).copied().unwrap_or(sz.head_pos[1])]
+                        }
+                        "mid.pos" => sz.mid_pos = [v0, v.get(1).copied().unwrap_or(sz.mid_pos[1])],
+                        "shadowoffset" => sz.shadowoffset = v0,
+                        _ => {}
+                    }
+                }
                 let st = stateno.as_ref().map_or(0, |c| self.eval(i, c).to_i());
                 let hid = id.as_ref().map_or(0, |c| self.eval(i, c).to_i());
                 let px = pos
@@ -2595,6 +2625,7 @@ impl World {
                 if let Some(h) = self.spawn_helper(i, st, hid, [px, py], pt, f, kc, *player_type) {
                     self.players[h].super_move_time = smt;
                     self.players[h].pause_move_time = pmt;
+                    self.players[h].size = sz;
                 }
             }
             Sctrl::DestroySelf {
@@ -4451,6 +4482,77 @@ mod tests {
         run(&mut w, 15, Buttons::default());
         assert!(w.players[h].removed, "DestroySelf after 10 ticks");
         assert!(w.players.iter().filter(|p| !p.removed).count() == 2);
+    }
+
+    /// Helper `size.*` parameters are evaluated in the parent's context and
+    /// stored on the helper; omitted ones default to the root's constants.
+    #[test]
+    fn helper_takes_its_size_parameters() {
+        let Some(d) = kfm() else { return };
+        let d = d
+            .with_states(
+                "test.cns",
+                "[Statedef 1001]\ntype = S\nphysics = S\nctrl = 0\nanim = 0\n[State 1001, v]\ntype = VarSet\ntrigger1 = time = 0\nfvar(3) = 2.5\n[State 1001, h]\ntype = Helper\ntrigger1 = time = 0\nstateno = 1002\nid = 79\nsize.xscale = .2 * fvar(3)\nsize.yscale = 0.25\nsize.ground.front = 40\nsize.height = 22\nsize.head.pos = 3, -50\nsize.proj.doscale = 1\n[State 1001, back]\ntype = ChangeState\ntrigger1 = time > 60\nvalue = 0\nctrl = 1\n[Statedef 1002]\ntype = S\nphysics = N\nanim = 0\n[State 1002, v]\ntype = VarSet\ntrigger1 = 1\nfvar(1) = const(size.xscale)\n[State 1002, w]\ntype = VarSet\ntrigger1 = 1\nvar(2) = const(size.height)\n[State 1002, x]\ntype = VarSet\ntrigger1 = 1\nvar(3) = const(size.ground.back)\n[State 1002, y]\ntype = VarSet\ntrigger1 = 1\nvar(4) = const(size.head.pos.y)\n",
+            )
+            .unwrap();
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d.clone(), 1, 2);
+        run(&mut w, 5, Buttons::default());
+        w.change_state(0, 1001, None, None);
+        run(&mut w, 3, Buttons::default());
+        let h = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.helper_id == 79)
+            .expect("helper exists");
+        let sz = w.players[h].size;
+        assert!(
+            (sz.xscale - 0.5).abs() < 1e-6,
+            "parent's fvar(3): {}",
+            sz.xscale
+        );
+        assert_eq!(sz.yscale, 0.25);
+        assert_eq!(sz.ground_front, 40.0);
+        assert_eq!(sz.height, 22.0);
+        assert_eq!(sz.head_pos, [3.0, -50.0]);
+        assert_eq!(sz.proj_doscale, 1);
+        let root_back = d.konst("size.ground.back").unwrap();
+        assert_eq!(sz.ground_back, root_back, "omitted: root's constant");
+        // Const(size.*) reads the helper's own values
+        assert!((w.players[h].fvars[1] - 0.5).abs() < 1e-6);
+        assert_eq!(w.players[h].vars[2], 22);
+        assert_eq!(w.players[h].vars[3], root_back as i32);
+        assert_eq!(w.players[h].vars[4], -50);
+        // the size box uses the helper's widths; the root keeps its own
+        assert_eq!(w.player_width(h).0, 40.0);
+        assert_eq!(w.player_width(0).0, d.konst("size.ground.front").unwrap());
+        assert_eq!(w.players[0].size, crate::player::Size::from_data(&d));
+    }
+
+    /// A character's own `[Size] xscale / yscale` scale its Clsn boxes.
+    #[test]
+    fn size_scale_scales_clsn() {
+        let Some(d) = kfm() else { return };
+        let mut w = World::new(Stage::default(), 1);
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(d.clone(), 1, 2);
+        run(&mut w, 2, Buttons::default());
+        let base = collision::clsn_world(&w, 0, 2);
+        assert!(!base.is_empty());
+        let mut big = (*d).clone();
+        big.consts.insert("size.xscale".into(), 2.0);
+        big.consts.insert("size.yscale".into(), 0.5);
+        let mut w2 = World::new(Stage::default(), 1);
+        w2.add_player(Arc::new(big), 0, 1);
+        w2.add_player(d, 1, 2);
+        run(&mut w2, 2, Buttons::default());
+        let scaled = collision::clsn_world(&w2, 0, 2);
+        assert_eq!(base.len(), scaled.len());
+        for (a, b) in base.iter().zip(&scaled) {
+            assert_eq!([a[0] * 2.0, a[1] * 0.5, a[2] * 2.0, a[3] * 0.5], *b);
+        }
+        assert_eq!(w2.players[0].size.xscale, 2.0);
     }
 
     #[test]

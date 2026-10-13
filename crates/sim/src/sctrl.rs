@@ -454,6 +454,8 @@ pub enum Sctrl {
         player_type: bool,
         supermovetime: Option<Code>,
         pausemovetime: Option<Code>,
+        /// `size.*` parameters given, as (key without `size.`, values).
+        size: Vec<(String, Vec<Code>)>,
     },
     DestroySelf {
         recursive: Option<Code>,
@@ -462,6 +464,21 @@ pub enum Sctrl {
     /// Recognised but not implemented yet; runs as a no-op.
     Unsupported(String),
 }
+
+/// The Helper `size.*` parameters (MUGEN 1.1 Helper doc).
+pub const HELPER_SIZE_KEYS: [&str; 11] = [
+    "xscale",
+    "yscale",
+    "ground.back",
+    "ground.front",
+    "air.back",
+    "air.front",
+    "height",
+    "proj.doscale",
+    "head.pos",
+    "mid.pos",
+    "shadowoffset",
+];
 
 fn one(c: &Controller, name: &str) -> Result<Option<Code>> {
     c.expr(name)
@@ -837,6 +854,22 @@ impl Sctrl {
                     .is_some_and(|t| t.trim().eq_ignore_ascii_case("player")),
                 supermovetime: one(c, "supermovetime")?,
                 pausemovetime: one(c, "pausemovetime")?,
+                size: {
+                    let mut v = Vec::new();
+                    // lenient: a bad size parameter is dropped, the helper still spawns
+                    for key in HELPER_SIZE_KEYS {
+                        let name = format!("size.{key}");
+                        let codes = if key.ends_with(".pos") {
+                            c.exprs(&name).ok().flatten()
+                        } else {
+                            c.expr(&name).ok().flatten().map(|e| vec![e])
+                        };
+                        if let Some(codes) = codes.filter(|c| !c.is_empty()) {
+                            v.push((key.to_string(), codes));
+                        }
+                    }
+                    v
+                },
             },
             "destroyself" => Sctrl::DestroySelf {
                 recursive: one(c, "recursive")?,

@@ -368,7 +368,7 @@ impl Context for Ctx<'_> {
             }),
             // helpers without keyctrl read no command input (MUGEN Helper doc, Ikemen `command`)
             T::Command(name) => Self::b((p.helper_index == 0 || p.keyctrl) && p.cmds.active(name)),
-            T::Const(name) => match data.konst(name) {
+            T::Const(name) => match p.size.konst(name).or_else(|| data.konst(name)) {
                 Some(v) => {
                     // ints stay ints so `const(data.life)` compares like MUGEN
                     if name.starts_with("data.") && name != "data.fall.defence_mul"

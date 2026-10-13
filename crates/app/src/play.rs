@@ -1174,7 +1174,11 @@ impl Match {
             } else {
                 0.0
             };
-            let ascale = p.angle_scale;
+            // AngleDraw scale times the player's [Size] xscale / yscale (explods never take it)
+            let ascale = [
+                p.angle_scale[0] * p.size.xscale,
+                p.angle_scale[1] * p.size.yscale,
+            ];
             let pfx = tint(p.palfx.sample().stacked(all_pfx));
             // afterimages first so they sit behind the player
             let aimg = p
