@@ -252,7 +252,21 @@ fn main() -> anyhow::Result<()> {
                 (p1.to_string(), rest.get(1).map(|s| s.to_string()));
             let p1 = resolve(&names.0)?;
             let p2 = names.1.as_deref().map(resolve).transpose()?;
-            let stage = stage.or_else(|| lib.default_stage().map(|p| p.display().to_string()));
+            // no --stage: the default (training) stage when it loads, else
+            // a plain floor; a stale cached path is not worth failing over
+            let fallback = match &stage {
+                Some(_) => None,
+                None => lib.default_stage().filter(|p| {
+                    let ok = rugen_formats::vfs::exists(p);
+                    if !ok {
+                        log::warn!(
+                            "default stage {} not found; fighting without one",
+                            p.display()
+                        );
+                    }
+                    ok
+                }),
+            };
             let stage = stage
                 .map(|s| -> anyhow::Result<std::path::PathBuf> {
                     let p = std::path::Path::new(&s);
@@ -267,7 +281,8 @@ fn main() -> anyhow::Result<()> {
                     let (dir, m) = lib.prepare_stage(&entry)?;
                     Ok(m.def_path(&dir))
                 })
-                .transpose()?;
+                .transpose()?
+                .or(fallback);
             let net_mode = if let Some(remote) = net {
                 let remote: std::net::SocketAddr = remote
                     .parse()
