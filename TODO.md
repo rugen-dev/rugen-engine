@@ -195,9 +195,25 @@ box) and screenshots.
   elimination, the server seeds by rating and calls each match; spectators
   watch the bracket.
 
+### Live watching (shared base for replays and brackets)
+- [ ] **One match format: header + input stream.** Header: rugen version,
+  fighter and stage fingerprints, fighter size, rules, round seed. Body: the
+  confirmed inputs per frame. Saved replays stay `.json`; the live stream is
+  compact binary (~2 bytes per player per frame, ~15 KB a minute).
+- [ ] **Server keeps the input log of every live match.** The relay already
+  forwards the inputs; keep a copy, fan out to spectators from the server (not
+  from P1), drop the log when the match ends unless it is shared.
+- [ ] **Watch any live match, even mid-match.** WATCH downloads missing
+  fighters and stage through the package sync, fetches the backlog from frame
+  0, fast-forwards the sim without drawing ("CATCHING UP…"), then follows
+  live a few seconds behind the players (smooth start, no relaying to a
+  player in tournaments).
+- [ ] **WATCH from the lobby and the bracket.** Live rooms show WATCH in the
+  lobby; the bracket's live match opens it on ENTER.
+
 ### Replays
-- [ ] **Shareable replays.** Upload a finished replay to the server (small:
-  inputs only), get a short code; WATCH → BY CODE downloads and plays it,
+- [ ] **Shareable replays.** Keep a finished match's input log on the server
+  (see *Live watching*), get a short code; WATCH → BY CODE downloads and plays it,
   fetching missing fighters through the existing package sync. Kept 30 days.
 
 ### Creators
