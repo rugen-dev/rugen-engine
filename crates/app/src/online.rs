@@ -56,7 +56,7 @@ use crate::matchup::{Driver, Shared, Xfer, XferState};
 use crate::official::{self, Stamp, Trust};
 use crate::play::{FightSetup, NetMode};
 use crate::system::SystemData;
-use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, viewport};
+use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, plural, viewport};
 use crate::versus::Portrait;
 use rugen_net::online::SignedBlob;
 use rugen_net::online::{FighterCard, VerdictKind};
@@ -548,11 +548,6 @@ fn hotkeys(config: &Config) -> HashMap<&'static str, String> {
                 .map(|k| (*action, (*k).to_string()))
         })
         .collect()
-}
-
-/// `n THING` / `n THINGS`.
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// At most `max` characters, ending in `...` when cut (for labels the
