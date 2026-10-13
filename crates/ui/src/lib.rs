@@ -34,7 +34,8 @@
 //! node, text with `pad` sizes itself to its text and `wrap` breaks lines
 //! (`max_lines` caps them; `ellipsis` ends a line that does not fit in
 //! `...`), an input with `caret` draws a blinking bar while edited, a `modal`
-//! subtree keeps the focus while it is shown,
+//! subtree keeps the focus while it is shown, a `hug` box is as long as its
+//! children,
 //! `when = "focus"|"blur"|"focus2"` and `w_focus`/`h_focus`/`scale_focus`
 //! react to the focus of the node's scope, `top` draws over everything, and a
 //! `paged` grid scrolls whole pages (publishing `pages.<id>`), with `bleed`
@@ -366,6 +367,9 @@ pub struct NodeDef {
     /// Modal subtree (dialogs): while it is laid out, only focusable nodes
     /// inside it take the focus; the focus comes back when it closes.
     pub modal: bool,
+    /// Box without `items` and without `w` (hbox) / `h` (vbox): as long as
+    /// its shown children and gaps (plus `pad`), not the parent's size.
+    pub hug: bool,
     pub children: Vec<NodeDef>,
 }
 
@@ -1500,6 +1504,34 @@ impl Ui {
                     (_, Some(given)) => given,
                     (_, None) => nat,
                 });
+            }
+        }
+        if n.hug && n.items.is_none() && matches!(n.kind, Kind::Hbox | Kind::Vbox) {
+            let vertical = n.kind == Kind::Vbox;
+            if (vertical && h.is_none()) || (!vertical && w.is_none()) {
+                let pad = n.pad.unwrap_or(0.0);
+                let probe = Rect {
+                    w: w.unwrap_or(parent.w) - 2.0 * pad,
+                    h: h.unwrap_or(parent.h) - 2.0 * pad,
+                    ..parent
+                };
+                let mut len = 0.0;
+                let mut shown = 0usize;
+                for c in n
+                    .children
+                    .iter()
+                    .filter(|c| c.visible.as_ref().is_none_or(|v| visible(ctx, v)))
+                {
+                    let r = Self::node_rect(c, probe, ctx, p);
+                    len += if vertical { r.h } else { r.w };
+                    shown += 1;
+                }
+                len += n.gap.unwrap_or(0.0) * shown.saturating_sub(1) as f32 + 2.0 * pad;
+                if vertical {
+                    h = Some(len);
+                } else {
+                    w = Some(len);
+                }
             }
         }
         let w = w.unwrap_or(parent.w);
@@ -3493,6 +3525,50 @@ h = 100
         ui.set_data(serde_json::json!({ "dialog": false }));
         ui.tick(Nav::default(), &mut p);
         assert_eq!(ui.focused(), Some("under"), "the focus comes back");
+    }
+
+    #[test]
+    fn hug_boxes_size_to_their_children() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "hbox"
+w = 400
+h = 20
+justify = "end"
+gap = 10
+
+  [[node.children]]
+  kind = "hbox"
+  hug = true
+  gap = 4
+
+    [[node.children.children]]
+    kind = "text"
+    text = "ESC"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "BACK"
+
+  [[node.children]]
+  kind = "hbox"
+  hug = true
+  visible = "never"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "HIDDEN"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        // ESC (24) + 4 + BACK (32) = 60 wide, pushed to the right edge
+        let r = ui.instances[1].rect;
+        assert_eq!((r.x, r.w), (340.0, 60.0));
+        assert_eq!(ui.instances[3].rect.x, 368.0);
     }
 
     #[test]
