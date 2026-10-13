@@ -844,7 +844,7 @@ group = "header"
   kind = "keycap"
   h = 38
   pad = 12
-  text = "{device.label}"
+  text = "{device.label}     "
   font = 2
   bank = 11
   bank_focus = 11
@@ -854,12 +854,15 @@ group = "header"
   focus = true
   on_press = "{device.press}"
 
-  [[node.children]]
-  kind = "icon"
-  glyph = "tri_down"
-  w = 12
-  h = 12
-  color = [1.0, 1.0, 1.0, 1.0]
+    # the dropdown arrow, inside the box on its right
+    [[node.children.children]]
+    kind = "icon"
+    glyph = "tri_down"
+    anchor = "right"
+    x = 12
+    w = 12
+    h = 12
+    color = [1.0, 1.0, 1.0, 1.0]
 
 @SAVE_BUTTON@@SAVE_STATUS@
 # ---------------------------------------------------------------- test pad
