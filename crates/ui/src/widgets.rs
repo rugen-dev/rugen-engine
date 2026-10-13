@@ -9,7 +9,7 @@
 
 use serde_json::Value;
 
-use crate::{NodeDef, Painter, Rect, interpolate, lookup, value_num, value_text};
+use crate::{Ctx, NodeDef, Painter, Rect, Scope, interpolate, value_num, value_text};
 
 pub(crate) const INK: [f32; 4] = [0.067, 0.067, 0.067, 1.0];
 pub(crate) const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -134,22 +134,22 @@ fn fade(c: [f32; 4], alpha: f32) -> [f32; 4] {
 }
 
 /// Bound number of pips (`max_from`, else `max`, else 5).
-fn pip_count(n: &NodeDef, ctx: &Value) -> usize {
+fn pip_count(n: &NodeDef, ctx: &Ctx) -> usize {
     let v = n
         .max_from
         .as_deref()
-        .map(|b| value_num(lookup(ctx, crate::bind_path(b))))
+        .map(|b| value_num(ctx.bound(crate::bind_path(b))))
         .or(n.max)
         .unwrap_or(5.0);
     (v.max(0.0) as usize).min(64)
 }
 
 /// Choice options (strings) from the `options` bind.
-fn choice_options(n: &NodeDef, ctx: &Value) -> Vec<String> {
+fn choice_options(n: &NodeDef, ctx: &Ctx) -> Vec<String> {
     match n
         .options
         .as_deref()
-        .and_then(|b| lookup(ctx, crate::bind_path(b)))
+        .and_then(|b| ctx.bound(crate::bind_path(b)))
     {
         Some(Value::Array(a)) => a.iter().map(value_text).collect(),
         _ => Vec::new(),
@@ -157,8 +157,8 @@ fn choice_options(n: &NodeDef, ctx: &Value) -> Vec<String> {
 }
 
 /// Selected choice index: a number, or the option equal to a string value.
-fn choice_index(n: &NodeDef, ctx: &Value, opts: &[String]) -> Option<usize> {
-    let v = lookup(ctx, crate::bind_path(n.value.as_deref()?))?;
+fn choice_index(n: &NodeDef, ctx: &Ctx, opts: &[String]) -> Option<usize> {
+    let v = ctx.bound(crate::bind_path(n.value.as_deref()?))?;
     match v {
         Value::Number(x) => x.as_f64().map(|f| f as usize),
         Value::String(s) => opts.iter().position(|o| o == s),
@@ -184,7 +184,7 @@ fn segments(p: &mut dyn Painter, n: &NodeDef, opts: &[String], h: f32) -> Vec<f3
 }
 
 /// Natural size for widgets that size themselves when `w`/`h` are not given.
-pub(crate) fn natural_w(n: &NodeDef, ctx: &Value, h: f32, p: &mut dyn Painter) -> Option<f32> {
+pub(crate) fn natural_w(n: &NodeDef, ctx: &Ctx, h: f32, p: &mut dyn Painter) -> Option<f32> {
     use crate::Kind;
     match n.kind {
         Kind::Pips => {
@@ -271,7 +271,7 @@ fn label(
 pub(crate) fn draw_pips(
     p: &mut dyn Painter,
     n: &NodeDef,
-    ctx: &Value,
+    ctx: &Ctx,
     r: Rect,
     alpha: f32,
     clip: Option<Rect>,
@@ -280,7 +280,7 @@ pub(crate) fn draw_pips(
     let on = n
         .value
         .as_deref()
-        .map(|v| value_num(lookup(ctx, crate::bind_path(v))))
+        .map(|v| value_num(ctx.bound(crate::bind_path(v))))
         .unwrap_or(0.0);
     let gap = n.gap.unwrap_or(5.0);
     let s = r.h;
@@ -308,7 +308,7 @@ pub(crate) fn draw_pips(
 pub(crate) fn draw_choice(
     p: &mut dyn Painter,
     n: &NodeDef,
-    ctx: &Value,
+    ctx: &Ctx,
     r: Rect,
     lit: bool,
     alpha: f32,
@@ -358,7 +358,7 @@ pub(crate) fn draw_choice(
 pub(crate) fn draw_keycap(
     p: &mut dyn Painter,
     n: &NodeDef,
-    ctx: &Value,
+    ctx: &Ctx,
     text: Option<&str>,
     r: Rect,
     lit: bool,
@@ -425,7 +425,7 @@ pub(crate) fn draw_keycap(
 pub(crate) fn draw_icon(
     p: &mut dyn Painter,
     n: &NodeDef,
-    ctx: &Value,
+    ctx: &Ctx,
     r: Rect,
     lit: bool,
     alpha: f32,

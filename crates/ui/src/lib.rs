@@ -145,7 +145,7 @@ pub enum Dim {
 
 impl Dim {
     /// Pixels; strings may bind (`"{item.dx}"`, `"{pad.x}%"`) and end in `%`.
-    fn resolve(&self, parent: f32, ctx: &Value) -> f32 {
+    fn resolve<S: Scope + ?Sized>(&self, parent: f32, ctx: &S) -> f32 {
         match self {
             Dim::Px(v) => *v,
             Dim::Pct(s) => {
@@ -699,7 +699,7 @@ struct Instance {
     /// Extra enter delay from `stagger`.
     delay: f32,
     /// Context the instance was built with (for `{bind}` images at draw time).
-    ctx: Value,
+    ctx: Ctx,
     /// Slanted clip inherited from the nearest `cut` ancestor (or itself).
     quad: Option<Quad>,
     /// Rotation inherited from the nearest `angle` ancestor (or itself).
@@ -718,7 +718,7 @@ pub struct Ui {
     def: ScreenDef,
     /// Flattened defs (preorder) for stable indices.
     defs: Vec<NodeDef>,
-    data: Value,
+    data: std::rc::Rc<Value>,
     instances: Vec<Instance>,
     focus: Option<String>,
     focus2: Option<String>,
@@ -790,15 +790,75 @@ pub fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
+/// Something `{bind}` paths resolve against: plain data or a layout [`Ctx`].
+pub trait Scope {
+    fn bound(&self, path: &str) -> Option<&Value>;
+}
+
+impl Scope for Value {
+    fn bound(&self, path: &str) -> Option<&Value> {
+        lookup(self, path)
+    }
+}
+
+/// Layout context: the screen data, shared, plus the innermost `items`
+/// element (`item`, `index`). Cheap to clone: instances keep one each, and
+/// copying the whole data per instance made big grids cost O(n²) per tick.
+#[derive(Clone, Debug)]
+pub struct Ctx {
+    root: std::rc::Rc<Value>,
+    item: Option<std::rc::Rc<(Value, Value)>>,
+}
+
+impl Ctx {
+    pub fn new(root: Value) -> Self {
+        Self {
+            root: std::rc::Rc::new(root),
+            item: None,
+        }
+    }
+
+    /// The same data with `item` / `index` bound to an `items` element.
+    fn with_item(&self, item: Value, index: usize) -> Self {
+        Self {
+            root: self.root.clone(),
+            item: Some(std::rc::Rc::new((item, Value::from(index)))),
+        }
+    }
+}
+
+impl Scope for Ctx {
+    fn bound(&self, path: &str) -> Option<&Value> {
+        if let Some(layer) = &self.item {
+            let mut parts = path.split('.').map(str::trim).filter(|p| !p.is_empty());
+            match parts.next() {
+                Some("item") => {
+                    let rest = path.split_once("item").map_or("", |(_, r)| r);
+                    return lookup(&layer.0, rest);
+                }
+                Some("index") => {
+                    return if parts.next().is_none() {
+                        Some(&layer.1)
+                    } else {
+                        None
+                    };
+                }
+                _ => {}
+            }
+        }
+        lookup(&self.root, path)
+    }
+}
+
 fn bind_path(expr: &str) -> &str {
     expr.trim().trim_matches(['{', '}'])
 }
 
-fn visible(ctx: &Value, expr: &str) -> bool {
+fn visible<S: Scope + ?Sized>(ctx: &S, expr: &str) -> bool {
     let e = bind_path(expr);
     match e.strip_prefix('!') {
-        Some(rest) => !truthy(lookup(ctx, rest)),
-        None => truthy(lookup(ctx, e)),
+        Some(rest) => !truthy(ctx.bound(rest)),
+        None => truthy(ctx.bound(e)),
     }
 }
 
@@ -822,7 +882,7 @@ fn value_num(v: Option<&Value>) -> f32 {
 }
 
 /// Replace `{path}` with context values.
-pub fn interpolate(s: &str, ctx: &Value) -> String {
+pub fn interpolate<S: Scope + ?Sized>(s: &str, ctx: &S) -> String {
     if !s.contains('{') {
         return s.to_string();
     }
@@ -834,7 +894,7 @@ pub fn interpolate(s: &str, ctx: &Value) -> String {
         match after.find('}') {
             Some(j) => {
                 let path = &after[..j];
-                out.push_str(&lookup(ctx, path).map(value_text).unwrap_or_default());
+                out.push_str(&ctx.bound(path).map(value_text).unwrap_or_default());
                 rest = &after[j + 1..];
             }
             None => {
@@ -997,7 +1057,7 @@ impl Ui {
         Self {
             def,
             defs,
-            data,
+            data: std::rc::Rc::new(data),
             instances: Vec::new(),
             focus: None,
             focus2: None,
@@ -1042,13 +1102,13 @@ impl Ui {
     }
 
     pub fn set_data(&mut self, data: Value) {
-        self.data = data;
+        self.data = std::rc::Rc::new(data);
     }
     pub fn data(&self) -> &Value {
         &self.data
     }
     pub fn data_mut(&mut self) -> &mut Value {
-        &mut self.data
+        std::rc::Rc::make_mut(&mut self.data)
     }
 
     /// Enable a second, independent focus for player 2.
@@ -1202,7 +1262,7 @@ impl Ui {
             TextKey::Enter => {
                 self.stop_edit();
                 if let Some(a) = on_press {
-                    let a = interpolate(&a, &self.data);
+                    let a = interpolate(&a, self.data.as_ref());
                     if !a.is_empty() {
                         self.pending.push(Event::Action(a));
                     }
@@ -1218,7 +1278,7 @@ impl Ui {
             self.inputs.insert(id.clone(), text.clone());
             self.pending.push(Event::Input(id, text.clone()));
             if let Some(a) = on_change {
-                let a = interpolate(&a.replace("{value}", &text), &self.data);
+                let a = interpolate(&a.replace("{value}", &text), self.data.as_ref());
                 if !a.is_empty() {
                     self.pending.push(Event::Action(a));
                 }
@@ -1242,24 +1302,33 @@ impl Ui {
             (self.size.1 - VIRTUAL_H).max(0.0),
         );
         self.cur_root = true;
-        let nodes = self.def.node.clone();
+        // the def tree is borrowed out for the walk (no per-tick copy)
+        let nodes = std::mem::take(&mut self.def.node);
         // paged grids publish their page for `{pages.<id>.page}` / `.count`
-        if !self.pages.is_empty()
-            && let Value::Object(m) = &mut self.data
-        {
+        if !self.pages.is_empty() && self.data.is_object() {
             let pages: serde_json::Map<String, Value> = self
                 .pages
                 .iter()
                 .map(|(k, (p, n))| (k.clone(), serde_json::json!({ "page": p, "count": n })))
                 .collect();
-            m.insert("pages".into(), Value::Object(pages));
+            let pages = Value::Object(pages);
+            if self.data.get("pages") != Some(&pages)
+                && let Value::Object(m) = std::rc::Rc::make_mut(&mut self.data)
+            {
+                m.insert("pages".into(), pages);
+            }
         }
         self.cur_quad = None;
         self.cur_rot = None;
-        let ctx = self.data.clone();
+        // shared, not copied: the data only changes through `set_data` / `data_mut`
+        let ctx = Ctx {
+            root: self.data.clone(),
+            item: None,
+        };
         let mut cursor = 0usize;
         self.cur_modal = false;
         self.layout_children(&mut cursor, &nodes, root, &ctx, "", None, 0.0, p);
+        self.def.node = nodes;
         self.apply_modal();
     }
 
@@ -1305,7 +1374,7 @@ impl Ui {
         cursor: &mut usize,
         nodes: &[NodeDef],
         parent: Rect,
-        ctx: &Value,
+        ctx: &Ctx,
         key_prefix: &str,
         clip: Option<Rect>,
         delay: f32,
@@ -1441,7 +1510,7 @@ impl Ui {
         rows * (ch + gap)
     }
 
-    fn node_rect(n: &NodeDef, parent: Rect, ctx: &Value, p: &mut dyn Painter) -> Rect {
+    fn node_rect(n: &NodeDef, parent: Rect, ctx: &Ctx, p: &mut dyn Painter) -> Rect {
         let (mut w, mut h) = (
             n.w.as_ref().map(|d| d.resolve(parent.w, ctx)),
             n.h.as_ref().map(|d| d.resolve(parent.h, ctx)),
@@ -1599,7 +1668,7 @@ impl Ui {
         def_idx: usize,
         key: String,
         rect: Rect,
-        ctx: &Value,
+        ctx: &Ctx,
         clip: Option<Rect>,
         delay: f32,
         cursor: &mut usize,
@@ -1639,7 +1708,7 @@ impl Ui {
         def_idx: usize,
         key: String,
         rect: Rect,
-        ctx: &Value,
+        ctx: &Ctx,
         clip: Option<Rect>,
         delay: f32,
         cursor: &mut usize,
@@ -1841,24 +1910,17 @@ impl Ui {
 
         // items: instance the children once per element (children overlap in the slot)
         // item contexts are built lazily: paged grids skip most of them
-        let items: Option<Vec<Value>> =
+        let items: Option<&[Value]> =
             n.items
                 .as_ref()
-                .map(|path| match lookup(ctx, bind_path(path)) {
-                    Some(Value::Array(a)) => a.clone(),
-                    _ => Vec::new(),
+                .map(|path| match ctx.bound(bind_path(path)) {
+                    Some(Value::Array(a)) => a.as_slice(),
+                    _ => &[],
                 });
-        let item_count = items.as_ref().map_or(1, Vec::len);
-        let item_ctx = |i: usize| -> (String, Value) {
-            match &items {
-                Some(a) => {
-                    let mut c = ctx.clone();
-                    if let Value::Object(m) = &mut c {
-                        m.insert("item".into(), a[i].clone());
-                        m.insert("index".into(), Value::from(i));
-                    }
-                    (format!("{key}[{i}]."), c)
-                }
+        let item_count = items.map_or(1, <[Value]>::len);
+        let item_ctx = |i: usize| -> (String, Ctx) {
+            match items {
+                Some(a) => (format!("{key}[{i}]."), ctx.with_item(a[i].clone(), i)),
                 None => (format!("{key}."), ctx.clone()),
             }
         };
@@ -2287,7 +2349,7 @@ impl Ui {
         let n = &self.defs[i.def];
         n.value
             .as_ref()
-            .map(|v| value_num(lookup(&i.ctx, bind_path(v))))
+            .map(|v| value_num(i.ctx.bound(bind_path(v))))
             .unwrap_or(0.0)
     }
 
@@ -2598,7 +2660,7 @@ impl Ui {
         let on = n
             .value
             .as_ref()
-            .is_some_and(|v| truthy(lookup(&inst.ctx, bind_path(v))));
+            .is_some_and(|v| truthy(inst.ctx.bound(bind_path(v))));
         let image = if n.kind == Kind::Toggle && on && n.image_on.is_some() {
             n.image_on.as_ref()
         } else if focused2 && n.image_focus2.is_some() {
@@ -3182,6 +3244,19 @@ y = 20
         // moving the mouse takes it again
         ui.mouse_move(Some((101.0, 180.0 + 120.0 + 10.0)));
         assert_eq!(ui.tick(Nav::default(), &mut p), vec![Event::Moved]);
+    }
+
+    /// Item scopes shadow `item` / `index` and fall back to the shared data.
+    #[test]
+    fn ctx_item_scope() {
+        let root = Ctx::new(serde_json::json!({ "title": "T", "item": "outer", "list": [1] }));
+        assert_eq!(interpolate("{item}", &root), "outer");
+        let c = root.with_item(serde_json::json!({ "name": "kfm" }), 3);
+        assert_eq!(interpolate("{title} {item.name} {index}", &c), "T kfm 3");
+        assert_eq!(interpolate("{ item . name }", &c), "kfm");
+        assert!(visible(&c, "list") && !visible(&c, "!item.name"));
+        let inner = c.with_item(Value::from("x"), 0);
+        assert_eq!(interpolate("{item}{index}", &inner), "x0");
     }
 
     #[test]
