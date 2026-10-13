@@ -2,8 +2,8 @@
 //! draws players, explods, projectiles, the stage and the fight.def HUD.
 //!
 //! Player keys come from `rugen.toml` (see [`crate::config`]); gamepads work
-//! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug,
-//! +/- zoom.
+//! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug
+//! (TRAINING: F1 hitboxes), +/- zoom.
 
 use rugen_sim::scale::FighterSize;
 use std::collections::HashMap;
@@ -360,6 +360,8 @@ pub struct Match {
     pub start_label: String,
     /// Profile stats already written for this match.
     pub stats_recorded: bool,
+    /// TRAINING tools (hitboxes, ...): drawing and the dummy's inputs only.
+    pub training: Option<crate::training::Training>,
 }
 
 impl Match {
@@ -544,6 +546,7 @@ impl Match {
             tutorial: None,
             start_label: "START".into(),
             stats_recorded: false,
+            training: None,
         })
     }
 
@@ -1124,6 +1127,12 @@ impl Match {
             Key::Named(NamedKey::Space) => self.paused = !self.paused,
             Key::Character(".") => self.step = true,
             Key::Named(NamedKey::F2) => self.show_boxes = !self.show_boxes,
+            // TRAINING: F1 is the HITBOXES switch of the pause menu
+            Key::Named(NamedKey::F1) if self.training.is_some() => {
+                if let Some(t) = self.training.as_mut() {
+                    t.cfg.hitboxes = !t.cfg.hitboxes;
+                }
+            }
             Key::Named(NamedKey::F1) => self.debug = !self.debug,
             Key::Named(NamedKey::F3) => self.overlay = !self.overlay,
             Key::Character("+") | Key::Character("=") => self.zoom = (self.zoom * 1.25).min(8.0),
@@ -1559,7 +1568,7 @@ impl Match {
         let stage = self.world.stage.clone();
         let ground = stage.zoffset;
         let items = self.collect_items(r);
-        let show_boxes = self.show_boxes;
+        let show_boxes = self.show_boxes || self.training.as_ref().is_some_and(|t| t.cfg.hitboxes);
         let brightness = self.world.superbrightness;
         let cam_x = self.world.cam_x;
 

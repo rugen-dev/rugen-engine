@@ -277,6 +277,10 @@ pub struct UiScreen {
     pause: Option<PauseInfo>,
     /// Move list page shown by the pause menu.
     moves_page: usize,
+    /// TRAINING pause menu: the panel on display (`moves`, `display`, ...).
+    panel: &'static str,
+    /// Focus key seen last tick (the training panel follows the menu focus).
+    pause_focus: Option<String>,
     /// Title: installed fighters the feature panel cycles through (newest first).
     featured: Vec<Featured>,
     feature_at: usize,
@@ -304,7 +308,20 @@ pub struct PauseInfo {
     pub scene: Option<MemImage>,
     /// Mode to go back to for CHARACTER SELECT (None: no select screen).
     pub mode: Option<Mode>,
+    /// TRAINING: the training lab's settings, edited by the menu.
+    pub training: Option<TrainingInfo>,
 }
+
+/// The pause menu of a TRAINING match: its tool settings and who fights.
+#[derive(Clone, Debug)]
+pub struct TrainingInfo {
+    pub cfg: crate::training::TrainingCfg,
+    /// Display names of P1 and the dummy (P2).
+    pub fighters: [String; 2],
+}
+
+/// Panels of the training pause menu (beside the menu, instead of the move list).
+const TRAINING_PANELS: [&str; 1] = ["display"];
 
 /// A fighter for the title's feature panel.
 struct Featured {
@@ -645,6 +662,26 @@ impl UiScreen {
         Ok(s)
     }
 
+    /// TRAINING pause menu: the training settings as the menu left them.
+    pub fn training_cfg(&self) -> Option<crate::training::TrainingCfg> {
+        self.pause
+            .as_ref()
+            .and_then(|p| p.training.as_ref())
+            .map(|t| t.cfg.clone())
+    }
+
+    /// Focus inside a training panel (`display[2].row`): the index of that
+    /// panel's entry in the menu.
+    fn training_menu_at(&self, focus: &str) -> Option<usize> {
+        let id = TRAINING_PANELS
+            .iter()
+            .find(|p| focus.starts_with(&format!("{p}[")))?;
+        self.ui.data()["menu"]
+            .as_array()?
+            .iter()
+            .position(|m| m["id"] == *id)
+    }
+
     /// Title facts: featured fighters (newest archive first) and the arenas.
     fn load_title_facts(&mut self, lib: &rugen_content::Library) {
         let mut feats: Vec<(std::time::SystemTime, Featured)> = Vec::new();
@@ -874,6 +911,8 @@ impl UiScreen {
             },
             pause: None,
             moves_page: 0,
+            panel: "moves",
+            pause_focus: None,
             featured: Vec::new(),
             feature_at: 0,
             arenas: Value::Null,
@@ -1023,18 +1062,40 @@ impl UiScreen {
                 let count = pages.len().max(1);
                 let page = self.moves_page % count;
                 let [col1, col2] = pages.into_iter().nth(page).unwrap_or_default();
+                let training = info.and_then(|p| p.training.as_ref());
                 let mut menu = vec![
                     json!({ "id": "resume", "label": "RESUME", "action": "resume" }),
                     json!({ "id": "moves", "label": "MOVE LIST", "action": "moves" }),
                     json!({ "id": "restart", "label": "RESTART ROUND", "action": "restart" }),
                     json!({ "id": "controls", "label": "BUTTON CONFIG", "action": "controls" }),
                 ];
+                if training.is_some() {
+                    // the training lab: its panels after RESUME, a reset that says what it does
+                    for (k, id) in TRAINING_PANELS.iter().enumerate() {
+                        let label = id.to_uppercase();
+                        let go = format!("panel:{id}");
+                        menu.insert(
+                            1 + k,
+                            json!({ "id": id, "label": label, "action": go, "right": go }),
+                        );
+                    }
+                    if let Some(m) = menu.iter_mut().find(|m| m["id"] == "restart") {
+                        m["label"] = json!("RESET POSITIONS");
+                    }
+                }
                 if info.is_some_and(|p| p.mode.is_some()) {
                     menu.push(
                         json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select" }),
                     );
                 }
                 menu.push(json!({ "id": "quit", "label": "QUIT TO MENU", "action": "quit" }));
+                // left / right page the move list, except on an entry with its own panel
+                for m in &mut menu {
+                    if m.get("right").is_none() {
+                        m["right"] = json!("page:1");
+                    }
+                    m["left"] = json!("page:-1");
+                }
                 let cmd = info.map(|p| p.cmd.to_uppercase()).unwrap_or_default();
                 let name = info.map(|p| p.name.to_uppercase()).unwrap_or_default();
                 let title = format!("{name} · MOVE LIST");
@@ -1043,11 +1104,28 @@ impl UiScreen {
                 } else {
                     format!("NO SPECIAL MOVES FOUND IN {cmd}")
                 };
+                let who = match training {
+                    Some(t) => format!(
+                        "P1 · {} VS DUMMY · {}",
+                        t.fighters[0].to_uppercase(),
+                        t.fighters[1].to_uppercase()
+                    ),
+                    None => format!("P{} · {name}", info.map_or(1, |p| p.side + 1)),
+                };
+                let panel = if training.is_some() {
+                    self.panel
+                } else {
+                    "moves"
+                };
                 json!({
                     "profile": self.profile_json(),
                     "version": env!("CARGO_PKG_VERSION"),
                     "menu": menu,
-                    "who": format!("P{} · {name}", info.map_or(1, |p| p.side + 1)),
+                    "training": training.is_some(),
+                    "show_moves": panel == "moves",
+                    "show_display": panel == "display",
+                    "display": training.map_or(json!([]), |t| t.cfg.display_json()),
+                    "who": who,
                     "name": name,
                     // the header shrinks for long names so it never reaches the page count
                     "title_big": title.chars().count() <= 20,
@@ -1069,7 +1147,8 @@ impl UiScreen {
                     } else {
                         "FACING RIGHT".to_string()
                     },
-                    "paged": count > 1,
+                    "paged": count > 1 && panel == "moves",
+                    "panel_open": panel != "moves",
                     "keys": self.keys_json(),
                 })
             }
@@ -1415,7 +1494,16 @@ impl UiScreen {
                     Transition::Title
                 })
             }
-            UiKind::Pause => Some(Transition::Resume),
+            UiKind::Pause => {
+                // B inside a training panel: back to its menu entry
+                let f = self.ui.focused().unwrap_or("").to_string();
+                if let Some(at) = self.training_menu_at(&f) {
+                    sfx(sys.title.cancel_snd);
+                    self.ui.set_focus(Some(&format!("menu[{at}].slab")));
+                    return None;
+                }
+                Some(Transition::Resume)
+            }
             UiKind::Options => self.escape(sys),
             // B is a fight button: it must not quit the game, leave a result or the bindings page
             UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus | UiKind::Stages => {
@@ -1616,6 +1704,21 @@ impl UiScreen {
             };
         }
         if self.kind == UiKind::Pause {
+            if let Some(t) = self.pause.as_mut().and_then(|p| p.training.as_mut()) {
+                if t.cfg.action(a) {
+                    self.refresh_data(sys);
+                    return None;
+                }
+                if let Some(id) = a.strip_prefix("panel:")
+                    && let Some(&id) = TRAINING_PANELS.iter().find(|p| **p == id)
+                {
+                    // into the panel, at its first row
+                    self.panel = id;
+                    self.refresh_data(sys);
+                    self.ui.set_focus(Some(&format!("{id}[0].row")));
+                    return None;
+                }
+            }
             return match a {
                 "resume" | "back" => Some(Transition::Resume),
                 "options" => Some(Transition::Options),
@@ -1976,6 +2079,32 @@ impl UiScreen {
             && let Some(t) = self.back(Some(1), sys, sfx)
         {
             out = Some(t);
+        }
+        // training pause menu: the focused entry's panel is the one on display
+        if self.kind == UiKind::Pause && self.pause.as_ref().is_some_and(|p| p.training.is_some()) {
+            let f = self.ui.focused().map(str::to_string);
+            if f != self.pause_focus {
+                let entry = f
+                    .as_deref()
+                    .and_then(|f| f.strip_prefix("menu["))
+                    .and_then(|r| r.split(']').next())
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.ui.data()["menu"].get(i))
+                    .and_then(|m| m["id"].as_str())
+                    .map(str::to_string);
+                if let Some(id) = entry {
+                    let panel = TRAINING_PANELS
+                        .iter()
+                        .find(|p| **p == id)
+                        .copied()
+                        .unwrap_or("moves");
+                    if panel != self.panel {
+                        self.panel = panel;
+                        self.refresh_data(sys);
+                    }
+                }
+                self.pause_focus = f;
+            }
         }
         // options: the focused tab is the tab on display; the help line follows the focus
         if self.kind == UiKind::Options {

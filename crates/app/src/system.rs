@@ -44,7 +44,6 @@ pub struct TitleInfo {
     pub bg_offset: [f32; 2],
     pub move_snd: SndRef,
     pub done_snd: SndRef,
-    #[allow(dead_code)]
     pub cancel_snd: SndRef,
 }
 

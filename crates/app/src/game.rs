@@ -309,6 +309,8 @@ pub struct Shell {
     menu_repeat: [crate::repeat::Repeat; 2],
     /// Stats of the match being played (read-only observer).
     match_stats: crate::screeninfo::MatchStats,
+    /// TRAINING tool settings, kept from one training match to the next.
+    training_cfg: crate::training::TrainingCfg,
     /// The settings as rugen.toml holds them: the options screens preview
     /// edits live and only SAVE writes them (DISCARD goes back to these).
     saved: Config,
@@ -425,6 +427,7 @@ impl Shell {
             mouse_releases: Vec::new(),
             menu_repeat: Default::default(),
             match_stats: Default::default(),
+            training_cfg: Default::default(),
             menu_keys: Buttons::default(),
             menu_taps: Buttons::default(),
             ctrl: false,
@@ -547,6 +550,17 @@ impl Shell {
         let keys =
             crate::keylabel::Labels::new(&self.config.input, side, self.input.devices()[side]);
         crate::screeninfo::relabel(&mut moves, |b| keys.button(b));
+        let training = m.training.as_ref().map(|t| crate::uiscreen::TrainingInfo {
+            cfg: t.cfg.clone(),
+            fighters: [0, 1].map(|i| {
+                let w = &m.world;
+                w.players
+                    .get(i)
+                    .and_then(|p| w.data.get(p.data))
+                    .map(|d| d.display_name.clone())
+                    .unwrap_or_default()
+            }),
+        });
         let info = crate::uiscreen::PauseInfo {
             side,
             name,
@@ -555,6 +569,7 @@ impl Shell {
             moves,
             scene,
             mode: setup.mode.filter(|_| !setup.tutorial),
+            training,
         };
         match UiScreen::load_pause(
             &self.motif_dir,
@@ -1389,6 +1404,11 @@ impl Shell {
                         if setup.net.is_some() {
                             m.ranked = self.online_match.as_ref().map(|om| om.ranked);
                         }
+                        // the training lab: local TRAINING matches only
+                        if crate::training::applies(&setup) {
+                            m.training =
+                                Some(crate::training::Training::new(self.training_cfg.clone()));
+                        }
                         if setup.net.is_none() {
                             m.record = Some(crate::replay::Replay::new(
                                 &setup,
@@ -1714,6 +1734,15 @@ impl Shell {
                     resume = p.tick(pressed, sys, &mut g.renderer, &mut |snd| {
                         sfx_queue.push(snd)
                     });
+                    // training settings edited in the menu apply at once
+                    if let Some(cfg) = p.training_cfg() {
+                        if let Screen::Match(m) = &mut self.screen
+                            && let Some(t) = m.training.as_mut()
+                        {
+                            t.cfg = cfg.clone();
+                        }
+                        self.training_cfg = cfg;
+                    }
                     // START, Esc and a pad's Select / Back resume
                     if resume.is_none() && (pad_pause.is_some() || start_side.is_some()) {
                         resume = Some(Transition::Resume);
@@ -1767,6 +1796,10 @@ impl Shell {
                 advanced = m.tick(now, &mut self.audio);
                 if advanced {
                     self.match_stats.observe(&m.world);
+                }
+                // F1 toggles a training tool in the match: the next one keeps it
+                if let Some(t) = m.training.as_ref() {
+                    self.training_cfg = t.cfg.clone();
                 }
                 if m.leave {
                     if let Some(om) = self.online_match.take() {

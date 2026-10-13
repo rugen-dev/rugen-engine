@@ -68,10 +68,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Server backups**: daily copies to any S3-compatible bucket.
 - [x] **One-way platforms**: jump up through them, double-tap down to drop.
 - [x] **Arena AI**: CPU fighters stay on stage, recover and use platforms.
+- [x] **Hitbox display**: see the attack and hurt boxes in Training.
 
 ### Planned
 
-- [ ] **Hitbox display**: see the attack and hurt boxes in Training.
 - [ ] **Frame data**: startup, active and recovery frames for every move.
 - [ ] **Input display**: the inputs of both players on screen.
 - [ ] **Record and playback dummy**: record a sequence and practise against it.

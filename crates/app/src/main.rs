@@ -17,6 +17,7 @@
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
+//!   --training                                                  TRAINING mode (dummy P2, training pause menu)
 //!   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
 //!   --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
@@ -78,6 +79,7 @@ mod stagegen;
 mod stagesel;
 mod system;
 mod title;
+mod training;
 mod tutorial;
 mod uiscreen;
 mod verify;
@@ -136,6 +138,7 @@ rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboa
   --synctest                                                  local match that verifies determinism
   --ai n                                                      P2 computer level (default 4, 0 = human)
   --watch                                                     both sides computer controlled
+  --training                                                  TRAINING mode (dummy P2, training pause menu)
   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
   --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
@@ -237,6 +240,7 @@ fn main() -> anyhow::Result<()> {
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let watch = args.iter().any(|a| a == "--watch");
+            let training = args.iter().any(|a| a == "--training");
             let force = args.iter().any(|a| a == "--force");
             let synctest = args.iter().any(|a| a == "--synctest");
             let spectate = args.iter().any(|a| a == "--spectate");
@@ -371,7 +375,12 @@ fn main() -> anyhow::Result<()> {
             let ai = ai
                 .map(|a| a.parse::<i32>().context("--ai expects 0..8"))
                 .transpose()?
-                .unwrap_or(if synctest || net_mode.is_some() { 0 } else { 4 });
+                .unwrap_or(if synctest || training || net_mode.is_some() {
+                    0
+                } else {
+                    4
+                });
+            let training = training && net_mode.is_none();
             let setup = play::FightSetup {
                 p1: p1.clone(),
                 p2: p2.unwrap_or(p1),
@@ -380,7 +389,7 @@ fn main() -> anyhow::Result<()> {
                 net: net_mode,
                 tutorial: false,
                 ids: [String::new(), String::new()],
-                mode: None,
+                mode: training.then_some(game::Mode::Training),
                 fighter_size: None,
                 arena_ai: arena_ai.map(|v| v != "0" && v != "off" && v != "false"),
                 round_time: None,

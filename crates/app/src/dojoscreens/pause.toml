@@ -1,9 +1,10 @@
 # rugen PAUSE — Dojo theme (layout of the approved "Pause and move list" mockup).
 # Coordinates are 1280x720. The fight stays visible, dimmed; the menu sits
 # on the left, the move list of the fighter who paused on a washi sheet.
-# Data: scene/has_scene (the frozen fight), menu[] {id label action}, who,
-# name, title, title_big, col1[] / col2[] rows {group label | name cost
-# parts[] {text cap}}, has_moves, no_moves, empty, source, facing, paged,
+# Data: scene/has_scene (the frozen fight), menu[] {id label action left
+# right}, who, training, show_moves / show_display, display[] {id
+# label options sel left right press}, panel_open, name, title, title_big,
+# col1[] / col2[] rows {group label | name cost parts[] {text cap}}, has_moves, no_moves, empty, source, facing, paged,
 # keys {start}.
 background = [0.078, 0.051, 0.043, 1.0]
 exit_time = 6
@@ -40,6 +41,17 @@ enter_time = 10
   font = 3
   scale = 2
   bank = 14
+  visible = "!training"
+
+  # TRAINING is longer: smaller, so it stays clear of the panel
+  [[node.children]]
+  kind = "text"
+  text = "TRAINING"
+  y = 8
+  font = 3
+  scale = 1.5
+  bank = 14
+  visible = "training"
 
   [[node.children]]
   kind = "text"
@@ -55,6 +67,7 @@ enter_time = 10
   w = 344
   gap = 7
   items = "menu"
+  group = "menu"
   stagger = 2
 
     # fixed slot so the list never shifts with the focus
@@ -80,8 +93,8 @@ enter_time = 10
     align = "left"
     pad = 22
     on_press = "{item.action}"
-    on_left = "page:-1"
-    on_right = "page:1"
+    on_left = "{item.left}"
+    on_right = "{item.right}"
 
 # ------------------------------------------------------------- move list
 [[node]]
@@ -93,6 +106,7 @@ w = 812
 h = 616
 enter = "right"
 enter_time = 12
+visible = "show_moves"
 
   # the washi sheet in its wooden frame
   [[node.children]]
@@ -450,6 +464,123 @@ enter_time = 12
   bank = 17
   visible = "source"
 
+# ------------------------------------------------- training: DISPLAY panel
+# TRAINING only (show_display): the training tools that draw over the fight,
+# one row each; left / right change a row, B goes back to the menu.
+[[node]]
+kind = "panel"
+dock = "right"
+x = 420
+y = 40
+w = 812
+h = 616
+enter = "right"
+enter_time = 12
+visible = "show_display"
+
+  [[node.children]]
+  kind = "panel"
+  w = 812
+  h = 616
+  image = "ui/sheet9.webp"
+  nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  text = "DISPLAY"
+  x = 32
+  y = 22
+  font = 3
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "WHAT THE SCREEN SHOWS"
+  anchor = "tr"
+  x = 32
+  y = 34
+  font = 2
+  bank = 17
+
+  [[node.children]]
+  kind = "panel"
+  x = 22
+  y = 76
+  w = 768
+  h = 2
+  color = [0.341, 0.2, 0.122, 1.0]
+
+  [[node.children]]
+  kind = "vbox"
+  id = "display"
+  x = 22
+  y = 78
+  w = 768
+  items = "display"
+  group = "display"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "row"
+    w = 768
+    h = 52
+    on_press = "{item.press}"
+    on_left = "{item.left}"
+    on_right = "{item.right}"
+    on_pick = "pick:{item.id}:{value}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = "100%"
+      h = "100%"
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 8
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      anchor = "bl"
+      h = 2
+      color = [0.839, 0.769, 0.627, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      anchor = "left"
+      x = 22
+      font = 6
+      bank = 12
+
+      [[node.children.children.children]]
+      kind = "choice"
+      anchor = "right"
+      x = 16
+      h = 32
+      pad = 10
+      border = 2
+      border_color = [0.341, 0.2, 0.122, 1.0]
+      color = [0.976, 0.945, 0.871, 1.0]
+      color2 = [0.706, 0.188, 0.102, 1.0]
+      font = 2
+      bank = 12
+      bank_focus = 14
+      options = "item.options"
+      value = "item.sel"
+
+  [[node.children]]
+  kind = "text"
+  text = "F1 SWITCHES THE HITBOXES DURING THE FIGHT."
+  anchor = "bl"
+  x = 32
+  y = 22
+  font = 2
+  bank = 17
+
 # ------------------------------------------------------------- key hints
 # on a dark strip: the labels must read over any stage under the dim
 [[node]]
@@ -490,6 +621,44 @@ align = "center"
   font = 2
   bank = 14
   visible = "paged"
+
+  [[node.children]]
+  kind = "text"
+  text = "↑↓"
+  h = 30
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+  visible = "panel_open"
+
+  [[node.children]]
+  kind = "text"
+  text = "CHOOSE   "
+  font = 2
+  bank = 14
+  visible = "panel_open"
+
+  [[node.children]]
+  kind = "text"
+  text = "←→"
+  h = 30
+  pad = 8
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+  visible = "panel_open"
+
+  [[node.children]]
+  kind = "text"
+  text = "CHANGE   "
+  font = 2
+  bank = 14
+  visible = "panel_open"
 
   [[node.children]]
   kind = "text"
