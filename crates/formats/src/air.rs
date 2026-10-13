@@ -113,7 +113,7 @@ impl Air {
 
     pub fn open(path: impl AsRef<std::path::Path>) -> crate::Result<Self> {
         let path = path.as_ref();
-        let text = crate::text::decode(&std::fs::read(path)?);
+        let text = crate::text::decode(&crate::vfs::read(path)?);
         Ok(Self::parse_named(&path.to_string_lossy(), &text))
     }
 }

@@ -93,7 +93,19 @@ impl Audio {
         }
         self.stop_music();
         self.music_track = volume.clamp(0.0, 2.0);
-        let data = match StreamingSoundData::from_file(path) {
+        // music inside a stage's .rgs streams from memory (its bytes are stored as they were)
+        let data = if path.is_file() {
+            StreamingSoundData::from_file(path)
+        } else {
+            match rugen_formats::vfs::read(path) {
+                Ok(bytes) => StreamingSoundData::from_cursor(Cursor::new(bytes)),
+                Err(e) => {
+                    log::warn!("music {}: {e}", path.display());
+                    return;
+                }
+            }
+        };
+        let data = match data {
             Ok(d) => d,
             Err(e) => {
                 log::warn!("music {}: {e}", path.display());

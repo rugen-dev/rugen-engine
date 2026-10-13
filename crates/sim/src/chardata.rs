@@ -1,5 +1,11 @@
 //! Immutable per-character assets: constants, states, commands, animations.
 //! Loaded once, shared by every instance via `Arc`.
+//!
+//! A character loads the same from its folder or from inside an `.rgc`
+//! content file (`chars/x.rgc/x.def`, see `rugen_formats::vfs`). An `.rgc`
+//! carries its AIR / CMD / CNS compiled by the engine that converted it
+//! ([`compile_logic`]); when that engine was another build, the text is
+//! compiled again and the result kept in `cache/logic/`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,9 +16,9 @@ use rugen_cns::cmd::Cmd;
 use rugen_cns::state::{Controller, StateDef};
 use rugen_formats::air::Air;
 use rugen_formats::def::Def;
-use rugen_formats::pack::{self, Stamp};
 use rugen_formats::sff::Sff;
 use rugen_formats::text::decode;
+use rugen_formats::vfs;
 
 use crate::sctrl::Sctrl;
 use crate::{Error, Result};
@@ -62,14 +68,14 @@ pub struct CharData {
 /// How [`CharData::load_opts`] reads a character.
 #[derive(Clone, Copy, Debug)]
 pub struct LoadOptions {
-    /// Use the optimised artefacts in [`opt_dir`] when they are present and
-    /// match the source files (they fall back to the originals otherwise).
-    pub optimised: bool,
+    /// Use compiled logic (from the `.rgc`, else `cache/logic/`) when it was
+    /// built by this engine; `false` always compiles the text.
+    pub precompiled: bool,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        Self { optimised: true }
+        Self { precompiled: true }
     }
 }
 
@@ -92,7 +98,6 @@ struct Sources {
     /// cns, st, st0..st9 in load order (deduplicated like the loader always did).
     state_files: Vec<String>,
     common: (String, PathBuf),
-    def_path: PathBuf,
 }
 
 impl Sources {
@@ -180,25 +185,18 @@ impl Sources {
             cmd,
             state_files,
             common: (common_name.to_string(), common_path),
-            def_path: def_path.to_path_buf(),
             dir,
         })
     }
 
-    /// Every file the compiled logic depends on, with its stamp; `None` if one is missing.
-    fn logic_stamps(&self) -> Option<Vec<(String, u64, u64)>> {
-        let mut paths = vec![self.def_path.clone(), self.air.clone(), self.cmd.1.clone()];
+    /// Every file the compiled logic is made from, in load order.
+    fn logic_files(&self) -> Result<Vec<PathBuf>> {
+        let mut out = vec![self.air.clone(), self.cmd.1.clone()];
         for n in &self.state_files {
-            paths.push(resolve(&self.dir, n).ok()?);
+            out.push(resolve(&self.dir, n)?);
         }
-        paths.push(self.common.1.clone());
-        paths
-            .into_iter()
-            .map(|p| {
-                let s = Stamp::of(&p)?;
-                Some((p.to_string_lossy().to_string(), s.len, s.mtime_ns))
-            })
-            .collect()
+        out.push(self.common.1.clone());
+        Ok(out)
     }
 }
 
@@ -217,11 +215,11 @@ impl Logic {
         let air = Air::open(&src.air)?;
         let mut warnings = Vec::new();
         let (cns_name, cns_path) = &src.cns;
-        let cns_text = decode(&std::fs::read(cns_path)?);
+        let cns_text = decode(&vfs::read(cns_path)?);
         let consts = load_consts(&Def::parse(&cns_text), src.localcoord[0]);
 
         let (cmd_name, cmd_path) = &src.cmd;
-        let cmd_text = decode(&std::fs::read(cmd_path)?);
+        let cmd_text = decode(&vfs::read(cmd_path)?);
         let cmd = rugen_cns::cmd::parse(cmd_name, &cmd_text);
         warnings.extend(cmd.errors.iter().cloned());
 
@@ -257,12 +255,12 @@ impl Logic {
             let text = if n == cns_name {
                 cns_text.clone()
             } else {
-                decode(&std::fs::read(resolve(&src.dir, n)?)?)
+                decode(&vfs::read(&resolve(&src.dir, n)?)?)
             };
             add(n, rugen_cns::state::parse_states(n, &text), &mut warnings);
         }
         let (common, common_path) = &src.common;
-        let common_text = decode(&std::fs::read(common_path)?);
+        let common_text = decode(&vfs::read(common_path)?);
         add(
             common,
             rugen_cns::state::parse_states(common, &common_text),
@@ -277,92 +275,63 @@ impl Logic {
         })
     }
 
-    /// The cached logic in `path` if it was built by this engine from these sources.
-    fn read_cached(path: &Path, src: &Sources) -> Option<Self> {
-        let bytes = std::fs::read(path).ok()?;
-        let mut r: &[u8] = &bytes;
-        let header: LogicHeader = bincode::deserialize_from(&mut r).ok()?;
-        if !header.matches(src) {
-            return None;
-        }
-        bincode::deserialize_from(&mut r).ok()
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self).map_err(|e| Error::Load(e.to_string()))
     }
 
-    fn write_cached(&self, path: &Path, src: &Sources) -> Result<()> {
-        let header = LogicHeader {
-            magic: *LOGIC_MAGIC,
-            schema: LOGIC_SCHEMA.to_string(),
-            sources: src
-                .logic_stamps()
-                .ok_or_else(|| Error::Load("a logic source file vanished".into()))?,
-        };
-        let mut out = bincode::serialize(&header).map_err(|e| Error::Load(e.to_string()))?;
-        out.extend(bincode::serialize(self).map_err(|e| Error::Load(e.to_string()))?);
-        write_atomic(path, &out)
+    fn from_bytes(b: &[u8]) -> Option<Self> {
+        bincode::deserialize(b).ok()
+    }
+
+    /// The compiled logic of a character inside a content file: its own
+    /// when this engine built it, else the `cache/logic/` copy, else
+    /// compiled now (and cached). `None` outside content files.
+    fn precompiled(def_path: &Path, src: &Sources) -> Option<Self> {
+        if let Some((schema, payload)) = vfs::logic(def_path)
+            && schema == LOGIC_SCHEMA
+            && let Some(l) = Self::from_bytes(&payload)
+        {
+            return Some(l);
+        }
+        let cache = logic_cache_path(def_path, src)?;
+        if let Ok(b) = std::fs::read(&cache)
+            && let Some(l) = Self::from_bytes(&b)
+        {
+            return Some(l);
+        }
+        let l = Self::parse(src).ok()?;
+        if let Ok(b) = l.to_bytes() {
+            let _ = write_atomic(&cache, &b);
+        }
+        Some(l)
     }
 }
 
-const LOGIC_MAGIC: &[u8; 8] = b"RUGENLGC";
+/// `cache/logic/<key>.bin` for a character inside a content file: the key
+/// hashes the engine schema and the bytes of every logic source, so a
+/// stale or foreign entry is never picked up.
+fn logic_cache_path(def_path: &Path, src: &Sources) -> Option<PathBuf> {
+    vfs::split(def_path)?;
+    let dir = vfs::cache_dir()?;
+    let mut key = Vec::new();
+    key.extend_from_slice(LOGIC_SCHEMA.as_bytes());
+    for p in std::iter::once(def_path.to_path_buf()).chain(src.logic_files().ok()?) {
+        key.extend_from_slice(&rugen_formats::rgc::sha256(&vfs::read(&p).ok()?));
+    }
+    let h = rugen_formats::rgc::sha256(&key);
+    let hex: String = h[..16].iter().map(|b| format!("{b:02x}")).collect();
+    Some(dir.join("logic").join(format!("{hex}.bin")))
+}
+
 /// Engine version + hash of the sim / cns / formats sources (see `build.rs`):
-/// any engine change invalidates every cached logic file.
+/// compiled logic made by any other build is compiled again.
 pub const LOGIC_SCHEMA: &str = concat!(env!("CARGO_PKG_VERSION"), "-", env!("RUGEN_LOGIC_SCHEMA"));
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct LogicHeader {
-    magic: [u8; 8],
-    schema: String,
-    /// `(path, len, mtime ns)` of every source file.
-    sources: Vec<(String, u64, u64)>,
-}
-
-impl LogicHeader {
-    fn matches(&self, src: &Sources) -> bool {
-        &self.magic == LOGIC_MAGIC
-            && self.schema == LOGIC_SCHEMA
-            && src.logic_stamps().is_some_and(|s| s == self.sources)
-    }
-}
-
-/// Optimised sprite pack file name inside [`opt_dir`].
-pub const SPRITES_FILE: &str = "sprites.rspk";
-/// Precompiled AIR / CMD / CNS file name inside [`opt_dir`].
-pub const LOGIC_FILE: &str = "logic.bin";
-
-/// Where the optimised artefacts of the character (or stage) `def_path`
-/// live: `<def dir>/.rugen-opt/<def stem>/`. A local derived cache: never
-/// part of the fingerprint, packages or verification.
-pub fn opt_dir(def_path: &Path) -> PathBuf {
-    let stem = def_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
-    def_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(".rugen-opt")
-        .join(stem)
-}
-
-/// The sprite pack at `pack` if it was built from `source` (same size and
-/// mtime, current format, parsed the same way).
-pub fn load_sprite_pack(pack: &Path, source: &Path, is_char: bool) -> Option<Sff> {
-    let h = pack::read_header_file(pack).ok()?;
-    if h.format != pack::FORMAT || h.is_char != is_char || Some(h.stamp) != Stamp::of(source) {
-        return None;
-    }
-    match pack::open(pack) {
-        Ok((sff, _)) => Some(sff),
-        Err(e) => {
-            log::warn!("{}: {e}", pack.display());
-            None
-        }
-    }
-}
-
-fn sprite_pack_fresh(pack: &Path, source: &Path, is_char: bool) -> bool {
-    pack::read_header_file(pack).is_ok_and(|h| {
-        h.format == pack::FORMAT && h.is_char == is_char && Some(h.stamp) == Stamp::of(source)
-    })
+/// Compile the AIR / CMD / CNS of the character `def_path` into the bytes
+/// an `.rgc` stores next to its text (valid for [`LOGIC_SCHEMA`]).
+pub fn compile_logic(def_path: &Path, data_dir: &Path) -> Result<Vec<u8>> {
+    let src = Sources::resolve(def_path, data_dir)?;
+    Logic::parse(&src)?.to_bytes()
 }
 
 /// Write via a temporary file so a crash never leaves half a file behind.
@@ -376,156 +345,52 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// What [`optimise`] did.
-#[derive(Clone, Debug, Default)]
-pub struct OptReport {
-    /// Sprite pack built now (`None`: it was already fresh).
-    pub sprites: Option<pack::Stats>,
-    /// Logic cache built now.
-    pub logic: bool,
-}
-
-/// Whether the optimised artefacts of `def_path` exist and match the sources:
-/// `(sprites, logic)`.
-pub fn opt_fresh(def_path: &Path, data_dir: &Path) -> (bool, bool) {
-    let Ok(src) = Sources::resolve(def_path, data_dir) else {
-        return (false, false);
-    };
-    let dir = opt_dir(def_path);
-    let sprites = sprite_pack_fresh(&dir.join(SPRITES_FILE), &src.sff, true);
-    let logic = std::fs::read(dir.join(LOGIC_FILE))
-        .ok()
-        .and_then(|b| bincode::deserialize::<LogicHeader>(&b).ok())
-        .is_some_and(|h| h.matches(&src));
-    (sprites, logic)
-}
-
-/// Build the stale or missing optimised artefacts of a character into
-/// [`opt_dir`]. `parsed` is the character's SFF if the caller already
-/// parsed it (`Sff::parse(.., true)`, before any palette is applied).
-pub fn optimise(def_path: &Path, data_dir: &Path, parsed: Option<Sff>) -> Result<OptReport> {
-    let src = Sources::resolve(def_path, data_dir)?;
-    let dir = opt_dir(def_path);
-    let mut report = OptReport::default();
-    std::thread::scope(|s| -> Result<()> {
-        let logic = s.spawn(|| -> Result<bool> {
-            let path = dir.join(LOGIC_FILE);
-            if Logic::read_cached(&path, &src).is_some() {
-                return Ok(false);
-            }
-            Logic::parse(&src)?.write_cached(&path, &src)?;
-            Ok(true)
-        });
-        let pack_path = dir.join(SPRITES_FILE);
-        if !sprite_pack_fresh(&pack_path, &src.sff, true) {
-            let stamp =
-                Stamp::of(&src.sff).ok_or_else(|| Error::Load("sprite file vanished".into()))?;
-            let sff = match parsed {
-                Some(s) => s,
-                None => Sff::open(&src.sff, true)?,
-            };
-            let (bytes, stats) = pack::write(
-                &sff,
-                pack::Options {
-                    is_char: true,
-                    trim: true,
-                },
-                stamp,
-            );
-            write_atomic(&pack_path, &bytes)?;
-            report.sprites = Some(stats);
-        }
-        report.logic = logic
-            .join()
-            .map_err(|_| Error::Load("logic optimiser panicked".into()))??;
-        Ok(())
-    })?;
-    Ok(report)
-}
-
-/// Build a stage's sprite pack (untrimmed: stages tile sprites by their size)
-/// into [`opt_dir`] unless it is fresh. Returns whether one was written.
-pub fn optimise_stage(def_path: &Path, sff_path: &Path, parsed: Option<Sff>) -> Result<bool> {
-    let pack_path = opt_dir(def_path).join(SPRITES_FILE);
-    if sprite_pack_fresh(&pack_path, sff_path, false) {
-        return Ok(false);
-    }
-    let stamp = Stamp::of(sff_path).ok_or_else(|| Error::Load("sprite file vanished".into()))?;
-    let sff = match parsed {
-        Some(s) => s,
-        None => Sff::open(sff_path, false)?,
-    };
-    let opts = pack::Options {
-        is_char: false,
-        trim: false,
-    };
-    write_atomic(&pack_path, &pack::write(&sff, opts, stamp).0)?;
-    Ok(true)
-}
-
 impl CharData {
     pub fn load(def_path: &Path) -> Result<Arc<Self>> {
         Self::load_with_data(def_path, Path::new(""))
     }
 
     /// `data_dir` holds the engine's `common1.cns`; the char's own directory is searched first.
-    /// Uses the optimised artefacts when they are valid.
+    /// Uses precompiled logic when it is valid.
     pub fn load_with_data(def_path: &Path, data_dir: &Path) -> Result<Arc<Self>> {
         Self::load_opts(def_path, data_dir, LoadOptions::default())
     }
 
-    /// Load from the original files only, ignoring any optimised artefacts
+    /// Load compiling the text files, ignoring any precompiled logic
     /// (verification, equivalence tests).
     pub fn load_original(def_path: &Path, data_dir: &Path) -> Result<Arc<Self>> {
-        Self::load_opts(def_path, data_dir, LoadOptions { optimised: false })
+        Self::load_opts(def_path, data_dir, LoadOptions { precompiled: false })
     }
 
     pub fn load_opts(def_path: &Path, data_dir: &Path, opts: LoadOptions) -> Result<Arc<Self>> {
         let src = Sources::resolve(def_path, data_dir)?;
-        let opt = opts.optimised.then(|| opt_dir(def_path));
         let mut warnings = Vec::new();
-
-        let rest = || {
-            let logic = match opt
-                .as_ref()
-                .and_then(|d| Logic::read_cached(&d.join(LOGIC_FILE), &src))
-            {
-                Some(l) => Ok(l),
-                None => Logic::parse(&src),
-            };
-            let snd = src.snd.as_ref().map(|(n, found)| {
-                found
-                    .as_ref()
-                    .map_err(|e| Error::Load(e.to_string()))
-                    .and_then(|p| rugen_formats::snd::Snd::open(p).map_err(Into::into))
-                    .map_err(|e| format!("sound {n}: {e}"))
-            });
-            (logic, snd)
-        };
-        let pack = opt.as_ref().map(|d| d.join(SPRITES_FILE));
-        let (sff, logic, snd) = match pack.filter(|p| sprite_pack_fresh(p, &src.sff, true)) {
-            // optimised: logic and sounds on a helper thread while this one reads the pack
-            Some(pack) => std::thread::scope(|s| {
-                let rest = s.spawn(rest);
-                let sff = match pack::open(&pack) {
-                    Ok((sff, _)) => Ok(sff),
-                    Err(e) => {
-                        log::warn!("{}: {e}", pack.display());
-                        Sff::open(&src.sff, true).map_err(Error::from)
-                    }
+        // logic and sounds on a helper thread while this one reads the sprites
+        let (sff, logic, snd) = std::thread::scope(|s| {
+            let rest = s.spawn(|| {
+                let logic = match opts
+                    .precompiled
+                    .then(|| Logic::precompiled(def_path, &src))
+                    .flatten()
+                {
+                    Some(l) => Ok(l),
+                    None => Logic::parse(&src),
                 };
-                let (logic, snd) = rest
-                    .join()
-                    .unwrap_or_else(|_| (Err(Error::Load("logic loading panicked".into())), None));
-                (sff, logic, snd)
-            }),
-            // originals: one after the other, as MUGEN files have always loaded
-            None => {
-                let sff = Sff::open(&src.sff, true).map_err(Error::from);
-                let (logic, snd) = rest();
-                (sff, logic, snd)
-            }
-        };
+                let snd = src.snd.as_ref().map(|(n, found)| {
+                    found
+                        .as_ref()
+                        .map_err(|e| Error::Load(e.to_string()))
+                        .and_then(|p| rugen_formats::snd::Snd::open(p).map_err(Into::into))
+                        .map_err(|e| format!("sound {n}: {e}"))
+                });
+                (logic, snd)
+            });
+            let sff = Sff::open(&src.sff, true).map_err(Error::from);
+            let (logic, snd) = rest
+                .join()
+                .unwrap_or_else(|_| (Err(Error::Load("logic loading panicked".into())), None));
+            (sff, logic, snd)
+        });
         let mut sff = sff?;
         let logic = logic?;
         let snd = match snd {
@@ -741,24 +606,8 @@ impl FxData {
 
 /// Case-insensitive path resolution with backslash normalisation.
 pub fn resolve(dir: &Path, name: &str) -> Result<PathBuf> {
-    let name = name.replace('\\', "/");
-    let direct = dir.join(&name);
-    if direct.exists() {
-        return Ok(direct);
-    }
-    let mut cur = dir.to_path_buf();
-    for part in name.split('/').filter(|p| !p.is_empty()) {
-        let found = std::fs::read_dir(&cur)
-            .ok()
-            .and_then(|rd| {
-                rd.flatten()
-                    .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))
-            })
-            .map(|e| e.path())
-            .ok_or_else(|| Error::Load(format!("{part} not found in {}", cur.display())))?;
-        cur = found;
-    }
-    Ok(cur)
+    vfs::resolve(dir, name)
+        .ok_or_else(|| Error::Load(format!("{} not found in {}", name.trim(), dir.display())))
 }
 
 /// `data/common1.cns` relative to the char dir's ancestors (`chars/kfm/../../data`).

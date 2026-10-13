@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 kira.workspace = true
+rugen-formats.workspace = true
 libm.workspace = true
 log.workspace = true
 thiserror.workspace = true

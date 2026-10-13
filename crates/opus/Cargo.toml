@@ -1,0 +1,14 @@
+[package]
+name = "rugen-opus"
+description = "Safe Opus encoder / decoder over unsafe-libopus (libopus 1.3.1 translated to Rust: no C toolchain, no system library)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+unsafe-libopus = "0.2"
+
+[lints]
+workspace = true

@@ -12,9 +12,12 @@ pub mod air;
 pub mod def;
 pub mod fnt;
 pub mod pack;
+pub mod rgc;
 pub mod sff;
 pub mod snd;
 pub mod text;
+pub mod vfs;
+pub mod wav;
 
 #[cfg(test)]
 pub(crate) mod fixtures;

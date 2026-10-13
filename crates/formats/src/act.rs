@@ -13,7 +13,7 @@ pub fn parse(bytes: &[u8]) -> Palette {
 }
 
 pub fn open(path: impl AsRef<std::path::Path>) -> crate::Result<Palette> {
-    Ok(parse(&std::fs::read(path)?))
+    Ok(parse(&crate::vfs::read(path.as_ref())?))
 }
 
 #[cfg(test)]

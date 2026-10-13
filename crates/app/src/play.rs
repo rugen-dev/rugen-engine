@@ -152,8 +152,8 @@ pub struct Match {
     input_history: [Vec<Buttons>; 2],
     setup: FightSetup,
     data_dir: PathBuf,
-    /// Hot reload: character dirs and the newest mtime seen there.
-    watch: Vec<(usize, PathBuf, u64)>,
+    /// Hot reload: data slot and what to watch for it.
+    watch: Vec<(usize, Watch)>,
     reload_tick: u32,
     /// Data slots whose textures must be re-uploaded (after a reload).
     gpu_dirty: Vec<usize>,
@@ -208,6 +208,10 @@ impl Match {
             for w in &d.warnings {
                 log::warn!("{}: {w}", d.name);
             }
+            // Opus sounds of .rgc fighters decode in the background, ready before they play
+            if let Some(snd) = &d.snd {
+                snd.prefetch();
+            }
         }
         if setup.tutorial {
             world.round.time_left = -1;
@@ -259,7 +263,7 @@ impl Match {
             let stage_dir = p.parent().unwrap_or(Path::new("."));
             [root.join(&name), stage_dir.join(&name)]
                 .into_iter()
-                .find(|c| c.exists())
+                .find(|c| rugen_formats::vfs::exists(c))
         });
         let lifebar = match crate::lifebar::Lifebar::load(motif, data_dir) {
             Ok(lb) => Some(lb),
@@ -291,11 +295,7 @@ impl Match {
             watch: [(0usize, &setup.p1), (1, &setup.p2)]
                 .into_iter()
                 .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
-                .map(|(i, p)| {
-                    let dir = p.parent().unwrap_or(Path::new(".")).to_path_buf();
-                    let m = newest_mtime(&dir);
-                    (i, dir, m)
-                })
+                .filter_map(|(i, p)| Watch::of(p).map(|w| (i, w)))
                 .collect(),
             setup: setup.clone(),
             data_dir: data_dir.to_path_buf(),
@@ -346,18 +346,35 @@ impl Match {
             return;
         }
         for k in 0..self.watch.len() {
-            let (slot, dir, seen) = self.watch[k].clone();
-            let now = newest_mtime(&dir);
-            if now <= seen {
-                continue;
-            }
-            self.watch[k].2 = now;
+            let slot = self.watch[k].0;
             let def = if slot == 0 {
                 &self.setup.p1
             } else {
                 &self.setup.p2
             };
             let def = def.clone();
+            let changed = match &mut self.watch[k].1 {
+                // a folder in chars/: its working copy is converted again first
+                Watch::WorkingCopy => {
+                    match rugen_content::refresh_working_copy(&def, &self.data_dir) {
+                        Some(Ok(changed)) => changed,
+                        Some(Err(e)) => {
+                            log::error!("reload failed: {e}");
+                            false
+                        }
+                        None => false,
+                    }
+                }
+                Watch::Folder(dir, seen) => {
+                    let now = newest_mtime(dir);
+                    let changed = now > *seen;
+                    *seen = now;
+                    changed
+                }
+            };
+            if !changed {
+                continue;
+            }
             match CharData::load_with_data(&def, &self.data_dir) {
                 Ok(d) => {
                     for w in &d.warnings {
@@ -1466,6 +1483,33 @@ fn draw_text(r: &mut Renderer, text: &str, center: [f32; 2], px: f32, color: [f3
 
 fn draw_number(r: &mut Renderer, n: i32, center: [f32; 2], px: f32, color: [f32; 4]) {
     draw_text(r, &format!("{n:02}"), center, px, color);
+}
+
+/// What hot reload watches for a fighter.
+#[derive(Clone, Debug)]
+enum Watch {
+    /// The def lives in the `cache/` conversion of a folder in `chars/`.
+    WorkingCopy,
+    /// A def loaded straight from a folder: its newest source mtime.
+    Folder(PathBuf, u64),
+}
+
+impl Watch {
+    /// `None` for content that cannot change (an `.rgc` / `.rgs` file).
+    fn of(def: &Path) -> Option<Self> {
+        match rugen_formats::vfs::split(def) {
+            Some((content, _)) => {
+                let mut side = content.into_os_string();
+                side.push(".source.json");
+                PathBuf::from(side).is_file().then_some(Watch::WorkingCopy)
+            }
+            None => {
+                let dir = def.parent().unwrap_or(Path::new(".")).to_path_buf();
+                let m = newest_mtime(&dir);
+                Some(Watch::Folder(dir, m))
+            }
+        }
+    }
 }
 
 /// Newest modification time (seconds) of any state/anim/command file under `dir`.

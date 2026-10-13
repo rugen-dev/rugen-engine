@@ -40,7 +40,7 @@ pub enum Pixels {
     Indexed(Vec<u8>),
     /// Straight (non-premultiplied) RGBA8, `w * h * 4` bytes.
     Rgba(Vec<u8>),
-    /// Still compressed, from an optimised sprite pack ([`crate::pack`]);
+    /// Still compressed, from an `.rgc` / `.rgs` sprite section ([`crate::pack`]);
     /// [`Sprite::decoded`] turns it into one of the variants above.
     Packed(crate::pack::Packed),
 }
@@ -85,9 +85,9 @@ impl Sprite {
     }
 
     /// Identity of the pixel data for texture sharing: sprites with the same
-    /// key hold the same pixels (linked / duplicate sprites in a sprite pack).
+    /// key hold the same pixels (linked / duplicate sprites of a content file).
     /// `None` when the data is not shared.
-    pub fn share_key(&self) -> Option<(usize, usize)> {
+    pub fn share_key(&self) -> Option<(usize, usize, u64)> {
         match &self.pixels {
             Pixels::Packed(p) => Some(p.share_key()),
             _ => None,
@@ -119,7 +119,7 @@ impl Sff {
     }
 
     pub fn open(path: impl AsRef<std::path::Path>, is_char: bool) -> Result<Self> {
-        Self::parse(&std::fs::read(path)?, is_char)
+        crate::vfs::open_sff(path.as_ref(), is_char)
     }
 
     /// Give an SFFv1 character the colours of its selected `.act`.
@@ -591,6 +591,63 @@ fn rle8_decode(rle: &[u8], w: u16, h: u16) -> Vec<u8> {
     p
 }
 
+/// SFFv2 RLE8 (format 2): `0x40 | n, value` runs, other bytes literal.
+fn rle8_encode(px: &[u8], out: &mut Vec<u8>) {
+    let mut i = 0;
+    while i < px.len() {
+        let v = px[i];
+        let mut n = 1;
+        while n < 63 && i + n < px.len() && px[i + n] == v {
+            n += 1;
+        }
+        if n > 1 || v & 0xC0 == 0x40 {
+            out.push(0x40 | n as u8);
+            out.push(v);
+        } else {
+            out.push(v);
+        }
+        i += n;
+    }
+}
+
+/// An 8-bit PCX image (128-byte header + RLE rows), as SFFv1 stores sprites.
+fn pcx_encode(px: &[u8], w: u16, h: u16, out: &mut Vec<u8>) {
+    let bpl = (w as usize + 1) & !1;
+    let mut hdr = [0u8; 128];
+    hdr[0] = 10;
+    hdr[1] = 5;
+    hdr[2] = 1;
+    hdr[3] = 8;
+    hdr[8..10].copy_from_slice(&w.wrapping_sub(1).to_le_bytes());
+    hdr[10..12].copy_from_slice(&h.wrapping_sub(1).to_le_bytes());
+    hdr[12..14].copy_from_slice(&72u16.to_le_bytes());
+    hdr[14..16].copy_from_slice(&72u16.to_le_bytes());
+    hdr[65] = 1;
+    hdr[66..68].copy_from_slice(&(bpl as u16).to_le_bytes());
+    hdr[68..70].copy_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&hdr);
+    let (w, h) = (w as usize, h as usize);
+    let mut row = vec![0u8; bpl];
+    for y in 0..h {
+        row.fill(0);
+        let src = px.get(y * w..(y + 1) * w).unwrap_or(&[]);
+        row[..src.len()].copy_from_slice(src);
+        let mut i = 0;
+        while i < bpl {
+            let v = row[i];
+            let mut n = 1;
+            while n < 63 && i + n < bpl && row[i + n] == v {
+                n += 1;
+            }
+            if n > 1 || v >= 0xC0 {
+                out.push(0xC0 | n as u8);
+            }
+            out.push(v);
+            i += n;
+        }
+    }
+}
+
 fn rle5_decode(rle: &[u8], w: u16, h: u16) -> Vec<u8> {
     let total = w as usize * h as usize;
     if rle.is_empty() {
@@ -947,6 +1004,9 @@ mod tests {
 
 // ---------------------------------------------------------------- writer
 
+/// Size, palette slot and pixels of a sprite already written (links).
+type PixelsKey<'a> = (u16, u16, Option<usize>, &'a [u8]);
+
 impl Sff {
     /// Serialize as SFF v2.0.1: raw 8-bit indexed sprites (format 0) or
     /// PNG-compressed RGBA (format 12, depth 32), palettes with their alpha kept. Palettes are
@@ -1027,6 +1087,338 @@ impl Sff {
         out
     }
 
+    /// Serialize so that [`Sff::parse`] (with the same `is_char`) gives this
+    /// SFF back: same version (v1 as PCX, v2 with RLE8 / PNG), sprite order,
+    /// sizes, axes, palette slots (SFFv1 palette sharing included) and
+    /// pixels. Identical sprites become links. Used to export `.rgc` files.
+    pub fn write_exact(&self) -> Vec<u8> {
+        match self.version {
+            Some(Version::V1) => self.write_exact_v1(),
+            Some(Version::V2 { patch }) => self.write_exact_v2(patch),
+            None => self.write_exact_v2(1),
+        }
+    }
+
+    fn write_exact_v2(&self, patch: u8) -> Vec<u8> {
+        let mut out = vec![0u8; 512];
+        out[..12].copy_from_slice(b"ElecbyteSpr\0");
+        out[12..16].copy_from_slice(&[0, patch, 0, 2]);
+        // palette keys: slots without one (duplicate keys in the source) get unused keys
+        let mut key_of: Vec<Option<Key>> = vec![None; self.palettes.len()];
+        for (k, &i) in &self.palette_keys {
+            if let Some(slot) = key_of.get_mut(i) {
+                *slot = Some(*k);
+            }
+        }
+        let used: std::collections::BTreeSet<Key> = self.palette_keys.keys().copied().collect();
+        let mut spare = (0..=u16::MAX)
+            .rev()
+            .flat_map(|g| (0..=u16::MAX).rev().map(move |n| (g, n)))
+            .filter(|k| !used.contains(k));
+        let mut ldata: Vec<u8> = Vec::new();
+        let mut pal_nodes: Vec<u8> = Vec::new();
+        for (i, pal) in self.palettes.iter().enumerate() {
+            let (g, n) = key_of[i].unwrap_or_else(|| spare.next().unwrap_or((0, 0)));
+            let ofs = ldata.len() as u32;
+            let count = pal.len().min(256);
+            for c in pal.iter().take(count) {
+                ldata.extend_from_slice(c);
+            }
+            pal_nodes.extend_from_slice(&g.to_le_bytes());
+            pal_nodes.extend_from_slice(&n.to_le_bytes());
+            pal_nodes.extend_from_slice(&(count as u16).to_le_bytes());
+            pal_nodes.extend_from_slice(&0u16.to_le_bytes());
+            pal_nodes.extend_from_slice(&ofs.to_le_bytes());
+            pal_nodes.extend_from_slice(&((count * 4) as u32).to_le_bytes());
+        }
+        let mut spr_nodes: Vec<u8> = Vec::new();
+        // pixels already written: (w, h, pixels) -> node index
+        let mut written: std::collections::HashMap<(u16, u16, bool, &[u8]), u16> =
+            std::collections::HashMap::new();
+        let decoded: Vec<std::borrow::Cow<'_, Pixels>> =
+            self.sprites.values().map(|s| s.decoded()).collect();
+        for (i, (s, px)) in self.sprites.values().zip(&decoded).enumerate() {
+            let node = |out: &mut Vec<u8>, link: u16, fmt: u8, depth: u8, ofs: u32, len: u32| {
+                out.extend_from_slice(&s.group.to_le_bytes());
+                out.extend_from_slice(&s.number.to_le_bytes());
+                out.extend_from_slice(&s.width.to_le_bytes());
+                out.extend_from_slice(&s.height.to_le_bytes());
+                out.extend_from_slice(&s.offset[0].to_le_bytes());
+                out.extend_from_slice(&s.offset[1].to_le_bytes());
+                out.extend_from_slice(&link.to_le_bytes());
+                out.push(fmt);
+                out.push(depth);
+                out.extend_from_slice(&ofs.to_le_bytes());
+                out.extend_from_slice(&len.to_le_bytes());
+                out.extend_from_slice(&(s.palette.unwrap_or(0) as u16).to_le_bytes());
+                out.extend_from_slice(&0u16.to_le_bytes());
+            };
+            match px.as_ref() {
+                Pixels::Indexed(p) if p.is_empty() => {
+                    // no pixels: a link to itself reads back as an empty sprite
+                    node(&mut spr_nodes, i as u16, 0, 8, 0, 0);
+                }
+                Pixels::Indexed(p) => {
+                    if s.palette.is_some()
+                        && let Some(&j) = written.get(&(s.width, s.height, false, p.as_slice()))
+                    {
+                        node(&mut spr_nodes, j, 0, 8, 0, 0);
+                        continue;
+                    }
+                    let ofs = ldata.len() as u32;
+                    ldata.extend_from_slice(&(p.len() as u32).to_le_bytes());
+                    rle8_encode(p, &mut ldata);
+                    node(&mut spr_nodes, 0, 2, 8, ofs, ldata.len() as u32 - ofs);
+                    if i <= u16::MAX as usize {
+                        written
+                            .entry((s.width, s.height, false, p.as_slice()))
+                            .or_insert(i as u16);
+                    }
+                }
+                Pixels::Rgba(p) => {
+                    // a linked true-colour sprite reads back with its node's palette
+                    if s.palette.is_some()
+                        && let Some(&j) = written.get(&(s.width, s.height, true, p.as_slice()))
+                    {
+                        node(&mut spr_nodes, j, 0, 8, 0, 0);
+                        continue;
+                    }
+                    let ofs = ldata.len() as u32;
+                    let png = png_encode_rgba(p, s.width, s.height);
+                    ldata.extend_from_slice(&(p.len() as u32).to_le_bytes());
+                    ldata.extend_from_slice(&png);
+                    node(&mut spr_nodes, 0, 12, 32, ofs, png.len() as u32 + 4);
+                    if i <= u16::MAX as usize {
+                        written
+                            .entry((s.width, s.height, true, p.as_slice()))
+                            .or_insert(i as u16);
+                    }
+                }
+                Pixels::Packed(_) => unreachable!("decoded"),
+            }
+        }
+        let spr_ofs = out.len() as u32;
+        out.extend_from_slice(&spr_nodes);
+        let pal_ofs = out.len() as u32;
+        out.extend_from_slice(&pal_nodes);
+        let ldata_ofs = out.len() as u32;
+        out.extend_from_slice(&ldata);
+        let put = |out: &mut Vec<u8>, at: usize, v: u32| {
+            out[at..at + 4].copy_from_slice(&v.to_le_bytes())
+        };
+        put(&mut out, 36, spr_ofs);
+        put(&mut out, 40, self.sprites.len() as u32);
+        put(&mut out, 44, pal_ofs);
+        put(&mut out, 48, self.palettes.len() as u32);
+        put(&mut out, 52, ldata_ofs);
+        put(&mut out, 56, ldata.len() as u32);
+        put(&mut out, 60, ldata_ofs + ldata.len() as u32);
+        put(&mut out, 64, 0);
+        out
+    }
+
+    /// SFF v1: PCX sprites, each with its palette appended unless it shares
+    /// the previous sprite's (the `samepal` flag), links for duplicates.
+    ///
+    /// The reader numbers palettes in the order sprites bring their own,
+    /// including duplicate-key sprites it then drops; palette slots that no
+    /// kept sprite introduces are written as such dropped duplicates, so
+    /// every slot keeps its number.
+    fn write_exact_v1(&self) -> Vec<u8> {
+        struct Out {
+            key: Key,
+            offset: [i16; 2],
+            link: u16,
+            same_pal: bool,
+            data: Vec<u8>,
+        }
+        let pcx_with = |px: &[u8], w: u16, h: u16, pal: Option<&Palette>| {
+            let mut data = Vec::new();
+            pcx_encode(px, w, h, &mut data);
+            if let Some(pal) = pal {
+                data.push(0x0C);
+                for k in 0..256 {
+                    let c = pal.get(k).copied().unwrap_or([0; 4]);
+                    data.extend_from_slice(&c[..3]);
+                }
+            }
+            data
+        };
+        let mut entries: Vec<Out> = Vec::with_capacity(self.sprites.len());
+        let mut prev_pal: Option<usize> = None;
+        let mut have_prev = false;
+        // palette slots the reader has created so far
+        let mut slots = 0usize;
+        let mut written: std::collections::HashMap<PixelsKey<'_>, u16> =
+            std::collections::HashMap::new();
+        let decoded: Vec<std::borrow::Cow<'_, Pixels>> =
+            self.sprites.values().map(|s| s.decoded()).collect();
+        for (s, px) in self.sprites.values().zip(&decoded) {
+            let px: &[u8] = match px.as_ref() {
+                Pixels::Indexed(p) => p,
+                // SFFv1 has no true colour (never parsed that way)
+                Pixels::Rgba(p) => p,
+                Pixels::Packed(_) => unreachable!("decoded"),
+            };
+            let index = entries.len() as u16;
+            if px.is_empty() {
+                // len 0 + a link to itself: an empty sprite
+                entries.push(Out {
+                    key: (s.group, s.number),
+                    offset: s.offset,
+                    link: index,
+                    same_pal: false,
+                    data: Vec::new(),
+                });
+                continue;
+            }
+            if let Some(&j) = written.get(&(s.width, s.height, s.palette, px)) {
+                entries.push(Out {
+                    key: (s.group, s.number),
+                    offset: s.offset,
+                    link: j,
+                    same_pal: false,
+                    data: Vec::new(),
+                });
+                continue;
+            }
+            let same_pal = have_prev && s.palette.is_some() && s.palette == prev_pal;
+            if !same_pal && let Some(p) = s.palette {
+                // slots introduced by dropped duplicates before this sprite
+                while slots < p {
+                    let Some(last) = entries.last().map(|e| e.key) else {
+                        break;
+                    };
+                    entries.push(Out {
+                        key: last,
+                        offset: [0, 0],
+                        link: entries.len() as u16,
+                        same_pal: false,
+                        data: pcx_with(&[0], 1, 1, self.palettes.get(slots)),
+                    });
+                    prev_pal = Some(slots);
+                    have_prev = true;
+                    slots += 1;
+                }
+            }
+            let same_pal = have_prev && s.palette.is_some() && s.palette == prev_pal;
+            let pal = (!same_pal).then(|| {
+                s.palette
+                    .and_then(|p| self.palettes.get(p))
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            if !same_pal {
+                slots += 1;
+            }
+            let index = entries.len() as u16;
+            entries.push(Out {
+                key: (s.group, s.number),
+                offset: s.offset,
+                link: index,
+                same_pal,
+                data: pcx_with(px, s.width, s.height, pal.as_ref()),
+            });
+            have_prev = true;
+            prev_pal = s.palette;
+            written
+                .entry((s.width, s.height, s.palette, px))
+                .or_insert(index);
+        }
+        // trailing slots no kept sprite uses
+        while slots < self.palettes.len() {
+            let Some(last) = entries.last().map(|e| e.key) else {
+                break;
+            };
+            entries.push(Out {
+                key: last,
+                offset: [0, 0],
+                link: entries.len() as u16,
+                same_pal: false,
+                data: pcx_with(&[0], 1, 1, self.palettes.get(slots)),
+            });
+            slots += 1;
+        }
+        let mut out = vec![0u8; 512];
+        out[..12].copy_from_slice(b"ElecbyteSpr\0");
+        out[12..16].copy_from_slice(&[0, 1, 0, 1]);
+        let groups: std::collections::BTreeSet<u16> = self.sprites.keys().map(|k| k.0).collect();
+        out[16..20].copy_from_slice(&(groups.len() as u32).to_le_bytes());
+        out[20..24].copy_from_slice(&(entries.len() as u32).to_le_bytes());
+        out[24..28].copy_from_slice(&512u32.to_le_bytes());
+        out[28..32].copy_from_slice(&32u32.to_le_bytes());
+        let n = entries.len();
+        for (i, e) in entries.iter().enumerate() {
+            let at = out.len();
+            let next = if i + 1 == n {
+                0
+            } else {
+                (at + 32 + e.data.len()) as u32
+            };
+            let mut h = [0u8; 32];
+            h[0..4].copy_from_slice(&next.to_le_bytes());
+            h[4..8].copy_from_slice(&(e.data.len() as u32).to_le_bytes());
+            h[8..10].copy_from_slice(&e.offset[0].to_le_bytes());
+            h[10..12].copy_from_slice(&e.offset[1].to_le_bytes());
+            h[12..14].copy_from_slice(&e.key.0.to_le_bytes());
+            h[14..16].copy_from_slice(&e.key.1.to_le_bytes());
+            h[16..18].copy_from_slice(&e.link.to_le_bytes());
+            h[18] = u8::from(e.same_pal);
+            out.extend_from_slice(&h);
+            out.extend_from_slice(&e.data);
+        }
+        out
+    }
+
+    /// sha256 over everything [`Sff::parse`] yields that drawing depends on:
+    /// version (v1 / v2), palette slots, palette keys, and every sprite's
+    /// key, size, axis, palette slot and decoded pixels, in file order.
+    /// Independent of how the file was compressed (PCX, RLE, LZ5, PNG, an
+    /// `.rgc` section); the content fingerprint uses it for sprites.
+    pub fn canonical_hash(&self) -> [u8; 32] {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(b"rugen-spr-1\n");
+        h.update([match self.version {
+            None => 0u8,
+            Some(Version::V1) => 1,
+            Some(Version::V2 { .. }) => 2,
+        }]);
+        h.update((self.palettes.len() as u32).to_le_bytes());
+        for p in &self.palettes {
+            h.update((p.len() as u32).to_le_bytes());
+            for c in p {
+                h.update(c);
+            }
+        }
+        h.update((self.palette_keys.len() as u32).to_le_bytes());
+        for (&(g, n), &i) in &self.palette_keys {
+            h.update(g.to_le_bytes());
+            h.update(n.to_le_bytes());
+            h.update((i as u32).to_le_bytes());
+        }
+        h.update((self.sprites.len() as u32).to_le_bytes());
+        for s in self.sprites.values() {
+            h.update(s.group.to_le_bytes());
+            h.update(s.number.to_le_bytes());
+            h.update(s.width.to_le_bytes());
+            h.update(s.height.to_le_bytes());
+            h.update(s.offset[0].to_le_bytes());
+            h.update(s.offset[1].to_le_bytes());
+            h.update(s.palette.map_or(u32::MAX, |p| p as u32).to_le_bytes());
+            let px = s.decoded();
+            let (kind, bytes): (u8, &[u8]) = match px.as_ref() {
+                Pixels::Indexed(p) => (0, p),
+                Pixels::Rgba(p) => (1, p),
+                Pixels::Packed(_) => (2, &[]),
+            };
+            h.update([kind]);
+            h.update((bytes.len() as u32).to_le_bytes());
+            h.update(bytes);
+        }
+        h.finalize().into()
+    }
+
     /// Add an indexed sprite using palette slot `pal`.
     pub fn push_indexed(
         &mut self,
@@ -1104,5 +1496,81 @@ mod writer_tests {
         let b = back.get(9, 1).unwrap();
         assert_eq!(b.pixels, Pixels::Rgba(vec![1, 2, 3, 4, 5, 6, 7, 8]));
         assert_eq!(back.palette_keys.get(&(0, 0)), Some(&0));
+    }
+
+    /// `write_exact` gives back what was parsed, for both versions.
+    pub(crate) fn assert_exact_roundtrip(sff: &Sff, is_char: bool, what: &str) {
+        let bytes = sff.write_exact();
+        let back = Sff::parse(&bytes, is_char).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_eq!(back.version, sff.version, "{what}");
+        assert_eq!(back.palettes, sff.palettes, "{what}");
+        assert_eq!(back.palette_keys, sff.palette_keys, "{what}");
+        assert_eq!(back.sprites, sff.sprites, "{what}");
+        assert_eq!(back.canonical_hash(), sff.canonical_hash(), "{what}");
+        // and the other parse mode reads the written file the same way
+        let other = Sff::parse(&bytes, !is_char).unwrap();
+        assert_eq!(other.canonical_hash(), sff.canonical_hash(), "{what}");
+    }
+
+    #[test]
+    fn exact_writer_roundtrips_reference_files() {
+        let Some(root) = crate::fixtures::reference("") else {
+            return;
+        };
+        let mut n = 0;
+        for dir in ["mugen-1.1b1", "ikemen-go-v1.0.0"] {
+            for entry in crate::fixtures::walk(&root.join(dir)) {
+                if !entry
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("sff"))
+                {
+                    continue;
+                }
+                let is_char = entry.to_string_lossy().contains("/chars/");
+                let sff = Sff::open(&entry, is_char).unwrap();
+                assert_exact_roundtrip(&sff, is_char, &entry.display().to_string());
+                n += 1;
+            }
+        }
+        if n > 0 {
+            assert!(n > 20);
+        }
+    }
+
+    #[test]
+    fn exact_writer_keeps_v1_palette_sharing_and_links() {
+        let mut sff = Sff {
+            version: Some(Version::V1),
+            ..Default::default()
+        };
+        let pal = |c: u8| -> Palette {
+            (0..256)
+                .map(|i| [c, i as u8, 0, if i == 0 { 0 } else { 255 }])
+                .collect()
+        };
+        sff.palettes = vec![pal(1), pal(2)];
+        sff.push_indexed((0, 0), 3, 2, [1, 1], 0, vec![0, 1, 2, 0xC5, 0xC5, 0xC5]);
+        sff.push_indexed((0, 1), 2, 1, [0, 0], 0, vec![7, 7]); // shares the palette
+        sff.push_indexed((5, 0), 3, 2, [9, 9], 1, vec![1; 6]); // own palette
+        sff.push_indexed((5, 1), 3, 2, [2, 2], 0, vec![0, 1, 2, 0xC5, 0xC5, 0xC5]); // link
+        sff.sprites.insert(
+            (6, 0),
+            Sprite {
+                group: 6,
+                number: 0,
+                width: 0,
+                height: 0,
+                offset: [0, 0],
+                palette: None,
+                pixels: Pixels::Indexed(Vec::new()),
+            },
+        );
+        assert_exact_roundtrip(&sff, true, "v1 sample");
+        let mut act = vec![[3, 3, 3, 255]; 256];
+        act[0][3] = 0;
+        let mut a = Sff::parse(&sff.write_exact(), true).unwrap();
+        a.apply_v1_act(&act);
+        assert_eq!(a.palettes[0], act, "0,0 and its sharers follow pal1");
+        assert_eq!(a.palettes[1], pal(2));
     }
 }

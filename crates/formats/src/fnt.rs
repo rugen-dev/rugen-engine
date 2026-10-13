@@ -35,7 +35,7 @@ pub struct Font {
 impl Font {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let data = std::fs::read(path)?;
+        let data = crate::vfs::read(path)?;
         if data.starts_with(b"ElecbyteFnt\0") {
             Self::parse_v1(&data)
         } else {

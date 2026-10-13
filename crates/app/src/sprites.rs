@@ -13,10 +13,10 @@ use rugen_sim::anim::AnimState;
 type Uploaded = (TextureId, Option<usize>);
 
 /// Textures already uploaded for shared pixel data ([`Sprite::share_key`]):
-/// linked / duplicate sprites of a sprite pack upload once.
-pub type Shared = HashMap<(usize, usize), TextureId>;
+/// linked / duplicate sprites of a content file upload once.
+pub type Shared = HashMap<(usize, usize, u64), TextureId>;
 
-/// Upload a sprite (decompressing it if it comes from a sprite pack).
+/// Upload a sprite (decompressing it if it comes from a content file).
 /// Returns the texture and, for indexed sprites, the SFF palette slot.
 pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Uploaded {
     let (w, h) = (spr.width as u32, spr.height as u32);

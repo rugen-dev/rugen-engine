@@ -4,11 +4,16 @@
 //! * [`files`]: which files of a character / stage are gameplay-relevant
 //!   (the def and everything its `[Files]` / `[BGdef]` reference, plus the
 //!   common states it falls back to), path-normalised.
-//! * [`fingerprint`]: sha256 over that canonical file set: independent of
-//!   the archive format (zip / rar / folder), of junk files and of file
-//!   order; any byte change in a referenced file changes it.
-//! * [`package`]: the optimised upload / download container (exactly the
-//!   canonical files, zstd-compressed) and its safe unpacking.
+//! * [`fingerprint`]: sha256 over that canonical set's gameplay content:
+//!   the text files and palettes byte for byte, the sprite file by its
+//!   decoded pixels and palettes ([`rugen_formats::sff::Sff::canonical_hash`]),
+//!   sounds not at all. Independent of the archive format (zip / rar /
+//!   folder / `.rgc`), of junk files, of file order and of how sprites and
+//!   sounds are compressed, so converting to `.rgc` and exporting back keep
+//!   it; any change to what the simulation or the picture depends on
+//!   changes it.
+//! * [`package`]: verification of an `.rgc` / `.rgs` received from someone
+//!   else (the online transfer format).
 //! * [`profile`]: static analysis → [`FairnessProfile`] (stats, damage,
 //!   tools, cheat flags, power score).
 //! * [`verdict`]: FAIR / UNBALANCED / BLOCKED from two profiles.
@@ -25,7 +30,7 @@ pub mod verdict;
 
 use std::path::Path;
 
-pub use files::{ContentFiles, FileEntry, Kind};
+pub use files::{ContentFiles, FileEntry, Kind, Role};
 pub use rugen_proto::{CheatFlag, FAIR_VERSION, FairnessProfile, Severity, Verdict, VerdictKind};
 use sha2::{Digest, Sha256};
 
@@ -49,22 +54,47 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex(&Sha256::digest(data))
 }
 
-/// Fingerprint of a canonical file set: sha256 over
-/// `rugen-fp-1 / kind / def` and the sorted `(lowercase path, sha256)` list.
+/// Version tag hashed into every fingerprint.
+pub const FP_TAG: &str = "rugen-fp-2";
+
+/// The fingerprint row of one file: `raw:<sha256 of the bytes>` for text
+/// and palettes, `spr:<canonical sprite hash>` for the sprite file, `None`
+/// for the sound file (not part of the fingerprint).
+pub fn row_of(kind: Kind, e: &FileEntry) -> Result<Option<String>> {
+    let content = |err: rugen_formats::Error| Error::Content(format!("{}: {err}", e.path));
+    Ok(match e.role {
+        files::Role::Sound => None,
+        files::Role::Sprite => {
+            let sff = rugen_formats::vfs::open_sff_exact(&e.source, kind == Kind::Char)
+                .map_err(content)?;
+            Some(format!("spr:{}", hex(&sff.canonical_hash())))
+        }
+        _ => Some(format!(
+            "raw:{}",
+            sha256_hex(&rugen_formats::vfs::read(&e.source).map_err(content)?)
+        )),
+    })
+}
+
+/// Fingerprint of a canonical file set: sha256 over `rugen-fp-2 / kind /
+/// def` and the sorted `(lowercase path, row)` list (see [`row_of`]).
 pub fn fingerprint(files: &ContentFiles) -> Result<String> {
     let mut rows: Vec<(String, String)> = Vec::with_capacity(files.entries.len());
     for e in &files.entries {
-        rows.push((e.canon.clone(), sha256_hex(&std::fs::read(&e.source)?)));
+        if let Some(r) = row_of(files.kind, e)? {
+            rows.push((e.canon.clone(), r));
+        }
     }
     Ok(fingerprint_of(files.kind, &files.def, rows))
 }
 
-/// [`fingerprint`] from already hashed `(canonical path, sha256 hex)` rows.
+/// [`fingerprint`] from already computed `(canonical path, row)` rows.
 pub fn fingerprint_of(kind: Kind, def: &str, mut rows: Vec<(String, String)>) -> String {
     rows.sort();
     rows.dedup_by(|a, b| a.0 == b.0);
     let mut h = Sha256::new();
-    h.update(b"rugen-fp-1\n");
+    h.update(FP_TAG.as_bytes());
+    h.update(b"\n");
     h.update(kind.as_str().as_bytes());
     h.update(b"\n");
     h.update(files::canon(def).as_bytes());
@@ -104,6 +134,19 @@ pub(crate) mod test_util {
         d
     }
 
+    /// A one-sprite SFF v2 whose pixel is `colour`.
+    pub fn tiny_sff(colour: u8) -> Vec<u8> {
+        let mut sff = rugen_formats::sff::Sff {
+            version: Some(rugen_formats::sff::Version::V2 { patch: 1 }),
+            ..Default::default()
+        };
+        let mut pal = vec![[0u8; 4]; 256];
+        pal[1] = [200, 10, 10, 255];
+        let p = sff.push_palette((1, 1), pal);
+        sff.push_indexed((0, 0), 2, 1, [0, 0], p, vec![colour, 0]);
+        sff.write_exact()
+    }
+
     /// A minimal character in `dir` (own common1.cns); `extra` is appended to its cns.
     pub fn tiny_char(dir: &Path, extra: &str) -> PathBuf {
         std::fs::create_dir_all(dir).unwrap();
@@ -119,7 +162,7 @@ pub(crate) mod test_util {
                 "[Data]\nlife = 1000\nattack = 100\n[Statedef 200]\nmovetype = A\n[State 200, h]\ntype = HitDef\ntrigger1 = 1\ndamage = 40\nguardflag = MA\n{extra}"
             ),
         );
-        w("Tiny.SFF", "sprites");
+        std::fs::write(dir.join("Tiny.SFF"), tiny_sff(1)).unwrap();
         w("tiny.air", "[Begin Action 0]\n0,0, 0,0, 10\n");
         w("tiny.snd", "sounds");
         w("tiny.act", "palette");
@@ -171,6 +214,31 @@ mod tests {
         // same bytes as the char's own copy → same fingerprint
         let own = char_fingerprint(&tiny_char(&root.join("own"), ""), None).unwrap();
         assert_eq!(fingerprint(&with_data).unwrap(), own);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fingerprint_follows_pixels_not_bytes_and_ignores_sounds() {
+        let root = tmp("fp-content");
+        let a = char_fingerprint(&tiny_char(&root.join("a"), ""), None).unwrap();
+        // other sounds: same fingerprint
+        let def = tiny_char(&root.join("b"), "");
+        std::fs::write(root.join("b/tiny.snd"), "other sounds").unwrap();
+        assert_eq!(char_fingerprint(&def, None).unwrap(), a);
+        // the same sprites stored as SFF v2 raw instead of RLE8: same fingerprint
+        let sff = rugen_formats::sff::Sff::parse(&test_util::tiny_sff(1), true).unwrap();
+        std::fs::write(root.join("b/Tiny.SFF"), sff.write_v2()).unwrap();
+        assert_ne!(
+            std::fs::read(root.join("b/Tiny.SFF")).unwrap(),
+            test_util::tiny_sff(1)
+        );
+        assert_eq!(char_fingerprint(&def, None).unwrap(), a);
+        // one pixel changes it
+        std::fs::write(root.join("b/Tiny.SFF"), test_util::tiny_sff(2)).unwrap();
+        assert_ne!(char_fingerprint(&def, None).unwrap(), a);
+        // a broken sprite file cannot be fingerprinted
+        std::fs::write(root.join("b/Tiny.SFF"), "junk").unwrap();
+        assert!(char_fingerprint(&def, None).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

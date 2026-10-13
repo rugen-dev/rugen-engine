@@ -131,7 +131,8 @@ pub struct CharRating {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct FighterDecl {
-    /// sha256 hex of the canonical gameplay files (see `rugen-fair`).
+    /// Content fingerprint (`rugen-fair`, `rugen-fp-2`): sha256 over the
+    /// canonical gameplay files, sprites by their decoded pixels, no sounds.
     pub fingerprint: String,
     /// `char` or `stage`.
     pub kind: String,
@@ -141,7 +142,7 @@ pub struct FighterDecl {
     pub author: String,
     /// Main .def inside the package.
     pub def: String,
-    /// Optimised package size in bytes.
+    /// Size in bytes of the package (the `.rgc` / `.rgs` file).
     pub size: u64,
     pub profile: Option<FairnessProfile>,
     /// Small WebP card portrait, base64.

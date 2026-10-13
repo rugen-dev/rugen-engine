@@ -4,7 +4,7 @@
 //! ```text
 //! pick     declare our fighter (fingerprint + fairness profile + card; P1
 //!          also the stage) → the server answers FAIR / UNBALANCED / BLOCKED
-//!          at once; from now on our package uploads in the background when
+//!          at once; from now on our .rgc / .rgs uploads in the background when
 //!          the server lacks it (resumable; the server re-hashes it)
 //! confirm  both players accept (UNBALANCED explicitly, BLOCKED never)
 //! sync     download what we lack into cache/net, report ready (files,
@@ -26,7 +26,7 @@ use rugen_net::online::{
     FighterDecl, MatchupView, OnlineClient, ReadyReport, SessionTicket, Transfer, VerdictKind,
 };
 
-/// Largest unpacked size of a downloaded package (zip bombs stop here).
+/// Largest decompressed size of a downloaded content file (bombs stop here).
 const MAX_UNPACKED: u64 = 1 << 30;
 
 /// First 12 hex digits of a fingerprint, for logs.

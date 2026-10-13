@@ -8,7 +8,8 @@
 //! per process so the peak belongs to it.
 //!
 //! Flags: `--phases` (step-by-step breakdown of the original loader),
-//! `--build` (build the optimised artefacts first), `--original` (ignore them).
+//! `--original` (compile the logic instead of using the precompiled one).
+//! Works on a folder's def or on one inside an `.rgc` (`chars/x.rgc/x.def`).
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -133,28 +134,7 @@ fn main() {
         println!("rss after phases: {} MB", vm("VmRSS:") / 1024);
     }
 
-    if args.iter().any(|a| a == "--build") {
-        let t = Instant::now();
-        let r = rugen_sim::chardata::optimise(&def_path, &data_dir, None).unwrap();
-        println!("optimise: {:.1} ms, {r:?}", ms(t));
-    }
     let original = args.iter().any(|a| a == "--original");
-    let pack = rugen_sim::chardata::opt_dir(&def_path).join(rugen_sim::chardata::SPRITES_FILE);
-    if !original && pack.exists() {
-        let t = Instant::now();
-        let n = rugen_formats::pack::open(&pack)
-            .map(|(s, _)| s.sprites.len())
-            .unwrap_or(0);
-        println!("  sprite pack alone: {n} sprites, {:.1} ms", ms(t));
-        let logic = pack.with_file_name(rugen_sim::chardata::LOGIC_FILE);
-        let t = Instant::now();
-        let b = std::fs::read(&logic).unwrap_or_default();
-        println!(
-            "  logic.bin read alone: {:.1} MB, {:.1} ms",
-            b.len() as f64 / 1e6,
-            ms(t)
-        );
-    }
     let t = Instant::now();
     let data = if original {
         rugen_sim::CharData::load_original(&def_path, &data_dir).unwrap()
@@ -162,8 +142,6 @@ fn main() {
         rugen_sim::CharData::load_with_data(&def_path, &data_dir).unwrap()
     };
     let full = ms(t);
-    let fresh = rugen_sim::chardata::opt_fresh(&def_path, &data_dir);
-    println!("optimised artefacts fresh (sprites, logic): {fresh:?}");
     println!(
         "full load_with_data: {full:.1} ms ({} states, {} sprites)",
         data.states.len(),
@@ -180,7 +158,7 @@ fn main() {
         };
         let key = s
             .share_key()
-            .unwrap_or((usize::MAX, k.0 as usize * 65536 + k.1 as usize));
+            .unwrap_or((usize::MAX, k.0 as usize * 65536 + k.1 as usize, 0));
         if seen.insert(key) {
             vram += s.width as usize * s.height as usize * bpp;
         }

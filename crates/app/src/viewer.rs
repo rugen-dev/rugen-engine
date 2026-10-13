@@ -56,6 +56,13 @@ impl Content {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
+        // a content file: view its main def
+        if ext == "rgc" || ext == "rgs" {
+            let meta = rugen_formats::vfs::archive(path)
+                .and_then(|a| a.meta())
+                .with_context(|| path.display().to_string())?;
+            return Self::load(&path.join(meta.def));
+        }
         if ext == "sff" {
             let sff = Sff::open(path, true).with_context(|| path.display().to_string())?;
             let mut air = Air::default();
@@ -102,26 +109,11 @@ impl Content {
     }
 }
 
-/// Case-insensitive path resolution: MUGEN content mixes case freely and Linux does not.
+/// Case-insensitive path resolution (also inside `.rgc` files): MUGEN
+/// content mixes case freely and Linux does not.
 fn resolve(dir: &Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
-    let name = name.replace('\\', "/");
-    let direct = dir.join(&name);
-    if direct.exists() {
-        return Ok(direct);
-    }
-    let mut cur = dir.to_path_buf();
-    for part in name.split('/').filter(|p| !p.is_empty()) {
-        let found = std::fs::read_dir(&cur)
-            .ok()
-            .and_then(|rd| {
-                rd.flatten()
-                    .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))
-            })
-            .map(|e| e.path())
-            .with_context(|| format!("{} not found in {}", part, cur.display()))?;
-        cur = found;
-    }
-    Ok(cur)
+    rugen_formats::vfs::resolve(dir, name)
+        .with_context(|| format!("{} not found in {}", name.trim(), dir.display()))
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.

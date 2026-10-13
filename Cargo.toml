@@ -20,6 +20,7 @@ rugen-render = { path = "crates/render" }
 rugen-audio = { path = "crates/audio" }
 rugen-content = { path = "crates/content" }
 rugen-ui = { path = "crates/ui" }
+rugen-opus = { path = "crates/opus" }
 
 thiserror = "2"
 anyhow = "1"
