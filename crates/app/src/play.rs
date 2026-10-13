@@ -446,8 +446,10 @@ impl Match {
                 air_dash: cfg.game.air_dash,
                 fast_fall: cfg.game.fast_fall,
             },
-            // the options' round time; online peers keep the motif's so both sides agree
-            round_time: setup.net.is_none().then_some(cfg.game.round_time),
+            // offline: the options' round time; online rooms: the room's
+            // (both sides run `match_config`); LAN peers keep the motif's
+            round_time: (setup.net.is_none() || cfg.game.match_wins.is_some())
+                .then_some(cfg.game.round_time),
             ai: if setup.net.is_none() {
                 setup.ai
             } else {
@@ -457,6 +459,10 @@ impl Match {
         };
         let mut world = rugen_sim::headless::build_world(&spec)
             .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        // the room's ROUNDS (online; the same on both sides and in the server's re-simulation)
+        if let Some(w) = cfg.game.match_wins.filter(|_| setup.net.is_some()) {
+            world.round.config.match_wins = w;
+        }
         // a match rule for CPU sides; online rooms are human vs human
         world.arena_ai = setup.net.is_none() && setup.arena_ai.unwrap_or(cfg.game.arena_ai);
         for d in &world.data {

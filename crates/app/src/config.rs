@@ -55,6 +55,11 @@ pub struct GameCfg {
     /// rest get a round x1.1..x3.0 or /1.1../3.0 step (0.1 apart) into it (320x240 units: `normal`
     /// 58-82, `small` 62-78, `chibi` 44-56); `none` never scales.
     pub fighter_size: rugen_sim::scale::FighterSize,
+    /// Rounds to win, from an online room's ROUNDS (never saved): set only
+    /// by [`crate::online::match_config`], which also makes `round_time`
+    /// the room's.
+    #[serde(skip)]
+    pub match_wins: Option<u8>,
 }
 
 impl Default for GameCfg {
@@ -67,6 +72,7 @@ impl Default for GameCfg {
             arena_ai: true,
             round_time: 99,
             fighter_size: rugen_sim::scale::FighterSize::Normal,
+            match_wins: None,
         }
     }
 }

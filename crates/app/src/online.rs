@@ -1828,6 +1828,8 @@ impl OnlineScreen {
             "lobby" => {
                 self.state = State::Lobby;
                 self.ui.set_focus(None);
+                // a fresh list (the first one focuses its top room)
+                self.rooms.clear();
                 let c = self.client.clone();
                 self.jobs
                     .push(Job::Rooms(Pending::spawn(move || c.rooms())));
@@ -2187,7 +2189,7 @@ impl OnlineScreen {
                 let off = problem.is_some();
                 json!({
                     "is_server": true,
-                    "name": fit(&self.row_name(i), if tag.is_empty() { 19 } else { 14 }),
+                    "name": fit(&self.row_name(i), if tag.is_empty() { 19 } else { 13 }),
                     "tag": tag,
                     "tag_red": tone == "red",
                     "tag_amber": tone == "amber",
@@ -4058,6 +4060,15 @@ impl OnlineScreen {
                         } else {
                             format!("{} PUBLIC ROOMS", r.len())
                         };
+                        // rooms to join: Enter joins the first (the hint says
+                        // ENTER JOIN), unless the player moved elsewhere
+                        if self.state == State::Lobby
+                            && self.rooms.is_empty()
+                            && !r.is_empty()
+                            && matches!(self.ui.focused(), None | Some("lobby_create"))
+                        {
+                            self.pending_focus_key = Some("lobby_list[0].row".into());
+                        }
                         self.rooms = r;
                     }
                     Some(Err(e)) => self.fail("lobby", e),
@@ -4546,6 +4557,7 @@ pub fn match_config(base: &Config, rules: &Rules) -> Config {
         rules.round_time as i32
     };
     c.game.fighter_size = room_size(rules);
+    c.game.match_wins = Some(rules.rounds.clamp(1, 9));
     if rules.mode == "arena" {
         c.game.air_jumps = 1;
         c.game.air_dash = true;
@@ -4651,6 +4663,35 @@ mod tests {
             FighterSize::Normal
         );
         assert!(rules_tags(&rules("small")).contains(&"SMALL SIZE".to_string()));
+    }
+
+    /// A room's ROUNDS and TIME are what both sides simulate (and the
+    /// server's re-simulation), whatever the player's offline options say.
+    #[test]
+    fn rooms_carry_their_rounds_and_time() {
+        let mut base = Config::default();
+        base.game.round_time = 30;
+        let rules = |rounds: u8, round_time: u16| Rules {
+            rounds,
+            round_time,
+            ..Rules::default()
+        };
+        let c = match_config(&base, &rules(1, 60));
+        assert_eq!((c.game.match_wins, c.game.round_time), (Some(1), 60));
+        let c = match_config(&base, &rules(3, 0));
+        assert_eq!(
+            (c.game.match_wins, c.game.round_time),
+            (Some(3), -1),
+            "no limit"
+        );
+        // quick match / ranked: the default rules
+        let c = match_config(&base, &Rules::default());
+        assert_eq!((c.game.match_wins, c.game.round_time), (Some(2), 99));
+        assert_eq!(
+            Config::default().game.match_wins,
+            None,
+            "offline: the motif's"
+        );
     }
 
     #[test]
