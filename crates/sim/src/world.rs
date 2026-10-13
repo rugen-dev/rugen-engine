@@ -417,6 +417,15 @@ impl World {
         self.data_scale(self.players[i].data)
     }
 
+    /// `j`'s position minus `i`'s, in `i`'s local units. Fighters whose
+    /// localcoord or FIGHTER SIZE differ keep positions in their own units,
+    /// so raw positions of two of them must never be compared.
+    pub fn rel_pos(&self, i: usize, j: usize) -> [f32; 2] {
+        let k = self.local_scale(j) / self.local_scale(i);
+        let (a, b) = (&self.players[i], &self.players[j]);
+        [b.pos[0] * k - a.pos[0], b.pos[1] * k - a.pos[1]]
+    }
+
     /// Stage units per local unit of data slot `d`: its localcoord, zoomed by
     /// FIGHTER SIZE (the fighter acts as if authored at `localcoord / zoom`).
     pub fn data_scale(&self, d: usize) -> f32 {
@@ -490,9 +499,9 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(i, o)| *i != me && !o.removed && o.player_type && o.team != p.team)
-            .min_by(|(_, a), (_, b)| {
-                let da = (a.pos[0] - p.pos[0]).abs();
-                let db = (b.pos[0] - p.pos[0]).abs();
+            .min_by(|(a, _), (b, _)| {
+                let da = self.rel_pos(me, *a)[0].abs();
+                let db = self.rel_pos(me, *b)[0].abs();
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(i, _)| i)
@@ -799,8 +808,7 @@ impl World {
         let Some(e) = self.nearest_enemy(i) else {
             return false;
         };
-        let (p, o) = (&self.players[i], &self.players[e]);
-        (o.pos[0] - p.pos[0]) * p.facing < 0.0
+        self.rel_pos(i, e)[0] * self.players[i].facing < 0.0
     }
 
     fn auto_turn(&mut self, i: usize) {
@@ -5030,6 +5038,49 @@ mod tests {
         let mut none = World::new(Stage::default(), 1);
         none.add_player(d, 0, 1);
         assert_eq!(none.data_zoom, vec![1.0]);
+    }
+
+    /// Two fighters of different localcoord keep positions in their own
+    /// units: distance triggers, facing and P2 selection convert through
+    /// `local_scale` instead of subtracting raw positions.
+    #[test]
+    fn mixed_localcoord_distances_convert_units() {
+        let Some(d) = kfm() else { return };
+        let mut hd = (*d).clone();
+        hd.localcoord = [640.0, 480.0];
+        let mut w = World::new(Stage::default(), 1);
+        w.fighter_size = crate::scale::FighterSize::None;
+        w.add_player(d.clone(), 0, 1);
+        w.add_player(Arc::new(hd), 1, 2);
+        w.start_round();
+        run(&mut w, 2, Buttons::default());
+        let (s0, s1) = (w.local_scale(0), w.local_scale(1));
+        assert!((s0 - 2.0 * s1).abs() < 1e-5, "{s0} vs {s1}");
+        // P2 at stage x 60, P1 at stage x -60: 120 stage units apart
+        w.players[0].pos[0] = -60.0 / s0;
+        w.players[1].pos[0] = 60.0 / s1;
+        w.players[0].pos[1] = 0.0;
+        w.players[1].pos[1] = -20.0 / s1;
+        w.players[0].facing = 1.0;
+        w.players[1].facing = -1.0;
+        let mut ev = |i: usize, src: &str| {
+            let code = rugen_cns::compile(src).expect(src);
+            w.eval(i, &code).to_f()
+        };
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // each answer is in the asking fighter's own units
+        assert!(near(ev(0, "p2dist x"), 120.0 / s0));
+        assert!(near(ev(1, "p2dist x"), 120.0 / s1));
+        assert!(near(ev(0, "p2dist y"), -20.0 / s0));
+        assert!(near(ev(1, "p2dist y"), 20.0 / s1));
+        let body = ev(0, "p2bodydist x");
+        let (f0, _) = w.player_width(0);
+        let (f1, _) = w.player_width(1);
+        assert!(near(body, 120.0 / s0 - f0 - f1 * s1 / s0), "{body}");
+        // stage -50 is in front of P1 at -60, but the raw local x (-50 / s1
+        // = -100 / s0) is behind it
+        w.players[1].pos[0] = -50.0 / s1;
+        assert!(!w.should_face_p2(0), "P2 is in front of P1 on stage");
     }
 
     #[test]

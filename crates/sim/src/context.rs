@@ -240,9 +240,10 @@ impl Context for Ctx<'_> {
             T::P2BodyDist(a) | T::P2Dist(a) => match self.p2() {
                 Some(e) => {
                     let o = &self.w.players[e];
+                    let rel = self.w.rel_pos(self.cur, e);
                     match a {
                         Axis::X => {
-                            let mut d = (o.pos[0] - p.pos[0]) * p.facing;
+                            let mut d = rel[0] * p.facing;
                             if matches!(t, T::P2BodyDist(_)) {
                                 let (wf, _) = self.w.player_width(self.cur);
                                 let (of, ob) = self.w.player_width(e);
@@ -251,11 +252,13 @@ impl Context for Ctx<'_> {
                                 } else {
                                     ob
                                 };
-                                d -= wf + ow;
+                                // the other's width is in its own units
+                                let k = self.w.local_scale(e) / self.w.local_scale(self.cur);
+                                d -= wf + ow * k;
                             }
                             Self::f(d)
                         }
-                        Axis::Y => Self::f(o.pos[1] - p.pos[1]),
+                        Axis::Y => Self::f(rel[1]),
                     }
                 }
                 None => Value::Bottom,
@@ -275,10 +278,10 @@ impl Context for Ctx<'_> {
                 };
                 match who {
                     Some(o) if p.helper_index > 0 => {
-                        let o = &self.w.players[o];
+                        let rel = self.w.rel_pos(self.cur, o);
                         Self::f(match a {
-                            Axis::X => (o.pos[0] - p.pos[0]) * p.facing,
-                            Axis::Y => o.pos[1] - p.pos[1],
+                            Axis::X => rel[0] * p.facing,
+                            Axis::Y => rel[1],
                         })
                     }
                     _ => Value::Bottom,

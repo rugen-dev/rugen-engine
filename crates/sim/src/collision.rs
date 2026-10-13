@@ -525,7 +525,7 @@ pub fn hit_detection(w: &mut World) {
             }
             // guard distance
             if !w.players[g].inguarddist && w.players[c].move_type == MoveType::A {
-                let dx = (w.players[g].pos[0] - w.players[c].pos[0]) * w.players[c].facing;
+                let dx = w.rel_pos(c, g)[0] * w.players[c].facing;
                 if dx < hd.guard_dist && dx > -hd.guard_dist {
                     w.players[g].inguarddist = true;
                 }
@@ -548,8 +548,8 @@ pub fn hit_detection(w: &mut World) {
             candidates.push(g);
         }
         candidates.sort_by(|&x, &y| {
-            let dx = (w.players[x].pos[0] - w.players[c].pos[0]).abs();
-            let dy = (w.players[y].pos[0] - w.players[c].pos[0]).abs();
+            let dx = w.rel_pos(c, x)[0].abs();
+            let dy = w.rel_pos(c, y)[0].abs();
             dx.partial_cmp(&dy).unwrap_or(std::cmp::Ordering::Equal)
         });
         for g in candidates {
