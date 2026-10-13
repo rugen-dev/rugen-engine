@@ -31,7 +31,10 @@
 //!
 //! Decoration and big-roster keys: `angle` rotates a subtree, `cut` clips it
 //! to a slanted quad, `fit`/`flip`/`grey` place portraits, `outline` frames a
-//! node, text with `pad` sizes itself to its text and `wrap` breaks lines,
+//! node, text with `pad` sizes itself to its text and `wrap` breaks lines
+//! (`max_lines` caps them; `ellipsis` ends a line that does not fit in
+//! `...`), an input with `caret` draws a blinking bar while edited, a `modal`
+//! subtree keeps the focus while it is shown,
 //! `when = "focus"|"blur"|"focus2"` and `w_focus`/`h_focus`/`scale_focus`
 //! react to the focus of the node's scope, `top` draws over everything, and a
 //! `paged` grid scrolls whole pages (publishing `pages.<id>`), with `bleed`
@@ -352,6 +355,17 @@ pub struct NodeDef {
     pub top: bool,
     /// Vertical nudge of the node's text in virtual pixels (negative = up).
     pub text_dy: Option<f32>,
+    /// Text / button: a line wider than the node ends in `...` instead of
+    /// running out of it (wrapped lines too).
+    pub ellipsis: bool,
+    /// Wrapped text: at most this many lines; the last one ends in `...`.
+    pub max_lines: Option<usize>,
+    /// Input: caret colour. While editing, a blinking bar follows the text
+    /// (instead of `_`) and a text wider than the box shows its end.
+    pub caret: Option<[f32; 4]>,
+    /// Modal subtree (dialogs): while it is laid out, only focusable nodes
+    /// inside it take the focus; the focus comes back when it closes.
+    pub modal: bool,
     pub children: Vec<NodeDef>,
 }
 
@@ -692,6 +706,8 @@ struct Instance {
     offpage: bool,
     /// Drawn in the overlay pass (`top` on itself or an ancestor).
     top: bool,
+    /// Inside a `modal` subtree.
+    modal: bool,
 }
 
 pub struct Ui {
@@ -727,6 +743,9 @@ pub struct Ui {
     cur_quad: Option<Quad>,
     cur_rot: Option<Rot>,
     cur_top: bool,
+    cur_modal: bool,
+    /// Focus before a modal subtree took it (restored when it closes).
+    modal_return: Option<String>,
     /// Paged grids by id: (page, pages), 1-based, from the last layout.
     pages: HashMap<String, (usize, usize)>,
     /// Scrollers follow the second player's focus (it moved last).
@@ -877,6 +896,61 @@ fn wrap_text(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32)
     lines
 }
 
+/// `text` shortened to `width` with a trailing `...` (unchanged when it fits).
+fn ellipsize(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32) -> String {
+    if p.text_width(font, text, scale) <= width {
+        return text.to_string();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let head: String = chars.iter().collect();
+        let cand = format!("{}...", head.trim_end());
+        if p.text_width(font, &cand, scale) <= width {
+            return cand;
+        }
+    }
+    String::new()
+}
+
+/// Wrapped lines limited to `max_lines` (the last kept line ends in `...`
+/// when lines were dropped); with `ellipsis`, lines too wide (one long
+/// word) are shortened too.
+fn fit_lines(
+    p: &mut dyn Painter,
+    font: i32,
+    scale: f32,
+    mut lines: Vec<String>,
+    n: &NodeDef,
+    width: f32,
+) -> Vec<String> {
+    if let Some(max) = n.max_lines
+        && lines.len() > max
+        && max > 0
+    {
+        lines.truncate(max);
+        if let Some(last) = lines.last_mut() {
+            // drop whole words first, then characters of a single long word
+            let mut words: Vec<&str> = last.split(' ').collect();
+            let mut cut = format!("{}...", words.join(" "));
+            while words.len() > 1 && p.text_width(font, &cut, scale) > width {
+                words.pop();
+                cut = format!("{}...", words.join(" "));
+            }
+            if p.text_width(font, &cut, scale) > width {
+                cut = ellipsize(p, font, scale, &format!("{} ", words.join(" ")), width);
+            }
+            *last = cut;
+        }
+    }
+    if n.ellipsis || n.max_lines.is_some() {
+        for l in &mut lines {
+            *l = ellipsize(p, font, scale, l, width);
+        }
+    }
+    lines
+}
+
 fn count(n: &NodeDef) -> usize {
     n.children.iter().map(|c| 1 + count(c)).sum()
 }
@@ -940,6 +1014,8 @@ impl Ui {
             cur_quad: None,
             cur_rot: None,
             cur_top: false,
+            cur_modal: false,
+            modal_return: None,
             pages: HashMap::new(),
             follow2: false,
             size: (VIRTUAL_W, VIRTUAL_H),
@@ -1178,7 +1254,44 @@ impl Ui {
         self.cur_rot = None;
         let ctx = self.data.clone();
         let mut cursor = 0usize;
+        self.cur_modal = false;
         self.layout_children(&mut cursor, &nodes, root, &ctx, "", None, 0.0, p);
+        self.apply_modal();
+    }
+
+    /// A modal subtree on screen: nothing else takes the focus, and the
+    /// focus moves into it (and back out once it closes).
+    fn apply_modal(&mut self) {
+        let modal = self.instances.iter().any(|i| i.modal && i.focusable);
+        if !modal {
+            if let Some(back) = self.modal_return.take()
+                && self.find(&back).is_some_and(|i| i.focusable)
+            {
+                self.focus = Some(back);
+                self.focus_age = 0.0;
+            }
+            return;
+        }
+        for i in self.instances.iter_mut().filter(|i| !i.modal) {
+            i.focusable = false;
+        }
+        let inside = self
+            .focus
+            .as_deref()
+            .and_then(|f| self.find(f))
+            .is_some_and(|i| i.modal && i.focusable);
+        if !inside {
+            if self.modal_return.is_none() {
+                self.modal_return = self.focus.clone();
+            }
+            self.editing = None;
+            self.focus = self
+                .instances
+                .iter()
+                .find(|i| i.modal && i.focusable)
+                .map(|i| i.key.clone());
+            self.focus_age = 0.0;
+        }
     }
 
     /// Lay out `nodes` (siblings) inside `parent`; `cursor` walks the flattened defs in preorder.
@@ -1345,7 +1458,9 @@ impl Ui {
             if h.is_none() {
                 let lh = n.line_h.unwrap_or_else(|| p.text_height(font, scale));
                 let lines = match (n.wrap, w) {
-                    (true, Some(ww)) => wrap_text(p, font, scale, &text, ww - 2.0 * pad).len(),
+                    (true, Some(ww)) => wrap_text(p, font, scale, &text, ww - 2.0 * pad)
+                        .len()
+                        .min(n.max_lines.unwrap_or(usize::MAX)),
                     _ => 1,
                 };
                 h = Some(lh * lines.max(1) as f32);
@@ -1466,7 +1581,9 @@ impl Ui {
             ..rect
         };
         let (saved_quad, saved_rot, saved_top) = (self.cur_quad, self.cur_rot, self.cur_top);
+        let saved_modal = self.cur_modal;
         self.cur_top |= n.top;
+        self.cur_modal |= n.modal;
         if let Some(c) = n.cut {
             self.cur_quad = Some(Quad::of(rect, c));
         }
@@ -1480,6 +1597,7 @@ impl Ui {
         self.cur_quad = saved_quad;
         self.cur_rot = saved_rot;
         self.cur_top = saved_top;
+        self.cur_modal = saved_modal;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1547,6 +1665,7 @@ impl Ui {
             scope_lit: false,
             offpage: false,
             top: self.cur_top,
+            modal: self.cur_modal,
         });
         let me = self.instances.len() - 1;
         if n.children.is_empty() {
@@ -2544,6 +2663,10 @@ impl Ui {
                     t = "*".repeat(t.chars().count());
                 }
                 let editing = self.editing.as_deref() == Some(&inst.key);
+                if let Some(caret) = n.caret.filter(|_| editing) {
+                    self.draw_caret_input(p, n, &t, rect, caret, alpha, clip);
+                    return;
+                }
                 if editing && (self.time as i64 / 20) % 2 == 0 {
                     t.push('_');
                 }
@@ -2594,6 +2717,7 @@ impl Ui {
             };
             if n.wrap && n.kind == Kind::Text && n.line_h.is_none() {
                 let lines = widgets::wrap_lines(p, font, scale, &text, rect.w - inset);
+                let lines = fit_lines(p, font, scale, lines, n, rect.w - inset);
                 let step = th + n.line_gap.unwrap_or(th * 0.4);
                 let total = step * lines.len() as f32 - (step - th);
                 let top = rect.y + ((rect.h - total) / 2.0).max(0.0) - ink;
@@ -2614,6 +2738,7 @@ impl Ui {
             }
             if n.wrap && n.kind == Kind::Text {
                 let lines = wrap_text(p, font, scale, &text, rect.w - 2.0 * inset);
+                let lines = fit_lines(p, font, scale, lines, n, rect.w - 2.0 * inset);
                 let lh = n.line_h.unwrap_or(th);
                 let top = rect.y + (rect.h - lh * lines.len() as f32) / 2.0;
                 for (i, line) in lines.iter().enumerate() {
@@ -2632,6 +2757,11 @@ impl Ui {
                 }
                 return;
             }
+            let text = if n.ellipsis {
+                ellipsize(p, font, scale, &text, rect.w - 2.0 * inset)
+            } else {
+                text
+            };
             p.draw_text(
                 font,
                 &text,
@@ -2701,6 +2831,69 @@ impl Ui {
                 continue;
             }
             p.draw_rect(r, col, 0.0, clip);
+        }
+    }
+
+    /// An input being edited with a `caret`: its text (the end of it when
+    /// it is wider than the box) and a blinking bar after it.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_caret_input(
+        &self,
+        p: &mut dyn Painter,
+        n: &NodeDef,
+        text: &str,
+        rect: Rect,
+        caret: [f32; 4],
+        alpha: f32,
+        clip: Option<Rect>,
+    ) {
+        let font = n.font.unwrap_or(1);
+        let scale = n.scale_focus.or(n.scale).unwrap_or(1.0);
+        let bank = n.bank_focus.or(n.bank).unwrap_or(0);
+        let inset = n.pad.unwrap_or(0.0);
+        let th = p.text_height(font, scale);
+        let bar_w = (2.0 * scale).max(2.0);
+        let room = (rect.w - 2.0 * inset - bar_w - 2.0).max(0.0);
+        // keep the end (where the caret is) in view
+        let mut shown: &str = text;
+        while !shown.is_empty() && p.text_width(font, shown, scale) > room {
+            let mut it = shown.chars();
+            it.next();
+            shown = it.as_str();
+        }
+        let w = p.text_width(font, shown, scale);
+        let (align, x, end) = match n.align.as_deref().unwrap_or("left") {
+            "right" => (
+                -1,
+                rect.x + rect.w - inset - bar_w - 2.0,
+                rect.x + rect.w - inset - bar_w,
+            ),
+            "center" => (
+                0,
+                rect.x + rect.w / 2.0 - bar_w / 2.0,
+                rect.x + rect.w / 2.0 + w / 2.0,
+            ),
+            _ => (1, rect.x + inset, rect.x + inset + w + 2.0),
+        };
+        let ink = p.text_center_dy(font, scale);
+        let y = rect.y + (rect.h + th) / 2.0 - ink + n.text_dy.unwrap_or(0.0);
+        let inner = Some(clip.map_or(rect, |c| c.intersect(&rect)));
+        if !shown.is_empty() {
+            p.draw_text(font, shown, x, y, bank, align, scale, alpha, inner);
+        }
+        if (self.time as i64 / 20) % 2 == 0 {
+            let bar_h = (th * 0.8).min(rect.h - 4.0).max(4.0);
+            p.draw_rect(
+                Rect {
+                    x: end,
+                    y: rect.y + (rect.h - bar_h) / 2.0,
+                    w: bar_w,
+                    h: bar_h,
+                },
+                [caret[0], caret[1], caret[2], caret[3] * alpha],
+                0.0,
+                inner,
+            );
         }
     }
 
@@ -3167,6 +3360,139 @@ mask = "!show"
             "{:?}",
             p.drawn
         );
+    }
+
+    #[test]
+    fn long_text_ends_in_an_ellipsis_and_wraps_stop_at_max_lines() {
+        // the test painter's text is 8 px per character
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "text"
+text = "{name}"
+w = 80
+ellipsis = true
+
+[[node]]
+kind = "text"
+text = "{motd}"
+y = 40
+w = 80
+wrap = true
+max_lines = 2
+"#,
+        )
+        .unwrap();
+        let data = serde_json::json!({
+            "name": "A VERY LONG SERVER NAME",
+            "motd": "ONE TWO THREE FOUR FIVE SIX SEVEN",
+        });
+        let mut ui = Ui::new(def, data);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert!(
+            p.drawn.contains(&"text:A VERY...".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(
+            p.drawn.contains(&"text:ONE TWO".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(
+            p.drawn.contains(&"text:THREE...".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(!p.drawn.iter().any(|d| d.contains("SEVEN")));
+        // two lines tall, not four
+        let r = ui.instances[1].rect;
+        assert_eq!(r.h, 24.0);
+    }
+
+    #[test]
+    fn caret_inputs_show_the_end_of_long_text_and_a_bar() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "input"
+id = "name"
+w = 60
+h = 20
+caret = [1.0, 0.0, 0.0, 1.0]
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, data());
+        ui.set_input("name", "ABCDEFGHIJ");
+        ui.edit("name");
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        // 60 px minus the bar fits 7 characters: the end stays visible
+        assert!(
+            p.drawn.contains(&"text:DEFGHIJ".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(!p.drawn.iter().any(|d| d.contains('_')));
+        assert!(p.drawn.contains(&"rect".to_string()), "caret bar");
+    }
+
+    #[test]
+    fn a_modal_keeps_the_focus_until_it_closes() {
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "button"
+id = "under"
+y = 0
+w = 100
+h = 20
+on_press = "under"
+
+[[node]]
+kind = "button"
+id = "below"
+y = 300
+w = 100
+h = 20
+on_press = "below"
+
+[[node]]
+kind = "panel"
+visible = "dialog"
+modal = true
+y = 100
+w = 300
+h = 100
+
+  [[node.children]]
+  kind = "button"
+  id = "ok"
+  w = 100
+  h = 20
+  on_press = "ok"
+"#,
+        )
+        .unwrap();
+        let mut ui = Ui::new(def, serde_json::json!({ "dialog": false }));
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.focused(), Some("under"));
+        ui.set_data(serde_json::json!({ "dialog": true }));
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.focused(), Some("ok"), "the dialog takes the focus");
+        ui.tick(nav_down(), &mut p);
+        ui.tick(nav_down(), &mut p);
+        assert_eq!(ui.focused(), Some("ok"), "nothing behind it is reachable");
+        let ev = ui.tick(nav_accept(), &mut p);
+        assert!(ev.contains(&Event::Action("ok".into())));
+        ui.set_data(serde_json::json!({ "dialog": false }));
+        ui.tick(Nav::default(), &mut p);
+        assert_eq!(ui.focused(), Some("under"), "the focus comes back");
     }
 
     #[test]
