@@ -44,6 +44,78 @@ pub enum NetMode {
     SyncTest,
 }
 
+/// Rules the LAN host sends in the handshake (`HandshakeRules::Send`): the
+/// simulation settings that are not part of the match setup, so two players
+/// with different `[game]` options still simulate the same match.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LanRules {
+    pub fighter_size: FighterSize,
+    pub movement: rugen_sim::world::Movement,
+}
+
+impl LanRules {
+    /// `fighter_size=normal;air_jumps=1;air_dash=0;fast_fall=1` (no spaces).
+    pub fn encode(&self) -> String {
+        let m = &self.movement;
+        format!(
+            "fighter_size={};air_jumps={};air_dash={};fast_fall={}",
+            self.fighter_size.as_str(),
+            m.air_jumps,
+            u8::from(m.air_dash),
+            u8::from(m.fast_fall)
+        )
+    }
+
+    /// `None` unless every field is there (0.6.1 hosts send the size only).
+    pub fn decode(s: &str) -> Option<Self> {
+        let (mut size, mut jumps, mut dash, mut fall) = (None, None, None, None);
+        for kv in s.split(';') {
+            let (k, v) = kv.split_once('=')?;
+            let flag = || match v {
+                "0" => Some(false),
+                "1" => Some(true),
+                _ => None,
+            };
+            match k {
+                "fighter_size" => size = FighterSize::parse(v),
+                "air_jumps" => jumps = v.parse::<i32>().ok().filter(|n| (0..=9).contains(n)),
+                "air_dash" => dash = flag(),
+                "fast_fall" => fall = flag(),
+                _ => {} // a newer host's extra rule
+            }
+        }
+        Some(Self {
+            fighter_size: size?,
+            movement: rugen_sim::world::Movement {
+                air_jumps: jumps?,
+                air_dash: dash?,
+                fast_fall: fall?,
+            },
+        })
+    }
+}
+
+/// What a LAN peer agreed to after the handshake: the host keeps its own
+/// rules (`None`), the guest takes the host's. A peer older than
+/// [`rugen_net::LAN_PROTOCOL`] (0.6.1 and earlier: it would simulate with
+/// its own movement settings) is refused.
+pub(crate) fn lan_agreement(
+    side: usize,
+    peer_protocol: Option<u32>,
+    rules: Option<&str>,
+) -> anyhow::Result<Option<LanRules>> {
+    if peer_protocol.is_none_or(|v| v < rugen_net::LAN_PROTOCOL) {
+        anyhow::bail!("the other player runs an older rugen; both players need the same version");
+    }
+    if side == 0 {
+        return Ok(None);
+    }
+    match rules.and_then(LanRules::decode) {
+        Some(r) => Ok(Some(r)),
+        None => anyhow::bail!("the host sent no match rules; both players need the same version"),
+    }
+}
+
 /// Camera limits of a match: the player's own settings offline (and in a
 /// local sync test), [`rugen_sim::headless::ONLINE_ZOOM`] in every online
 /// session (LAN netplay, relay rooms, quick match, ranked, spectating), since
@@ -383,13 +455,23 @@ impl Match {
             });
         // a replay's recorded size, else the config's (online: the room's rules)
         let mut fighter_size = setup.fighter_size.unwrap_or(cfg.game.fighter_size);
+        let mut movement = rugen_sim::world::Movement {
+            air_jumps: cfg.game.air_jumps,
+            air_dash: cfg.game.air_dash,
+            fast_fall: cfg.game.fast_fall,
+        };
         let net = match &setup.net {
             Some(NetMode::P2P { port, remote, side }) => {
                 // LAN / explicit IP: wait for the peer, measure the round trip
                 let mut socket = rugen_net::Socket::bind(*port)
                     .with_context(|| format!("netplay on port {port}"))?;
-                // the host's FIGHTER SIZE rides the handshake: both sides simulate with it
-                let mine = format!("fighter_size={}", cfg.game.fighter_size.as_str());
+                // the host's FIGHTER SIZE and movement ride the handshake:
+                // both sides simulate with them
+                let mine = LanRules {
+                    fighter_size,
+                    movement,
+                }
+                .encode();
                 let rules = if *side == 0 {
                     rugen_net::HandshakeRules::Send(&mine)
                 } else {
@@ -403,18 +485,11 @@ impl Match {
                         &mut |s| log::info!("netplay: {s}"),
                     )
                     .with_context(|| format!("netplay with {remote}"))?;
-                if *side == 1 {
-                    match shake
-                        .rules
-                        .as_deref()
-                        .and_then(|r| r.strip_prefix("fighter_size="))
-                        .and_then(FighterSize::parse)
-                    {
-                        Some(v) => fighter_size = v,
-                        None => log::warn!(
-                            "netplay: the host sent no fighter size (older build?); using ours"
-                        ),
-                    }
+                let agreed = lan_agreement(*side, shake.peer_protocol, shake.rules.as_deref())
+                    .with_context(|| format!("netplay with {remote}"))?;
+                if let Some(r) = agreed {
+                    fighter_size = r.fighter_size;
+                    movement = r.movement;
                 }
                 let p95 = shake.rtt.map(|r| r.p95).or(shake.rtt_ms);
                 let policy = cfg.net.delay_policy();
@@ -447,11 +522,7 @@ impl Match {
             data_dir,
             motif,
             zoom: match_zoom(setup.net.as_ref(), &cfg.camera),
-            movement: rugen_sim::world::Movement {
-                air_jumps: cfg.game.air_jumps,
-                air_dash: cfg.game.air_dash,
-                fast_fall: cfg.game.fast_fall,
-            },
+            movement,
             // a replay's recorded clock; offline: the options' round time;
             // online rooms: the room's (both sides run `match_config`); LAN
             // peers keep the motif's
@@ -2279,6 +2350,78 @@ mod tests {
             run(match_zoom(None, &close)),
             "the settings do shape the camera (the test means something)"
         );
+    }
+
+    /// LAN netplay settings desync: air jumps, air dash and fast fall came
+    /// from each player's own `[game]` options. The host's ride the
+    /// handshake now, the guest takes them, and a peer that cannot carry
+    /// them (0.6.1 and earlier) is refused instead of drifting apart.
+    #[test]
+    fn lan_peers_simulate_the_hosts_movement() {
+        let host = LanRules {
+            fighter_size: FighterSize::parse("chibi").unwrap(),
+            movement: rugen_sim::world::Movement {
+                air_jumps: 2,
+                air_dash: true,
+                fast_fall: false,
+            },
+        };
+        let wire = host.encode();
+        assert!(!wire.contains(' '), "the punch format splits at spaces");
+        let v = Some(rugen_net::LAN_PROTOCOL);
+        // the guest (its own options: none of these) takes the host's
+        let guest = lan_agreement(1, v, Some(&wire)).unwrap();
+        assert_eq!(guest, Some(host));
+        // the host keeps its own
+        assert_eq!(lan_agreement(0, v, None).unwrap(), None);
+        // a 0.6.1 host: the size only, no protocol number
+        assert!(lan_agreement(1, None, Some("fighter_size=chibi")).is_err());
+        assert!(lan_agreement(1, v, Some("fighter_size=chibi")).is_err());
+        // a 0.6.1 guest (no protocol number) is refused by the host
+        assert!(lan_agreement(0, None, None).is_err());
+        // a newer host's extra rule is ignored
+        assert_eq!(LanRules::decode(&format!("{wire};future=1")), Some(host));
+
+        // and the worlds really agree (bundled KFM, skipped when absent)
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        let stage = root.join("stages/kfm.def");
+        if !kfm.exists() || !stage.exists() {
+            return;
+        }
+        let run = |m: rugen_sim::world::Movement| {
+            let spec = rugen_sim::headless::MatchSpec {
+                p1: &kfm,
+                p2: &kfm,
+                stage: Some(&stage),
+                data_dir: &root.join("data"),
+                motif: &root.join("data/system.def"),
+                zoom: rugen_sim::headless::ONLINE_ZOOM,
+                movement: m,
+                round_time: None,
+                ai: [0, 0],
+                fighter_size: Default::default(),
+            };
+            let mut w = rugen_sim::headless::build_world(&spec).expect("KFM world");
+            // P1 jumps forward and presses up again in the air
+            let mut inputs = Vec::new();
+            for f in 0..240u32 {
+                let a: u16 = match f % 40 {
+                    0..=2 | 14..=16 => 1 | (1 << 3),
+                    _ => 0,
+                };
+                inputs.extend_from_slice(&a.to_le_bytes());
+                inputs.extend_from_slice(&0u16.to_le_bytes());
+            }
+            rugen_sim::headless::replay(&mut w, &inputs, None).checksum
+        };
+        assert_ne!(
+            run(host.movement),
+            run(rugen_sim::world::Movement::default()),
+            "the movement shapes the match (the test means something)"
+        );
+        assert_eq!(run(host.movement), run(guest.unwrap().movement));
     }
 
     /// The tutorial's step title, hint and progress never overlap ("JUMP"
