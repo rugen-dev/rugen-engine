@@ -276,7 +276,7 @@ themes, deck profile checked at 1280x800.
 - [x] **LESSONS inside Training.** (083b616) The tutorial lessons run from the
   Training pause menu with the current fighter against the dummy, then
   free training again; no separate Tutorial entry.
-- [ ] **In-game DEBUGGER.** PRACTICE → DEBUGGER picks 1 or 2 fighters and a
+- [x] **In-game DEBUGGER.** (e51aabe) PRACTICE → DEBUGGER picks 1 or 2 fighters and a
   stage, then opens the fighter debugger; DEBUGGER in the Training pause
   menu and F12 in Training open it on the current match. Offline only.
 - [ ] **Team mode step.** SINGLE / TURNS / SIMUL / TAG cards before the
