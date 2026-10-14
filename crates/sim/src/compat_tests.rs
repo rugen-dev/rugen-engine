@@ -166,6 +166,7 @@ fn community(p1: &Path, p2: &Path, size: FighterSize) -> World {
     let root = reference();
     let stage = root.join("stages/kfm.def");
     let spec = MatchSpec {
+        life: None,
         p1,
         p2,
         stage: Some(&stage),

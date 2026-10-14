@@ -60,6 +60,7 @@ struct Run<'a> {
 fn run(r: &Run) -> (u64, u32, [u8; 2]) {
     let root = reference();
     let spec = MatchSpec {
+        life: None,
         p1: r.p1,
         p2: r.p2,
         stage: r.stage,
@@ -206,6 +207,7 @@ fn tracing_never_changes_the_match() {
         return;
     }
     let spec = MatchSpec {
+        life: None,
         p1: &kfm,
         p2: &kfm,
         stage: Some(&stage),
@@ -247,4 +249,90 @@ fn tracing_never_changes_the_match() {
     );
     let traced = replay(&mut w, &[], None).checksum;
     assert_eq!(traced, plain);
+}
+
+/// The global LIFE setting: every fighter starts each round at it (LifeMax
+/// and `Const(data.life)` follow), a fight at 5000 lasts longer than at the
+/// fighters' own 1000, KO still comes at 0, and the same setup replays to
+/// the same checksum. `life: None` is the legacy (fighter's own) life the
+/// checksums above pin.
+#[test]
+fn global_life_overrides_every_fighter() {
+    let root = reference();
+    let kfm = root.join("chars/kfm/kfm.def");
+    let stage = root.join("stages/kfm.def");
+    if !kfm.exists() || !stage.exists() {
+        return;
+    }
+    let (data, motif) = (root.join("data"), root.join("data/system.def"));
+    let spec = |life: Option<i32>| MatchSpec {
+        life,
+        p1: &kfm,
+        p2: &kfm,
+        stage: Some(&stage),
+        data_dir: &data,
+        motif: &motif,
+        zoom: crate::headless::ONLINE_ZOOM,
+        movement: Movement::default(),
+        round_time: Some(-1),
+        ai: [0, 0],
+        fighter_size: Default::default(),
+        seed: crate::headless::LEGACY_SEED,
+    };
+    let inputs = noise(60 * 1800, 0x11fe);
+    let frame = |f: &[u8]| {
+        let b = |i: usize| crate::Buttons::from_bits(u16::from_le_bytes([f[i], f[i + 1]]));
+        [b(0), b(2)]
+    };
+    // the fighters' own life: frames until the first KO, life 0 there
+    let mut own = build_world(&spec(None)).expect("world");
+    assert_eq!(own.players[0].life_max, 1000, "KFM's own [Data] life");
+    let ko_at = inputs
+        .chunks_exact(4)
+        .position(|f| {
+            own.step(&frame(f));
+            own.players.iter().take(2).any(|p| p.life <= 0)
+        })
+        .expect("a KO at 1000");
+    assert!(own.players.iter().take(2).any(|p| p.life == 0));
+    // LIFE 5000: the same inputs leave both standing there
+    let run = || {
+        let mut w = build_world(&spec(Some(5000))).expect("world");
+        assert_eq!(w.players[1].life_max, 5000);
+        for f in inputs.chunks_exact(4).take(ko_at + 1) {
+            w.step(&frame(f));
+        }
+        w
+    };
+    let mut w = run();
+    assert!(
+        w.players
+            .iter()
+            .take(2)
+            .all(|p| p.life > 0 && p.life < 5000),
+        "5000 lasts longer than 1000: {} / {}",
+        w.players[0].life,
+        w.players[1].life
+    );
+    assert_eq!(run().checksum(), w.checksum(), "deterministic");
+    // and KO still comes at 0
+    w.players[1].life = 25;
+    w.players[0].life = 25;
+    let ko = inputs.chunks_exact(4).skip(ko_at + 1).any(|f| {
+        w.step(&frame(f));
+        w.players.iter().take(2).any(|p| p.life <= 0)
+    });
+    assert!(ko, "a KO from 25 life");
+    assert!(w.players.iter().take(2).any(|p| p.life == 0 && p.ko));
+    // a non-positive setting is the fighter's own life
+    assert_eq!(
+        build_world(&spec(Some(0))).unwrap().players[1].life_max,
+        1000
+    );
+    let w = build_world(&spec(Some(5000))).unwrap();
+    assert!(
+        w.players
+            .iter()
+            .all(|p| p.life == 5000 && p.life_max == 5000)
+    );
 }

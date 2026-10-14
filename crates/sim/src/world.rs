@@ -449,6 +449,10 @@ pub struct World {
     pub data_height: Vec<f32>,
     /// FIGHTER SIZE for players added from now on; `None` by default (tests, tools).
     pub fighter_size: crate::scale::FighterSize,
+    /// The global LIFE setting for players added from now on: their LifeMax
+    /// (and `Const(data.life)`) instead of the fighter's own `[Data] life`.
+    /// `None` by default: each fighter's own life.
+    pub life: Option<i32>,
     pub fx: Option<Arc<FxData>>,
     pub players: Vec<Player>,
     pub explods: Vec<Explod>,
@@ -509,6 +513,7 @@ impl World {
             data_zoom: Vec::new(),
             data_height: Vec::new(),
             fighter_size: crate::scale::FighterSize::None,
+            life: None,
             fx: None,
             players: Vec::new(),
             explods: Vec::new(),
@@ -613,7 +618,9 @@ impl World {
     /// Add a player of `data` on `team` (0 = left, 1 = right).
     pub fn add_player(&mut self, data: Arc<CharData>, team: u8, pal_no: i32) -> usize {
         let idx = self.players.len();
-        let life = data.konst("data.life").unwrap_or(1000.0) as i32;
+        let life = self
+            .life
+            .unwrap_or_else(|| data.konst("data.life").unwrap_or(1000.0) as i32);
         let power_max = data.konst("data.power").unwrap_or(3000.0) as i32;
         let (x, facing) = if team == 0 {
             (self.stage.p1_start_x, 1.0)

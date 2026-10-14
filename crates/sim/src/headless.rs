@@ -48,6 +48,10 @@ pub struct MatchSpec<'a> {
     /// offline match (replays record it), [`online_seed`] online,
     /// [`LEGACY_SEED`] for older recordings.
     pub seed: u64,
+    /// The global LIFE setting: every fighter's (and partner's) LifeMax and
+    /// round-start life instead of its own `[Data] life`. `None` (or <= 0)
+    /// keeps each fighter's own life, as older recordings were played.
+    pub life: Option<i32>,
 }
 
 /// The partners of a team match (see [`crate::team`]): `MatchSpec::p1` /
@@ -89,6 +93,7 @@ fn build(spec: &MatchSpec, teams: Option<&TeamSpec>) -> crate::Result<World> {
     };
     let mut world = World::new(stage, spec.seed);
     world.fighter_size = spec.fighter_size;
+    world.life = spec.life.filter(|l| *l > 0);
     match FxData::load_with_motif(spec.motif, spec.data_dir) {
         Ok(fx) => {
             let mut round = fx.round.clone();

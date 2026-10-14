@@ -1074,6 +1074,7 @@ mod edit_tests {
             return;
         }
         let spec = rugen_sim::headless::MatchSpec {
+            life: None,
             p1: &kfm,
             p2: &kfm,
             stage: None,

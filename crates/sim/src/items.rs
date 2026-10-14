@@ -762,6 +762,7 @@ mod bundled {
             return;
         }
         let spec = MatchSpec {
+            life: None,
             p1: &kfm,
             p2: &kfm,
             stage: Some(&stage),
@@ -799,6 +800,7 @@ mod bundled {
         let motif = root.join("data/system.def");
         let drops = |seed: u64| {
             let spec = MatchSpec {
+                life: None,
                 p1: &kfm,
                 p2: &kfm,
                 stage: Some(&stage),

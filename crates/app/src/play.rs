@@ -768,6 +768,7 @@ impl Match {
             ),
         );
         let spec = rugen_sim::headless::MatchSpec {
+            life: None,
             p1: &setup.p1,
             p2: &setup.p2,
             stage: setup.stage.as_deref(),
@@ -3445,6 +3446,7 @@ mod tests {
         }
         let run = |zoom: (f32, f32)| {
             let spec = rugen_sim::headless::MatchSpec {
+                life: None,
                 p1: &kfm,
                 p2: &kfm,
                 stage: Some(&stage),
@@ -3493,6 +3495,7 @@ mod tests {
             return;
         }
         let spec = rugen_sim::headless::MatchSpec {
+            life: None,
             p1: &kfm,
             p2: &kfm,
             stage: Some(&stage),
@@ -3713,6 +3716,7 @@ mod tests {
         }
         let run = |m: rugen_sim::world::Movement| {
             let spec = rugen_sim::headless::MatchSpec {
+                life: None,
                 p1: &kfm,
                 p2: &kfm,
                 stage: Some(&stage),

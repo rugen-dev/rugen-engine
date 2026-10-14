@@ -93,6 +93,7 @@ fn assert_same_logic(a: &CharData, b: &CharData) {
 /// Final checksum of an AI-vs-AI match fed pseudo-random inputs.
 fn match_checksum(p1: &Path, p2: &Path, data: &Path, seed: u32) -> (u32, u64) {
     let spec = MatchSpec {
+        life: None,
         p1,
         p2,
         stage: None,

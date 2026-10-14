@@ -733,6 +733,7 @@ mod tests {
             return None;
         }
         let spec = MatchSpec {
+            life: None,
             p1: &kfm,
             p2: &kfm,
             stage: Some(&stage),
@@ -752,6 +753,47 @@ mod tests {
             partner_ai: [4, 4],
         };
         Some(build_team_world(&spec, &t).expect("team world"))
+    }
+
+    /// The global LIFE setting reaches every team member: LifeMax, life,
+    /// and `Const(data.life)` read it.
+    #[test]
+    fn global_life_reaches_partners() {
+        let root = reference();
+        let kfm = root.join("chars/kfm/kfm.def");
+        if !kfm.exists() {
+            return;
+        }
+        let (data, motif) = (root.join("data"), root.join("data/system.def"));
+        let spec = MatchSpec {
+            life: Some(5000),
+            p1: &kfm,
+            p2: &kfm,
+            stage: None,
+            data_dir: &data,
+            motif: &motif,
+            zoom: crate::headless::ONLINE_ZOOM,
+            movement: Default::default(),
+            round_time: None,
+            ai: [0, 0],
+            fighter_size: Default::default(),
+            seed: crate::headless::LEGACY_SEED,
+        };
+        let t = TeamSpec {
+            mode: [TeamMode::Turns, TeamMode::Simul],
+            partners: [vec![kfm.as_path()], vec![kfm.as_path(), kfm.as_path()]],
+            partner_ai: [4, 4],
+        };
+        let mut w = build_team_world(&spec, &t).expect("team world");
+        let roots: Vec<usize> = (0..w.players.len())
+            .filter(|&i| w.players[i].helper_index == 0)
+            .collect();
+        assert_eq!(roots.len(), 5);
+        for i in roots {
+            assert_eq!(w.players[i].life_max, 5000, "member {i}");
+            assert_eq!(eval(&mut w, i, "const(data.life)"), 5000);
+            assert_eq!(eval(&mut w, i, "lifemax"), 5000);
+        }
     }
 
     fn eval(w: &mut World, i: usize, src: &str) -> i32 {

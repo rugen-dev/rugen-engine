@@ -408,6 +408,10 @@ impl Context for Ctx<'_> {
             }),
             // helpers without keyctrl read no command input (MUGEN Helper doc, Ikemen `command`)
             T::Command(name) => Self::b((p.helper_index == 0 || p.keyctrl) && p.cmds.active(name)),
+            // the global LIFE setting replaces every fighter's own
+            T::Const(name) if self.w.life.is_some() && name.eq_ignore_ascii_case("data.life") => {
+                Self::i(self.w.life.unwrap_or(1000))
+            }
             T::Const(name) => match p.size.konst(name).or_else(|| data.konst(name)) {
                 Some(v) => {
                     // ints stay ints so `const(data.life)` compares like MUGEN
