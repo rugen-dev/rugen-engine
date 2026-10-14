@@ -1613,6 +1613,40 @@ impl Match {
 
     /// What a result report carries: last frame, world checksum and both
     /// players' inputs (the server compares the two reports).
+    /// A LAN match's replay header (`side`: ours); the inputs come from the
+    /// session when it is saved ([`Match::net_inputs`]). It plays back with
+    /// the match's own rules: the host's fighter size, movement, seed and
+    /// life, the fixed online camera and the bundled fight.def.
+    pub fn lan_recording(&self, side: usize) -> crate::replay::Replay {
+        let mut rec = crate::replay::Replay::new(
+            &self.setup,
+            self.world.fighter_size,
+            false,
+            self.world.round.config.round_time,
+            self.world.seed(),
+            self.world.life,
+        );
+        rec.ai = [0, 0];
+        rec.sim = self.sim_rules;
+        rec.mode = Some("lan".into());
+        rec.online = Some(crate::replay::OnlineMeta {
+            server: "lan".into(),
+            match_id: 0,
+            side: side as u8,
+            peer: self.peer_machine(),
+        });
+        rec
+    }
+
+    /// Both players' inputs of every frame simulated so far (rollbacks
+    /// corrected), for a netplay seat's replay; empty offline.
+    pub fn net_inputs(&self) -> Vec<[u16; 2]> {
+        self.net
+            .as_ref()
+            .map(|n| rugen_proto::stream::inputs_from_bytes(&n.input_log_bytes()))
+            .unwrap_or_default()
+    }
+
     /// The other player's machine summary (online / LAN), once it sent one.
     pub fn peer_machine(&self) -> Option<MachineSummary> {
         self.net
@@ -4147,6 +4181,138 @@ mod tests {
             p.tick([Buttons::default(); 2], &mut audio);
         }
         assert_eq!(p.world.checksum(), want, "the replay plays the same match");
+    }
+
+    /// LAN replays: two peers on loopback with different camera and
+    /// movement settings play a match; each side's replay (its header and
+    /// the session's inputs), watched with yet other settings, reaches the
+    /// world that side simulated.
+    #[test]
+    fn lan_replays_play_the_lan_match() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let reference = base.join("reference/mugen-1.1b1");
+        let kfm = std::path::absolute(reference.join("chars/kfm/kfm.def")).unwrap();
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = reference.join("data");
+        let free = || {
+            std::net::UdpSocket::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let ports = [free(), free()];
+        let side_cfg = |side: usize| {
+            let mut c = Config::default();
+            if side == 0 {
+                (c.camera.zoom_out, c.camera.zoom_in) = (0.3, 2.5);
+                c.game.air_jumps = 2;
+                c.game.air_dash = true;
+            } else {
+                (c.camera.zoom_out, c.camera.zoom_in) = (0.9, 1.0);
+                c.game.fast_fall = true;
+            }
+            c
+        };
+        let run = |side: usize| {
+            let (kfm, motif, data) = (kfm.clone(), motif.clone(), data.clone());
+            std::thread::spawn(move || {
+                let setup = FightSetup {
+                    sim: Default::default(),
+                    life: None,
+                    p1: kfm.clone(),
+                    p2: kfm,
+                    stage: None,
+                    ai: [0, 0],
+                    net: Some(NetMode::P2P {
+                        port: ports[side],
+                        remote: SocketAddr::from(([127, 0, 0, 1], ports[1 - side])),
+                        side,
+                    }),
+                    tutorial: false,
+                    ids: [String::new(), String::new()],
+                    mode: None,
+                    fighter_size: None,
+                    arena_ai: None,
+                    round_time: None,
+                    teams: None,
+                    run: None,
+                    seed: None,
+                };
+                let mut m = Match::load(&setup, &motif, &data, &side_cfg(side)).expect("LAN match");
+                let mut rec = m.lan_recording(side);
+                let mut audio = None;
+                let start = std::time::Instant::now();
+                let mut f = 0u32;
+                while m.world.frame < 700 && start.elapsed() < std::time::Duration::from_secs(40) {
+                    let b = if side == 0 {
+                        Buttons {
+                            l: f % 120 < 90,
+                            u: f % 120 == 100 || f % 120 == 108,
+                            ..Default::default()
+                        }
+                    } else {
+                        Buttons {
+                            r: f % 100 < 70,
+                            d: f % 100 == 75,
+                            u: f % 100 == 80,
+                            ..Default::default()
+                        }
+                    };
+                    let mut inputs = [Buttons::default(); 2];
+                    inputs[side] = b;
+                    m.tick(inputs, &mut audio);
+                    f += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(4));
+                }
+                assert!(m.world.frame >= 700, "the LAN match ran");
+                rec.inputs = m.net_inputs();
+                (rec, m.world.checksum(), m.world.frame)
+            })
+        };
+        let (a, b) = (run(0), run(1));
+        for (side, (rec, want, frame)) in [a.join().unwrap(), b.join().unwrap()]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                rec.inputs.len() as u32,
+                frame,
+                "P{}: one input pair per frame",
+                side + 1
+            );
+            let o = rec.online.clone().unwrap();
+            assert_eq!((o.server.as_str(), o.side as usize), ("lan", side));
+            assert!(rec.sim.online);
+            assert_eq!(rec.sim.zoom, Some([0.6, 1.25]));
+            assert_eq!(
+                rec.sim.movement,
+                Some(MovementRules {
+                    air_jumps: 2,
+                    air_dash: true,
+                    fast_fall: false
+                }),
+                "the host's movement on both sides"
+            );
+            let rec: crate::replay::Replay =
+                serde_json::from_slice(&serde_json::to_vec(&rec).unwrap()).unwrap();
+            let mut p =
+                Match::load(&rec.setup(), &motif, &data, &Config::default()).expect("replay");
+            p.playback = Some((rec.inputs.clone(), 0));
+            let mut audio = None;
+            for _ in 0..rec.inputs.len() {
+                p.tick([Buttons::default(); 2], &mut audio);
+            }
+            assert_eq!(
+                p.world.checksum(),
+                want,
+                "P{}'s LAN replay plays its match",
+                side + 1
+            );
+        }
     }
 
     /// `--team1 turns:goku,kfm`: the mode, then the partners.

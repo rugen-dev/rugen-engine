@@ -1192,7 +1192,20 @@ impl Shell {
         let Screen::Match(m) = &mut self.screen else {
             return;
         };
-        let Some(rec) = m.record.take() else { return };
+        let Some(mut rec) = m.record.take() else {
+            return;
+        };
+        // LAN: every frame both players confirmed (rollbacks corrected)
+        if rec.mode.as_deref() == Some("lan") {
+            // the session failed: nothing reliable to keep
+            if !m.is_netplay_seat() {
+                return;
+            }
+            rec.inputs = m.net_inputs();
+            if let Some(o) = rec.online.as_mut() {
+                o.peer = m.peer_machine();
+            }
+        }
         if rec.inputs.len() < 60 {
             return;
         }
@@ -1925,6 +1938,10 @@ impl Shell {
                             // the camera and movement it is played with
                             rec.sim = m.sim_rules;
                             m.record = Some(rec);
+                        } else if let Some(crate::play::NetMode::P2P { side, .. }) = &setup.net {
+                            // LAN: the header now, the session's inputs when
+                            // it is saved (`save_replay`)
+                            m.record = Some(m.lan_recording(*side));
                         }
                         if let Some(r) = self.replay.take() {
                             m.playback = Some((r.inputs, 0));
