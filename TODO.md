@@ -350,9 +350,15 @@ box) and screenshots.
   season starts a player's fighter rating from a soft reset of the last
   one. Tab switches PLAYERS / FIGHTERS, a FIGHTER stepper cycles the
   fighters with a board. Shots: `~/.cache/rugen-work/ro/shots/fboard-{ink,dojo}.png`.
-- [ ] **Tournament brackets.** In a room: 8 or 16 players, single
+- [x] **Tournament brackets.** (1a2c5c7; rugen-server 5277884) In a room: 8 or 16 players, single
   elimination, the server seeds by rating and calls each match; spectators
   watch the bracket.
+  FORMAT on CREATE ROOM; the host starts the bracket (2+ entrants, byes
+  for the top seeds); a disputed / failed match is called once more, then
+  a walkover (the player still in the room, else the one further on, else
+  the higher seed; 3 min without a start). Scores come from the reports'
+  additive `rounds`. Shots: `~/.cache/rugen-work/ro/shots/bracket-{ink,dojo}.png`,
+  `create-format-{ink,dojo}.png`.
 
 ### Live watching (shared base for replays and brackets)
 - [ ] **One match format: header + input stream.** Header: rugen version,
