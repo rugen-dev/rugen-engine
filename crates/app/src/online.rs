@@ -129,6 +129,11 @@ pub struct Played {
     /// This machine's summary when it played the match.
     #[serde(default)]
     pub mine: Option<rugen_proto::MachineSummary>,
+    /// Camera, movement, online rules and rounds the match was played with;
+    /// absent from files kept before them (every room match had the same:
+    /// [`crate::play::SimRules::online_room`]).
+    #[serde(default)]
+    pub sim: Option<crate::play::SimRules>,
 }
 
 /// `RUGEN 0.6.4 · FEDORA LINUX 44 · X86_64 · VULKAN` for REPLAYS (the
@@ -176,6 +181,7 @@ pub fn server_label(server: &str) -> String {
 /// The local replay file of an online match we played.
 fn played_replay(p: &Played) -> crate::replay::Replay {
     let setup = FightSetup {
+        sim: Default::default(),
         life: None,
         p1: p.p1.clone(),
         p2: p.p2.clone(),
@@ -205,10 +211,11 @@ fn played_replay(p: &Played) -> crate::replay::Replay {
         room_life(&p.rules),
     );
     r.ai = [0, 0];
-    r.run = Some(crate::play::RunRules {
-        match_wins: p.rules.rounds.clamp(1, 9),
-        p1_life: None,
-    });
+    // the online camera, movement, round timings and the room's ROUNDS,
+    // whatever the player's own settings are when it is watched
+    r.sim = p
+        .sim
+        .unwrap_or_else(|| crate::play::SimRules::online_room(p.rules.rounds));
     r.inputs = p.inputs.clone();
     r.mode = Some("online".into());
     if p.recorded_at.is_some() {
@@ -1608,6 +1615,7 @@ impl OnlineScreen {
             rules: h.rules.clone(),
         });
         self.pending_fight = Some(FightSetup {
+            sim: Default::default(),
             life: None,
             p1,
             p2,
@@ -2035,6 +2043,7 @@ impl OnlineScreen {
         };
         let portraits = [side(&p1), side(&p2)];
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1,
             p2,
@@ -4961,6 +4970,7 @@ impl OnlineScreen {
             .or_else(|| self.lib.default_stage());
         log::info!("online: direct match as side {}", self.direct_side + 1);
         self.pending_fight = Some(FightSetup {
+            sim: Default::default(),
             life: None,
             p1,
             p2,
@@ -6434,6 +6444,7 @@ mod tests {
             peer: None,
             recorded_at: None,
             mine: None,
+            sim: None,
         };
         note_played(&root, p);
         // a new session reads it back from the cache
@@ -6473,5 +6484,141 @@ mod tests {
             "THIS ROOM'S HOST RUNS AN OLDER RUGEN (0.5). BOTH PLAYERS NEED THE SAME VERSION."
         );
         assert!(room_error(&room(9)).unwrap().contains("UPDATE YOUR GAME"));
+    }
+
+    /// SAVE FILE replays play the online match exactly: the match runs
+    /// under the online rules (as viewers and the server's re-simulation run
+    /// it) on a machine whose own camera, movement and rounds differ; the
+    /// saved replay, watched with those settings, reaches the same world.
+    #[test]
+    fn saved_online_replays_play_the_online_match() {
+        use crate::play::{FightSetup, Match, NetMode};
+        use rugen_sim::Buttons;
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let reference = base.join("reference/mugen-1.1b1");
+        let kfm = std::path::absolute(reference.join("chars/kfm/kfm.def")).unwrap();
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = reference.join("data");
+        // this player's own settings: far from the online rules
+        let mut local = Config::default();
+        (local.camera.zoom_out, local.camera.zoom_in) = (0.3, 2.5);
+        local.game.air_jumps = 3;
+        local.game.air_dash = true;
+        local.game.fast_fall = true;
+        local.game.round_time = 20;
+        local.game.life = 1000;
+        let rules = Rules {
+            rounds: 1,
+            round_time: 30,
+            ..Default::default()
+        };
+        // both fighters back off to the screen edges, jump now and then
+        let inputs: Vec<[u16; 2]> = (0..900)
+            .map(|f| {
+                let p1 = Buttons {
+                    l: f % 120 < 90,
+                    u: f % 120 == 100 || f % 120 == 110,
+                    x: f % 60 == 30,
+                    ..Default::default()
+                };
+                let p2 = Buttons {
+                    r: f % 100 < 70,
+                    u: f % 100 == 80 || f % 100 == 88,
+                    ..Default::default()
+                };
+                [p1.bits(), p2.bits()]
+            })
+            .collect();
+        let header = rugen_proto::stream::MatchHeader {
+            seed: 77,
+            rules: rules.clone(),
+            ..Default::default()
+        };
+        let online = FightSetup {
+            sim: Default::default(),
+            life: None,
+            p1: kfm.clone(),
+            p2: kfm.clone(),
+            stage: None,
+            ai: [0, 0],
+            net: Some(NetMode::Stream(crate::watch::Feed::complete(
+                header,
+                inputs.clone(),
+            ))),
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(77),
+        };
+        let mut audio = None;
+        let mut m = Match::load(&online, &motif, &data, &match_config(&local, &rules))
+            .expect("online match");
+        let mut frames = 0;
+        for _ in 0..inputs.len() + 2000 {
+            for _ in 0..m.stream_steps() {
+                if m.tick([Buttons::default(); 2], &mut audio) {
+                    frames += 1;
+                }
+            }
+            if frames >= inputs.len() {
+                break;
+            }
+        }
+        assert_eq!(frames, inputs.len(), "the whole stream played");
+        let want = m.world.checksum();
+        let played = Played {
+            server: "http://s".into(),
+            match_id: 7,
+            title: String::new(),
+            line: String::new(),
+            p1: kfm.clone(),
+            p2: kfm.clone(),
+            stage: None,
+            seed: 77,
+            rules: rules.clone(),
+            inputs: inputs.clone(),
+            side: 0,
+            peer: None,
+            recorded_at: None,
+            mine: None,
+            sim: Some(m.sim_rules),
+        };
+        let play = |r: &crate::replay::Replay| {
+            let r: crate::replay::Replay =
+                serde_json::from_slice(&serde_json::to_vec(r).unwrap()).unwrap();
+            let mut p = Match::load(&r.setup(), &motif, &data, &local).expect("replay");
+            p.playback = Some((r.inputs.clone(), 0));
+            let mut audio = None;
+            for _ in 0..r.inputs.len() {
+                p.tick([Buttons::default(); 2], &mut audio);
+            }
+            p.world.checksum()
+        };
+        let r = played_replay(&played);
+        assert_eq!(r.sim.zoom, Some([0.6, 1.25]));
+        assert_eq!(play(&r), want, "the saved replay plays the online match");
+        // a file kept before the rules were: the online room's rules
+        let old = Played {
+            sim: None,
+            ..played
+        };
+        assert_eq!(played_replay(&old).sim, r.sim);
+        assert_eq!(play(&played_replay(&old)), want);
+        // without them it would not (the test can tell)
+        let mut loose = r.clone();
+        loose.sim = Default::default();
+        assert_ne!(
+            play(&loose),
+            want,
+            "the player's own camera changes the match"
+        );
     }
 }

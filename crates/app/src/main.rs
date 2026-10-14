@@ -465,6 +465,7 @@ fn main() -> anyhow::Result<()> {
                 None
             };
             let setup = play::FightSetup {
+                sim: Default::default(),
                 life: None,
                 p1: p1.clone(),
                 p2: p2.unwrap_or(p1),

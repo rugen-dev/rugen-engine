@@ -1121,6 +1121,7 @@ mod tests {
 
     fn setup(mode: Option<crate::game::Mode>) -> crate::play::FightSetup {
         crate::play::FightSetup {
+            sim: Default::default(),
             life: None,
             p1: "a.def".into(),
             p2: "b.def".into(),
