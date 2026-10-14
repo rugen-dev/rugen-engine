@@ -353,6 +353,10 @@ pub struct RoomSummary {
     /// older server). Older clients cannot join such a room.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tournament: Option<TournamentBrief>,
+    /// The match running in the room when the server keeps its input log:
+    /// viewers open it with `GET /v1/live/{id}` (0: none, or an older server).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub live_match: u64,
 }
 
 /// A tournament room in the lobby list.

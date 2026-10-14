@@ -91,6 +91,43 @@ pub struct RelaySocket {
     exit: std::sync::Arc<Exit>,
     /// Flee messages still to send (a few, on every path).
     flee_left: u8,
+    /// Confirmed inputs for the server's input log.
+    uplink: std::sync::Arc<Uplink>,
+    last_upload: Instant,
+}
+
+/// The confirmed inputs of the match for the server's input log, shared
+/// between the session (which confirms frames) and the socket (which sends
+/// them on the relay session, [`wire::STREAM`]). Only used when the ticket
+/// says the server keeps a log ([`SessionTicket::live`]).
+#[derive(Debug, Default)]
+pub struct Uplink {
+    /// The ticket allows it (a player slot of a server that keeps logs).
+    pub enabled: bool,
+    /// Confirmed frames, from frame 0.
+    pub frames: std::sync::Mutex<Vec<[u16; 2]>>,
+    /// Frames the server said it holds.
+    pub acked: std::sync::atomic::AtomicU32,
+}
+
+impl Uplink {
+    /// The confirmed inputs so far (`frames` grows only).
+    pub fn confirm(&self, frames: &[[u16; 2]]) {
+        if let Ok(mut f) = self.frames.lock()
+            && frames.len() > f.len()
+        {
+            let n = f.len();
+            f.extend_from_slice(&frames[n..]);
+        }
+    }
+
+    /// The next datagram to send: the frames from what the server holds.
+    pub fn next_upload(&self) -> Option<Vec<u8>> {
+        let f = self.frames.lock().ok()?;
+        let from = self.acked.load(Ordering::Relaxed) as usize;
+        (self.enabled && from < f.len())
+            .then(|| rugen_proto::stream::encode_upload(from as u32, &f[from..]))
+    }
 }
 
 /// How the match ends early, shared with the socket after it moved into a
@@ -181,6 +218,11 @@ impl RelaySocket {
             hooks: Default::default(),
             exit: Default::default(),
             flee_left: 3,
+            uplink: std::sync::Arc::new(Uplink {
+                enabled: t.live && t.slot < 2,
+                ..Default::default()
+            }),
+            last_upload: Instant::now(),
         })
     }
 
@@ -317,6 +359,11 @@ impl RelaySocket {
     /// moved into a ggrs session.
     pub fn exit(&self) -> std::sync::Arc<Exit> {
         self.exit.clone()
+    }
+
+    /// The confirmed inputs this socket sends to the server's input log.
+    pub fn uplink(&self) -> std::sync::Arc<Uplink> {
+        self.uplink.clone()
     }
 
     /// Send our flee message to the other player on every path we have
@@ -515,6 +562,14 @@ impl RelaySocket {
                 continue;
             }
             match h.kind {
+                wire::STREAM_ACK => {
+                    if let Ok(b) = <[u8; 4]>::try_from(p.get(..4).unwrap_or_default()) {
+                        self.uplink
+                            .acked
+                            .store(u32::from_le_bytes(b), Ordering::Relaxed);
+                    }
+                    continue;
+                }
                 wire::ACK | wire::PEERS => {
                     if let Some(&m) = p.first() {
                         // the other player was connected and is gone: the
@@ -922,6 +977,13 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
             self.send_frame(wire::HELLO, 0, &usage);
             self.last_hello = Instant::now();
         }
+        // the server's input log: what it does not hold yet, 5 times a second
+        if self.last_upload.elapsed() >= Duration::from_millis(200)
+            && let Some(p) = self.uplink.next_upload()
+        {
+            self.send_frame(wire::STREAM, 0xFF, &p);
+            self.last_upload = Instant::now();
+        }
         if self.exit.flee.load(Ordering::Relaxed) && self.flee_left > 0 {
             self.flee_left -= 1;
             self.send_flee();
@@ -962,6 +1024,31 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_uplink_sends_what_the_server_lacks() {
+        let off = Uplink::default();
+        off.confirm(&[[1, 2]]);
+        assert!(off.next_upload().is_none(), "not a live server's ticket");
+        let u = Uplink {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(u.next_upload().is_none(), "nothing confirmed yet");
+        let frames: Vec<[u16; 2]> = (0..400).map(|i| [i, i + 1]).collect();
+        u.confirm(&frames[..10]);
+        u.confirm(&frames[..5]);
+        let (from, got) = rugen_proto::stream::decode_upload(&u.next_upload().unwrap()).unwrap();
+        assert_eq!((from, got.len()), (0, 10));
+        u.confirm(&frames);
+        u.acked.store(10, Ordering::Relaxed);
+        let (from, got) = rugen_proto::stream::decode_upload(&u.next_upload().unwrap()).unwrap();
+        assert_eq!(from, 10);
+        assert_eq!(got.len(), rugen_proto::stream::DATAGRAM_FRAMES);
+        assert_eq!(got[0], [10, 11]);
+        u.acked.store(400, Ordering::Relaxed);
+        assert!(u.next_upload().is_none(), "the server holds everything");
+    }
 
     #[test]
     fn virtual_addresses() {

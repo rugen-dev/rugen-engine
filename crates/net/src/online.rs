@@ -612,6 +612,52 @@ impl OnlineClient {
         Ok(())
     }
 
+    /// A binary GET (stream chunks); JSON errors become [`OnlineError::Server`].
+    fn get_bytes(&self, path: &str) -> OnlineResult<Vec<u8>> {
+        let url = format!("{}{path}", self.base()?);
+        let mut resp = self
+            .agent()
+            .get(&url)
+            .header(API_HEADER, API)
+            .call()
+            .map_err(|e| OnlineError::Http(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let bytes = resp
+            .body_mut()
+            .with_config()
+            .limit(4 << 20)
+            .read_to_vec()
+            .map_err(|e| OnlineError::Http(e.to_string()))?;
+        if status != 200 {
+            let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("http {status}"));
+            return Err(OnlineError::Server(msg));
+        }
+        Ok(bytes)
+    }
+
+    /// Public live matches (`GET /v1/live`); empty from older servers.
+    pub fn live_matches(&self) -> OnlineResult<Vec<rugen_proto::stream::LiveMatch>> {
+        match self.call("GET", "/v1/live", None) {
+            Ok(v) => Self::decode(v),
+            Err(OnlineError::Server(_)) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A live (or just finished) match's stream from frame `from` (the
+    /// header comes with frame 0).
+    pub fn live_chunk(&self, match_id: u64, from: u32) -> OnlineResult<rugen_proto::stream::Chunk> {
+        let k = self.key()?;
+        let b = self.get_bytes(&format!("/v1/live/{match_id}?key={k}&from={from}"))?;
+        rugen_proto::stream::decode_chunk(&b)
+            .ok_or_else(|| OnlineError::Decode("bad stream chunk".into()))
+    }
+
     /// Tell the server this match desynchronised (it will not resolve by agreement).
     pub fn report_desync(&self, match_id: u64, frame: u32) -> OnlineResult<()> {
         let b = self.with_key(json!({ "frame": frame }))?;
