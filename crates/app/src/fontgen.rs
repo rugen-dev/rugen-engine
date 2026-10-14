@@ -217,6 +217,8 @@ pub struct Generator<'a> {
     px: f32,
     /// Whole multiple of the face's own pixel grid (snapped fonts), else 0.
     mult: u32,
+    /// Carry [`LATIN`] beyond ASCII (the room-code font does not).
+    latin: bool,
 }
 
 impl<'a> Generator<'a> {
@@ -234,6 +236,7 @@ impl<'a> Generator<'a> {
             plain_red: false,
             px: style.size as f32,
             mult: 0,
+            latin: true,
         })
     }
 
@@ -259,6 +262,13 @@ impl<'a> Generator<'a> {
         let edge = scaled.ascent() - bottom * ppu;
         self.ascent = libm::roundf(edge) + bottom * ppu;
         self.cell_h = libm::ceilf(self.ascent - scaled.descent()) as u32;
+        self
+    }
+
+    /// ASCII and the symbols only (the room-code font: codes never hold
+    /// accented letters).
+    pub fn ascii_only(mut self) -> Self {
+        self.latin = false;
         self
     }
 
@@ -309,7 +319,7 @@ impl<'a> Generator<'a> {
         if let Some(m) = self.symbol_mask(c) {
             return Some(m);
         }
-        let id = self.font.glyph_id(c);
+        let id = self.glyph_id(c)?;
         let scale = PxScale {
             x: self.px * self.style.condense,
             y: self.px,
@@ -352,6 +362,25 @@ impl<'a> Generator<'a> {
             }
         }
         Some((w, h, out))
+    }
+
+    /// The face's glyph for `c`, or `None` (never `.notdef`'s box). Romanian
+    /// comma-below letters fall back to the cedilla forms older faces
+    /// draw for them.
+    fn glyph_id(&self, c: char) -> Option<ab_glyph::GlyphId> {
+        let id = self.font.glyph_id(c);
+        if id.0 != 0 {
+            return Some(id);
+        }
+        let alt = match c {
+            'Ș' => 'Ş',
+            'ș' => 'ş',
+            'Ț' => 'Ţ',
+            'ț' => 'ţ',
+            _ => return None,
+        };
+        let id = self.font.glyph_id(alt);
+        (id.0 != 0).then_some(id)
     }
 
     /// Hand-drawn 8x8 symbols (arrows, triangles, check, warning, dot) the
@@ -472,7 +501,14 @@ impl<'a> Generator<'a> {
             }
             sff.push_palette((0, b as u16), pal);
         }
-        let codes = (33u16..=126).chain(SYMBOLS.chars().map(|c| c as u16));
+        let latin = LATIN
+            .iter()
+            .flat_map(|r| r.clone())
+            .filter(|_| self.latin)
+            .filter(|c| !SYMBOLS.contains(*c));
+        let codes = (33u16..=126)
+            .chain(SYMBOLS.chars().map(|c| c as u16))
+            .chain(latin.map(|c| c as u16));
         for code in codes {
             let c = char::from_u32(code as u32).unwrap_or(' ');
             if let Some(g) = self.glyph(c) {
@@ -701,6 +737,20 @@ fn slash_zero(mut mask: Vec<bool>, w: u32, h: u32) -> (Vec<bool>, u32) {
     }
     (mask, w)
 }
+
+/// Letters and punctuation every text font carries beyond ASCII, where the
+/// face has them: Latin-1 (`¡`-`ÿ`), Latin Extended-A (`Ā`-`ſ`: Œ œ Š š Ž
+/// ž Ł ł Ğ ğ İ ı Ş ş ...), Romanian `Ș ș Ț ț` and typographic quotes,
+/// dashes, the ellipsis and the euro sign. Translations draw from these.
+pub const LATIN: [std::ops::RangeInclusive<char>; 7] = [
+    '¡'..='¬',
+    '®'..='ÿ',
+    'Ā'..='ſ',
+    'Ș'..='ț',
+    '–'..='—',
+    '‘'..='…',
+    '€'..='€',
+];
 
 /// Symbols every generated font carries beyond ASCII (see [`symbol_rows`]).
 pub const SYMBOLS: &str = "▶◀·⚠✓●←→↑↓↖↗↘↙";
@@ -987,6 +1037,9 @@ pub fn write_roles(
         if role.name == "rugen-menu" || role.name == DECK_FONT {
             g = g.plain_red();
         }
+        if role.name == CODE_FONT {
+            g = g.ascii_only();
+        }
         write_font(&g, &out_dir.join(format!("{}.def", role.name)), role.name)?;
     }
     Ok(())
@@ -1119,6 +1172,50 @@ mod tests {
         let raw = Generator::new(&ttf, role.style).unwrap();
         let (w, h, m) = raw.mask('B').unwrap();
         assert_ne!(grid_unit(&m, w, h), 2);
+    }
+
+    /// Every text font of both themes (and the flat motif) draws the
+    /// accented Latin translations will need: no character of the sample
+    /// falls back to a blank cell.
+    #[test]
+    fn text_fonts_carry_accented_latin() {
+        const SAMPLE: &str = "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞß àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ \
+            Œœ Šš Žž Ÿ Łł Ğğ İı Şş Șș Țț Ññ ĄąĆćĘęŃńŚśŹźŻż ČčĎďĚěŇňŘřŤťŮů Őő Űű Ăă \
+            ¡¿ «» € „“” ‘’ … – — Straße, Œuvre, Łódź, Ağrı, Şişli, Ñandú";
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif");
+        let dirs = [
+            motif.join("font"),
+            motif.join("themes/ink/font"),
+            motif.join("themes/dojo/font"),
+        ];
+        let mut checked = 0;
+        for dir in dirs {
+            for e in std::fs::read_dir(&dir).unwrap() {
+                let p = e.unwrap().path();
+                let name = p.file_stem().unwrap().to_string_lossy().to_string();
+                if p.extension().is_none_or(|x| x != "def") || name == CODE_FONT {
+                    continue;
+                }
+                let f = rugen_formats::fnt::Font::open(&p).unwrap();
+                let missing: String = SAMPLE
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .filter(|c| {
+                        f.glyphs
+                            .get(c)
+                            .is_none_or(|g| g.pixels.iter().all(|&px| px == 0))
+                    })
+                    .collect();
+                assert!(
+                    missing.is_empty(),
+                    "{}: no glyph for {missing:?}",
+                    p.display()
+                );
+                assert!(f.text_width(SAMPLE) > 0);
+                checked += 1;
+            }
+        }
+        assert!(checked >= 15, "only {checked} fonts checked");
     }
 
     /// Snapping a face already drawn on its grid changes nothing.
