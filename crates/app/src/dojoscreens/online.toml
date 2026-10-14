@@ -3323,7 +3323,8 @@ nine = [12, 12, 12, 12]
 # ---- LEADERBOARD: season plaque (top right), season stepper, the table, the
 # player's own line pinned under it, the season rule in the footer.
 # Data: board.* (rows[] (pos top name verified rating record last {has tier hi lo})
-# me.* season {name line pick can_step} finished badge_col note empty loading scope)
+# me.* season {name line pick can_step} finished badge_col note empty empty_line loading scope
+# tab_players tab_fighters fighter has_fighter)
 [[node]]
 kind = "hbox"
 visible = "is_board"
@@ -3359,9 +3360,144 @@ hug = true
   h = 2
 
 [[node]]
-kind = "text"
+kind = "button"
+id = "board_players"
 visible = "is_board"
 x = 48
+y = 96
+w = 136
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_press = "board:tab:players"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "board.tab_players"
+  x = 0
+  y = 0
+  w = 136
+  h = 38
+  color = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.tab_players"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 14
+  font = 2
+  text = "PLAYERS"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!board.tab_players"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 12
+  font = 2
+  text = "PLAYERS"
+
+[[node]]
+kind = "button"
+id = "board_fighters"
+visible = "is_board"
+x = 196
+y = 96
+w = 136
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_press = "board:tab:fighters"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "board.tab_fighters"
+  x = 0
+  y = 0
+  w = 136
+  h = 38
+  color = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.tab_fighters"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 14
+  font = 2
+  text = "FIGHTERS"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!board.tab_fighters"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 12
+  font = 2
+  text = "FIGHTERS"
+
+[[node]]
+kind = "text"
+visible = "board.has_fighter"
+x = 368
+y = 108
+bank = 16
+font = 2
+text = "FIGHTER"
+
+[[node]]
+kind = "button"
+id = "board_fighter"
+visible = "board.has_fighter"
+x = 452
+y = 96
+w = 260
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_left = "board:fighter:-"
+on_press = "board:fighter:+"
+on_right = "board:fighter:+"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 12
+  w = 260
+  align = "center"
+  bank = 12
+  font = 2
+  text = "◀ {board.fighter} ▶"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 340
 y = 108
 bank = 16
 font = 2
@@ -3617,7 +3753,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 12
   font = 6
-  text = "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD."
+  text = "{board.empty_line}"
 
   [[node.children]]
   kind = "text"

@@ -473,6 +473,26 @@ pub struct Leaderboard {
     /// ended it), not the live board.
     #[serde(default)]
     pub finished: bool,
+    /// A per-fighter board (`GET /leaderboard?fighter=FP`): the fighter it
+    /// ranks; `rows` then carry each player's rating and record with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fighter: Option<FighterEntry>,
+    /// The fighters with a board that season, most played first (asked with
+    /// `fighters=1` or `fighter=`); empty from older servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fighters: Vec<FighterEntry>,
+}
+
+/// A fighter (content fingerprint) with a per-fighter leaderboard.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FighterEntry {
+    pub fingerprint: String,
+    /// The name its players declared.
+    pub name: String,
+    /// Players ranked with it this season.
+    pub players: u32,
+    /// Ranked appearances this season.
+    pub games: u32,
 }
 
 /// One player's line in a season reset: the rating and record it ends
@@ -866,6 +886,7 @@ mod tests {
         )
         .unwrap();
         assert!(old.past.is_empty() && !old.finished && old.season.started_at == 0);
+        assert!(old.fighter.is_none() && old.fighters.is_empty());
         let p: ProfileInfo = serde_json::from_str(
             r#"{"id":1,"name":"x","avatar":0,"rating":1200,"best_rating":1200,"wins":0,"losses":0,"rank":"SILVER"}"#,
         )

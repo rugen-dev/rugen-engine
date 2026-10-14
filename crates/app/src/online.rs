@@ -455,6 +455,11 @@ pub struct OnlineScreen {
     /// Seasons the board can step through: the live one, then the
     /// finished ones newest first (from the last board).
     board_seasons: Vec<u32>,
+    /// LEADERBOARD on its FIGHTERS tab (per-fighter boards).
+    board_fighters: bool,
+    /// The fighter (fingerprint) whose board is shown (`None`: the most
+    /// played one).
+    board_fighter: Option<String>,
     jobs: Vec<Job>,
     tick: u32,
     /// Set when a match is about to start; the shell takes it.
@@ -705,6 +710,8 @@ impl OnlineScreen {
             board: None,
             board_season: None,
             board_seasons: Vec::new(),
+            board_fighters: false,
+            board_fighter: None,
             jobs: Vec::new(),
             tick: 0,
             started: None,
@@ -1915,6 +1922,8 @@ impl OnlineScreen {
             "board" => {
                 self.board_season = None;
                 self.board_seasons.clear();
+                self.board_fighters = false;
+                self.board_fighter = None;
                 self.state = State::Board;
                 self.fetch_board();
             }
@@ -2228,6 +2237,14 @@ impl OnlineScreen {
                 push(esc, "BACK");
             }
             State::Board => {
+                push(
+                    Some("TAB".into()),
+                    if self.board_fighters {
+                        "PLAYERS"
+                    } else {
+                        "FIGHTERS"
+                    },
+                );
                 if self.board_seasons.len() > 1 {
                     push(Some("@left".into()), "");
                     push(Some("@right".into()), "SEASON");
@@ -2786,10 +2803,40 @@ impl OnlineScreen {
     fn fetch_board(&mut self) {
         let c = self.client.clone();
         let season = self.board_season;
+        let fighter = self.board_fighters.then(|| self.board_fighter.clone());
         self.board = None;
         self.jobs.retain(|j| !matches!(j, Job::Board(_)));
         self.jobs
-            .push(Job::Board(Pending::spawn(move || c.leaderboard_of(season))));
+            .push(Job::Board(Pending::spawn(move || match fighter {
+                Some(fp) => c.fighter_board(season, fp.as_deref()),
+                None => c.leaderboard_of(season),
+            })));
+    }
+
+    /// LEADERBOARD: the PLAYERS or the FIGHTERS tab.
+    fn board_tab(&mut self, fighters: bool) {
+        if self.board_fighters != fighters {
+            self.board_fighters = fighters;
+            self.board_fighter = None;
+            self.fetch_board();
+        }
+    }
+
+    /// FIGHTERS tab ◀ / ▶: the previous / next fighter with a board.
+    fn step_fighter(&mut self, dir: i32) {
+        let Some(b) = self.board.as_ref() else { return };
+        let list: Vec<String> = b.fighters.iter().map(|f| f.fingerprint.clone()).collect();
+        if list.len() < 2 {
+            return;
+        }
+        let cur = b
+            .fighter
+            .as_ref()
+            .and_then(|f| list.iter().position(|x| *x == f.fingerprint))
+            .unwrap_or(0);
+        let next = (cur as i32 + dir).rem_euclid(list.len() as i32) as usize;
+        self.board_fighter = Some(list[next].clone());
+        self.fetch_board();
     }
 
     /// LEADERBOARD ◀ / ▶ on the season: `-1` an older season, `+1` a newer
@@ -2832,7 +2879,7 @@ impl OnlineScreen {
             })
         };
         let Some(b) = self.board.as_ref() else {
-            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false }, "season": season_chip(None), "finished": self.board_season.is_some() });
+            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false }, "season": season_chip(None), "finished": self.board_season.is_some(), "tab_players": !self.board_fighters, "tab_fighters": self.board_fighters, "has_fighter": false });
         };
         let my = self.my_id();
         // a finished season's board shows the tier each player ended it in
@@ -2873,30 +2920,53 @@ impl OnlineScreen {
                 })
             })
             .collect();
-        let me = b.me.as_ref().map_or(json!({ "show": false }), |(pos, p)| {
-            json!({
-                "show": true,
-                "pos": format!("#{pos}"),
-                "name": format!("{} · YOU", fit(&p.name.to_uppercase(), 16)),
-                "rating": p.rating,
-                "record": format!("{}W {}L", p.wins, p.losses),
-                "tier": p.rank,
-                "last": badge(p),
-            })
+        let me =
+            b.me.as_ref()
+                .filter(|_| !(self.board_fighters && b.fighter.is_none()))
+                .map_or(json!({ "show": false }), |(pos, p)| {
+                    json!({
+                        "show": true,
+                        "pos": format!("#{pos}"),
+                        "name": format!("{} · YOU", fit(&p.name.to_uppercase(), 16)),
+                        "rating": p.rating,
+                        "record": format!("{}W {}L", p.wins, p.losses),
+                        "tier": p.rank,
+                        "last": badge(p),
+                    })
+                });
+        // a server without fighter boards answers the players' board
+        let no_fighters = self.board_fighters && b.fighter.is_none() && !b.rows.is_empty();
+        let rows = if no_fighters { Vec::new() } else { rows };
+        let fighter = b.fighter.as_ref().map(|f| {
+            let name = if f.name.is_empty() {
+                crate::matchup::short(&f.fingerprint).to_uppercase()
+            } else {
+                f.name.to_uppercase()
+            };
+            fit(&name, 14)
         });
         json!({
             "loading": false,
+            "empty": rows.is_empty(),
             "rows": rows,
-            "empty": b.rows.is_empty(),
+            "tab_players": !self.board_fighters,
+            "tab_fighters": self.board_fighters,
+            "fighter": fighter.clone().unwrap_or_default(),
+            "has_fighter": self.board_fighters && fighter.is_some(),
+            "empty_line": match (self.board_fighters, no_fighters) {
+                (_, true) => "THIS SERVER HAS NO FIGHTER BOARDS YET.",
+                (true, _) => "NO RANKED MATCHES WITH A FIGHTER YET THIS SEASON.",
+                _ => "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD.",
+            },
             "me": me,
             "scope": self.scope(),
             "season": season_chip(Some(b)),
             "finished": b.finished,
             "badge_col": if b.finished { "FINAL TIER" } else { "LAST SEASON" },
-            "note": if b.finished {
-                "FINAL RATINGS OF THAT SEASON · EACH PLAYER'S TIER STAYS AS A BADGE"
-            } else {
-                "RATINGS SOFT-RESET TOWARD 1200 EACH SEASON · LAST SEASON'S TIER STAYS AS A BADGE"
+            "note": match (b.finished, self.board_fighters) {
+                (_, true) => "EACH PLAYER'S RATING WITH THIS FIGHTER",
+                (true, _) => "FINAL STANDINGS · TIERS AS THE SEASON ENDED",
+                _ => "RATINGS SOFT-RESET TOWARD 1200 EACH SEASON",
             },
         })
     }
@@ -3158,6 +3228,11 @@ impl OnlineScreen {
         use winit::keyboard::NamedKey;
         if self.ui.text_focused() {
             return false;
+        }
+        if self.state == State::Board && matches!(key, Key::Named(NamedKey::Tab)) {
+            self.action("board:tab");
+            self.refresh();
+            return true;
         }
         let action = match key {
             Key::Named(NamedKey::Delete) => "remove",
@@ -3706,6 +3781,11 @@ impl OnlineScreen {
                 }
             }
             ("board", "older") => self.step_season(-1),
+            ("board", "tab:players") => self.board_tab(false),
+            ("board", "tab:fighters") => self.board_tab(true),
+            ("board", "tab") => self.board_tab(!self.board_fighters),
+            ("board", "fighter:-") => self.step_fighter(-1),
+            ("board", "fighter:+") => self.step_fighter(1),
             ("board", "newer") => self.step_season(1),
             ("online", "quick") => self.run_action("quick"),
             ("online", "ranked") => self.run_action("ranked"),

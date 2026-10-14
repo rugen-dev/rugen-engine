@@ -8,9 +8,9 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 pub use rugen_proto::{
-    AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo,
-    MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay,
-    ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, SeasonBadge, ServerInfo,
+    AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, FighterEntry, Leaderboard,
+    MatchInfo, MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered,
+    Replay, ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, SeasonBadge, ServerInfo,
     ServerMsg, Session, SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode,
     ping_bars, rank_name,
 };
@@ -615,7 +615,28 @@ impl OnlineClient {
     /// the live one (`None`). Older servers ignore `season` and answer the
     /// live board (`finished` false).
     pub fn leaderboard_of(&self, season: Option<u32>) -> OnlineResult<Leaderboard> {
+        self.board_query(season, None)
+    }
+
+    /// A per-fighter board of `season` (`None`: the running one): of
+    /// `fighter` (a fingerprint), or of the most played fighter when
+    /// `None`; the answer lists the fighters with a board. Older servers
+    /// answer the players' board (no `fighters`).
+    pub fn fighter_board(
+        &self,
+        season: Option<u32>,
+        fighter: Option<&str>,
+    ) -> OnlineResult<Leaderboard> {
+        self.board_query(season, Some(fighter.unwrap_or("")))
+    }
+
+    fn board_query(&self, season: Option<u32>, fighter: Option<&str>) -> OnlineResult<Leaderboard> {
         let mut q: Vec<String> = Vec::new();
+        match fighter {
+            Some("") => q.push("fighters=1".into()),
+            Some(fp) => q.push(format!("fighter={fp}")),
+            None => {}
+        }
         if let Some(k) = &self.key {
             q.push(format!("key={k}"));
         }
