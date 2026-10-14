@@ -442,6 +442,42 @@ fn goku_ki_blast_glow_and_shade() {
     assert!(seen, "the ki blast helpers appeared");
 }
 
+/// Owner report 7 (the ki blast's explosion dark): on the hit, state 415
+/// makes an additive glow (420, sprpriority 4) and a subtractive shade
+/// (421, sprpriority 0): the glow is drawn over the shade, and the target
+/// takes the HitDef's palfx (add -200, the burnt look) that rugen ignored.
+#[test]
+#[ignore]
+fn goku_ki_blast_explosion() {
+    let Some(dir) = golden_dir() else { return };
+    let sasuke = dir.join("G6_Sasuke_Rinnegan/G6_Sasuke_Rinnegan.def");
+    let goku = dir.join("Goku/Goku.def");
+    let mut w = community(&goku, &sasuke, FighterSize::Normal);
+    w.change_state(0, 400, None, None);
+    let (mut seen, mut burnt) = (false, false);
+    for _ in 0..120 {
+        run(&mut w, 1);
+        let glow = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.state_no == 420);
+        let shade = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.state_no == 421);
+        if let (Some(g), Some(s)) = (glow, shade) {
+            use crate::explod::Trans;
+            assert_eq!(w.players[g].trans, Trans::AddAlpha);
+            assert_eq!(w.players[s].trans, Trans::Sub);
+            assert!(w.players[g].spr_priority > w.players[s].spr_priority);
+            seen = true;
+        }
+        burnt |= w.players[1].palfx.active() && w.players[1].palfx.add == [-200; 3];
+    }
+    assert!(seen, "the explosion helpers appeared");
+    assert!(burnt, "the HitDef palfx reached Sasuke");
+}
+
 /// Owner report 6 (Goku's B air attack punching forever): a HitDef armed
 /// by `animelem = 2` hits once. The animation steps in the tick whose hit
 /// starts the hitpause (Ikemen `acttmp`), so the trigger does not hold
