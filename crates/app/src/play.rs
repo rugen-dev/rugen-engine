@@ -330,7 +330,8 @@ type Loaded = (TextureId, Option<usize>);
 struct CharGpu {
     textures: HashMap<(u16, u16), Option<Loaded>>,
     shared: crate::sprites::Shared,
-    palettes: Vec<PaletteId>,
+    /// Per SFF palette slot, uploaded on first use.
+    palettes: Vec<Option<PaletteId>>,
 }
 
 /// One sprite to draw this frame, in stage coordinates.
@@ -942,11 +943,7 @@ impl Match {
             let Some(d) = self.world.data.get(i) else {
                 continue;
             };
-            let mut palettes: Vec<PaletteId> =
-                d.sff.palettes.iter().map(|p| r.add_palette(p)).collect();
-            if palettes.is_empty() {
-                palettes.push(r.add_palette(&[[0; 4]; 256]));
-            }
+            let palettes = vec![None; d.sff.palettes.len().max(1)];
             if let Some(cg) = self.chars.get_mut(i) {
                 cg.textures.clear();
                 cg.shared.clear();
@@ -1023,17 +1020,12 @@ impl Match {
         }
         self.chars = sffs
             .iter()
-            .map(|sff| {
-                let mut palettes: Vec<PaletteId> =
-                    sff.palettes.iter().map(|p| r.add_palette(p)).collect();
-                if palettes.is_empty() {
-                    palettes.push(r.add_palette(&[[0; 4]; 256]));
-                }
-                CharGpu {
-                    textures: HashMap::new(),
-                    shared: Default::default(),
-                    palettes,
-                }
+            .map(|sff| CharGpu {
+                textures: HashMap::new(),
+                shared: Default::default(),
+                // uploaded when a sprite first needs one: a G6 fighter
+                // carries hundreds, a fight uses a few
+                palettes: vec![None; sff.palettes.len().max(1)],
             })
             .collect();
         if let Some(sv) = self.stage_visual.as_mut() {
@@ -1945,7 +1937,13 @@ impl Match {
             .entry(key)
             .or_insert_with(|| Some(crate::sprites::upload_sprite(r, spr, shared)));
         let (tex, pal) = (*entry)?;
-        let pal = pal.map(|p| cg.palettes[p.min(cg.palettes.len() - 1)]);
+        let pal = pal.map(|p| {
+            let k = p.min(cg.palettes.len() - 1);
+            *cg.palettes[k].get_or_insert_with(|| match sff.palettes.get(k) {
+                Some(colors) => r.add_palette(colors),
+                None => r.add_palette(&[[0; 4]; 256]),
+            })
+        });
         Some((tex, pal, [spr.offset[0] as f32, spr.offset[1] as f32]))
     }
 
