@@ -270,7 +270,7 @@ box) and screenshots.
 ### Menus v2 (owner approved)
 Mockups "v2 · PRACTICE hub" and "v2 · Team mode step" on the canvas; both
 themes, deck profile checked at 1280x800.
-- [ ] **PRACTICE page.** TRAINING, TUTORIAL and WATCH become one PRACTICE
+- [x] **PRACTICE page.** (104dbbf) TRAINING, TUTORIAL and WATCH become one PRACTICE
   entry on the title; its page (TITLE › PRACTICE, Esc back) has the
   TRAINING, WATCH and DEBUGGER (NEW) cards (keyboard, pad, mouse).
 - [ ] **LESSONS inside Training.** The tutorial lessons run from the
