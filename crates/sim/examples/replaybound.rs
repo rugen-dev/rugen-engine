@@ -94,6 +94,7 @@ fn main() {
     );
     let inputs = r["inputs"].as_array().cloned().unwrap_or_default();
     let mut walls = 0;
+    let mut invisible = 0;
     for f in &inputs {
         let b = |k: usize| rugen_sim::Buttons::from_bits(f[k].as_u64().unwrap_or(0) as u16);
         w.step(&[b(0), b(1)]);
@@ -110,6 +111,12 @@ fn main() {
             if all || (hit && at_edge && outward) {
                 if hit && at_edge && outward {
                     walls += 1;
+                    // held inside the visible screen: an invisible wall
+                    let (sl, sr) = (w.screen_left(), w.screen_right());
+                    let margin = 25.0 + w.stage.screen_left.max(w.stage.screen_right);
+                    if x > sl + margin && x < sr - margin {
+                        invisible += 1;
+                    }
                 }
                 println!(
                     "f{} P{} st {} x {:.1} vel {:.2} y {:.1} cam {:.1} zoom {:.3} play {:.1}..{:.1} screen {:.1}..{:.1}",
@@ -130,7 +137,7 @@ fn main() {
         }
     }
     println!(
-        "frames {} wall frames {walls} checksum {:#x}",
+        "frames {} wall frames {walls} invisible {invisible} checksum {:#x}",
         w.frame,
         w.checksum()
     );

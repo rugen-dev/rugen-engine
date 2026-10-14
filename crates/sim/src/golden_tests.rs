@@ -128,15 +128,15 @@ fn kfm_matches_are_bit_identical() {
     assert_eq!(got, GOLDEN_KFM);
 }
 
-// The camera's edges reach Ikemen GO's `minLeft` / `maxRight` (bounds plus
-// MUGEN 1.1's zoom room plus half a zoomed-out screen) since the compat fix
-// for knockback stopped by an invisible wall: these zoom out (ONLINE_ZOOM)
-// and fight near the edges, so all three changed then (the arena one has
-// no camera bounds that matter and kept its value).
+// The camera's centre stays inside boundleft / boundright and players
+// inside the screen (MUGEN's camera bounds; round 3 of the owner's compat
+// report: fighters walked past the end of HD stages' art). These zoom out
+// (ONLINE_ZOOM) and fight near the stage's ends, so the three changed then;
+// the arena run kept its value.
 const GOLDEN_KFM: [(u64, u32, [u8; 2]); 4] = [
-    (0x3559b0f3197bbb59, 12000, [1, 0]),
-    (0x067e06352b917f7f, 20000, [2, 0]),
-    (0xa1de35a0c510d72f, 12000, [1, 0]),
+    (0xeaf07d0ce97df321, 12000, [1, 0]),
+    (0x24a46a57967e1c02, 20000, [2, 1]),
+    (0x3dc3e1c20fc7b2fa, 12000, [0, 1]),
     // examples/arena has items and hazards (moving / dropping platforms,
     // wind) since those features, on purpose
     (0xc540f0b530e524f5, 4000, [0, 0]),
@@ -188,10 +188,11 @@ fn community_matches_are_bit_identical() {
 }
 
 const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2]); 3] = [
-    // re-recorded with Ikemen's camera limits (see GOLDEN_KFM)
-    (0xfa9833cbc6947c65, 12000, [1, 0]),
-    (0x9e3b3461972eac0c, 20000, [0, 2]),
-    (0x7e23e1df3c1276c7, 12000, [0, 1]),
+    // re-recorded with the camera's centre held inside its bounds (see
+    // GOLDEN_KFM)
+    (0x3895c0df60c847ee, 12000, [1, 0]),
+    (0x9003bb5a90445e68, 20000, [2, 1]),
+    (0x5d545012b91f4cbd, 12000, [0, 1]),
 ];
 
 /// The fighter debugger's trace records what the state machine did, never

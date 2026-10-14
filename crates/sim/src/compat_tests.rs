@@ -759,16 +759,99 @@ fn knockback_goes_far_and_the_camera_follows() {
         );
         last = x;
     }
-    let p1 = w.players[0].pos[0] * w.local_scale(0);
-    let full_screen = w.stage.width / w.stage.zoom_out;
-    let stop = w.stage.right_bound.min(p1 + full_screen - 120.0);
     assert!(
         last > 1340.0 + 100.0,
         "P2 went from {start} to {last}: past the old wall at 1340"
     );
-    assert!(
-        (last - stop).abs() < 30.0,
-        "P2 stopped at {last}, expected at a visible limit near {stop}"
+    // the camera reached boundright and pulled back: the fighter stops at
+    // the visible screen edge, never at an invisible wall
+    assert_eq!(
+        w.cam_x, w.stage.bound_right,
+        "the camera followed to its bound"
     );
-    assert!(w.screen_right() >= last, "the camera followed");
+    let edge = w.screen_right() - w.stage.screen_right;
+    assert!(
+        (last - edge).abs() < 1.0,
+        "P2 stopped at {last}, the screen edge is at {edge}"
+    );
+    assert!(w.cam_zoom < 0.7, "pulled back: zoom {}", w.cam_zoom);
+}
+
+/// Both fighters walk to one end of `stage` and stay there: the camera's
+/// centre stops at `boundleft` / `boundright` and the leading fighter at
+/// the screen's edge (MUGEN: the camera inside its bounds, players inside
+/// the screen), not out past the stage's art.
+fn walk_to_both_ends(stage: Stage) {
+    let Some(d) = kfm() else { return };
+    let mut w = World::new(stage, 1);
+    w.add_player(d.clone(), 0, 1);
+    w.add_player(d, 1, 2);
+    w.start_round();
+    skip_intro(&mut w);
+    for dir in [1.0f32, -1.0] {
+        let b = Buttons {
+            r: dir > 0.0,
+            l: dir < 0.0,
+            ..Default::default()
+        };
+        for _ in 0..1500 {
+            w.step(&[b, b]);
+        }
+        let s = w.local_scale(0);
+        let xs = [w.players[0].pos[0] * s, w.players[1].pos[0] * s];
+        let st = &w.stage;
+        if dir > 0.0 {
+            let lead = xs[0].max(xs[1]);
+            assert_eq!(w.cam_x, st.bound_right, "camera at boundright");
+            let edge = w.screen_right() - st.screen_right;
+            assert!((lead - edge).abs() < 1.0, "right: {lead} vs edge {edge}");
+            assert!(lead < st.right_bound, "the screen stops it first");
+        } else {
+            let lead = xs[0].min(xs[1]);
+            assert_eq!(w.cam_x, st.bound_left, "camera at boundleft");
+            let edge = w.screen_left() + st.screen_left;
+            assert!((lead - edge).abs() < 1.0, "left: {lead} vs edge {edge}");
+            assert!(lead > st.left_bound, "the screen stops it first");
+        }
+    }
+}
+
+/// Owner report (round 3): an SD stage (the bundled training room, 320x240,
+/// bounds -600..600) keeps fighters on screen at its ends.
+#[test]
+fn sd_stage_ends_hold_the_fighters() {
+    walk_to_both_ends(Stage {
+        bound_left: -600.0,
+        bound_right: 600.0,
+        left_bound: -1400.0,
+        right_bound: 1400.0,
+        zoom_out: 0.3,
+        zoom_in: 0.85,
+        ..Stage::default()
+    });
+}
+
+/// Owner report (round 3): HD community stages (1280x720, bounds
+/// -860..760, rightbound 1800, zoomout 0.65 / the owner's 0.6) let
+/// fighters walk past the end of the art; they now stop at the screen's
+/// edge with the camera at its bound.
+#[test]
+fn hd_stage_ends_hold_the_fighters() {
+    walk_to_both_ends(Stage {
+        width: 1280.0,
+        height: 720.0,
+        zoffset: 650.0,
+        bound_left: -860.0,
+        bound_right: 760.0,
+        left_bound: -2000.0,
+        right_bound: 1800.0,
+        screen_left: 60.0,
+        screen_right: 60.0,
+        tension: 100.0,
+        p1_start_x: -500.0,
+        p2_start_x: 500.0,
+        zoom_out: 0.6,
+        zoom_in: 0.85,
+        ..Stage::default()
+    });
 }
