@@ -404,8 +404,41 @@ impl Default for Limits {
 /// stage when the camera pulls back (a tenth: 72 px in a 720 px window).
 pub const ARENA_MIN_FIGHTER: f32 = 0.1;
 
+/// One controller the state machine looked at ([`World::trace`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CtrlTrace {
+    /// Player index (helpers included).
+    pub player: usize,
+    /// `World::data` index the state came from (custom states run the
+    /// other character's).
+    pub data: usize,
+    pub state: i32,
+    /// Index into the state's controllers.
+    pub index: u16,
+    pub outcome: CtrlOutcome,
+}
+
+/// What became of a controller this tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CtrlOutcome {
+    /// Trigger group `group` (`trigger<group + 1>`) held: it ran.
+    Fired { group: u8 },
+    /// `triggerall` line `line` (0-based) was false.
+    TriggerAll { line: u8 },
+    /// No group held; `trigger1`'s line `line` was the first false one.
+    NoGroup { line: u8 },
+    /// Skipped by `persistent`.
+    Persistent,
+    /// Skipped during hit pause (no `ignorehitpause`).
+    HitPause,
+}
+
 #[derive(Clone)]
 pub struct World {
+    /// The fighter debugger's record of the controllers the state machine
+    /// looked at this tick (`None`: not recorded, the default). Never part
+    /// of the checksum and never read by the simulation.
+    pub trace: Option<Vec<CtrlTrace>>,
     pub data: Vec<Arc<CharData>>,
     /// FIGHTER SIZE zoom per `data` slot (1 = the art's own size), fixed when
     /// the player is added (see [`crate::scale`]).
@@ -471,6 +504,7 @@ impl World {
         // start at the resting zoom instead of easing out from 1
         let cam_zoom = stage.zoom_in.min(1.0).max(stage.zoom_out);
         Self {
+            trace: None,
             data: Vec::new(),
             data_zoom: Vec::new(),
             data_height: Vec::new(),
@@ -674,6 +708,13 @@ impl World {
     }
 
     // ------------------------------------------------------------ state changes
+
+    /// Evaluate an expression for player `i` (the fighter debugger shows
+    /// the values behind a failed trigger). `Random` advances the world's
+    /// rng: call it on a clone, never on the world being played.
+    pub fn debug_eval(&mut self, i: usize, code: &Code) -> Value {
+        self.eval(i, code)
+    }
 
     pub(crate) fn eval(&mut self, i: usize, code: &Code) -> Value {
         let mut ctx = Ctx::new(self, i);
@@ -968,6 +1009,9 @@ impl World {
     /// Advance one tick. `inputs[i]` drives player `i` (missing = no input).
     pub fn step(&mut self, inputs: &[Buttons]) {
         self.events.clear();
+        if let Some(t) = self.trace.as_mut() {
+            t.clear();
+        }
         let n = self.players.len();
 
         // 0. pause timers (a pause requested last tick starts now)
@@ -2026,7 +2070,8 @@ impl World {
             if let Some(state) = own.states.get(&neg) {
                 self.players[i].minus = neg as i8;
                 let mut persist = vec![0; state.ctrls.len()];
-                self.run_ctrls(i, &state.ctrls, &mut persist);
+                let at = (self.players[i].data, neg);
+                self.run_ctrls(i, at, &state.ctrls, &mut persist);
             }
         }
         self.players[i].minus = 0;
@@ -2145,13 +2190,14 @@ impl World {
         self.apply_pending(i);
         let mut loops = 0;
         loop {
-            let data = self.data[self.players[i].state_owner].clone();
+            let owner = self.players[i].state_owner;
+            let data = self.data[owner].clone();
             let no = self.players[i].state_no;
             let Some(state) = data.states.get(&no) else {
                 break;
             };
             let mut persist = std::mem::take(&mut self.players[i].persist);
-            let changed = self.run_ctrls(i, &state.ctrls, &mut persist);
+            let changed = self.run_ctrls(i, (owner, no), &state.ctrls, &mut persist);
             if self.players[i].persist.is_empty() {
                 self.players[i].persist = persist;
             }
@@ -2172,10 +2218,35 @@ impl World {
         }
     }
 
-    /// Run a controller list. Returns true if the state changed (stop processing).
-    fn run_ctrls(&mut self, i: usize, ctrls: &[Ctrl], persist: &mut [i32]) -> bool {
+    /// Note what the state machine did with controller `index` of state
+    /// `at` (data index, state number), when tracing ([`World::trace`]).
+    fn trace(&mut self, i: usize, at: (usize, i32), index: usize, outcome: CtrlOutcome) {
+        if let Some(t) = self.trace.as_mut() {
+            t.push(CtrlTrace {
+                player: i,
+                data: at.0,
+                state: at.1,
+                index: index.min(u16::MAX as usize) as u16,
+                outcome,
+            });
+        }
+    }
+
+    /// Run a controller list of state `at` (data index, number). Returns
+    /// true if the state changed (stop processing).
+    fn run_ctrls(
+        &mut self,
+        i: usize,
+        at: (usize, i32),
+        ctrls: &[Ctrl],
+        persist: &mut [i32],
+    ) -> bool {
+        let tracing = self.trace.is_some();
         for (ci, c) in ctrls.iter().enumerate() {
             if self.players[i].hit_pause_time > 0 && !c.ignorehitpause {
+                if tracing {
+                    self.trace(i, at, ci, CtrlOutcome::HitPause);
+                }
                 continue;
             }
             if let Some(ps) = persist.get_mut(ci) {
@@ -2183,31 +2254,43 @@ impl World {
                     *ps -= 1;
                 }
                 if *ps > 0 {
+                    if tracing {
+                        self.trace(i, at, ci, CtrlOutcome::Persistent);
+                    }
                     continue;
                 }
             }
             let mut fired = true;
-            for t in &c.triggerall {
+            let mut outcome = CtrlOutcome::NoGroup { line: 0 };
+            for (k, t) in c.triggerall.iter().enumerate() {
                 if !self.eval(i, t).to_b() {
                     fired = false;
+                    outcome = CtrlOutcome::TriggerAll { line: k as u8 };
                     break;
                 }
             }
             if fired {
                 fired = false;
-                for group in &c.triggers {
+                for (g, group) in c.triggers.iter().enumerate() {
                     let mut all = true;
-                    for t in group {
+                    for (k, t) in group.iter().enumerate() {
                         if !self.eval(i, t).to_b() {
                             all = false;
+                            if g == 0 {
+                                outcome = CtrlOutcome::NoGroup { line: k as u8 };
+                            }
                             break;
                         }
                     }
                     if all {
                         fired = true;
+                        outcome = CtrlOutcome::Fired { group: g as u8 };
                         break;
                     }
                 }
+            }
+            if tracing {
+                self.trace(i, at, ci, outcome);
             }
             if !fired {
                 continue;

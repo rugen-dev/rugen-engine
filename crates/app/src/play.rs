@@ -550,6 +550,8 @@ pub struct Match {
     banks: SoundBanks,
     /// Draw the fight without its HUD (the pause menu's frozen backdrop).
     pub hud_hidden: bool,
+    /// `rugen debug`: the fighter debugger (history, selection, panel data).
+    pub debugger: Option<crate::debugger::Debugger>,
     /// Online menu over the running match (see [`FleeMenu`]).
     pub flee_menu: Option<FleeMenu>,
     /// Online: the match ended early, and ticks since.
@@ -795,6 +797,7 @@ impl Match {
             zoom: 1.0,
             show_boxes: false,
             hud_hidden: false,
+            debugger: None,
             debug: true,
             banner: None,
             stage_visual: visual,
@@ -955,6 +958,10 @@ impl Match {
         if self.paused && !self.step {
             return false;
         }
+        // the debugger's slow motion: only every nth tick moves (a STEP always)
+        if !self.step && self.debugger.as_mut().is_some_and(|d| !d.gate()) {
+            return false;
+        }
         self.step = false;
         // the other player left: the victory over the frozen fight, then out
         if let Some((_, t)) = self.early.as_mut() {
@@ -1069,6 +1076,9 @@ impl Match {
         };
         if !advanced {
             return false;
+        }
+        if let Some(d) = self.debugger.as_mut() {
+            d.record(&self.world);
         }
         // the training lab measures what the step did (reads the world only)
         if let Some(t) = self.training.as_mut() {
@@ -1416,10 +1426,117 @@ impl Match {
         }
     }
 
+    /// `rugen debug`: trace the simulation and keep the frames for STEP
+    /// BACK; the fight's own HUD makes room for the debugger's panel.
+    pub fn attach_debugger(&mut self, data_dir: &Path) {
+        self.debugger = Some(crate::debugger::Debugger::new(&mut self.world, data_dir));
+        self.hud_hidden = true;
+    }
+
+    /// A debugger button or key (`play`, `step`, `back`, `speed`, `boxes`,
+    /// `next`). True when it changed something.
+    pub fn debug_action(&mut self, a: &str) -> bool {
+        let Some(d) = self.debugger.as_mut() else {
+            return false;
+        };
+        match a {
+            "play" => self.paused = !self.paused,
+            "step" => {
+                self.paused = true;
+                self.step = true;
+            }
+            "back" => {
+                self.paused = true;
+                match d.back() {
+                    Some(w) => self.world = w,
+                    None => return false,
+                }
+            }
+            "speed" => d.cycle_speed(),
+            "boxes" => self.show_boxes = !self.show_boxes,
+            "next" => d.select_next(&self.world),
+            _ => return false,
+        }
+        log::debug!("debugger: {a} at frame {}", self.world.frame);
+        true
+    }
+
+    /// The debugger panel's data (`ui/debug.toml`).
+    pub fn debug_data(&mut self) -> Option<serde_json::Value> {
+        let (paused, boxes) = (self.paused, self.show_boxes);
+        let d = self.debugger.as_mut()?;
+        Some(d.data(&self.world, paused, boxes))
+    }
+
+    /// Where player `i` stands on screen (drawing coordinates of
+    /// [`render`](Self::render)): its feet and the top of its hurt boxes.
+    fn player_view(&self, i: usize) -> Option<([f32; 2], f32, f32)> {
+        let p = self.world.players.get(i).filter(|p| !p.removed)?;
+        let scale = self.world.data_scale(p.anim_owner);
+        let ground = self.world.stage.zoffset;
+        let cam_y = self.world.cam_y + self.world.envshake.offset[1];
+        let feet = [p.pos[0] * scale, ground + p.pos[1] * scale - cam_y];
+        let frame = self.world.data[p.anim_owner]
+            .air
+            .get(p.anim.action)
+            .and_then(|a| p.anim.frame(a));
+        let boxes = frame.map(|f| f.clsn2.clone()).unwrap_or_default();
+        let (top, half) = if boxes.is_empty() {
+            (-60.0 * scale, 20.0 * scale)
+        } else {
+            let top = boxes.iter().map(|b| b[1].min(b[3])).min().unwrap_or(-60) as f32;
+            let half = boxes
+                .iter()
+                .map(|b| b[0].abs().max(b[2].abs()))
+                .max()
+                .unwrap_or(20) as f32;
+            (top * scale, half * scale)
+        };
+        Some((feet, feet[1] + top, half.max(8.0 * scale)))
+    }
+
+    /// The debugger's pick: the player under `at` (drawing coordinates),
+    /// the smallest one when they overlap, else the nearest within reach.
+    pub fn debug_pick(&mut self, at: [f32; 2]) -> bool {
+        let mut best: Option<(f32, usize)> = None;
+        for i in 0..self.world.players.len() {
+            let Some((feet, top, half)) = self.player_view(i) else {
+                continue;
+            };
+            let inside = (at[0] - feet[0]).abs() <= half && at[1] <= feet[1] + 4.0 && at[1] >= top;
+            let mid = [feet[0], (feet[1] + top) / 2.0];
+            let dist = ((at[0] - mid[0]).powi(2) + (at[1] - mid[1]).powi(2)).sqrt();
+            let score = if inside { half } else { 1000.0 + dist };
+            if dist < 120.0 && best.is_none_or(|(s, _)| score < s) {
+                best = Some((score, i));
+            }
+        }
+        match (best, self.debugger.as_mut()) {
+            (Some((_, i)), Some(d)) => {
+                d.selected = i;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Debug keys. Returns true when consumed.
     pub fn key(&mut self, key: &Key, pressed: bool) -> bool {
         if !pressed {
             return false;
+        }
+        if self.debugger.is_some() {
+            let a = match key.as_ref() {
+                Key::Character(",") => "back",
+                Key::Named(NamedKey::Tab) => "next",
+                Key::Named(NamedKey::F4) => "speed",
+                Key::Character(".") => "step",
+                _ => "",
+            };
+            if !a.is_empty() {
+                self.debug_action(a);
+                return true;
+            }
         }
         match key.as_ref() {
             // a netplay match cannot pause (the peer would stall)
@@ -1865,6 +1982,31 @@ impl Match {
         }
     }
 
+    /// The debugger's selected player: a bar over its head and its name.
+    fn draw_debug_marker(&self, r: &mut Renderer, u: f32) {
+        let Some(d) = self.debugger.as_ref() else {
+            return;
+        };
+        let Some((feet, top, half)) = self.player_view(d.selected) else {
+            return;
+        };
+        let yellow = [1.0, 0.82, 0.25, 1.0];
+        let y = top - 6.0 * u;
+        r.rect(
+            [feet[0] - half, y - 2.0 * u],
+            [feet[0] + half, y + 1.0 * u],
+            yellow,
+        );
+        let label = format!(
+            "SELECTED - {}",
+            crate::debugger::Debugger::who(&self.world, d.selected)
+        );
+        let w = label.chars().count() as f32 * 4.0 * u + 6.0 * u;
+        let (x0, y0) = (feet[0] - w / 2.0, y - 13.0 * u);
+        r.rect([x0, y0], [x0 + w, y0 + 9.0 * u], [0.08, 0.07, 0.06, 0.92]);
+        draw_text(r, &label, [feet[0], y0 + 2.0 * u], u, yellow);
+    }
+
     /// Queue this frame's draws; the shell calls `begin` before and `end` after.
     pub fn render(&mut self, r: &mut Renderer) -> (Camera, [f64; 4]) {
         let stage = self.world.stage.clone();
@@ -1988,6 +2130,7 @@ impl Match {
                 }
             }
         }
+        self.draw_debug_marker(r, u);
         self.draw_hazards(r, ground, cam_y, cam_x, screen_w * u);
         self.draw_arena_items(r, ground, cam_y);
         if let Some(sv) = stage_visual.as_mut() {

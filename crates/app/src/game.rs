@@ -248,6 +248,20 @@ pub struct Harness {
     /// screen (the matchup before it takes as long as it takes), and the
     /// end of a script never quits (leaving mid-match would be a flee).
     pub in_match: bool,
+    /// `rugen debug`: every local match runs with the fighter debugger.
+    pub debug: bool,
+}
+
+/// A point of the debugger panel (virtual units) in the fight's drawing
+/// coordinates: the inverse of `Renderer::remap_since` for `cam` in `rect`.
+fn debug_unmap(cam: &rugen_render::Camera, rect: [f32; 4], p: [f32; 2]) -> [f32; 2] {
+    let (w, h) = (rect[2] - rect[0], rect[3] - rect[1]);
+    let k = cam.zoom * (w / cam.screen[0]).max(h / cam.screen[1]);
+    let mid = [(rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0];
+    [
+        cam.center[0] + (p[0] - mid[0]) / k.max(1e-6),
+        cam.center[1] + (p[1] - mid[1]) / k.max(1e-6),
+    ]
 }
 
 /// One scripted mouse action (`--mouse`).
@@ -322,6 +336,10 @@ pub struct Shell {
     motif_dir: PathBuf,
     /// The active user theme's files, watched for live reload.
     theme_watch: Option<crate::themes::Watch>,
+    /// `rugen debug`: the panel around the match (`ui/debug.toml`) and
+    /// where the fight was drawn last frame (its camera, the view rectangle).
+    debug_ui: Option<Box<UiScreen>>,
+    debug_view: Option<(rugen_render::Camera, [f32; 4])>,
     gpu: Option<Gpu>,
     input: InputState,
     prev: [Buttons; 2],
@@ -454,6 +472,8 @@ impl Shell {
             data_dir,
             theme_watch: crate::themes::is_user(&motif_dir)
                 .then(|| crate::themes::Watch::new(&motif_dir)),
+            debug_ui: None,
+            debug_view: None,
             motif_dir,
             gpu: None,
             prev: [Buttons::default(); 2],
@@ -510,7 +530,7 @@ impl Shell {
     /// `[input] mouse` on, while the mouse (not a key or pad) drives them.
     fn update_cursor(&mut self) {
         let want = self.config.input.mouse
-            && self.in_menu()
+            && (self.in_menu() || self.debug_ui.is_some())
             && self.harness.script.is_none()
             && self.mouse.visible();
         if self.cursor_shown == Some(want) {
@@ -539,6 +559,8 @@ impl Shell {
             Screen::Match(_) => {
                 if let Some(p) = self.pause.as_mut() {
                     p.mouse(ev);
+                } else if let Some(du) = self.debug_ui.as_mut() {
+                    du.mouse(ev);
                 }
             }
             Screen::Ui(u) => u.mouse(ev),
@@ -1762,6 +1784,9 @@ impl Shell {
                             let p = &mut m.world.players[0];
                             p.power = p.power_max;
                         }
+                        if self.harness.debug && setup.net.is_none() {
+                            self.open_debugger(&mut m);
+                        }
                         self.screen = Screen::Match(Box::new(m));
                     }
                     Err(e) => {
@@ -1774,6 +1799,66 @@ impl Shell {
                     }
                 }
             }
+        }
+    }
+
+    /// `rugen debug`: attach the debugger to a new match and open its panel.
+    fn open_debugger(&mut self, m: &mut Match) {
+        m.attach_debugger(&self.data_dir);
+        let Some(sys) = self.system.as_ref() else {
+            return;
+        };
+        match UiScreen::load(
+            UiKind::Debug,
+            &self.motif_dir,
+            &self.lib.root,
+            sys,
+            &self.config,
+            &self.lib,
+        ) {
+            Ok(u) => {
+                if let Some(mut old) = self.debug_ui.replace(Box::new(u))
+                    && let Some(g) = self.gpu.as_mut()
+                {
+                    old.release_gpu(&mut g.renderer);
+                }
+            }
+            Err(e) => log::warn!("ui/debug.toml: {e:#}"),
+        }
+    }
+
+    /// The debugger panel's tick: new data, its buttons, a click on the fight.
+    fn tick_debugger(&mut self) {
+        if self.pause.is_some() {
+            return;
+        }
+        let (Screen::Match(m), Some(du), Some(sys), Some(g)) = (
+            &mut self.screen,
+            self.debug_ui.as_mut(),
+            self.system.as_mut(),
+            self.gpu.as_mut(),
+        ) else {
+            return;
+        };
+        if let Some(d) = m.debug_data() {
+            du.set_debug_data(d, sys);
+        }
+        // the mouse only: the keys belong to the fighters
+        let _ = du.tick([Buttons::default(); 2], sys, &mut g.renderer, &mut |_| {});
+        let actions = du.take_debug_actions();
+        for a in &actions {
+            if a == "view" {
+                if let (Some((x, y)), Some((cam, rect))) = (du.mouse_virtual(), self.debug_view) {
+                    m.debug_pick(debug_unmap(&cam, rect, [x, y]));
+                }
+            } else {
+                m.debug_action(a);
+            }
+        }
+        if !actions.is_empty()
+            && let Some(d) = m.debug_data()
+        {
+            du.set_debug_data(d, sys);
         }
     }
 
@@ -1834,6 +1919,9 @@ impl Shell {
             .is_some_and(crate::themes::Watch::poll)
         {
             self.live_reload_theme();
+        }
+        if self.debug_ui.is_some() {
+            self.tick_debugger();
         }
         self.input.poll();
         self.key_ticks += 1;
@@ -2256,10 +2344,11 @@ impl Shell {
         if let Some(t) = next {
             self.transition(t);
         }
-        // a pause menu holds the match but still counts toward `--frames`
-        // (so a harness run can screenshot it)
+        // a pause menu (or the debugger, paused) holds the match but still
+        // counts toward `--frames` (so a harness run can screenshot it)
         let counted = !self.harness.in_match || self.is_match();
-        if (advanced || self.pause.is_some()) && counted {
+        let held = self.pause.is_some() || (self.debug_ui.is_some() && self.is_match());
+        if (advanced || held) && counted {
             self.ticks += 1;
             if let Some(n) = self.harness.frames
                 && self.ticks >= n
@@ -2294,6 +2383,18 @@ impl Shell {
             (Screen::Online(o), Some(sys)) => o.render(r, sys),
             (Screen::Versus(v), Some(sys)) => v.render(r, sys),
             (Screen::Story(st, _), _) => st.render(r),
+            // the debugger: the fight in the panel's view, the panel around it
+            (Screen::Match(m), Some(sys)) if self.debug_ui.is_some() => {
+                let mark = r.vertex_mark();
+                let (cam, _) = m.render(r);
+                let du = self.debug_ui.as_mut().expect("checked");
+                let rect = du.view_rect().map_or([14.0, 46.0, 734.0, 656.0], |v| {
+                    [v.x, v.y, v.x + v.w, v.y + v.h]
+                });
+                r.remap_since(mark, &cam, rect);
+                self.debug_view = Some((cam, rect));
+                du.render(r, sys)
+            }
             (Screen::Match(m), _) => m.render(r),
             _ => (
                 rugen_render::Camera {

@@ -186,3 +186,59 @@ const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2]); 3] = [
     (0x648e097b8dc77328, 20000, [1, 2]),
     (0x72e835bd3538dacd, 12000, [0, 2]),
 ];
+
+/// The fighter debugger's trace records what the state machine did, never
+/// changes it: a traced match ends bit-identical to an untraced one, and
+/// the trace names fired controllers with the trigger group that held.
+#[test]
+fn tracing_never_changes_the_match() {
+    use crate::world::CtrlOutcome;
+    let root = reference();
+    let kfm = root.join("chars/kfm/kfm.def");
+    let stage = root.join("stages/kfm.def");
+    if !kfm.exists() || !stage.exists() {
+        return;
+    }
+    let spec = MatchSpec {
+        p1: &kfm,
+        p2: &kfm,
+        stage: Some(&stage),
+        data_dir: &root.join("data"),
+        motif: &root.join("data/system.def"),
+        zoom: crate::headless::ONLINE_ZOOM,
+        movement: Movement::default(),
+        round_time: None,
+        ai: [0, 4],
+        fighter_size: Default::default(),
+        seed: crate::headless::LEGACY_SEED,
+    };
+    let inputs = noise(1500, 9);
+    let plain = {
+        let mut w = build_world(&spec).expect("world");
+        replay(&mut w, &inputs, None).checksum
+    };
+    let mut w = build_world(&spec).expect("world");
+    w.trace = Some(Vec::new());
+    let (mut fired, mut failed) = (0, 0);
+    for f in inputs.chunks_exact(4) {
+        let b = |k: usize| crate::Buttons::from_bits(u16::from_le_bytes([f[k], f[k + 1]]));
+        w.step(&[b(0), b(2)]);
+        for t in w.trace.as_ref().unwrap() {
+            let state = &w.data[t.data].states[&t.state];
+            assert!((t.index as usize) < state.ctrls.len());
+            match t.outcome {
+                CtrlOutcome::Fired { group } => {
+                    fired += 1;
+                    assert!((group as usize) < state.ctrls[t.index as usize].triggers.len());
+                }
+                _ => failed += 1,
+            }
+        }
+    }
+    assert!(
+        fired > 100 && failed > 100,
+        "fired {fired}, failed {failed}"
+    );
+    let traced = replay(&mut w, &[], None).checksum;
+    assert_eq!(traced, plain);
+}

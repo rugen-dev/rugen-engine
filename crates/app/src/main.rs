@@ -32,6 +32,7 @@
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
 //!   (play refuses `broken` characters unless --force)
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
+//! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 //! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
 //! rugen replay <file.json>                                      play back a recorded match
 //!   (quick play records to --record file.json, menu matches to replays/)
@@ -49,6 +50,7 @@ use anyhow::Context;
 mod challenge;
 mod clipboard;
 mod config;
+mod debugger;
 mod dojogen;
 mod fontgen;
 mod framestats;
@@ -161,6 +163,7 @@ rugen check <char> [--root dir]                               report unsupported
 rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
   (play refuses `broken` characters unless --force)
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
+rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
 rugen replay <file.json>                                      play back a recorded match
   (quick play records to --record file.json, menu matches to replays/)
@@ -191,7 +194,12 @@ fn main() -> anyhow::Result<()> {
             "info,wgpu_hal=error,wgpu_core=warn,naga=warn,arboard=error,{user}"
         ))
         .init();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `rugen debug` is `rugen play` with the fighter debugger beside the fight
+    let debug = args.first().is_some_and(|a| a == "debug");
+    if debug {
+        args[0] = "play".into();
+    }
     // a leading option (`rugen --frames 30`) means the full game
     let first = args.first().map(String::as_str);
     match first.filter(|a| !a.starts_with("--")) {
@@ -239,6 +247,7 @@ fn main() -> anyhow::Result<()> {
             let team1 = opt("--team1");
             let team2 = opt("--team2");
             let taken = [
+                opt("--mouse"),
                 team1.clone(),
                 team2.clone(),
                 keys.clone(),
@@ -394,7 +403,7 @@ fn main() -> anyhow::Result<()> {
             let ai = ai
                 .map(|a| a.parse::<i32>().context("--ai expects 0..8"))
                 .transpose()?
-                .unwrap_or(if synctest || training || net_mode.is_some() {
+                .unwrap_or(if debug || synctest || training || net_mode.is_some() {
                     0
                 } else {
                     4
@@ -456,8 +465,12 @@ fn main() -> anyhow::Result<()> {
                 script2: script2.as_deref().map(play::parse_script),
                 record: record.map(std::path::PathBuf::from),
                 keys: keys.as_deref().map(game::parse_keys).unwrap_or_default(),
-                mouse: Vec::new(),
+                mouse: opt("--mouse")
+                    .as_deref()
+                    .map(game::parse_mouse)
+                    .unwrap_or_default(),
                 in_match: false,
+                debug,
             };
             let shell = game::Shell::new(
                 config,
@@ -690,6 +703,7 @@ fn main() -> anyhow::Result<()> {
                     .map(game::parse_mouse)
                     .unwrap_or_default(),
                 in_match: false,
+                debug: false,
             };
             let mut setup = r.setup();
             // recordings made before content files point into old cache folders
@@ -980,6 +994,7 @@ fn main() -> anyhow::Result<()> {
                     .map(game::parse_mouse)
                     .unwrap_or_default(),
                 in_match: false,
+                debug: false,
             };
             // harness: start on another screen (`--open online|profile`)
             let start = match opt("--open").as_deref() {

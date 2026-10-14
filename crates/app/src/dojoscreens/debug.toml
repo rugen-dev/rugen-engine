@@ -1,0 +1,375 @@
+# rugen DEBUG — Dojo theme. The fighter debugger's panel around a
+# running match (`rugen debug <fighter>`). Coordinates are 1280x720.
+# The engine draws the fight inside the node with id "view" (keep it
+# transparent: everything else is drawn over the fight).
+# Data: title status paused running play speed boxes back can_back who
+# state where kv[] {t} vars[] {t changed same} has_vars no_vars
+# ctrls_title ctrls[] {ok no skip hl plain mark text note} has_ctrls
+# no_ctrls keys. Actions: dbg:play dbg:step dbg:back dbg:speed dbg:boxes
+# dbg:next dbg:view (a click on the fight picks the player under it).
+background = [0.078, 0.051, 0.043, 1.0]
+
+# ---------------------------------------------------------------- top bar
+[[node]]
+kind = "text"
+text = "{title}"
+x = 18
+y = 14
+font = 2
+bank = 14
+
+[[node]]
+kind = "panel"
+x = 470
+y = 10
+w = 264
+h = 26
+color = [0.706, 0.188, 0.102, 1.0]
+visible = "paused"
+
+  [[node.children]]
+  kind = "text"
+  text = "{status}"
+  anchor = "center"
+  font = 1
+  bank = 14
+
+[[node]]
+kind = "panel"
+x = 470
+y = 10
+w = 264
+h = 26
+outline = [0.85, 0.66, 0.3, 1.0]
+outline_w = 2
+visible = "running"
+
+  [[node.children]]
+  kind = "text"
+  text = "{status}"
+  anchor = "center"
+  font = 1
+  bank = 14
+
+# ---------------------------------------------------------------- the fight
+[[node]]
+kind = "button"
+id = "view"
+x = 14
+y = 46
+w = 720
+h = 606
+outline = [0.85, 0.66, 0.3, 1.0]
+outline_w = 3
+on_press = "dbg:view"
+
+# ---------------------------------------------------------------- transport
+[[node]]
+kind = "button"
+x = 14
+y = 666
+w = 176
+h = 40
+text = "{back}"
+font = 1
+bank = 14
+outline = [0.85, 0.66, 0.3, 1.0]
+outline_w = 3
+color_focus = [0.3, 0.19, 0.13, 1.0]
+on_press = "dbg:back"
+
+[[node]]
+kind = "button"
+x = 200
+y = 666
+w = 116
+h = 40
+text = "{play}"
+font = 2
+bank = 14
+color = [0.706, 0.188, 0.102, 1.0]
+color_focus = [0.82, 0.3, 0.16, 1.0]
+on_press = "dbg:play"
+
+[[node]]
+kind = "button"
+x = 326
+y = 666
+w = 116
+h = 40
+text = "STEP"
+font = 1
+bank = 14
+outline = [0.85, 0.66, 0.3, 1.0]
+outline_w = 3
+color_focus = [0.3, 0.19, 0.13, 1.0]
+on_press = "dbg:step"
+
+[[node]]
+kind = "button"
+x = 458
+y = 666
+w = 132
+h = 40
+text = "{speed}"
+font = 1
+bank = 14
+color_focus = [0.3, 0.19, 0.13, 1.0]
+on_press = "dbg:speed"
+
+[[node]]
+kind = "button"
+x = 600
+y = 666
+w = 134
+h = 40
+text = "{boxes}"
+font = 1
+bank = 14
+outline = [0.85, 0.66, 0.3, 1.0]
+outline_w = 3
+color_focus = [0.3, 0.19, 0.13, 1.0]
+on_press = "dbg:boxes"
+
+# ---------------------------------------------------------------- inspector
+[[node]]
+kind = "panel"
+x = 748
+w = 532
+h = "100%"
+color = [0.925, 0.878, 0.776, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{state}"
+  x = 18
+  y = 14
+  font = 2
+  bank = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "{where}"
+  anchor = "tr"
+  x = 18
+  y = 18
+  w = 330
+  font = 1
+  bank = 17
+  ellipsis = true
+
+  [[node.children]]
+  kind = "button"
+  x = 18
+  y = 40
+  w = 300
+  h = 18
+  text = "{who}"
+  align = "left"
+  font = 1
+  bank = 13
+  on_press = "dbg:next"
+
+  [[node.children]]
+  kind = "panel"
+  x = 18
+  y = 62
+  w = 496
+  h = 86
+  color = [0.976, 0.945, 0.871, 1.0]
+  outline = [0.361, 0.231, 0.149, 1.0]
+  outline_w = 3
+
+  [[node.children]]
+  kind = "grid"
+  x = 30
+  y = 70
+  w = 476
+  h = 72
+  columns = 4
+  cell_w = 119
+  cell_h = 23
+  items = "kv"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.t}"
+    w = 116
+    font = 1
+    bank = 12
+    ellipsis = true
+
+  [[node.children]]
+  kind = "text"
+  text = "VARIABLES (CHANGED IN RED)"
+  x = 18
+  y = 160
+  font = 1
+  bank = 12
+
+  [[node.children]]
+  kind = "panel"
+  x = 18
+  y = 178
+  w = 496
+  h = 110
+  color = [0.976, 0.945, 0.871, 1.0]
+  outline = [0.361, 0.231, 0.149, 1.0]
+  outline_w = 3
+
+  [[node.children]]
+  kind = "text"
+  text = "ALL ZERO"
+  x = 30
+  y = 188
+  font = 1
+  bank = 17
+  visible = "no_vars"
+
+  [[node.children]]
+  kind = "grid"
+  x = 30
+  y = 186
+  w = 476
+  h = 96
+  columns = 4
+  cell_w = 119
+  cell_h = 23
+  items = "vars"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.t}"
+    w = 116
+    font = 1
+    bank = 13
+    ellipsis = true
+    visible = "item.changed"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.t}"
+    w = 116
+    font = 1
+    bank = 12
+    ellipsis = true
+    visible = "item.same"
+
+  [[node.children]]
+  kind = "text"
+  text = "{ctrls_title}"
+  x = 18
+  y = 300
+  font = 1
+  bank = 12
+
+  [[node.children]]
+  kind = "panel"
+  x = 18
+  y = 318
+  w = 496
+  h = 360
+  color = [0.976, 0.945, 0.871, 1.0]
+  outline = [0.361, 0.231, 0.149, 1.0]
+  outline_w = 3
+
+  [[node.children]]
+  kind = "text"
+  text = "NOTHING RAN THIS FRAME"
+  x = 32
+  y = 330
+  font = 1
+  bank = 17
+  visible = "no_ctrls"
+
+  [[node.children]]
+  kind = "list"
+  id = "ctrls"
+  x = 24
+  y = 324
+  w = 484
+  h = 348
+  items = "ctrls"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 484
+    h = 22
+    color = [0.96, 0.84, 0.74, 1.0]
+    visible = "item.hl"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 5
+    h = 22
+    color = [0.706, 0.188, 0.102, 1.0]
+    visible = "item.hl"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 484
+    h = 22
+    color = [0.0, 0.0, 0.0, 0.0]
+    visible = "item.plain"
+
+    [[node.children.children]]
+    kind = "icon"
+    glyph = "check"
+    x = 10
+    y = 6
+    w = 10
+    h = 10
+    color = [0.102, 0.498, 0.216, 1.0]
+    visible = "item.ok"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.mark}"
+    x = 11
+    y = 5
+    font = 1
+    bank = 17
+    visible = "item.no"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.text}"
+    x = 28
+    y = 5
+    w = 296
+    font = 1
+    bank = 12
+    ellipsis = true
+    visible = "item.ok"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.text}"
+    x = 28
+    y = 5
+    w = 296
+    font = 1
+    bank = 17
+    ellipsis = true
+    visible = "item.no"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.note}"
+    anchor = "tr"
+    x = 8
+    y = 5
+    w = 150
+    font = 1
+    bank = 13
+    ellipsis = true
+
+  [[node.children]]
+  kind = "text"
+  text = "{keys}"
+  x = 18
+  y = 692
+  w = 496
+  font = 1
+  bank = 17
+  ellipsis = true

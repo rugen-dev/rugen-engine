@@ -40,6 +40,8 @@ pub enum UiKind {
     Stages,
     /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
     Challenge,
+    /// The fighter debugger's panel around a running match (`ui/debug.toml`).
+    Debug,
 }
 
 /// A decoded RGBA image kept in memory and drawn through a `mem:<name>` asset key.
@@ -262,6 +264,10 @@ pub struct UiScreen {
     /// A user theme's screen that failed to load on a live reload: the
     /// last good one stays, this strip says why.
     theme_error: Option<String>,
+    /// Debugger panel: the data the shell hands over every tick, and the
+    /// `dbg:` actions pressed since the shell last took them.
+    debug: Value,
+    debug_actions: Vec<String>,
     window: (u32, u32),
     mouse_px: Option<(f32, f32)>,
     pending: Option<Transition>,
@@ -569,6 +575,7 @@ impl UiScreen {
             UiKind::Controls => "controls.toml",
             UiKind::Stages => "stages.toml",
             UiKind::Challenge => "challenge.toml",
+            UiKind::Debug => "debug.toml",
         }
     }
 
@@ -653,6 +660,30 @@ impl UiScreen {
     /// Buttons held this tick (before [`tick`](Self::tick)).
     pub fn set_held(&mut self, held: [Buttons; 2]) {
         self.held = held;
+    }
+
+    /// Debugger panel: new data for this tick.
+    pub fn set_debug_data(&mut self, data: Value, sys: &SystemData) {
+        if data != self.debug {
+            self.debug = data;
+            self.refresh_data(sys);
+        }
+    }
+
+    /// The `dbg:` actions pressed since the last call.
+    pub fn take_debug_actions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.debug_actions)
+    }
+
+    /// Where the debugger's fight view sits (the `view` node, virtual units).
+    pub fn view_rect(&self) -> Option<rugen_ui::Rect> {
+        self.ui.rect_of("view")
+    }
+
+    /// The mouse in virtual units, when it is over the window.
+    pub fn mouse_virtual(&self) -> Option<(f32, f32)> {
+        self.mouse_px
+            .map(|(x, y)| rugen_ui::window_to_virtual(self.window, x, y))
     }
 
     /// A user theme's files changed: read this screen's TOML again and drop
@@ -971,6 +1002,8 @@ impl UiScreen {
             themes: crate::themes::cards(lib),
             themes_dir: lib.themes_dir(),
             theme_error: None,
+            debug: Value::Null,
+            debug_actions: Vec::new(),
             news,
             window: (1280, 720),
             mouse_px: None,
@@ -1349,6 +1382,7 @@ impl UiScreen {
                     "version": env!("CARGO_PKG_VERSION"),
                 })
             }
+            UiKind::Debug => self.debug.clone(),
             UiKind::Challenge => json!({
                 "cards": self.challenge,
                 "profile": self.profile_json(),
@@ -1628,9 +1662,12 @@ impl UiScreen {
                 Some(Transition::Title)
             }
             // B is a fight button: it must not quit the game, leave a result or the bindings page
-            UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus | UiKind::Stages => {
-                None
-            }
+            UiKind::Title
+            | UiKind::Result
+            | UiKind::Controls
+            | UiKind::Versus
+            | UiKind::Stages
+            | UiKind::Debug => None,
         }
     }
 
@@ -1758,6 +1795,11 @@ impl UiScreen {
     }
 
     fn action(&mut self, a: &str, sys: &SystemData) -> Option<Transition> {
+        // the debugger's buttons belong to the match under the panel
+        if let Some(rest) = a.strip_prefix("dbg:") {
+            self.debug_actions.push(rest.to_string());
+            return None;
+        }
         // a click on a stage strip tile
         if let (Some(st), Some(lib), Some(i)) = (
             self.stages.as_mut(),

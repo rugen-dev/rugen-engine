@@ -106,6 +106,49 @@ impl Tint {
     }
 }
 
+/// Clip one quad (`[c0, c1, c2, c0, c2, c3]`) to `r`: an axis-aligned quad
+/// is trimmed with its texture coordinates, one wholly outside collapses to
+/// nothing, a rotated one partly outside is kept whole.
+fn clip_quad(q: &mut [Vertex], r: [f32; 4]) {
+    let xs = q.iter().map(|v| v.pos[0]);
+    let ys = q.iter().map(|v| v.pos[1]);
+    let (x0, x1) = (
+        xs.clone().fold(f32::MAX, f32::min),
+        xs.fold(f32::MIN, f32::max),
+    );
+    let (y0, y1) = (
+        ys.clone().fold(f32::MAX, f32::min),
+        ys.fold(f32::MIN, f32::max),
+    );
+    if x0 >= r[0] && x1 <= r[2] && y0 >= r[1] && y1 <= r[3] {
+        return;
+    }
+    if x1 <= r[0] || x0 >= r[2] || y1 <= r[1] || y0 >= r[3] {
+        for v in q.iter_mut() {
+            v.pos = [r[0], r[1]];
+        }
+        return;
+    }
+    let (c0, c1, c3) = (q[0], q[1], q[5]);
+    let aligned = c0.pos[1] == c1.pos[1] && c0.pos[0] == c3.pos[0] && c0.pos[0] < c1.pos[0];
+    if !aligned || c3.pos[1] <= c0.pos[1] {
+        return;
+    }
+    // u follows x, v follows y on an unrotated quad
+    let (ua, ub) = (c0.uv[0], c1.uv[0]);
+    let (va, vb) = (c0.uv[1], c3.uv[1]);
+    let (px0, px1, py0, py1) = (c0.pos[0], c1.pos[0], c0.pos[1], c3.pos[1]);
+    for v in q.iter_mut() {
+        let x = v.pos[0].clamp(r[0], r[2]);
+        let y = v.pos[1].clamp(r[1], r[3]);
+        v.uv = [
+            ua + (ub - ua) * (x - px0) / (px1 - px0),
+            va + (vb - va) * (y - py0) / (py1 - py0),
+        ];
+        v.pos = [x, y];
+    }
+}
+
 struct Run {
     tex: usize,
     pal: Option<usize>,
@@ -819,6 +862,39 @@ impl Renderer {
         );
     }
 
+    /// Where the next queued draw starts (see [`Renderer::remap_since`]).
+    pub fn vertex_mark(&self) -> usize {
+        self.verts.len()
+    }
+
+    /// Move everything queued since `mark` (drawn for camera `from`) into
+    /// the rectangle `dst` (`[min x, min y, max x, max y]`) of the space the
+    /// frame ends in: `from`'s view is scaled uniformly to cover `dst`
+    /// (centred, the overflow cropped) and clipped to it, so one frame can
+    /// show a fight in a window of a menu (the fighter debugger).
+    pub fn remap_since(&mut self, mark: usize, from: &Camera, dst: [f32; 4]) {
+        let (w, h) = (dst[2] - dst[0], dst[3] - dst[1]);
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let k = from.zoom * (w / from.screen[0]).max(h / from.screen[1]);
+        let mid = [(dst[0] + dst[2]) / 2.0, (dst[1] + dst[3]) / 2.0];
+        let map = |p: [f32; 2]| {
+            [
+                mid[0] + (p[0] - from.center[0]) * k,
+                mid[1] + (p[1] - from.center[1]) * k,
+            ]
+        };
+        let start = mark.min(self.verts.len()) / 6 * 6;
+        for q in self.verts[start..].chunks_exact_mut(6) {
+            // a quad is [c0, c1, c2, c0, c2, c3]
+            for v in q.iter_mut() {
+                v.pos = map(v.pos);
+            }
+            clip_quad(q, dst);
+        }
+    }
+
     /// Axis-aligned filled rectangle in logical coords.
     pub fn rect(&mut self, min: [f32; 2], max: [f32; 2], color: [f32; 4]) {
         let w = self.white;
@@ -1128,5 +1204,46 @@ mod tests {
         }
         assert_eq!(s.items.len(), 2, "no growth over 100 replacements");
         assert_eq!(s.get(b), Some(&2));
+    }
+}
+
+#[cfg(test)]
+mod remap_tests {
+    use super::*;
+
+    fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> [Vertex; 6] {
+        let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
+            pos: [x, y],
+            uv: [u, w],
+            color: [1.0; 4],
+            fx_mul: [1.0; 4],
+            fx_add: [0.0; 4],
+        };
+        let c = [
+            v(x0, y0, 0.0, 0.0),
+            v(x1, y0, 1.0, 0.0),
+            v(x1, y1, 1.0, 1.0),
+            v(x0, y1, 0.0, 1.0),
+        ];
+        [c[0], c[1], c[2], c[0], c[2], c[3]]
+    }
+
+    /// A quad half outside the window is cut at its edge with the texture
+    /// trimmed to match; one wholly outside draws nothing.
+    #[test]
+    fn quads_are_clipped_to_the_window() {
+        let mut q = quad(-10.0, 0.0, 10.0, 10.0);
+        clip_quad(&mut q, [0.0, 0.0, 100.0, 100.0]);
+        assert_eq!(q[0].pos, [0.0, 0.0]);
+        assert_eq!(q[0].uv, [0.5, 0.0]);
+        assert_eq!(q[1].pos, [10.0, 0.0]);
+        assert_eq!(q[1].uv, [1.0, 0.0]);
+        let mut out = quad(200.0, 0.0, 210.0, 10.0);
+        clip_quad(&mut out, [0.0, 0.0, 100.0, 100.0]);
+        assert!(out.iter().all(|v| v.pos == [0.0, 0.0]));
+        let mut inside = quad(1.0, 1.0, 2.0, 2.0);
+        let before = inside;
+        clip_quad(&mut inside, [0.0, 0.0, 100.0, 100.0]);
+        assert_eq!(inside[2].pos, before[2].pos);
     }
 }

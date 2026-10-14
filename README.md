@@ -83,6 +83,7 @@ rugen play kfm        # a quick match against the computer
 - [x] **Items**: pickups that spawn on arena stages, to grab and throw.
 - [x] **Stage hazards**: moving platforms and stage events.
 - [x] **User themes folder**: your own themes with live reload, no rebuild.
+- [x] **Fighter debugger**: step through frames, states and variables.
 
 ### Planned
 
@@ -90,7 +91,6 @@ rugen play kfm        # a quick match against the computer
 - [ ] **Per-fighter leaderboards**: the best players of each character.
 - [ ] **Tournament brackets**: eight or sixteen players inside a room.
 - [ ] **Shareable replays**: send a match to someone by code.
-- [ ] **Fighter debugger**: step through frames, states and variables.
 - [ ] **Translations (i18n)**: the menus in 10+ languages: Brazilian Portuguese, Spanish, French, Italian, German, Polish, Turkish, Indonesian, Filipino and Japanese.
 - [ ] **Steam Deck layout**: a handheld-friendly screen and controls.
 
