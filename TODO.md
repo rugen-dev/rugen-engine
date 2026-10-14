@@ -395,9 +395,16 @@ box) and screenshots.
   `bracket-live-{ink,dojo}.png`, `bracket-watch-ink.png`.
 
 ### Replays
-- [ ] **Shareable replays.** Keep a finished match's input log on the server
+- [x] **Shareable replays.** (c2fbd19; rugen-server 0396499) Keep a finished match's input log on the server
   (see *Live watching*), get a short code; WATCH → BY CODE downloads and plays it,
   fetching missing fighters through the existing package sync. Kept 30 days.
+  REPLAYS on the hub: SHARE (8-character code, copied), COPY CODE, SAVE
+  FILE (`replays/<code>.json`, not for arena rooms), BY CODE, RECENT. The
+  server takes the stream from its live log, else the players' reports;
+  `shared_replays` (schema v9) is in every backup, bounded by
+  `RUGEN_REPLAY_DAYS` / `RUGEN_REPLAY_MB`, 50 shares a day per account.
+  Shots: `~/.cache/rugen-work/ro/shots/replays-{ink,dojo}.png`,
+  `replays-shared-ink.png`, `replay-watch-ink.png`.
 
 ### Creators
 - [x] **User themes folder.** (7149d7c) `themes/` next to `chars/`; any folder with a

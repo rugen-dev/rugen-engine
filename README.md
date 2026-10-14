@@ -88,10 +88,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Per-fighter leaderboards**: the best players of each character, every season.
 - [x] **Tournament brackets**: eight or sixteen players inside a room, seeded by rating.
 - [x] **Live watching**: watch any online match from the lobby or a bracket, even mid-match.
+- [x] **Shareable replays**: send a match to someone by code, kept 30 days.
 
 ### Planned
 
-- [ ] **Shareable replays**: send a match to someone by code.
 - [ ] **Translations (i18n)**: the menus in 10+ languages: Brazilian Portuguese, Spanish, French, Italian, German, Polish, Turkish, Indonesian, Filipino and Japanese.
 - [ ] **Steam Deck layout**: a handheld-friendly screen and controls.
 
