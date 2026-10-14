@@ -73,10 +73,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Input display**: the inputs of both players on screen.
 - [x] **Record and playback dummy**: record a sequence and practise against it.
 - [x] **Turns**: teams fight one after another, the winner stays in.
+- [x] **Simul**: two against two, all on screen at once.
 
 ### Planned
 
-- [ ] **Simul**: two against two, all on screen at once.
 - [ ] **Tag**: switch partners in the middle of a fight.
 - [ ] **Survival**: one life bar against an endless line of opponents.
 - [ ] **Boss Rush**: the toughest fighters back to back.

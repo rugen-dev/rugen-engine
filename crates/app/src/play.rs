@@ -208,9 +208,15 @@ impl TeamSetup {
     }
 }
 
+/// Computer level of each side's Simul partners: a computer side's own,
+/// COMPUTER LEVEL for a human side's (its partners are computer players).
+pub fn partner_ai(side_ai: [i32; 2], ai_level: i32) -> [i32; 2] {
+    side_ai.map(|a| if a > 0 { a } else { ai_level.clamp(1, 8) })
+}
+
 /// Team modes this build offers on the fighter select and `rugen play`.
 pub fn team_mode_ready(m: TeamMode) -> bool {
-    matches!(m, TeamMode::Single | TeamMode::Turns)
+    matches!(m, TeamMode::Single | TeamMode::Turns | TeamMode::Simul)
 }
 
 /// Team modes as their names in replays (`"turns"`).
@@ -623,14 +629,7 @@ impl Match {
                 let ts = rugen_sim::headless::TeamSpec {
                     mode: t.mode,
                     partners: [0, 1].map(|s| t.partners[s].iter().map(PathBuf::as_path).collect()),
-                    // a human side's Simul partners fight as the computer
-                    partner_ai: [0, 1].map(|s| {
-                        if setup.ai[s] > 0 {
-                            setup.ai[s]
-                        } else {
-                            cfg.game.ai_level.clamp(1, 8)
-                        }
-                    }),
+                    partner_ai: partner_ai(setup.ai, cfg.game.ai_level),
                 };
                 rugen_sim::headless::build_team_world(&spec, &ts)
             }
@@ -2472,6 +2471,11 @@ mod tests {
         );
         assert_eq!(TeamSetup::parse_side("trio:goku"), None);
         assert!(team_mode_ready(TeamMode::Turns));
+        assert!(team_mode_ready(TeamMode::Simul));
+        // VS: both humans, their partners play at COMPUTER LEVEL
+        assert_eq!(partner_ai([0, 0], 5), [5, 5]);
+        // the CPU side keeps its level; a level of 0 still means a computer partner
+        assert_eq!(partner_ai([0, 7], 0), [1, 7]);
     }
 
     /// LAN netplay settings desync: air jumps, air dash and fast fall came

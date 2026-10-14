@@ -1548,8 +1548,11 @@ impl Lifebar {
                         modes.push(m);
                     }
                 }
-                if !modes.is_empty() {
-                    line = format!("{} · {line}", modes.join("/"));
+                // two different modes: TEAMS (the plate is short)
+                match modes.len() {
+                    0 => {}
+                    1 => line = format!("{} · {line}", modes[0]),
+                    _ => line = format!("TEAMS · {line}"),
                 }
             }
             let pos = hud(

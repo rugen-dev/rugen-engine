@@ -311,4 +311,4 @@ face.bg = 214,196,160
 life.color = 180,48,26
 red.color = 227,179,76
 down.color = 160,140,110
-label.font = 1,14,1
+label.font = 1,17,1

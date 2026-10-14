@@ -1271,6 +1271,15 @@ mod tests {
             },
             _ => panic!("everyone picked"),
         }
+        // the choices run SINGLE, TURNS 2-4, SIMUL 2-4 (and back round)
+        let mut c = Roster::new(Mode::Watch, &lib, 4);
+        assert_eq!(c.team_side(), 0, "one cursor: the side being picked");
+        for _ in 0..4 {
+            c.step_team(0, 1);
+        }
+        assert_eq!(c.team[0], (TeamMode::Simul, 2));
+        assert!(c.step_team(0, -1));
+        assert_eq!(c.team[0], (TeamMode::Turns, 4));
         // modes without teams never offer them
         let mut a = Roster::new(Mode::Arcade, &lib, 4);
         assert!(!a.teams_ok());
