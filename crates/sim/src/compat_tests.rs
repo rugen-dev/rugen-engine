@@ -441,3 +441,69 @@ fn goku_ki_blast_glow_and_shade() {
     }
     assert!(seen, "the ki blast helpers appeared");
 }
+
+/// Owner report 6 (Goku's B air attack punching forever): a HitDef armed
+/// by `animelem = 2` hits once. The animation steps in the tick whose hit
+/// starts the hitpause (Ikemen `acttmp`), so the trigger does not hold
+/// again when the pause ends.
+#[test]
+fn animelem_hitdef_hits_once_per_element() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    w.players[0].pos[0] = -20.0;
+    w.players[1].pos[0] = 20.0;
+    // KFM's light punch: elem 3 has the Clsn1, so the hit lands the tick it is armed
+    let text = "[Statedef 7600]\ntype = S\nmovetype = A\nphysics = S\nanim = 200\nctrl = 0\n\n\
+        [State 7600, hit]\ntype = HitDef\ntrigger1 = animelem = 3\nattr = S, NA\ndamage = 10\n\
+        animtype = light\nguardflag = MA\nhitflag = MAF\npausetime = 4,4\nground.hittime = 30\n\n\
+        [State 7600, end]\ntype = ChangeState\ntrigger1 = AnimTime = 0\nvalue = 0\nctrl = 1\n";
+    let d = w.data[0].with_states("compat", text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7600, None, None);
+    let life = w.players[1].life;
+    run(&mut w, 40);
+    assert_eq!(
+        life - w.players[1].life,
+        10,
+        "one hit, not one per hitpause"
+    );
+}
+
+/// Goku's B chain (300 -> 310 -> 320 -> 330 -> air B 610): 610 arms its
+/// HitDef on `animelem = 2 || 4 || 6` and ends at AnimTime = 0. It used to
+/// re-hit after every hitpause and float upward for as long as P2 was there.
+#[test]
+#[ignore]
+fn goku_air_b_ends() {
+    let Some(dir) = golden_dir() else { return };
+    let sasuke = dir.join("G6_Sasuke_Rinnegan/G6_Sasuke_Rinnegan.def");
+    let goku = dir.join("Goku/Goku.def");
+    let mut w = community(&goku, &sasuke, FighterSize::Normal);
+    // walk in, then tap B every 4 ticks
+    let press = |b: bool| Buttons {
+        b,
+        ..Default::default()
+    };
+    let fwd = Buttons {
+        r: true,
+        ..Default::default()
+    };
+    for _ in 0..45 {
+        w.step(&[fwd, Buttons::default()]);
+    }
+    let (mut in_610, mut longest, mut reached) = (0, 0, false);
+    for t in 0..600 {
+        w.step(&[press(t % 4 == 0 && t < 160), Buttons::default()]);
+        if w.players[0].state_no == 610 {
+            reached = true;
+            in_610 += 1;
+            longest = longest.max(in_610);
+        } else {
+            in_610 = 0;
+        }
+    }
+    assert!(reached, "the chain reached the air B");
+    assert!(longest < 120, "610 lasted {longest} ticks");
+    assert_eq!(w.players[0].state_no, 0, "back to standing");
+}

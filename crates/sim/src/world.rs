@@ -1138,6 +1138,7 @@ impl World {
         let mut i = 0;
         while i < self.players.len() {
             if !self.players[i].removed && !self.players[i].broken {
+                self.players[i].acted = false;
                 self.running = Some(i);
                 if self.players[i].tag == crate::team::TagPhase::None {
                     if !self.ledge_step(i) {
@@ -1837,11 +1838,13 @@ impl World {
         if self.players[i].pause_bool {
             return;
         }
-        // animate (not during hit pause)
+        // animate (not during hit pause, but still in the tick whose hit
+        // started one: Ikemen steps when `acttmp > 0`, so `animelem = 2`
+        // does not hold again once the pause ends)
         let data = self.data[self.players[i].anim_owner].clone();
         {
             let p = &mut self.players[i];
-            if p.hit_pause_time == 0
+            if (p.hit_pause_time == 0 || p.acted)
                 && let Some(a) = data.air.get(p.anim.action)
             {
                 p.anim.step(a);
@@ -2109,6 +2112,7 @@ impl World {
         let guarding = collision::compute_guard_flag(&self.players[i]);
         self.players[i].guarding = guarding;
         if self.players[i].hit_pause_time == 0 {
+            self.players[i].acted = true;
             // forced stay in 5110 then get up
             let p = &self.players[i];
             if p.state_no == 5110 && p.state_time >= 1 && p.ghv.down_recovertime <= 0 && p.alive() {
@@ -4932,8 +4936,11 @@ mod tests {
             },
         );
         let mut hit_frame = None;
+        let mut move_hit = false;
         for f in 0..30 {
             run(&mut w, 1, Buttons::default());
+            // read while the attack lasts: back in state 0 resets them
+            move_hit |= w.players[0].move_hit() > 0 || w.players[0].hit_count > 0;
             if w.players[1].state_no == 5000 && hit_frame.is_none() {
                 hit_frame = Some(f);
             }
@@ -4950,10 +4957,7 @@ mod tests {
             life0,
             w.players[1].life
         );
-        assert!(
-            w.players[0].move_hit() > 0 || w.players[0].hit_count > 0,
-            "MoveHit / HitCount on attacker"
-        );
+        assert!(move_hit, "MoveHit / HitCount on attacker");
         run(&mut w, 90, Buttons::default());
         assert_eq!(w.players[1].state_no, 0, "P2 recovered to stand");
         assert!(w.players[1].ctrl);
@@ -4982,11 +4986,13 @@ mod tests {
             hold,
         ]);
         let mut guarded = false;
+        let mut move_guarded = false;
         for _ in 0..40 {
             w.step(&[Buttons::default(), hold]);
             if (150..=155).contains(&w.players[1].state_no) {
                 guarded = true;
             }
+            move_guarded |= w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0;
         }
         assert!(
             guarded,
@@ -4994,7 +5000,7 @@ mod tests {
             w.players[1].state_no
         );
         assert_eq!(w.players[1].life, life0, "no chip damage from a normal");
-        assert!(w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0);
+        assert!(move_guarded, "MoveGuarded / GuardCount on attacker");
     }
 
     /// P2 overrides P1's standing normal with a custom state via HitOverride.

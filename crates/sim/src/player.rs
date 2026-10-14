@@ -271,6 +271,10 @@ pub struct Player {
     /// with `ownpal = 1`, else it shows its root's PalFX and its own PalFX
     /// controllers do nothing (Ikemen `getPalfx`, `palFX.Run`).
     pub ownpal: bool,
+    /// Its states ran outside a hitpause this tick (Ikemen `acttmp > 0`):
+    /// the animation still steps at the end of the tick in which a hit
+    /// started a hitpause.
+    pub acted: bool,
     pub afterimage: Option<Box<AfterImage>>,
     /// `[Size]` in effect: the cns constants for a root, the Helper's
     /// `size.*` parameters (else the root's constants) for a helper.
@@ -487,6 +491,7 @@ impl Player {
             angle_scale: [1.0, 1.0],
             palfx: PalFx::default(),
             ownpal: true,
+            acted: false,
             afterimage: None,
             size: Size::default(),
         }
