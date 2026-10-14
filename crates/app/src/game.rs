@@ -423,6 +423,31 @@ pub struct Shell {
     /// A fight whose fighter or stage is still being prepared in the
     /// background: the versus screen stays up (with a ring) until it is ready.
     waiting_fight: Option<FightSetup>,
+    /// Harness: a mid-run screenshot due this frame (RUGEN_HARNESS_SHOTS).
+    extra_shot: Option<PathBuf>,
+}
+
+/// `RUGEN_HARNESS_FAST=n`: ticks per drawn frame instead of the wall clock.
+fn harness_fast() -> Option<u32> {
+    static V: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("RUGEN_HARNESS_FAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n > 0)
+    })
+}
+
+/// `RUGEN_HARNESS_SHOTS=t1,t2,...`: extra screenshots at those ticks.
+fn harness_shots() -> &'static [u32] {
+    static V: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        std::env::var("RUGEN_HARNESS_SHOTS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|t| t.trim().parse().ok())
+            .collect()
+    })
 }
 
 impl Shell {
@@ -532,6 +557,7 @@ impl Shell {
             frame_stats: crate::framestats::Reporter::default(),
             booted: false,
             waiting_fight: None,
+            extra_shot: None,
         }
     }
 
@@ -1978,12 +2004,17 @@ impl Shell {
         // the tick length can stretch a little during online matches
         // (time sync); it is read again before every tick
         let mut len = self.tick_len();
+        // harness: RUGEN_HARNESS_FAST=n runs n ticks per drawn frame
+        if let Some(n) = harness_fast() {
+            self.tick_acc = len * n;
+        }
         while self.tick_acc >= len {
             self.tick_acc -= len;
             self.tick();
             len = self.tick_len();
             // a harness screenshot shows exactly frame N, even after a slow frame
-            if self.quit || (self.shot_armed && self.harness.shot.is_some()) {
+            if self.quit || (self.shot_armed && self.harness.shot.is_some()) || self.extra_shot.is_some()
+            {
                 break;
             }
         }
@@ -2504,6 +2535,17 @@ impl Shell {
         let held = self.pause.is_some() || (self.debug_ui.is_some() && self.is_match());
         if (advanced || held) && counted {
             self.ticks += 1;
+            // harness: RUGEN_HARNESS_SHOTS=t1,t2,... also writes <shot>-<t>.png
+            if harness_shots().contains(&self.ticks)
+                && let Some(base) = &self.harness.shot
+            {
+                let stem = base.with_extension("");
+                self.extra_shot = Some(PathBuf::from(format!(
+                    "{}-{}.png",
+                    stem.display(),
+                    self.ticks
+                )));
+            }
             if let Some(n) = self.harness.frames
                 && self.ticks >= n
             {
@@ -2574,6 +2616,15 @@ impl Shell {
         let profiling = crate::framestats::enabled();
         if profiling {
             crate::framestats::add(crate::framestats::Phase::Build, build_start.elapsed());
+        }
+        if let Some(path) = self.extra_shot.take() {
+            let (w, h) = r.size();
+            let rgba = r.end_to_image(&cam, clear, w, h);
+            match crate::play::write_png(&path, w, h, &rgba) {
+                Ok(()) => log::info!("wrote {}", path.display()),
+                Err(e) => log::error!("shot {}: {e}", path.display()),
+            }
+            return;
         }
         if self.shot_armed
             && let Some(path) = self.harness.shot.take()
