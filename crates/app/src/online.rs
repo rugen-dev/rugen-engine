@@ -161,6 +161,8 @@ enum State {
     Direct,
     /// Bring-your-own-character matchup before a match.
     Matchup,
+    /// Opening a match to watch: its stream and its files.
+    Watch,
     /// PROFILE: the account on every server (list) and the selected
     /// server's account or form (panel).
     Profile,
@@ -336,7 +338,8 @@ enum Job {
     /// Our last result again (signed once the opponent reported).
     Result(Pending<ResultAck>),
     Me(Pending<ProfileInfo>),
-    Rooms(Pending<Vec<RoomSummary>>),
+    /// The lobby: public rooms and the live matches outside rooms.
+    Rooms(Pending<(Vec<RoomSummary>, Vec<rugen_proto::stream::LiveMatch>)>),
     Room(Pending<RoomInfo>),
     Queue(Pending<QueueStatus>),
     Board(Pending<Leaderboard>),
@@ -383,6 +386,16 @@ fn room_error(room: &RoomSummary) -> Option<String> {
             rugen_proto::release_of(room.api)
         ))
     }
+}
+
+/// A match being opened for watching.
+struct Watching {
+    match_id: u64,
+    feed: crate::watch::Feed,
+    prep: Option<crate::watch::Prep>,
+    /// The room it is played in (the screen comes back there).
+    room: Option<String>,
+    error: Option<String>,
 }
 
 /// One row of the server list.
@@ -444,6 +457,10 @@ pub struct OnlineScreen {
     servers: Vec<ServerRow>,
     me: Option<ProfileInfo>,
     rooms: Vec<RoomSummary>,
+    /// Live matches outside rooms (quick match, ranked), for WATCH.
+    lives: Vec<rugen_proto::stream::LiveMatch>,
+    /// Watching a match from the server's input log: fetching it, then the fight.
+    watch: Option<Watching>,
     room: Option<RoomInfo>,
     /// Ticket already used for a fight (so a stale poll does not restart it).
     used_ticket: Option<u32>,
@@ -703,6 +720,8 @@ impl OnlineScreen {
                 .collect(),
             me: None,
             rooms: Vec::new(),
+            lives: Vec::new(),
+            watch: None,
             room: None,
             used_ticket: None,
             typed: String::new(),
@@ -1289,6 +1308,132 @@ impl OnlineScreen {
         });
         self.state = State::Matchup;
         self.status = format!("ROOM {} - FETCHING THE FIGHTERS", r.code);
+    }
+
+    /// Watch live match `id` from the server's input log (any moment of the
+    /// match: the backlog comes first, then the fight catches up).
+    fn start_live_watch(&mut self, id: u64, room: Option<String>) {
+        log::info!("online: watching match {id}");
+        self.watch = Some(Watching {
+            match_id: id,
+            feed: crate::watch::Feed::follow(self.client.clone(), id),
+            prep: None,
+            room,
+            error: None,
+        });
+        self.state = State::Watch;
+        self.status = "CONNECTING TO THE MATCH...".into();
+    }
+
+    /// The watched match: its files once the header arrived, the fight
+    /// once they are here.
+    fn poll_watch(&mut self) {
+        let Some(w) = self.watch.as_mut() else { return };
+        if w.error.is_some() {
+            return;
+        }
+        if let Some(e) = w.feed.error() {
+            w.error = Some(format!("THE MATCH STREAM STOPPED: {}", e.to_uppercase()));
+            return;
+        }
+        let Some(h) = w.feed.header() else { return };
+        // another game version may simulate the match differently
+        let mine = crate::matchup::engine();
+        if !h.engine.is_empty() && h.engine != mine {
+            w.error = Some(format!(
+                "THIS MATCH IS PLAYED WITH {}, YOU RUN {}: BOTH NEED THE SAME VERSION TO WATCH.",
+                h.engine.to_uppercase(),
+                mine.to_uppercase()
+            ));
+            return;
+        }
+        let prep = w
+            .prep
+            .get_or_insert_with(|| {
+                crate::watch::Prep::start(self.client.clone(), self.lib.clone(), h.clone())
+            })
+            .snapshot();
+        if let Some(e) = prep.error {
+            w.error = Some(e.to_uppercase());
+            return;
+        }
+        let Some([p1, p2, stage]) = prep.defs else {
+            return;
+        };
+        let feed = w.feed.clone();
+        let (id, room) = (w.match_id, w.room.clone());
+        self.watch = None;
+        if let Ok(mut r) = RESUME.lock() {
+            *r = Some((self.client.server.clone(), room));
+        }
+        self.started = Some(OnlineMatch {
+            server: self.client.server.clone(),
+            match_id: id,
+            players: [h.players[0].id, h.players[1].id],
+            my_side: 0,
+            ranked: h.ranked,
+            spectator: true,
+            rules: h.rules.clone(),
+        });
+        self.pending_fight = Some(FightSetup {
+            p1,
+            p2,
+            stage: Some(stage),
+            ai: [0, 0],
+            net: Some(NetMode::Stream(feed)),
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(h.seed),
+        });
+        self.state = State::Lobby;
+    }
+
+    fn watch_json(&self) -> Value {
+        let Some(w) = self.watch.as_ref() else {
+            return json!({});
+        };
+        let h = w.feed.header();
+        let prep = w.prep.as_ref().map(|p| p.snapshot()).unwrap_or_default();
+        let (have, _) = w.feed.status();
+        let rows: Vec<Value> = prep
+            .progress
+            .iter()
+            .map(|(label, f)| {
+                json!({
+                    "label": fit(label, 18),
+                    "pct": format!("{}%", (f * 100.0) as u32),
+                    "w": (f * 360.0).max(4.0),
+                    "done": *f >= 1.0,
+                })
+            })
+            .collect();
+        let line = match (&w.error, &h) {
+            (Some(e), _) => e.clone(),
+            (None, None) => "CONNECTING TO THE MATCH...".into(),
+            (None, Some(_)) if prep.progress.iter().any(|p| p.1 < 1.0) => {
+                "MISSING FIGHTERS DOWNLOAD BEFORE IT PLAYS".into()
+            }
+            (None, Some(_)) => "STARTING...".into(),
+        };
+        json!({
+            "title": h.as_ref().map_or("LIVE MATCH".into(), |h| h.title()),
+            "players": h.as_ref().map_or(String::new(), |h| format!(
+                "{} VS {}",
+                h.players[0].name.to_uppercase(),
+                h.players[1].name.to_uppercase()
+            )),
+            "frames": format!("{} S PLAYED", have / 60),
+            "line": line,
+            "error": w.error.is_some(),
+            "ok": w.error.is_none(),
+            "rows": rows,
+        })
     }
 
     /// The shell's fighter pick (select screen in online mode) came back.
@@ -1919,8 +2064,9 @@ impl OnlineScreen {
                 // a fresh list (the first one focuses its top room)
                 self.rooms.clear();
                 let c = self.client.clone();
-                self.jobs
-                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
+                self.jobs.push(Job::Rooms(Pending::spawn(move || {
+                    Ok((c.rooms()?, c.live_matches().unwrap_or_default()))
+                })));
             }
             "board" => {
                 self.board_season = None;
@@ -2272,6 +2418,7 @@ impl OnlineScreen {
                 push(esc, "BACK");
             }
             State::Matchup => {}
+            State::Watch => push(esc, "BACK"),
         }
         if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) {
             push(key("retry"), "RETRY");
@@ -2628,9 +2775,33 @@ impl OnlineScreen {
                     "full": full && !off,
                     "open": !full && !off,
                     "can_watch": !off && r.spectators < r.max_spectators,
-                    "action": if off || full { format!("lobby:watch:{}", r.code) } else { format!("lobby:join:{}", r.code) },
+                    "action": if !off && r.live_match > 0 && full {
+                        format!("lobby:live:{}", r.live_match)
+                    } else if off || full {
+                        format!("lobby:watch:{}", r.code)
+                    } else {
+                        format!("lobby:join:{}", r.code)
+                    },
                 })
             })
+            .chain(self.lives.iter().map(|m| {
+                json!({
+                    "name": if m.ranked { "RANKED MATCH" } else { "QUICK MATCH" },
+                    "tag": "LIVE",
+                    "has_tag": true,
+                    "host": fit(&format!("{} VS {}", m.players[0].to_uppercase(), m.players[1].to_uppercase()), 22),
+                    "rules": fit(&format!("{} VS {}", m.fighters[0].to_uppercase(), m.fighters[1].to_uppercase()), 40),
+                    "seats": "2/2",
+                    "watching": m.viewers.to_string(),
+                    "live": true,
+                    "off": false,
+                    "on": true,
+                    "full": true,
+                    "open": false,
+                    "can_watch": true,
+                    "action": format!("lobby:live:{}", m.match_id),
+                })
+            }))
             .collect();
         let loading = self.jobs.iter().any(|j| matches!(j, Job::Rooms(_)));
         json!({
@@ -3285,6 +3456,7 @@ impl OnlineScreen {
                 },
             ),
             State::Matchup => (String::new(), String::new()),
+            State::Watch => ("WATCH".into(), fit(&self.server_name().to_uppercase(), 28)),
         }
     }
 
@@ -3361,6 +3533,8 @@ impl OnlineScreen {
             "is_direct": self.state == State::Direct,
             "is_profile": self.state == State::Profile,
             "is_matchup": self.state == State::Matchup,
+            "is_watch": self.state == State::Watch,
+            "wt": if self.state == State::Watch { self.watch_json() } else { json!({}) },
             "not_matchup": self.state != State::Matchup,
             "servers": if hub { self.servers_json() } else { Vec::new() },
             "sel": if hub { self.sel_json() } else { json!({}) },
@@ -3825,6 +3999,16 @@ impl OnlineScreen {
                 self.probe_servers();
             }
             ("online", "lobby") => self.run_action("lobby"),
+            ("lobby", rest) if rest.starts_with("live:") => {
+                if let Ok(id) = rest["live:".len()..].parse::<u64>() {
+                    let room = self
+                        .rooms
+                        .iter()
+                        .find(|r| r.live_match == id)
+                        .map(|r| r.code.clone());
+                    self.start_live_watch(id, room);
+                }
+            }
             ("lobby", rest) => {
                 let (kind, code) = rest.split_once(':').unwrap_or(("join", rest));
                 // a host of another version: say so instead of trying
@@ -4178,6 +4362,17 @@ impl OnlineScreen {
         }
         if self.state == State::Matchup {
             self.leave_matchup("YOU LEFT THE MATCHUP");
+            return;
+        }
+        if self.state == State::Watch {
+            // the feed's worker stops once nobody holds it
+            let room = self.watch.take().and_then(|w| w.room);
+            match room {
+                Some(code) if self.room.as_ref().is_some_and(|r| r.code == code) => {
+                    self.state = State::Room;
+                }
+                _ => self.run_action("lobby"),
+            }
             return;
         }
         match self.state {
@@ -4544,7 +4739,9 @@ impl OnlineScreen {
                 },
                 Job::Rooms(p) => match p.take() {
                     None => keep.push(j),
-                    Some(Ok(r)) => {
+                    Some(Ok((r, lives))) => {
+                        // matches in public rooms show as their room
+                        self.lives = lives.into_iter().filter(|m| m.room.is_none()).collect();
                         self.status = if r.is_empty() {
                             "NO PUBLIC ROOMS - CREATE ONE!".into()
                         } else {
@@ -4807,8 +5004,9 @@ impl OnlineScreen {
             State::Servers if self.tick % 600 == 0 => self.poll_last_result(),
             State::Lobby if self.tick % 300 == 0 => {
                 let c = self.client.clone();
-                self.jobs
-                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
+                self.jobs.push(Job::Rooms(Pending::spawn(move || {
+                    Ok((c.rooms()?, c.live_matches().unwrap_or_default()))
+                })));
             }
             _ => {}
         }
@@ -4826,6 +5024,7 @@ impl OnlineScreen {
         self.poll_presence();
         self.poll_server();
         self.poll_matchup();
+        self.poll_watch();
         self.auto_join();
         if self.auto_quit_at.is_some_and(|t| self.tick >= t) {
             return Some(Transition::Quit);

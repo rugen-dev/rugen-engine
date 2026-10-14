@@ -2274,9 +2274,31 @@ impl Shell {
                         now = [Buttons::default(); 2];
                     }
                 }
-                advanced = m.tick(now, &mut self.audio);
-                if advanced {
-                    self.match_stats.observe(&m.world);
+                if m.is_watch() {
+                    // a viewer never plays: START / Esc / Select leave
+                    if pause_req.is_some() {
+                        m.leave = true;
+                    }
+                    // buffered, caught up (many frames, silent, not drawn) or followed
+                    advanced = false;
+                    let n = m.stream_steps();
+                    for i in 0..n {
+                        let mut silent = None;
+                        let audio = if i + 1 == n {
+                            &mut self.audio
+                        } else {
+                            &mut silent
+                        };
+                        if m.tick([Buttons::default(); 2], audio) {
+                            advanced = true;
+                            self.match_stats.observe(&m.world);
+                        }
+                    }
+                } else {
+                    advanced = m.tick(now, &mut self.audio);
+                    if advanced {
+                        self.match_stats.observe(&m.world);
+                    }
                 }
                 // a run: the strip over the fight (and Time Attack's clock)
                 if let Some(run) = self.run.as_mut() {

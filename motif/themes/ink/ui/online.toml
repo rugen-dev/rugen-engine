@@ -3313,6 +3313,136 @@ ellipsis = true
 text = "{bk.note}"
 
 # ---- END BRACKET
+# ---- WATCH: opening a match to watch (its stream, its files)
+# Data: is_watch, wt.* (title players frames line error ok rows[] (label pct w done))
+[[node]]
+kind = "panel"
+visible = "is_watch"
+x = 300
+y = 160
+w = 680
+h = 400
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "is_watch"
+x = 290
+y = 150
+w = 680
+h = 400
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 36
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "● LIVE"
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 60
+  w = 600
+  ellipsis = true
+  bank = 9
+  font = 1
+  scale = 2
+  text = "{wt.title}"
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 96
+  w = 600
+  ellipsis = true
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{wt.players} · {wt.frames}"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 40
+  y = 140
+  w = 600
+  h = 150
+  gap = 14
+  items = "wt.rows"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 4
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{item.label}"
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 180
+    y = 0
+    w = 360
+    h = 22
+    color = [0.902, 0.875, 0.804, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 180
+    y = 0
+    w = "{item.w}"
+    h = 22
+    color = [0.784, 0.063, 0.102, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 552
+    y = 4
+    bank = 9
+    font = 1
+    scale = 1
+    text = "{item.pct}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "wt.ok"
+  x = 40
+  y = 310
+  w = 600
+  h = 60
+  line_gap = 6
+  max_lines = 3
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{wt.line}"
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "wt.error"
+  x = 40
+  y = 310
+  w = 600
+  h = 60
+  line_gap = 6
+  max_lines = 3
+  bank = 10
+  font = 1
+  scale = 1
+  text = "{wt.line}"
+  wrap = true
+
+# ---- END WATCH
 # ---- PROFILE: one card per server (left), its account (right)
 [[node]]
 kind = "list"
