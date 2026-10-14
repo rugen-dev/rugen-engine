@@ -439,9 +439,9 @@ enter_time = 16
   # team panel (a team mode on): mode and size segments, a row per fighter
   [[node.children]]
   kind = "hbox"
-  x = 206
+  x = 194
   y = 14
-  w = 194
+  w = 204
   h = 22
   justify = "start"
   items = "card1.modes"
