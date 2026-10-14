@@ -57,7 +57,7 @@ later section while an earlier one has open boxes:
   and logged in.
 - [x] **No error or warning spam** (0d81b05) in a normal session log (`RUST_LOG=info`);
   character warnings stay at debug.
-- [ ] **Release 0.6.2** once the boxes above are ticked: version bump, tag,
+- [x] **Release 0.6.2** (v0.6.2, 2026-10-14) once the boxes above are ticked: version bump, tag,
   release notes in the usual order, README roadmap boxes for 0.6.2 ticked,
   docs updated, download page checked.
 
