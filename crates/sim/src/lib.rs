@@ -30,6 +30,8 @@ pub mod sctrl;
 pub mod world;
 
 #[cfg(test)]
+mod golden_tests;
+#[cfg(test)]
 mod safety_tests;
 
 pub use chardata::{CharData, FxData};
