@@ -279,7 +279,7 @@ themes, deck profile checked at 1280x800.
 - [x] **In-game DEBUGGER.** (e51aabe) PRACTICE → DEBUGGER picks 1 or 2 fighters and a
   stage, then opens the fighter debugger; DEBUGGER in the Training pause
   menu and F12 in Training open it on the current match. Offline only.
-- [ ] **Team mode step.** SINGLE / TURNS / SIMUL / TAG cards before the
+- [x] **Team mode step.** (a0875f8) SINGLE / TURNS / SIMUL / TAG cards before the
   fighter grid (←→ mode, ↑↓ size 2–4, rules line, slots preview, READY
   per side), VS MODE and WATCH only; replaces the X / Y stepping. A VS team
   match hides the `[Arena]` stages.
