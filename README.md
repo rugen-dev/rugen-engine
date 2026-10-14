@@ -87,6 +87,7 @@ rugen play kfm        # a quick match against the computer
 - [x] **Ranked seasons**: ratings that soft-reset every 90 days; past seasons and tier badges stay.
 - [x] **Per-fighter leaderboards**: the best players of each character, every season.
 - [x] **Tournament brackets**: eight or sixteen players inside a room, seeded by rating.
+- [x] **Live watching**: watch any online match from the lobby or a bracket, even mid-match.
 
 ### Planned
 

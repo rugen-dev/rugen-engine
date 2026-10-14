@@ -376,13 +376,23 @@ box) and screenshots.
   match, `RUGEN_LIVE_MB` = 64 for all); a finished match's log stays 15
   minutes (late viewers, sharing from the result screen), then goes.
   `GET /v1/live`, `GET /v1/live/{id}?from=N` (binary chunks).
-- [ ] **Watch any live match, even mid-match.** WATCH downloads missing
+- [x] **Watch any live match, even mid-match.** (bbe2cf4) WATCH downloads missing
   fighters and stage through the package sync, fetches the backlog from frame
   0, fast-forwards the sim without drawing ("CATCHING UP…"), then follows
   live a few seconds behind the players (smooth start, no relaying to a
   player in tournaments).
-- [ ] **WATCH from the lobby and the bracket.** Live rooms show WATCH in the
+  `watch::Feed` polls the log, `watch::Prep` downloads what is missing,
+  `NetMode::Stream` plays it with the header's seed and the online rules;
+  start buffer 1.5 s, catch-up at 120 frames a drawn frame (silent, not
+  drawn), then 3 s behind. A match of another game version is refused.
+  Tested with two clients and a spectator on a local server, a room match
+  and a bracket match. Shots: `~/.cache/rugen-work/ro/shots/watch-{ink,dojo}.png`,
+  `watch-catchup-{ink,dojo}.png`.
+- [x] **WATCH from the lobby and the bracket.** (b820af7) Live rooms show WATCH in the
   lobby; the bracket's live match opens it on ENTER.
+  ROOMS also lists live quick / ranked matches. Shots:
+  `~/.cache/rugen-work/ro/shots/lobby-live-ink.png`,
+  `bracket-live-{ink,dojo}.png`, `bracket-watch-ink.png`.
 
 ### Replays
 - [ ] **Shareable replays.** Keep a finished match's input log on the server
