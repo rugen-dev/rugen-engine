@@ -151,12 +151,13 @@ angle = -12
 enter = "fade"
 enter_delay = 18
 
+# under P2's name plate (y 600..672), which a long name stretches left
 [[node]]
 kind = "text"
 dock = "left"
 text = "ROUND 1 · {stage.name}"
 x = 40
-y = 650
+y = 692
 font = 1
 scale = 2
 bank = 11
