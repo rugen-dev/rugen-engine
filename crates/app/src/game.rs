@@ -60,6 +60,9 @@ pub enum Mode {
     BossRush,
     /// CHALLENGE: the arcade ladder against a run timer.
     TimeAttack,
+    /// PRACTICE → DEBUGGER: one or two fighters and a stage, then the
+    /// fighter debugger around the match (offline).
+    Debugger,
 }
 
 impl Mode {
@@ -76,6 +79,7 @@ impl Mode {
             Mode::Survival => "SURVIVAL",
             Mode::BossRush => "BOSS RUSH",
             Mode::TimeAttack => "TIME ATTACK",
+            Mode::Debugger => "DEBUGGER",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         }
     }
@@ -148,6 +152,9 @@ pub enum Transition {
     Training(crate::training::Command),
     /// Training pause menu: back to the match with the LESSONS running.
     Lessons,
+    /// Training pause menu (or F12): open / close the fighter debugger on
+    /// the current match.
+    Debugger,
     Quit,
 }
 
@@ -684,6 +691,7 @@ impl Shell {
             cfg: t.cfg.clone(),
             slots: t.slot_frames(),
             start: start.clone(),
+            debugger: m.debugger.is_some(),
             fighters: [0, 1].map(|i| {
                 let w = &m.world;
                 w.players
@@ -1190,11 +1198,11 @@ impl Shell {
         self.transition_inner(t);
         // no match left (on screen or parked under the options): its fighters'
         // voices stop and their samples go, so nothing carries into the next fight
-        if !matches!(self.screen, Screen::Match(_))
-            && self.parked.is_none()
-            && let Some(a) = self.audio.as_mut()
-        {
-            a.release_fight();
+        if !matches!(self.screen, Screen::Match(_)) && self.parked.is_none() {
+            if let Some(a) = self.audio.as_mut() {
+                a.release_fight();
+            }
+            self.close_debugger();
         }
     }
 
@@ -1211,6 +1219,7 @@ impl Shell {
                     | Transition::Restart
                     | Transition::Training(_)
                     | Transition::Lessons
+                    | Transition::Debugger
             )
         {
             u.release_gpu(&mut g.renderer);
@@ -1299,6 +1308,11 @@ impl Shell {
                 {
                     t.command(cmd);
                 }
+            }
+            Transition::Debugger => {
+                self.drop_pause();
+                self.fade = 0.0;
+                self.toggle_debugger();
             }
             Transition::Lessons => {
                 self.drop_pause();
@@ -1722,6 +1736,10 @@ impl Shell {
                     None => Screen::Blank,
                 };
             }
+            // the debugger has no VS screen: straight into its match
+            Transition::Versus(setup, _) if setup.mode == Some(Mode::Debugger) => {
+                self.transition(Transition::Fight(setup));
+            }
             Transition::Versus(setup, sides) => {
                 self.play_system_music("vs");
                 self.screen = match self.system.as_ref() {
@@ -1848,8 +1866,12 @@ impl Shell {
                             let p = &mut m.world.players[0];
                             p.power = p.power_max;
                         }
-                        if self.harness.debug && setup.net.is_none() {
+                        // `rugen debug`, PRACTICE → DEBUGGER (offline only)
+                        let debug = self.harness.debug || setup.mode == Some(Mode::Debugger);
+                        if debug && setup.net.is_none() {
                             self.open_debugger(&mut m);
+                        } else {
+                            self.close_debugger();
                         }
                         self.screen = Screen::Match(Box::new(m));
                     }
@@ -1863,6 +1885,36 @@ impl Shell {
                     }
                 }
             }
+        }
+    }
+
+    /// Training: open the debugger on the running match, or close it (F12,
+    /// the pause menu's DEBUGGER). Never online.
+    fn toggle_debugger(&mut self) {
+        let Screen::Match(m) = std::mem::replace(&mut self.screen, Screen::Blank) else {
+            return;
+        };
+        let mut m = m;
+        if m.debugger.is_some() {
+            m.detach_debugger();
+            self.screen = Screen::Match(m);
+            self.close_debugger();
+        } else if !m.is_net() {
+            log::info!("debugger opened on the training match");
+            self.open_debugger(&mut m);
+            self.screen = Screen::Match(m);
+        } else {
+            self.screen = Screen::Match(m);
+        }
+    }
+
+    /// Drop the debugger's panel (its match is gone or no longer debugged).
+    fn close_debugger(&mut self) {
+        self.debug_view = None;
+        if let Some(mut u) = self.debug_ui.take()
+            && let Some(g) = self.gpu.as_mut()
+        {
+            u.release_gpu(&mut g.renderer);
         }
     }
 
@@ -2730,6 +2782,15 @@ impl Shell {
             && let Screen::Online(o) = &mut self.screen
             && o.hotkey(&lower)
         {
+            return;
+        }
+        // Training: F12 opens / closes the fighter debugger on the match
+        if pressed
+            && key == &Key::Named(NamedKey::F12)
+            && self.pause.is_none()
+            && matches!(&self.screen, Screen::Match(m) if m.training.is_some() && !m.is_net())
+        {
+            self.toggle_debugger();
             return;
         }
         if pressed && key == &Key::Named(NamedKey::F11) {

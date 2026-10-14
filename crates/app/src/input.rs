@@ -29,6 +29,7 @@ pub fn parse_key(name: &str) -> Key {
         "PageUp" => Some(NamedKey::PageUp),
         "PageDown" => Some(NamedKey::PageDown),
         "F11" => Some(NamedKey::F11),
+        "F12" => Some(NamedKey::F12),
         _ => None,
     };
     match named {

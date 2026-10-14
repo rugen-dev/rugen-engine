@@ -154,6 +154,7 @@ color = [0.925, 0.878, 0.776, 1.0]
   x = 18
   y = 18
   w = 330
+  deck = { w = 250 }
   font = 1
   bank = 17
   ellipsis = true
@@ -176,6 +177,7 @@ color = [0.925, 0.878, 0.776, 1.0]
   y = 62
   w = 496
   h = 86
+  deck = { h = 92 }
   color = [0.976, 0.945, 0.871, 1.0]
   outline = [0.361, 0.231, 0.149, 1.0]
   outline_w = 3
@@ -189,12 +191,14 @@ color = [0.925, 0.878, 0.776, 1.0]
   columns = 4
   cell_w = 119
   cell_h = 23
+  deck = { y = 74, h = 78, columns = 3, cell_w = 158, cell_h = 19 }
   items = "kv"
 
     [[node.children.children]]
     kind = "text"
     text = "{item.t}"
     w = 116
+    deck = { w = 154 }
     font = 1
     bank = 12
     ellipsis = true

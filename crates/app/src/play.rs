@@ -1717,6 +1717,17 @@ impl Match {
     pub fn attach_debugger(&mut self, data_dir: &Path) {
         self.debugger = Some(crate::debugger::Debugger::new(&mut self.world, data_dir));
         self.hud_hidden = true;
+        // stepping back rewinds the world under the recording: no replay
+        self.record = None;
+    }
+
+    /// Close the debugger (Training): the match runs on as before.
+    pub fn detach_debugger(&mut self) {
+        if self.debugger.take().is_some() {
+            self.world.trace = None;
+            self.hud_hidden = false;
+            self.paused = false;
+        }
     }
 
     /// A debugger button or key (`play`, `step`, `back`, `speed`, `boxes`,

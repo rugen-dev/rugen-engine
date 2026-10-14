@@ -67,7 +67,7 @@ enter_time = 10
   id = "menu"
   y = 108
   w = 344
-  gap = 7
+  gap = 4
   items = "menu"
   group = "menu"
   stagger = 2
@@ -76,15 +76,15 @@ enter_time = 10
     [[node.children.children]]
     kind = "panel"
     w = 344
-    h = 57
+    h = 52
 
     [[node.children.children]]
     kind = "button"
     id = "slab"
     w = 320
-    h = 50
+    h = 46
     w_focus = 340
-    h_focus = 54
+    h_focus = 50
     image = "ui/plaque9.webp"
     image_focus = "ui/plaque9_lit.webp"
     nine = [8, 8, 8, 10]

@@ -84,6 +84,7 @@ impl SelectScreen {
             Mode::Versus => [true, true],
             Mode::Arcade
             | Mode::Training
+            | Mode::Debugger
             | Mode::Tutorial
             | Mode::Arena
             | Mode::Online
@@ -185,7 +186,7 @@ impl SelectScreen {
             p2: if tutorial { p1 } else { p2 },
             stage,
             ai: match self.mode {
-                Mode::Training | Mode::Tutorial => [0, 0],
+                Mode::Training | Mode::Tutorial | Mode::Debugger => [0, 0],
                 _ => [ai(self.human[0]), ai(self.human[1])],
             },
             net: None,
@@ -362,6 +363,7 @@ impl SelectScreen {
             Mode::Watch => "Watch",
             Mode::Arena => "Arena",
             Mode::Tutorial => "Tutorial",
+            Mode::Debugger => "Debugger",
             Mode::Online => "Online",
             Mode::Survival => "Survival",
             Mode::BossRush => "Boss Rush",

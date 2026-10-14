@@ -407,6 +407,8 @@ pub struct TrainingInfo {
     pub slots: [usize; crate::training::SLOTS],
     /// What P1 presses for START (it stops a recording).
     pub start: String,
+    /// The fighter debugger is open on this match.
+    pub debugger: bool,
 }
 
 impl TrainingInfo {
@@ -586,7 +588,9 @@ fn menu_desc(id: &str) -> &'static str {
 fn select_exit(mode: Mode, motif: &Path) -> Transition {
     match mode {
         Mode::Online => Transition::Online,
-        Mode::Training | Mode::Watch if UiScreen::available(motif, UiKind::Practice) => {
+        Mode::Training | Mode::Watch | Mode::Debugger
+            if UiScreen::available(motif, UiKind::Practice) =>
+        {
             Transition::Practice
         }
         _ => Transition::Title,
@@ -1303,6 +1307,20 @@ impl UiScreen {
                         1,
                         json!({ "id": "lessons", "label": "LESSONS", "action": "lessons" }),
                     );
+                    // the fighter debugger on this match (F12 too)
+                    let label = if training.is_some_and(|t| t.debugger) {
+                        "CLOSE DEBUGGER"
+                    } else {
+                        "DEBUGGER"
+                    };
+                    let at = menu
+                        .iter()
+                        .position(|m| m["id"] == "controls")
+                        .map_or(menu.len(), |i| i + 1);
+                    menu.insert(
+                        at,
+                        json!({ "id": "debugger", "label": label, "action": "debugger" }),
+                    );
                 }
                 // Survival carries P1's life between fights: a restarted round
                 // would hand it back full
@@ -2006,6 +2024,9 @@ impl UiScreen {
                 "lessons" if self.pause.as_ref().is_some_and(|p| p.training.is_some()) => {
                     Some(Transition::Lessons)
                 }
+                "debugger" if self.pause.as_ref().is_some_and(|p| p.training.is_some()) => {
+                    Some(Transition::Debugger)
+                }
                 "options" => Some(Transition::Options),
                 "restart" => Some(Transition::Restart),
                 "moves" | "page:1" | "page:-1" => {
@@ -2060,6 +2081,7 @@ impl UiScreen {
                 "arcade" => Transition::Select(Mode::Arcade),
                 "versus" => Transition::Select(Mode::Versus),
                 "training" => Transition::Select(Mode::Training),
+                "debugger" => Transition::Select(Mode::Debugger),
                 "arena" => Transition::Select(Mode::Arena),
                 "tutorial" => Transition::Select(Mode::Tutorial),
                 "watch" => Transition::Select(Mode::Watch),
@@ -2881,6 +2903,20 @@ impl Painter for Host<'_> {
 mod tests {
     use super::*;
 
+    /// Leaving the Training, Watch or Debugger fighter select goes back to
+    /// PRACTICE in a theme with the page; other modes go to the title.
+    #[test]
+    fn practice_modes_go_back_to_practice() {
+        let ink = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif/themes/ink");
+        for m in [Mode::Training, Mode::Watch, Mode::Debugger] {
+            assert!(matches!(select_exit(m, &ink), Transition::Practice), "{m:?}");
+        }
+        assert!(matches!(select_exit(Mode::Versus, &ink), Transition::Title));
+        assert!(matches!(select_exit(Mode::Online, &ink), Transition::Online));
+        let none = std::path::Path::new("/nonexistent-theme");
+        assert!(matches!(select_exit(Mode::Training, none), Transition::Title));
+    }
+
     /// The DUMMY panel's recorder line follows the chosen slot.
     #[test]
     fn training_recorder_line() {
@@ -2889,6 +2925,7 @@ mod tests {
             fighters: ["A".into(), "B".into()],
             slots: [0, 228, 600],
             start: "p".into(),
+            debugger: false,
         };
         let r = t.rec_json();
         assert_eq!(r["title"], "RECORDING · SLOT 1 OF 3");

@@ -67,7 +67,7 @@ enter_time = 10
   id = "menu"
   y = 92
   w = 344
-  gap = 7
+  gap = 6
   items = "menu"
   group = "menu"
   stagger = 2
@@ -76,7 +76,7 @@ enter_time = 10
     [[node.children.children]]
     kind = "panel"
     w = 335
-    h = 57
+    h = 50
 
     # hard black shadow under the selected slab
     [[node.children.children]]
@@ -84,7 +84,7 @@ enter_time = 10
     x = 5
     y = 5
     w = 330
-    h = 52
+    h = 46
     color = [0.0, 0.0, 0.0, 1.0]
     when = "focus"
 
@@ -92,7 +92,7 @@ enter_time = 10
     kind = "button"
     id = "slab"
     w = 330
-    h = 52
+    h = 46
     color = [0.078, 0.071, 0.063, 1.0]
     color_focus = [0.784, 0.063, 0.102, 1.0]
     text = "{item.label}"

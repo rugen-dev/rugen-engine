@@ -163,6 +163,7 @@ impl Roster {
             Mode::Versus => [true, true],
             Mode::Arcade
             | Mode::Training
+            | Mode::Debugger
             | Mode::Tutorial
             | Mode::Arena
             | Mode::Online
@@ -173,7 +174,9 @@ impl Roster {
         };
         // training, arena and watch: the cursor also picks the other side
         let chooses = match mode {
-            Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
+            Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena | Mode::Debugger => {
+                [true, true]
+            }
             Mode::Arcade
             | Mode::Tutorial
             | Mode::Online
@@ -671,7 +674,7 @@ impl Roster {
             p2: if tutorial { p1 } else { p2 },
             stage,
             ai: match self.mode {
-                Mode::Training | Mode::Tutorial => [0, 0],
+                Mode::Training | Mode::Tutorial | Mode::Debugger => [0, 0],
                 _ => [
                     ai(self.human[0], self.ai_level),
                     ai(self.human[1], self.ai_level),
@@ -1056,8 +1059,11 @@ impl Roster {
                 (Mode::Watch, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
                 (Mode::Watch, _) => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
                 (Mode::Training, _) => "P1 : CHOOSE YOUR SPARRING PARTNER".to_string(),
+                (Mode::Debugger, _) => "OPPONENT (OR THE SAME AGAIN)".to_string(),
                 _ => "P1 : CHOOSE YOUR OPPONENT".to_string(),
             }
+        } else if self.picking == 0 && self.mode == Mode::Debugger {
+            "CHOOSE THE FIGHTER TO DEBUG".to_string()
         } else if self.picking < 2 {
             format!("P{} : CHOOSE YOUR FIGHTER", self.picking + 1)
         } else {
