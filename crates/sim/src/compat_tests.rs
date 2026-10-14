@@ -617,3 +617,48 @@ fn ownpal_explod_keeps_its_creators_palfx() {
         "the player's own moved on"
     );
 }
+
+/// Owner report 9 (Genki Dama does nothing): driven by its real inputs
+/// with Sasuke idle, both forms run to the hit. Genki Dama (z, power 2000):
+/// 1600 -> 15001 and the "mini genkidama" helper 15005 -> 15007 -> 15008
+/// that binds and hits Sasuke. Super Genkidama: y held charges state 3000
+/// (helper 3050 adds .007 to its fvar(2) a tick, full at 6.95, about 1000
+/// ticks, then helper 3054 exists) and y again starts 3001.
+#[test]
+#[ignore]
+fn goku_genki_dama_runs() {
+    let Some(dir) = golden_dir() else { return };
+    let sasuke = dir.join("G6_Sasuke_Rinnegan/G6_Sasuke_Rinnegan.def");
+    let goku = dir.join("Goku/Goku.def");
+    let key = |z: bool, y: bool| Buttons {
+        z,
+        y,
+        ..Default::default()
+    };
+    // Genki Dama
+    let mut w = community(&goku, &sasuke, FighterSize::Normal);
+    w.players[0].power = w.players[0].power_max;
+    let life = w.players[1].life;
+    let mut states = Vec::new();
+    for t in 0..600 {
+        w.step(&[key(t == 0, false), Buttons::default()]);
+        for p in w.players.iter().filter(|p| !p.removed) {
+            if !states.contains(&p.state_no) {
+                states.push(p.state_no);
+            }
+        }
+    }
+    for s in [1600, 15001, 15005, 15007, 15008] {
+        assert!(states.contains(&s), "state {s} reached: {states:?}");
+    }
+    assert!(w.players[1].life < life, "Sasuke was hit");
+    // Super Genkidama: hold y, release, press y again
+    let mut w = community(&goku, &sasuke, FighterSize::Normal);
+    let mut super_started = false;
+    for t in 0..1400 {
+        w.players[0].power = w.players[0].power_max;
+        w.step(&[key(false, t < 1100 || t == 1140), Buttons::default()]);
+        super_started |= w.players[0].state_no == 3001;
+    }
+    assert!(super_started, "the charged Genkidama started (3001)");
+}
