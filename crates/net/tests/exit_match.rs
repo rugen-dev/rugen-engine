@@ -133,6 +133,7 @@ fn play(plan: Plan, session: u32) -> (Option<PeerExit>, Duration, Option<PeerExi
                 spectators: 0,
                 udp: Some(server.to_string()),
                 transports: Vec::new(),
+                live: false,
             };
             let mut sock =
                 RelaySocket::connect_udp(&ticket, &server.to_string(), Duration::from_secs(3))

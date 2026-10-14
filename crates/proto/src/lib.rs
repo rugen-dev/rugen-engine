@@ -13,6 +13,7 @@ pub mod fair;
 pub mod relay;
 pub mod room_code;
 pub mod size;
+pub mod stream;
 pub mod trust;
 
 pub use account::{AccountInfo, Session};
@@ -111,7 +112,7 @@ impl SeasonBadge {
     }
 }
 
-fn is_false(v: &bool) -> bool {
+pub(crate) fn is_false(v: &bool) -> bool {
     !*v
 }
 
@@ -313,6 +314,11 @@ pub struct SessionTicket {
     /// these instead of `udp`. Unknown kinds are skipped.
     #[serde(default)]
     pub transports: Vec<RelayTransport>,
+    /// The server keeps this match's input log for viewers: players send
+    /// their confirmed inputs on the relay session ([`relay::STREAM`]).
+    /// False from older servers (nothing is sent then).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub live: bool,
 }
 
 impl SessionTicket {

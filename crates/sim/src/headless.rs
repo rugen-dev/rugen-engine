@@ -23,10 +23,7 @@ pub const LEGACY_SEED: u64 = 1;
 /// same one without exchanging anything (SplitMix64 of the id, so
 /// consecutive ids give unrelated seeds; never 0).
 pub fn online_seed(match_id: u64) -> u64 {
-    let mut z = match_id.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    (z ^ (z >> 31)).max(1)
+    rugen_proto::stream::online_seed(match_id)
 }
 
 /// Everything that shapes a match's simulation.

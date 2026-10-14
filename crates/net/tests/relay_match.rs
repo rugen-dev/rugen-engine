@@ -98,6 +98,7 @@ fn ticket(server: SocketAddr, slot: usize) -> SessionTicket {
         spectators: 1,
         udp: Some(server.to_string()),
         transports: Vec::new(),
+        live: false,
     }
 }
 

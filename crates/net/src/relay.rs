@@ -1053,6 +1053,7 @@ mod tests {
             spectators: 0,
             udp: Some(server.to_string()),
             transports: Vec::new(),
+            live: false,
         };
         let mut a = RelaySocket::connect(
             &ticket(0),
