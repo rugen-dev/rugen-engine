@@ -406,6 +406,31 @@ box) and screenshots.
   Shots: `~/.cache/rugen-work/ro/shots/replays-{ink,dojo}.png`,
   `replays-shared-ink.png`, `replay-watch-ink.png`.
 
+### Online safety
+Fighters players bring online are third-party files: send them only with
+the player's consent, keep them briefly, and keep live viewers cheap.
+- [x] **Consent and 3-day expiry.** (efefb82; rugen-server 26a90b6) The first time a player goes online on
+  a server, a dialog (both themes): "Online play sends your fighters to
+  the server, your opponent and viewers. They're kept 3 days, then
+  deleted. [I AGREE] [NOT NOW]", kept per server in `profile.json`
+  (`online_consent`, versioned: new terms or a server keeping fighters
+  longer ask again). Without consent LAN and offline work, and online
+  still matches when both players have the fighters: nothing is uploaded.
+  Server: packages are deleted `RUGEN_PKG_DAYS` (3) days after upload,
+  whatever uses them (`/health` `pkg_days` feeds the dialog); uploads
+  carry `consent=1` (rugen 0.6.0-0.6.3 never send it and keep working);
+  a pick says `uploads: false`, the view lists `offline` fingerprints, a
+  client lacking one leaves with `reason: "missing"`.
+- [ ] **Watch packages for spectators.** Per fighter fingerprint, a cached
+  reduced package with the exact logic (hash-identical), half-resolution
+  indexed sprites (never lossy) and low-bitrate mono Opus sounds;
+  spectators download it, players the full one. Measure on Goku, Naruto,
+  Sasuke and KFM; same checksums as with the full package.
+- [ ] **Viewer cap and viewers in the self-benchmark.** `RUGEN_LIVE_VIEWERS`
+  (500) per match ("this match is full"), batched live fan-out, a
+  `viewers` field in the bench plan (2000 viewers measurable in
+  production).
+
 ### Creators
 - [x] **User themes folder.** (7149d7c) `themes/` next to `chars/`; any folder with a
   `system.def` shows up in INTERFACE; the game watches its files and reloads
