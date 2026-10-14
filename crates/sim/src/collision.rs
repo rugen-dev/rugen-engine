@@ -559,7 +559,7 @@ pub fn hit_detection(w: &mut World) {
             if !clsn_contact(w, c, g) {
                 continue;
             }
-            let result = hit_result(w, c, g, &hd, None);
+            let result = hit_result(w, c, g, &hd, HitSrc::Body);
             if result == 0 {
                 continue;
             }
@@ -636,7 +636,7 @@ fn reversal_detection(w: &mut World) {
             {
                 continue;
             }
-            let result = hit_result(w, g, c, &rhd, None);
+            let result = hit_result(w, g, c, &rhd, HitSrc::Body);
             if result == 0 {
                 continue;
             }
@@ -660,9 +660,18 @@ fn reversal_detection(w: &mut World) {
 }
 
 /// Apply `attacker`'s HitDef to `getter`. Returns 1 hit, 2 guarded, negative = no reaction, 0 = no contact.
-fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize>) -> i32 {
+/// What delivers a hit: the attacker's body, one of its projectiles, or an
+/// arena item it threw (stage position and facing).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum HitSrc {
+    Body,
+    Proj(usize),
+    Item { pos: [f32; 2], facing: f32 },
+}
+
+pub(crate) fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, src: HitSrc) -> i32 {
     let hd = hd.clone();
-    let is_proj = proj.is_some();
+    let is_proj = src != HitSrc::Body;
     {
         let gp = &w.players[g];
         if gp.pending_state.is_some() && gp.state_owner != w.players[c].data {
@@ -792,9 +801,10 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
         }
         w.players[g].spr_priority = hd.p2sprpriority;
     }
-    let mut byf = match proj {
-        Some(k) => w.projs[k].facing,
-        None => w.players[c].facing,
+    let mut byf = match src {
+        HitSrc::Proj(k) => w.projs[k].facing,
+        HitSrc::Item { facing, .. } => facing,
+        HitSrc::Body => w.players[c].facing,
     };
     if !is_proj && result == 1 {
         if hd.p1getp2facing != 0 {
@@ -932,9 +942,10 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
             ghv.fall_animtype = hd.fall_animtype;
             ghv.animtype = hit::gethit_animtype(ghv, gst);
             // mindist / maxdist snapping
-            let by_x = match proj {
-                Some(k) => w.projs[k].pos[0],
-                None => w.players[c].pos[0] * local_scale(w, c),
+            let by_x = match src {
+                HitSrc::Proj(k) => w.projs[k].pos[0],
+                HitSrc::Item { pos, .. } => pos[0],
+                HitSrc::Body => w.players[c].pos[0] * local_scale(w, c),
             };
             let g_x = w.players[g].pos[0] * local_scale(w, g);
             let mut snap: Option<f32> = None;
@@ -959,9 +970,10 @@ fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, proj: Option<usize
                 w.players[g].ghv.xoff = sx / gs - w.players[g].pos[0];
             }
             if result == 1 || gst == StateType::A {
-                let by_y = match proj {
-                    Some(k) => w.projs[k].pos[1] / local_scale(w, c),
-                    None => w.players[c].pos[1],
+                let by_y = match src {
+                    HitSrc::Proj(k) => w.projs[k].pos[1] / local_scale(w, c),
+                    HitSrc::Item { pos, .. } => pos[1] / local_scale(w, c),
+                    HitSrc::Body => w.players[c].pos[1],
                 };
                 let g_y = w.players[g].pos[1];
                 let mut sy: Option<f32> = None;
@@ -1255,7 +1267,7 @@ pub fn projectile_hit_detection(w: &mut World) {
                 continue;
             }
             let hd = hd.clone();
-            let result = hit_result(w, c, g, &hd, Some(k));
+            let result = hit_result(w, c, g, &hd, HitSrc::Proj(k));
             if result == 0 {
                 continue;
             }

@@ -1911,6 +1911,7 @@ impl Match {
                 }
             }
         }
+        self.draw_arena_items(r, ground, cam_y);
         if let Some(sv) = stage_visual.as_mut() {
             sv.draw(
                 r,
@@ -2139,9 +2140,103 @@ impl Match {
                     anchor,
                     ledge_hint(l.left(), l.side, &self.arena_caps[side][0]),
                 ));
+            } else if w.items.held_by(i).is_some_and(|it| it.age < 180) {
+                out.push((anchor, item_hint(&self.arena_caps[side][1])));
             }
         }
         out
+    }
+}
+
+/// The tag over a fighter that just picked up a throwable: B throws it.
+pub fn item_hint(throw: &str) -> crate::lifebar::Hint {
+    use crate::lifebar::{Hint, HintSeg};
+    Hint {
+        dark: false,
+        title: None,
+        rows: vec![vec![
+            HintSeg::Text("PICKED UP ·".into()),
+            HintSeg::Cap(throw.into()),
+            HintSeg::Text("THROW".into()),
+        ]],
+    }
+}
+
+/// Ink colours of the arena items (approved mockup "Arena features").
+const ITEM_INK: [f32; 4] = [0.078, 0.071, 0.063, 1.0];
+const ITEM_RED: [f32; 4] = [0.784, 0.063, 0.102, 1.0];
+const ITEM_BLUE: [f32; 4] = [0.145, 0.388, 0.922, 1.0];
+const ITEM_PAPER: [f32; 4] = [0.949, 0.933, 0.894, 1.0];
+
+/// A filled shape of horizontal strips centred on `c`: `half_w(dy)` gives
+/// the half width at height `dy` (-rad..rad).
+fn strips(r: &mut Renderer, c: [f32; 2], rad: f32, color: [f32; 4], half_w: impl Fn(f32) -> f32) {
+    let n = 14;
+    let step = 2.0 * rad / n as f32;
+    for k in 0..n {
+        let y0 = -rad + k as f32 * step;
+        let w = half_w(y0 + step / 2.0);
+        if w > 0.0 {
+            r.rect([c[0] - w, c[1] + y0], [c[0] + w, c[1] + y0 + step], color);
+        }
+    }
+}
+
+/// One arena item at `c` (world space), `h` = half its size: a black
+/// block (throwable), a red disc (heal) or a blue diamond (power), each
+/// with an ink rim.
+pub fn draw_item(r: &mut Renderer, kind: rugen_sim::items::ItemKind, c: [f32; 2], h: f32) {
+    use rugen_sim::items::ItemKind;
+    let rim = (h * 0.2).max(1.0);
+    // a paper halo keeps the ink rim readable on dark backgrounds
+    let halo = rim * 0.8;
+    let o = h + halo;
+    match kind {
+        ItemKind::Throwable => r.rect([c[0] - o, c[1] - o], [c[0] + o, c[1] + o], ITEM_PAPER),
+        ItemKind::Heal => strips(r, c, o, ITEM_PAPER, |y| {
+            libm::sqrtf((o * o - y * y).max(0.0))
+        }),
+        ItemKind::Power => {
+            let o = h * 1.25 + halo * 1.4;
+            strips(r, c, o, ITEM_PAPER, |y| o - y.abs());
+        }
+    }
+    match kind {
+        ItemKind::Throwable => {
+            r.rect([c[0] - h, c[1] - h], [c[0] + h, c[1] + h], ITEM_INK);
+            r.rect_outline(
+                [c[0] - h + rim, c[1] - h + rim],
+                [c[0] + h - rim, c[1] + h - rim],
+                rim * 0.5,
+                [0.3, 0.29, 0.27, 1.0],
+            );
+        }
+        ItemKind::Heal => {
+            strips(r, c, h, ITEM_INK, |y| libm::sqrtf((h * h - y * y).max(0.0)));
+            let i = h - rim;
+            strips(r, c, i, ITEM_RED, |y| libm::sqrtf((i * i - y * y).max(0.0)));
+        }
+        ItemKind::Power => {
+            let o = h * 1.25;
+            strips(r, c, o, ITEM_INK, |y| o - y.abs());
+            let i = o - rim * 1.4;
+            strips(r, c, i, ITEM_BLUE, |y| i - y.abs());
+        }
+    }
+}
+
+impl Match {
+    /// The arena items, in front of the fighters (a lying item about to go
+    /// blinks).
+    fn draw_arena_items(&self, r: &mut Renderer, ground: f32, cam_y: f32) {
+        let w = &self.world;
+        for it in &w.items.list {
+            if it.expiring() && (w.frame / 6) % 2 == 0 {
+                continue;
+            }
+            let c = [it.pos[0], ground + it.pos[1] - cam_y];
+            draw_item(r, it.kind, c, rugen_sim::items::HALF);
+        }
     }
 }
 
@@ -2740,6 +2835,15 @@ mod tests {
             ledge_hint(0, -1.0, "X").title.as_deref(),
             Some("LEDGE · 0.0 S")
         );
+    }
+
+    #[test]
+    fn item_hint_names_the_throw_key() {
+        use crate::lifebar::HintSeg;
+        let h = item_hint("K");
+        assert!(!h.dark && h.title.is_none());
+        assert_eq!(h.rows[0][1], HintSeg::Cap("K".into()));
+        assert_eq!(h.rows[0][2], HintSeg::Text("THROW".into()));
     }
 
     #[test]

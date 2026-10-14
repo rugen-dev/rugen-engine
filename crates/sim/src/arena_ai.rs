@@ -94,6 +94,10 @@ pub struct ArenaAiState {
     pub recoveries: u32,
     pub navs: u32,
     pub ledges: u32,
+    /// Ticks spent walking to an item.
+    pub items: u32,
+    /// Walking to an item this tick (a smaller edge margin).
+    item_walk: bool,
 }
 
 impl ArenaAiState {
@@ -502,6 +506,7 @@ pub fn filter(w: &mut World, i: usize, b: Buttons) -> Buttons {
     }
     let v = View::new(w, i);
     let st = &mut w.players[i].arena;
+    st.item_walk = false;
     st.danger = if v.off { st.danger + 1 } else { 0 };
     if !v.airborne {
         st.used_move = false;
@@ -572,7 +577,13 @@ pub fn filter(w: &mut World, i: usize, b: Buttons) -> Buttons {
         }
     }
     if !v.airborne {
-        out = edge_filter(w, i, &v, out);
+        // a walk to an item may go closer to the edge (a walk, not a run)
+        let margin = if w.players[i].arena.item_walk {
+            40.0
+        } else {
+            v.margin()
+        };
+        out = edge_filter_with(w, i, &v, out, margin);
     }
     let st = &mut w.players[i].arena;
     st.last = out;
@@ -774,8 +785,12 @@ fn recover(w: &mut World, i: usize, v: &View, tx: f32, ty: f32, toward: f32) -> 
 }
 
 /// Edge safety: no walking, running or jumping toward a drop into the pit.
-fn edge_filter(w: &World, i: usize, v: &View, mut out: Buttons) -> Buttons {
-    let margin = v.margin();
+fn edge_filter(w: &World, i: usize, v: &View, out: Buttons) -> Buttons {
+    edge_filter_with(w, i, v, out, v.margin())
+}
+
+/// [`edge_filter`] keeping `margin` from the drop.
+fn edge_filter_with(w: &World, i: usize, v: &View, mut out: Buttons, margin: f32) -> Buttons {
     // a jump's direction is read through the squat (state 40)
     let jumping = out.u || w.players[i].state_no == 40;
     let reach = if jumping {
@@ -828,6 +843,14 @@ fn ground(w: &mut World, i: usize, v: &View, b: Buttons) -> Buttons {
     let Some(([ox, oy], opp_grounded)) = v.opp else {
         return out;
     };
+    if let Some(b) = item_moves(w, i, v, out, [ox, oy]) {
+        if b.l || b.r {
+            let st = &mut w.players[i].arena;
+            st.items += 1;
+            st.item_walk = true;
+        }
+        return edge_filter_with(w, i, v, b, 40.0);
+    }
     let dx = ox - v.x;
     let toward = if dx.abs() < 25.0 { 0.0 } else { dx.signum() };
     // platform navigation: follow the opponent to its tier
@@ -878,6 +901,50 @@ fn ground(w: &mut World, i: usize, v: &View, b: Buttons) -> Buttons {
         return with_dirs(out, up);
     }
     out
+}
+
+/// Arena items, for a grounded CPU with control: throw a carried item at an
+/// opponent in front on its level, pick up a useful item in reach, or walk
+/// to one lying on its surface while the opponent is not close.
+fn item_moves(w: &World, i: usize, v: &View, out: Buttons, [ox, oy]: [f32; 2]) -> Option<Buttons> {
+    use crate::items::{ItemKind, ItemState};
+    if !crate::items::enabled(w) || v.level < 2 {
+        return None;
+    }
+    let p = &w.players[i];
+    // B must be a fresh press: release it for a tick first
+    let press = |mut b: Buttons| {
+        b.b = !p.item_b_last;
+        b
+    };
+    let dx = ox - v.x;
+    if w.items.held_by(i).is_some() {
+        let in_front = dx * p.facing > 40.0 && dx.abs() < 320.0 && (oy - v.y).abs() < 50.0;
+        return (in_front && roll(w, i, 8) < 10 + 5 * v.level as u32)
+            .then(|| press(Buttons::default()));
+    }
+    let useful = |k: ItemKind| match k {
+        ItemKind::Heal => p.life < p.life_max * 9 / 10,
+        ItemKind::Power => p.power < p.power_max,
+        ItemKind::Throwable => true,
+    };
+    if let Some(k) = w.item_in_reach(i)
+        && useful(w.items.list[k].kind)
+    {
+        return Some(press(Buttons::default()));
+    }
+    let hurt = p.life < p.life_max / 2;
+    let target = w
+        .items
+        .list
+        .iter()
+        .filter(|it| matches!(it.state, ItemState::Ground { .. }) && useful(it.kind))
+        .filter(|it| (it.pos[1] + crate::items::HALF - v.y).abs() < 4.0)
+        .filter(|it| (it.pos[0] - v.x).abs() < 260.0)
+        .filter(|_| dx.abs() > 110.0 || hurt)
+        .min_by(|a, b| (a.pos[0] - v.x).abs().total_cmp(&(b.pos[0] - v.x).abs()))?;
+    let dir = (target.pos[0] - v.x).signum();
+    Some(with_dirs(out, dir_buttons(dir)))
 }
 
 /// Cancel the running move into `state` with control, killing outward drift.
@@ -1192,6 +1259,59 @@ mod tests {
             assert_eq!(p.arena.ledges, 1, "x {x}: through the ledge");
             assert!(p.pos[0].abs() < 300.0);
         }
+    }
+
+    /// A hurt CPU walks to a heal and takes it; one carrying a throwable
+    /// throws it at the opponent in front.
+    #[test]
+    fn cpu_takes_a_heal_and_throws_items() {
+        use crate::items::{HALF, Item, ItemKind, ItemState};
+        let Some(mut w) = island(6, true, 7) else {
+            return;
+        };
+        w.stage.arena.items = true;
+        w.items.timer = 100_000;
+        place(&mut w, 0, 100.0, 0.0, -1.0);
+        w.players[0].life = 300;
+        w.items.list.push(Item {
+            id: 1,
+            kind: ItemKind::Heal,
+            state: ItemState::Ground { surface: -1 },
+            pos: [220.0, -HALF],
+            vel: [0.0, 0.0],
+            age: 0,
+        });
+        let mut healed = false;
+        for _ in 0..400 {
+            w.players[1].pos = [-250.0, 0.0];
+            w.step(&[]);
+            if w.items.list.is_empty() {
+                healed = true;
+                break;
+            }
+        }
+        assert!(healed, "P1 at {:?}", w.players[0].pos);
+        assert!(w.players[0].life > 300);
+        // a carried throwable flies at the opponent
+        let x = w.players[0].pos[0];
+        w.items.list.push(Item {
+            id: 2,
+            kind: ItemKind::Throwable,
+            state: ItemState::Held { holder: 0 },
+            pos: [x, -40.0],
+            vel: [0.0, 0.0],
+            age: 0,
+        });
+        let mut thrown = false;
+        for _ in 0..600 {
+            w.players[1].pos = [x - 150.0, 0.0];
+            w.step(&[]);
+            if w.items.held_by(0).is_none() {
+                thrown = true;
+                break;
+            }
+        }
+        assert!(thrown, "never thrown");
     }
 
     #[test]

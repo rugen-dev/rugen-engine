@@ -204,6 +204,7 @@ impl World {
         self.round.over_flagged = vec![false; self.players.len()];
         self.explods.clear();
         self.projs.clear();
+        self.reset_items();
         self.pausetime = 0;
         self.supertime = 0;
         self.pausetime_buffer = 0;
@@ -235,6 +236,9 @@ impl World {
             p.old_pos = p.pos;
             p.vel = [0.0, 0.0];
             p.facing = facing;
+            p.ledge = None;
+            p.ledge_grabs = 0;
+            p.ledge_cool = 0;
             if !keep_life {
                 p.life = p.life_max;
             }

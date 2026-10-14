@@ -1287,6 +1287,27 @@ impl Lifebar {
                 d.hflip = side == 1;
                 r.draw(d);
             }
+            // a carried item: a tab on the card's top edge, at the right
+            if let Some(it) = w.items.held_by(pi) {
+                let tw = self.fonts.get(&1).map_or(30.0, |f| f.width("ITEM", 1.0));
+                let (bw, bh) = (tw + 44.0, 24.0);
+                let (bx1, by0) = (x1 - 18.0, top - 14.0);
+                let bx0 = bx1 - bw;
+                rect(r, bx0, by0, bx1, by0 + bh, st.clock);
+                rect(r, bx1 - 26.0, by0 + 3.0, bx1 - 4.0, by0 + bh - 3.0, st.card);
+                let mid = self.text_ink(1, "A").map_or(3.5, |i| -(i[1] + i[2]) / 2.0);
+                if let Some(f) = self.fonts.get_mut(&1) {
+                    f.draw(
+                        r,
+                        "ITEM",
+                        at(bx0 + 8.0, by0 + bh / 2.0 + mid),
+                        st.clock_bank,
+                        1,
+                        us,
+                    );
+                }
+                crate::play::draw_item(r, it.kind, at(bx1 - 15.0, by0 + bh / 2.0), 6.0 * us);
+            }
             // tag, pips, name
             let tx = fx + fs + 12.0;
             rect(r, tx, top + 16.0, tx + 30.0, top + 32.0, st.accent[side]);

@@ -66,7 +66,8 @@ pub struct Stage {
 /// `walls = 0` lets players leave the screen edges, `stocks = N` gives lives
 /// per round (respawn at `spawn_y`), `floor = x1, x2` limits the ground to a
 /// span (outside it players fall), `ledge = 0` turns off the ledge grab at
-/// that span's edges, and `air_jumps` / `air_dash` /
+/// that span's edges, `items = 1` drops pickups every `item_every = min,
+/// max` seconds (see [`crate::items`]), and `air_jumps` / `air_dash` /
 /// `fast_fall` override the `[game]` movement options for this stage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Arena {
@@ -80,6 +81,10 @@ pub struct Arena {
     pub fast_fall: Option<bool>,
     /// Ledge grab at the `floor` span's edges (`ledge = 0` turns it off).
     pub ledge: bool,
+    /// Items drop onto the deck and platforms (`items = 1`), every
+    /// `item_every = min, max` seconds (default 10, 20).
+    pub items: bool,
+    pub item_every: [i32; 2],
 }
 
 impl Default for Arena {
@@ -94,6 +99,8 @@ impl Default for Arena {
             air_dash: None,
             fast_fall: None,
             ledge: true,
+            items: false,
+            item_every: [10, 20],
         }
     }
 }
@@ -244,6 +251,13 @@ impl Stage {
             if let Some(v) = a.i32("ledge") {
                 s.arena.ledge = v != 0;
             }
+            if let Some(v) = a.i32("items") {
+                s.arena.items = v != 0;
+            }
+            if let Some(v) = a.i32s("item_every").filter(|v| v.len() >= 2) {
+                let lo = v[0].clamp(1, 600);
+                s.arena.item_every = [lo, v[1].clamp(lo, 600)];
+            }
         }
         for sec in def.sections_named("platform") {
             let x = sec.f32s("x").unwrap_or_default();
@@ -388,6 +402,8 @@ pub struct World {
     pub arena_ai: bool,
     /// Team modes (default: a classic 1v1, see [`crate::team`]).
     pub teams: crate::team::Teams,
+    /// Arena items (`[Arena] items`; empty otherwise).
+    pub items: crate::items::Items,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -433,6 +449,7 @@ impl World {
             movement: Movement::default(),
             arena_ai: false,
             teams: Default::default(),
+            items: crate::items::Items::new(seed),
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -770,6 +787,10 @@ impl World {
         }
     }
 
+    pub(crate) fn power_add_pub(&mut self, i: usize, v: i32) {
+        self.power_add(i, v);
+    }
+
     fn power_add(&mut self, i: usize, v: i32) {
         let p = &mut self.players[i];
         p.power = p.power.saturating_add(v).clamp(0, p.power_max);
@@ -965,6 +986,7 @@ impl World {
                     .copied()
                     .unwrap_or_default()
             };
+            let b = self.item_buttons(i, b);
             let p = &mut self.players[i];
             // TAG (team Tag matches): an edge, read by `tag_step`
             p.tag_press = b.t && !p.tag_held;
@@ -1034,6 +1056,7 @@ impl World {
             }
         }
         self.check_ledges();
+        self.step_items();
         self.check_blastzone();
         crate::arena_ai::observe(self);
 
@@ -3354,6 +3377,10 @@ impl World {
         p.ledge_grabs = 0;
         p.ledge_cool = 0;
         p.state_owner = p.data;
+        // an item carried off the stage is lost with the stock
+        self.items
+            .list
+            .retain(|it| it.state != crate::items::ItemState::Held { holder: i });
         self.change_state(i, 50, None, Some(true));
         self.run_current(i);
     }
@@ -3755,6 +3782,12 @@ impl World {
             if p.ledge_grabs != 0 || p.ledge_cool != 0 {
                 mix(u64::from(p.ledge_grabs) << 32 | p.ledge_cool as u64);
             }
+            if p.item_b_last || p.item_b_mask {
+                mix(u64::from(p.item_b_last) << 1 | u64::from(p.item_b_mask));
+            }
+        }
+        if let Some(v) = self.items_checksum() {
+            mix(v);
         }
         h
     }

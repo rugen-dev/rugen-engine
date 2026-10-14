@@ -67,6 +67,8 @@ air_dash = 1
 fast_fall = 1
 ; catch the deck's edges and climb back on (on by default with a floor)
 ledge = 1
+; pickups (a throwable, a heal, a power boost) every 10-20 s
+items = 1
 
 [Platform]
 x = -540, -400

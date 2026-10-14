@@ -130,7 +130,8 @@ const GOLDEN_KFM: [(u64, u32, [u8; 2]); 4] = [
     (0x4d93d67f889e5e19, 12000, [1, 0]),
     (0x06349344b07c143a, 20000, [2, 1]),
     (0xeccb0277ef3cb214, 12000, [1, 0]),
-    (0xcbc66fae6785c791, 4000, [0, 0]),
+    // examples/arena drops items since the items feature (on purpose)
+    (0xa44d77e9dad5e2ff, 4000, [0, 0]),
 ];
 
 /// The same with real community fighters (Naruto, Sasuke and Goku have

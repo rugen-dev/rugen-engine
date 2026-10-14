@@ -80,10 +80,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Time Attack**: clear the ladder as fast as possible.
 - [x] **Storyboards**: fighter intros and arcade endings.
 - [x] **Ledge grab**: catch the edge of an arena and climb back on.
+- [x] **Items**: pickups that spawn on arena stages, to grab and throw.
 
 ### Planned
 
-- [ ] **Items**: pickups that spawn on arena stages, to grab and throw.
 - [ ] **Stage hazards**: moving platforms and stage events.
 - [ ] **Ranked seasons**: ratings that reset on a schedule.
 - [ ] **Per-fighter leaderboards**: the best players of each character.

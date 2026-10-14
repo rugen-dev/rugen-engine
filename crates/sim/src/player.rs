@@ -157,6 +157,10 @@ pub struct Player {
     /// Ledge grabs this airtime, and ticks before the next one is allowed.
     pub ledge_grabs: u8,
     pub ledge_cool: i32,
+    /// Arena items: B held last tick, and B kept from the character until
+    /// released (it picked up or threw an item, see [`crate::items`]).
+    pub item_b_last: bool,
+    pub item_b_mask: bool,
     pub pal_no: i32,
     /// Set while a negative-state block or current state is being run; -1,-2,-3 or 0.
     pub minus: i8,
@@ -405,6 +409,8 @@ impl Player {
             ledge: None,
             ledge_grabs: 0,
             ledge_cool: 0,
+            item_b_last: false,
+            item_b_mask: false,
             pal_no,
             minus: 0,
             state_owner: data,

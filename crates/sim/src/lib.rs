@@ -22,6 +22,7 @@ pub mod fx;
 pub mod headless;
 pub mod hit;
 pub mod input;
+pub mod items;
 pub mod ledge;
 pub mod player;
 pub mod projectile;
