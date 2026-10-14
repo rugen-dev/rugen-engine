@@ -2138,7 +2138,7 @@ impl Match {
         if logged.is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
             for it in &items {
                 log::info!(
-                    "draw f{} {}{} d{} st {} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    "draw f{} {}{} d{} st {} action {} spr {},{} pos {:?} fac {} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
                     self.world.frame,
                     it.who.0,
                     it.who.1,
@@ -2148,6 +2148,7 @@ impl Match {
                     it.frame.group,
                     it.frame.number,
                     it.pos,
+                    it.facing,
                     it.scale,
                     it.screen,
                     it.blend,

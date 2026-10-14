@@ -113,8 +113,9 @@ fn main() {
                 continue;
             }
             println!(
-                "f{} P{i} id {} par {} st {} prev {} t {} anim {} el {} at {} pos {:.1},{:.1} vel {:.2},{:.2} ctrl {} mt {:?} flags {:#x} trans {:?} pfx {:?}",
+                "f{} P{i} fac {} id {} par {} st {} prev {} t {} anim {} el {} at {} pos {:.1},{:.1} vel {:.2},{:.2} ctrl {} mt {:?} flags {:#x} trans {:?} pfx {:?}",
                 w.frame,
+                p.facing,
                 p.id,
                 p.parent_id,
                 p.state_no,
