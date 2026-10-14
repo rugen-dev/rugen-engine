@@ -434,3 +434,32 @@ align = "center"
   text = "BACK TO FIGHTERS"
   font = 2
   bank = 16
+
+# fighters and stages still converting in the background (crate::prepare)
+[[node]]
+kind = "panel"
+x = 1064
+y = 66
+w = 210
+h = 30
+color = [0.08, 0.06, 0.05, 0.92]
+visible = "preparing.on"
+
+  [[node.children]]
+  kind = "ring"
+  x = 6
+  y = 5
+  w = 20
+  h = 20
+  value = "preparing.progress"
+  border = 4
+  color = [1.0, 1.0, 1.0, 0.25]
+  color2 = [0.89, 0.702, 0.298, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{preparing.line}"
+  x = 34
+  y = 8
+  font = 2
+  bank = 14

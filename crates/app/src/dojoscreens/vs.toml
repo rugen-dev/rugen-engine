@@ -142,3 +142,32 @@ font = 6
 bank = 14
 enter = "fade"
 enter_delay = 10
+
+# the fight waits for a fighter (or stage) still converting in the background
+[[node]]
+kind = "panel"
+x = 440
+y = 560
+w = 400
+h = 84
+color = [0.08, 0.06, 0.05, 0.92]
+visible = "waiting.on"
+
+  [[node.children]]
+  kind = "ring"
+  x = 14
+  y = 12
+  w = 60
+  h = 60
+  value = "waiting.progress"
+  border = 7
+  color = [1.0, 1.0, 1.0, 0.25]
+  color2 = [0.89, 0.702, 0.298, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{waiting.line}"
+  x = 90
+  y = 34
+  font = 2
+  bank = 14

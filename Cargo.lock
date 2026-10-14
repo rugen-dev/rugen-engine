@@ -2743,6 +2743,7 @@ dependencies = [
  "env_logger",
  "gilrs",
  "image-webp",
+ "libc",
  "libm",
  "log",
  "png",

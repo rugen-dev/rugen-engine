@@ -397,3 +397,32 @@ color = [0.07, 0.07, 0.07, 1.0]
     text = "FULLSCREEN"
     font = 2
     bank = 11
+
+# fighters and stages still converting in the background (crate::prepare)
+[[node]]
+kind = "panel"
+x = 1040
+y = 6
+w = 228
+h = 30
+color = [0.07, 0.07, 0.07, 0.92]
+visible = "preparing.on"
+
+  [[node.children]]
+  kind = "ring"
+  x = 6
+  y = 5
+  w = 20
+  h = 20
+  value = "preparing.progress"
+  border = 4
+  color = [1.0, 1.0, 1.0, 0.25]
+  color2 = [0.88, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{preparing.line}"
+  x = 34
+  y = 8
+  font = 2
+  bank = 11

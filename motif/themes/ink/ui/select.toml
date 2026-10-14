@@ -161,6 +161,41 @@ enter_time = 14
     alpha = 0.6
     visible = "item.face_grey"
 
+    # a fighter still converting in the background: dimmed, its initial
+    # and a ring filling as it gets ready (a pick waits for it)
+    [[node.children.children]]
+    kind = "panel"
+    x = 4
+    y = 4
+    w = 56
+    h = 56
+    color = [0.95, 0.94, 0.89, 0.7]
+    visible = "item.preparing"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.initial}"
+    x = 0
+    y = 20
+    w = 64
+    align = "center"
+    font = 1
+    scale = 2
+    bank = 9
+    visible = "item.preparing"
+
+    [[node.children.children]]
+    kind = "ring"
+    x = 9
+    y = 9
+    w = 46
+    h = 46
+    value = "item.progress"
+    border = 5
+    color = [0.0, 0.0, 0.0, 0.3]
+    color2 = [0.88, 0.13, 0.13, 1.0]
+    visible = "item.preparing"
+
     [[node.children.children]]
     kind = "image"
     image = "ui/sel_x.webp"
@@ -971,3 +1006,32 @@ align = "center"
   text = "BACK"
   font = 2
   bank = 9
+
+# fighters and stages still converting in the background (crate::prepare)
+[[node]]
+kind = "panel"
+x = 1064
+y = 66
+w = 210
+h = 30
+color = [0.07, 0.07, 0.07, 0.92]
+visible = "preparing.on"
+
+  [[node.children]]
+  kind = "ring"
+  x = 6
+  y = 5
+  w = 20
+  h = 20
+  value = "preparing.progress"
+  border = 4
+  color = [1.0, 1.0, 1.0, 0.25]
+  color2 = [0.88, 0.13, 0.13, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  text = "{preparing.line}"
+  x = 34
+  y = 8
+  font = 2
+  bank = 11
