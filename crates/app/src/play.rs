@@ -350,8 +350,8 @@ struct Item {
     tint: Tint,
     /// Screen space: `pos` is a screen position (stage units at zoom 1, x
     /// from the centre, y from the top), drawn unzoomed and unshaken; the
-    /// value moves it by that many half-widths of the window's extra width
-    /// over the stage's (-1 = left anchored, 1 = right, 0 = centred).
+    /// value is its edge anchor (-1 = left, 1 = right, 0 = centred), kept
+    /// for the draw log: the screen is the stage's width, so no shift.
     screen: Option<f32>,
     /// What it is, for the `RUGEN_HARNESS_DRAWLOG` dump: kind (P player,
     /// I afterimage, E explod, J projectile), player / explod index, action.
@@ -2325,17 +2325,29 @@ impl Match {
         let mut lifebar = self.lifebar.take();
         let (w, h) = r.size();
         let aspect = w as f32 / h as f32;
-        let screen_w = stage.height * aspect;
-        // zooming in keeps the ground line where it is; zooming out lifts it
-        // toward two thirds of the screen so the wider view shows floor as well
-        // as sky. HUD coordinates are "screen" units mapped back into the
-        // zoomed world so bars never scale with the camera
-        let ground_frac = ground_screen_frac(ground / stage.height, zoom);
-        let center_y = ground - (ground_frac - 0.5) * stage.height / zoom;
+        // the stage's width fills the window's (MUGEN, Ikemen GO): the
+        // simulation keeps fighters inside exactly that width, so a wider
+        // view would show them stopped short of the edge. The height follows
+        // the window, cut or overdrawn by the stage's cuthigh / cutlow /
+        // overdrawlow; the ground line stays put on screen at any zoom.
+        // HUD coordinates are "screen" units mapped back into the zoomed
+        // world so bars never scale with the camera
+        let screen_w = stage.width;
+        let screen_h = stage.width / aspect.max(0.1);
+        let framing = stage_visual.as_ref().map_or(
+            crate::stage::Framing {
+                zoffset: ground,
+                height: stage.height,
+                ..Default::default()
+            },
+            |sv| sv.framing,
+        );
+        let ground_level = framing.ground_level(screen_h);
+        let center_y = ground - (ground_level - screen_h / 2.0) / zoom;
         let u = 1.0 / zoom;
         let hud_left = cam_x - screen_w * u / 2.0;
         let hud_w = screen_w * u;
-        let hud_top = center_y - stage.height * u / 2.0;
+        let hud_top = center_y - screen_h * u / 2.0;
         let hud = |sx: f32, sy: f32| [hud_left + sx * u, hud_top + sy * u];
         if let Some(sv) = stage_visual.as_mut() {
             sv.set_platform_offsets(
@@ -2379,11 +2391,10 @@ impl Match {
         // screen unit
         let mut items = items;
         let screen_left = self.world.cam_x - screen_w * u / 2.0;
-        let extra_half = (screen_w - stage.width) / 2.0;
         for it in items.iter_mut() {
-            if let Some(anchor) = it.screen {
+            if it.screen.is_some() {
                 it.pos = [
-                    screen_left + (screen_w / 2.0 + it.pos[0] + anchor * extra_half) * u,
+                    screen_left + (screen_w / 2.0 + it.pos[0]) * u,
                     hud_top + it.pos[1] * u - ground + cam_y,
                 ];
                 it.scale = [it.scale[0] * u, it.scale[1] * u];
@@ -2471,7 +2482,7 @@ impl Match {
                     at: &hud,
                     u,
                     screen_w,
-                    screen_h: stage.height,
+                    screen_h,
                 },
             );
         }
@@ -2515,8 +2526,8 @@ impl Match {
                 }
             }
         }
-        self.draw_flee_overlay(r, &hud, u, screen_w, stage.height, lifebar.as_mut());
-        self.draw_watch_overlay(r, &hud, u, screen_w, stage.height, lifebar.as_mut());
+        self.draw_flee_overlay(r, &hud, u, screen_w, screen_h, lifebar.as_mut());
+        self.draw_watch_overlay(r, &hud, u, screen_w, screen_h, lifebar.as_mut());
         if brightness < 1.0 {
             r.rect(
                 [-4000.0, -4000.0],
@@ -2529,7 +2540,7 @@ impl Match {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
             // never wider than the window: narrow windows shrink the HUD instead of cutting it
-            let ratio = (stage.height / lc[1].max(1.0)).min(screen_w / lc[0].max(1.0));
+            let ratio = (screen_h / lc[1].max(1.0)).min(screen_w / lc[0].max(1.0));
             let x_off = (screen_w - lc[0] * ratio) / 2.0;
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
             // wider than the fight.def: each side's bars move out to its edge
@@ -2599,13 +2610,13 @@ impl Match {
                     (x1 - bar_w * pf, x1)
                 };
                 r.rect(
-                    hud(x0, stage.height - 14.0),
-                    hud(x1, stage.height - 10.0),
+                    hud(x0, screen_h - 14.0),
+                    hud(x1, screen_h - 10.0),
                     [0.1, 0.1, 0.1, 0.9],
                 );
                 r.rect(
-                    hud(px0, stage.height - 14.0),
-                    hud(px1, stage.height - 10.0),
+                    hud(px0, screen_h - 14.0),
+                    hud(px1, screen_h - 10.0),
                     [0.3, 0.6, 1.0, 1.0],
                 );
             }
@@ -2634,7 +2645,7 @@ impl Match {
                 draw_text(
                     r,
                     &self.net_status,
-                    hud(screen_w / 2.0, stage.height - 4.0),
+                    hud(screen_w / 2.0, screen_h - 4.0),
                     u,
                     [0.8, 0.9, 1.0, 0.9],
                 );
@@ -2643,7 +2654,7 @@ impl Match {
                 draw_text(
                     r,
                     text,
-                    hud(screen_w / 2.0, stage.height * 0.35),
+                    hud(screen_w / 2.0, screen_h * 0.35),
                     3.0 * u,
                     [1.0, 1.0, 1.0, 1.0],
                 );
@@ -2652,7 +2663,7 @@ impl Match {
         self.draw_net_quality(r, &hud, u, screen_w);
         let _ = hud_w;
         let cam = Camera {
-            screen: [screen_w, stage.height],
+            screen: [screen_w, screen_h],
             center: [cam_x, center_y],
             zoom,
         };
@@ -3136,15 +3147,6 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()>
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()?.write_image_data(rgba)?;
     Ok(())
-}
-
-/// Where the ground line sits on screen (0 = top, 1 = bottom) at `zoom`:
-/// the stage's own `zoffset` fraction at zoom 1 and above, easing to 0.66 as
-/// the camera pulls back to 0.3.
-fn ground_screen_frac(at_rest: f32, zoom: f32) -> f32 {
-    let target = 0.66f32.min(at_rest);
-    let t = ((1.0 - zoom) / 0.7).clamp(0.0, 1.0);
-    at_rest + (target - at_rest) * t
 }
 
 /// Join a relay session (UDP fast path, WebSocket fallback), wait for the

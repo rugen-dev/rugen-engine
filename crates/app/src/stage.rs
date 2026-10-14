@@ -99,7 +99,61 @@ impl View {
     }
 }
 
+/// How a stage frames the fight screen vertically (`[Camera] cuthigh /
+/// cutlow / overdrawlow`, `[StageInfo] zoffset`, in stage units).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Framing {
+    pub zoffset: f32,
+    pub height: f32,
+    pub cut_high: f32,
+    /// `None` = MUGEN's guess: `height - zoffset - height * 5 %`.
+    pub cut_low: Option<f32>,
+    pub overdraw_low: f32,
+}
+
+impl Default for Framing {
+    fn default() -> Self {
+        Self {
+            zoffset: 210.0,
+            height: 240.0,
+            cut_high: 0.0,
+            cut_low: None,
+            overdraw_low: 0.0,
+        }
+    }
+}
+
+impl Framing {
+    /// Distance (stage units, at zoom 1) from the top of a screen
+    /// `screen_h` tall to the ground line. The stage's width always fills
+    /// the screen's (MUGEN, Ikemen GO): a screen shorter than the stage
+    /// cuts `cuthigh` / `cutlow` from its top and bottom in proportion, a
+    /// taller one shows up to `overdrawlow` below the stage and the rest
+    /// above (Ikemen GO `Camera.aspectcorrection`).
+    pub fn ground_level(&self, screen_h: f32) -> f32 {
+        let diff = self.height - screen_h;
+        let correction = if diff < 0.0 {
+            (diff + (-diff / 2.0).min(self.overdraw_low.max(0.0))).min(0.0)
+        } else if diff > 0.0 {
+            let low = self
+                .cut_low
+                .unwrap_or(self.height - self.zoffset - self.height * 0.05);
+            let high = self.cut_high;
+            if high + low <= 0.0 {
+                diff
+            } else {
+                let top = high * diff / (high + low);
+                if diff - top <= low { top } else { diff - low }
+            }
+        } else {
+            0.0
+        };
+        self.zoffset - correction
+    }
+}
+
 pub struct StageVisual {
+    pub framing: Framing,
     sff: Sff,
     air: Air,
     elems: Vec<Elem>,
@@ -160,6 +214,18 @@ impl StageVisual {
             .and_then(|s| s.f32s("localcoord"))
             .filter(|v| v.len() >= 2 && v[0] > 0.0)
             .map_or([320.0, 240.0], |v| [v[0], v[1]]);
+        let cam = def.section("camera");
+        let cf = |k: &str| cam.and_then(|c| c.f32(k));
+        let framing = Framing {
+            zoffset: def
+                .section("stageinfo")
+                .and_then(|s| s.f32("zoffset"))
+                .unwrap_or(localcoord[1] * 0.875),
+            height: localcoord[1],
+            cut_high: cf("cuthigh").unwrap_or(0.0),
+            cut_low: cf("cutlow"),
+            overdraw_low: cf("overdrawlow").unwrap_or(0.0),
+        };
         let mut elems = Vec::new();
         for s in def.sections_named(prefix) {
             let ty = s
@@ -264,6 +330,7 @@ impl StageVisual {
             });
         }
         Ok(Self {
+            framing,
             sff,
             air,
             elems,
