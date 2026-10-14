@@ -556,6 +556,10 @@ themes, deck profile checked at 1280x800.
   `~/.cache/rugen-work/replaymeta/shots/replays-{ink,dojo}.png`.
 - [x] **Readable replay names.** (b142af6) `<p1>-vs-<p2>-<stage>-<hash>.json` instead
   of a Unix time; old names keep working.
+- [x] **Exact online and LAN replays.** (55af301, 6090631, 80cef31) Replays
+  record the camera zoom, movement, online rules and an online room's rounds
+  (`sim`), and the team partners' level; SAVE FILE replays play the online
+  match exactly whatever the watcher's options; LAN matches are recorded.
 
 ### Online safety
 Fighters players bring online are third-party files: send them only with
