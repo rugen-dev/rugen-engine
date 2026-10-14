@@ -268,6 +268,19 @@ pub struct Renderer {
     last_frame: (usize, usize),
     /// Freed texture slots ([`Renderer::free_texture`]).
     free_slots: Vec<usize>,
+    /// The GPU this renderer draws with (replays record it).
+    adapter: AdapterSummary,
+}
+
+/// The GPU adapter in words: its name, the wgpu backend and the driver.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdapterSummary {
+    /// `AMD Radeon RX 7800 XT (RADV NAVI32)`
+    pub name: String,
+    /// `Vulkan`, `Metal`, `Dx12`, `Gl`
+    pub backend: String,
+    /// `radv Mesa 25.1.4` (driver and its info, when the backend says)
+    pub driver: String,
 }
 
 /// Counters for frame profiling (`RUGEN_FRAMESTATS`).
@@ -381,6 +394,16 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
+        let info = adapter.get_info();
+        let adapter_summary = AdapterSummary {
+            name: info.name.trim().to_string(),
+            backend: format!("{:?}", info.backend),
+            driver: [info.driver.trim(), info.driver_info.trim()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
+        };
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or(Error::SurfaceConfig)?;
@@ -571,9 +594,15 @@ impl Renderer {
             uploads: std::cell::Cell::new((0, 0)),
             last_frame: (0, 0),
             free_slots: Vec::new(),
+            adapter: adapter_summary,
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
+    }
+
+    /// The GPU adapter, backend and driver this renderer draws with.
+    pub fn adapter(&self) -> &AdapterSummary {
+        &self.adapter
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

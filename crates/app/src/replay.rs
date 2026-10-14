@@ -15,9 +15,66 @@ fn size_none() -> FighterSize {
 
 pub const REPLAY_VERSION: u32 = 1;
 
+/// An online or LAN match: where it was played and against what.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OnlineMeta {
+    /// The server's name (its host, never an address of a player), or `lan`.
+    pub server: String,
+    /// The server's match id (0 on LAN).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub match_id: u64,
+    /// Our side: 0 = P1, 1 = P2.
+    pub side: u8,
+    /// The other player's engine and OS / arch when its build sent them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<rugen_proto::MachineSummary>,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+/// The `mode` a replay records for a match started from `mode`.
+pub fn mode_name(mode: Option<crate::game::Mode>) -> &'static str {
+    use crate::game::Mode;
+    match mode {
+        Some(Mode::Arcade) => "arcade",
+        Some(Mode::Versus) => "vs",
+        Some(Mode::Training) => "training",
+        Some(Mode::Tutorial) => "tutorial",
+        Some(Mode::Watch) => "watch",
+        Some(Mode::Arena) => "arena",
+        Some(Mode::Survival) => "survival",
+        Some(Mode::BossRush) => "boss_rush",
+        Some(Mode::TimeAttack) => "time_attack",
+        Some(Mode::Debugger) => "debugger",
+        Some(Mode::Online | Mode::Netplay) => "online",
+        Some(Mode::Options | Mode::Exit) | None => "quick",
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Replay {
     pub version: u32,
+    /// The build that recorded it; absent from older replays. Header
+    /// fields (this one to `online`) never change how the match plays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<crate::machine::Engine>,
+    /// The machine that recorded it (no personal data, see
+    /// [`crate::machine`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<crate::machine::Machine>,
+    /// `arcade`, `vs`, `training`, `watch`, `arena`, `survival`,
+    /// `boss_rush`, `time_attack`, `online`, `lan`, `quick` (`rugen play`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// When the match started, UTC RFC 3339.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<String>,
+    /// Online and LAN matches: where and against what.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online: Option<OnlineMeta>,
     pub p1: PathBuf,
     pub p2: PathBuf,
     pub stage: Option<PathBuf>,
@@ -71,6 +128,11 @@ impl Replay {
     ) -> Self {
         Self {
             version: REPLAY_VERSION,
+            engine: Some(crate::machine::Engine::current()),
+            machine: Some(crate::machine::Machine::current()),
+            mode: Some(mode_name(setup.mode).into()),
+            recorded_at: Some(crate::machine::now_rfc3339()),
+            online: None,
             p1: setup.p1.clone(),
             p2: setup.p2.clone(),
             stage: setup.stage.clone(),
@@ -181,6 +243,11 @@ mod tests {
     fn replays_keep_their_round_time() {
         let setup = Replay {
             version: REPLAY_VERSION,
+            engine: None,
+            machine: None,
+            mode: None,
+            recorded_at: None,
+            online: None,
             p1: "a".into(),
             p2: "b".into(),
             stage: None,
@@ -274,5 +341,47 @@ mod tests {
         let back: Replay = serde_json::from_str(&json).unwrap();
         assert_eq!(back.seed, Some(0xDEAD_BEEF));
         assert_eq!(back.setup().seed, Some(0xDEAD_BEEF));
+    }
+
+    /// Engine, machine, mode and time ride along and come back; a replay
+    /// from before them reads without them and plays as it did.
+    #[test]
+    fn replays_say_what_recorded_them() {
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        assert!(old.engine.is_none() && old.machine.is_none() && old.online.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("engine"));
+        let mut setup = old.setup();
+        setup.mode = Some(crate::game::Mode::Arcade);
+        let mut r = Replay::new(&setup, FighterSize::None, false, 60, 3, None);
+        r.online = Some(OnlineMeta {
+            server: "play.example.dev".into(),
+            match_id: 42,
+            side: 1,
+            peer: Some(rugen_proto::MachineSummary {
+                engine: "rugen 0.7.0".into(),
+                os: "Windows 11 10.0.22631".into(),
+                arch: "x86_64".into(),
+                ..Default::default()
+            }),
+        });
+        let e = r.engine.clone().unwrap();
+        assert_eq!(e.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(r.mode.as_deref(), Some("arcade"));
+        let at = r.recorded_at.clone().unwrap();
+        assert!(crate::machine::parse_rfc3339(&at).is_some(), "{at}");
+        let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        assert_eq!(back.engine, r.engine);
+        assert_eq!(back.machine, r.machine);
+        assert_eq!(back.online, r.online);
+        assert_eq!(back.recorded_at, r.recorded_at);
+        // the header never changes the match
+        let (a, b) = (old.setup(), back.setup());
+        assert_eq!(
+            (a.p1, a.p2, a.ai, a.fighter_size, a.life),
+            (b.p1, b.p2, b.ai, b.fighter_size, b.life)
+        );
     }
 }

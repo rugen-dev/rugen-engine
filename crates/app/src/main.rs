@@ -69,6 +69,7 @@ mod keylabel;
 mod kit;
 mod latency;
 mod lifebar;
+mod machine;
 mod matchup;
 mod mouse;
 mod official;

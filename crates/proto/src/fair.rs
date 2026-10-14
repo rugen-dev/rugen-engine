@@ -198,6 +198,10 @@ pub struct ReadyReport {
     /// Game version (`rugen 0.2.0`); both sides must match.
     pub engine: String,
     pub rules: Rules,
+    /// This player's machine in a few words (debug reports); absent from
+    /// older clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<crate::MachineSummary>,
 }
 
 /// Matchup phase of one match, as seen by one member.
