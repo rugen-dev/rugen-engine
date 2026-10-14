@@ -115,6 +115,22 @@ mod tag_const {
     pub const RED_MUL: f32 = 0.75;
     /// A computer leader's chance per eligible tick to tag out (1 in N).
     pub const AI_CHANCE: u32 = 240;
+    /// The leaving fighter fades 100 -> 80 -> 60 -> 40 -> 20 -> 0 % opacity,
+    /// one step every this many ticks, then is gone.
+    pub const FADE_STEP: i32 = 6;
+    pub const FADE_STEPS: i32 = 5;
+}
+
+impl crate::player::Player {
+    /// Opacity a Tag fighter is drawn with: a leaving one fades out in five
+    /// steps (1, 0.8, .. 0), everybody else is opaque. Drawing only.
+    pub fn tag_opacity(&self) -> f32 {
+        if self.tag != TagPhase::Leaving {
+            return 1.0;
+        }
+        let step = (self.state_time / tag_const::FADE_STEP).min(tag_const::FADE_STEPS);
+        1.0 - step as f32 / tag_const::FADE_STEPS as f32
+    }
 }
 
 /// The team setup of a match. `Default` is a classic 1v1.
@@ -409,7 +425,12 @@ impl World {
             self.teams.last_out[side] = None;
         }
         let lp = &self.players[leader];
-        if !lp.ctrl || self.being_hit(leader) || !(lp.state_no == 0 || lp.pos[1] >= lp.ground) {
+        // no switch in a hitstun, mid-move or while frozen by a (Super)Pause
+        if !lp.ctrl
+            || lp.pause_bool
+            || self.being_hit(leader)
+            || !(lp.state_no == 0 || lp.pos[1] >= lp.ground)
+        {
             return;
         }
         let want = if lp.ai_level > 0 {
@@ -557,9 +578,11 @@ impl World {
                 let p = &mut self.players[i];
                 p.pos[0] += p.vel[0] * p.facing;
                 let x = p.pos[0] * s;
+                let faded = p.tag_opacity() <= 0.0;
                 let gone = tag_const::GONE * self.s240();
                 let (l, r) = (self.screen_left(), self.screen_right());
-                if x < l - gone || x > r + gone {
+                // faded out (or far off screen): it disappears
+                if faded || x < l - gone || x > r + gone {
                     self.tag_wait(i);
                 }
             }
@@ -576,7 +599,10 @@ impl World {
                     dx * s < 30.0 * self.s240() + 30.0
                 });
                 if self.back_dist(i) >= 0.0 && (stop || near) {
-                    self.tag_land(i, true);
+                    // in place: normal play, with control only while the
+                    // round is still on (a KO or time over mid-swap)
+                    let fight = self.round.round_state() == 2;
+                    self.tag_land(i, fight);
                 }
             }
             TagPhase::JumpingIn => {
@@ -1041,6 +1067,163 @@ mod tests {
         w.players[2].life = 0;
         until(&mut w, 30, |w| w.round.finish != crate::Finish::NotYet);
         assert_eq!(w.round.win_team, 1);
+    }
+
+    /// A Tag world with both partners waiting outside and the leaders
+    /// standing with control (P2's computer off).
+    fn tag_ready(mode2: TeamMode, size2: usize) -> Option<World> {
+        let mut w = team_world([TeamMode::Tag, mode2], [2, size2], [0, 0])?;
+        until(&mut w, 400, |w| w.round.round_state() == 2);
+        until(&mut w, 300, |w| {
+            w.teams.members.iter().enumerate().all(|(side, m)| {
+                w.teams.mode[side] != TeamMode::Tag
+                    || m.iter().all(|&k| {
+                        k == w.teams.leader[side] || w.players[k].tag == TagPhase::Waiting
+                    })
+            })
+        });
+        until(&mut w, 300, |w| {
+            w.players[0].ctrl && w.players[0].state_no == 0
+        });
+        Some(w)
+    }
+
+    /// The swap itself: the camera holds still, the newcomer is cosmetic
+    /// (no control, not hit, not pushed, nobody's P2) until in place, the
+    /// one leaving fades out in five steps and disappears.
+    #[test]
+    fn tag_swap_is_cosmetic_and_holds_the_camera() {
+        let Some(mut w) = tag_ready(TeamMode::Single, 1) else {
+            return;
+        };
+        let cam = (w.cam_x, w.cam_zoom);
+        w.step(&[TAG]);
+        assert_eq!(w.players[2].tag, TagPhase::Entering);
+        let mut opac = vec![w.players[0].tag_opacity()];
+        while w.players[2].tag != TagPhase::None {
+            assert_eq!((w.cam_x, w.cam_zoom), cam, "the camera holds still");
+            let p = &w.players[2];
+            assert!(!p.ctrl && p.unhittable_time > 0 && !p.player_push);
+            assert_eq!(w.nearest_enemy(1), None, "nobody's P2 while entering");
+            w.step(&[]);
+            let o = w.players[0].tag_opacity();
+            if w.players[0].tag == TagPhase::Leaving && opac.last() != Some(&o) {
+                opac.push(o);
+            }
+            assert!(w.frame < 2000);
+        }
+        assert!(w.players[2].ctrl, "in place: normal play");
+        assert_eq!(w.nearest_enemy(1), Some(2));
+        while w.players[0].tag == TagPhase::Leaving {
+            let o = w.players[0].tag_opacity();
+            if opac.last() != Some(&o) {
+                opac.push(o);
+            }
+            w.step(&[]);
+            assert!(w.frame < 3000);
+        }
+        assert_eq!(w.players[0].tag, TagPhase::Waiting, "faded out, then gone");
+        assert_eq!(
+            opac,
+            vec![1.0, 0.8, 0.6, 0.39999998, 0.19999999],
+            "{opac:?}"
+        );
+        assert!(w.players[0].asserted(crate::player::assert::INVISIBLE));
+    }
+
+    /// No swap in a hitstun or while a SuperPause freezes the leader.
+    #[test]
+    fn tag_no_swap_in_hitstun_or_superpause() {
+        let Some(mut w) = tag_ready(TeamMode::Single, 1) else {
+            return;
+        };
+        let snap = w.clone();
+        w.players[0].move_type = rugen_cns::state::MoveType::H;
+        w.step(&[TAG]);
+        assert_eq!(w.teams.leader[0], 0, "no swap while being hit");
+        let mut w = snap;
+        w.set_super_pause_time(1, 30, 0, false, 1.0);
+        w.step(&[]);
+        w.step(&[TAG]);
+        assert_eq!(w.teams.leader[0], 0, "no swap under a SuperPause");
+    }
+
+    /// Both sides swap on the same tick: the camera still holds.
+    #[test]
+    fn tag_both_sides_swap_at_once() {
+        let Some(mut w) = tag_ready(TeamMode::Tag, 2) else {
+            return;
+        };
+        until(&mut w, 300, |w| {
+            w.players[1].ctrl && w.players[1].state_no == 0
+        });
+        w.players[1].input_slot = 1;
+        let cam = w.cam_x;
+        w.step(&[TAG, TAG]);
+        assert_eq!(w.players[2].tag, TagPhase::Entering);
+        assert_eq!(w.players[3].tag, TagPhase::Entering);
+        for _ in 0..20 {
+            w.step(&[]);
+            assert_eq!(w.cam_x, cam);
+        }
+        until(&mut w, 300, |w| {
+            w.players[2].tag == TagPhase::None && w.players[3].tag == TagPhase::None
+        });
+        assert!(w.players[2].ctrl && w.players[3].ctrl);
+    }
+
+    /// The round ends mid-swap (KO of the opponent, time over): the
+    /// newcomer still reaches its place, without control.
+    #[test]
+    fn tag_round_end_mid_swap() {
+        let Some(mut w) = tag_ready(TeamMode::Single, 1) else {
+            return;
+        };
+        w.step(&[TAG]);
+        w.players[1].life = 0;
+        until(&mut w, 400, |w| w.players[2].tag == TagPhase::None);
+        assert!(w.round.round_state() > 2);
+        assert!(!w.players[2].ctrl, "no control once the round is decided");
+    }
+
+    /// A hit landing during the swap: neither the newcomer nor the one
+    /// leaving can be hit.
+    #[test]
+    fn tag_hit_during_swap_misses() {
+        let Some(mut w) = tag_ready(TeamMode::Single, 1) else {
+            return;
+        };
+        w.step(&[TAG]);
+        let (l0, l2) = (w.players[0].life, w.players[2].life);
+        // P2 attacks right where the newcomer runs
+        w.players[1].ai_level = 8;
+        for _ in 0..30 {
+            w.step(&[]);
+            if w.players[2].tag == TagPhase::None {
+                break;
+            }
+        }
+        assert_eq!(w.players[0].life, l0, "the one leaving is out of reach");
+        assert!(w.players[2].tag != TagPhase::Entering || w.players[2].life == l2);
+    }
+
+    /// Rollback: a world copied mid-swap plays on bit-identically.
+    #[test]
+    fn tag_swap_survives_rollback() {
+        let Some(mut w) = tag_ready(TeamMode::Single, 1) else {
+            return;
+        };
+        w.step(&[TAG]);
+        for _ in 0..5 {
+            w.step(&[]);
+        }
+        let mut copy = w.clone();
+        for _ in 0..120 {
+            w.step(&[]);
+            copy.step(&[]);
+            assert_eq!(w.checksum(), copy.checksum());
+        }
+        assert_eq!(w.players[0].tag, copy.players[0].tag);
     }
 
     /// Red life: a Tag fighter keeps a quarter of the damage as red life

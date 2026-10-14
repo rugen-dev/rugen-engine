@@ -386,6 +386,25 @@ fn queue_order(kind: char, seq: usize) -> std::cmp::Reverse<(u8, usize)> {
     std::cmp::Reverse((group, seq))
 }
 
+/// `blend` drawn at `opacity` (0..=1): a plain draw becomes a translucent
+/// one (MUGEN addalpha src = a, dst = 1 - a), an additive or subtractive
+/// one weakens its source.
+fn fade(blend: Blend, opacity: f32) -> Blend {
+    if opacity >= 1.0 {
+        return blend;
+    }
+    let a = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let k = |src: u8| ((u16::from(src) * u16::from(a)) / 255) as u8;
+    match blend {
+        Blend::Alpha => Blend::Add {
+            src: a,
+            dst: 255 - a,
+        },
+        Blend::Add { src, dst } => Blend::Add { src: k(src), dst },
+        Blend::Sub { src, dst } => Blend::Sub { src: k(src), dst },
+    }
+}
+
 /// PalFX multiply for a subtractive draw (Ikemen `toShader`, `useNeg`).
 fn sub_mul(m: [f32; 3]) -> [f32; 3] {
     [0, 1, 2].map(|i| (m[(i + 1) % 3] + m[(i + 2) % 3]) / 2.0)
@@ -1932,7 +1951,8 @@ impl Match {
                 p.facing,
                 p.spr_priority,
             );
-            let blend = resolve_blend(&frame, p.trans, p.alpha);
+            // a Tag fighter leaving the screen fades out in steps
+            let blend = fade(resolve_blend(&frame, p.trans, p.alpha), p.tag_opacity());
             let angle = if p.angle_drawn {
                 p.angle * p.facing
             } else {
@@ -3244,6 +3264,18 @@ mod tests {
         // Goku's FXSUB helper: mul = 0,256,512 subtracts mostly red
         assert_eq!(sub_mul([0.0, 1.0, 2.0]), [1.5, 1.0, 0.5]);
         assert_eq!(sub_mul([1.0; 3]), [1.0; 3]);
+    }
+
+    /// The Tag fighter leaving fades through 100, 80, 60, 40, 20, 0 %.
+    #[test]
+    fn tag_fade_blends() {
+        assert_eq!(fade(Blend::Alpha, 1.0), Blend::Alpha);
+        assert_eq!(fade(Blend::Alpha, 0.6), Blend::Add { src: 153, dst: 102 });
+        assert_eq!(fade(Blend::Alpha, 0.0), Blend::Add { src: 0, dst: 255 });
+        assert_eq!(
+            fade(Blend::Add { src: 255, dst: 255 }, 0.2),
+            Blend::Add { src: 51, dst: 255 }
+        );
     }
 
     /// Online camera determinism: the camera is part of the simulation, so

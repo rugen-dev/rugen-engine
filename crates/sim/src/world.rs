@@ -669,7 +669,13 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(i, o)| {
-                *i != me && !o.removed && !o.standby && o.player_type && o.team != p.team
+                // a Tag fighter entering the screen is cosmetic until in place
+                *i != me
+                    && !o.removed
+                    && !o.standby
+                    && o.player_type
+                    && o.team != p.team
+                    && o.tag == crate::team::TagPhase::None
             })
             .min_by(|(a, _), (b, _)| {
                 let da = self.rel_pos(me, *a)[0].abs();
@@ -3808,12 +3814,15 @@ impl World {
             (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
         // the camera works in stage units; positions are in each fighter's
         // own (localcoord) units
-        for (i, p) in self
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| !p.removed && !p.standby && p.helper_index == 0 && p.player_type)
-        {
+        for (i, p) in self.players.iter().enumerate().filter(|(_, p)| {
+            // Tag fighters entering or leaving are not followed: the
+            // camera holds still through a swap
+            !p.removed
+                && !p.standby
+                && p.helper_index == 0
+                && p.player_type
+                && p.tag == crate::team::TagPhase::None
+        }) {
             let s = self.local_scale(i);
             let (x, y) = (p.pos[0] * s, p.pos[1] * s);
             leftest = leftest.min(x);
@@ -3859,9 +3868,18 @@ impl World {
             tl += diff / 2.0;
             tr -= diff / 2.0;
         }
-        // room to zoom in: tighten the edges toward the players
+        // room to zoom in: tighten the edges toward the players, except while
+        // a Tag fighter enters or leaves: the camera holds through a swap
+        // (it still pans or pulls back to keep the fighters in place on screen)
+        let swapping = self.players.iter().any(|p| {
+            !p.removed
+                && !matches!(
+                    p.tag,
+                    crate::team::TagPhase::None | crate::team::TagPhase::Waiting
+                )
+        });
         let max_scale = st.zoom_in;
-        if half * 2.0 / (tr - tl) < max_scale {
+        if !swapping && half * 2.0 / (tr - tl) < max_scale {
             let mut dl = (leftest - tension - tl).max(0.0);
             let mut dr = (rightest + tension - tr).min(0.0);
             if dl - dr > 0.0 && half * 2.0 / ((tr + dr) - (tl + dl)) > max_scale {
