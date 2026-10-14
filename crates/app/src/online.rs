@@ -2339,7 +2339,18 @@ impl OnlineScreen {
                 push(esc, "BACK");
             }
             State::Lobby => {
-                push(enter, "JOIN");
+                // a full room playing a streamed match, or a live match row: ENTER watches
+                let row = self
+                    .ui
+                    .focused()
+                    .and_then(|f| f.strip_prefix("lobby_list["))
+                    .and_then(|f| f.split(']').next())
+                    .and_then(|i| i.parse::<usize>().ok());
+                let watches = row.is_some_and(|i| match self.rooms.get(i) {
+                    Some(r) => r.live_match > 0 && r.players >= 2,
+                    None => i - self.rooms.len() < self.lives.len(),
+                });
+                push(enter, if watches { "WATCH" } else { "JOIN" });
                 push(key("watch"), "WATCH");
                 push(key("create"), "CREATE");
                 push(esc, "BACK");
@@ -2348,6 +2359,8 @@ impl OnlineScreen {
                 let bk = self.bracket_json();
                 if bk["can_start"].as_bool() == Some(true) {
                     push(enter, "START");
+                } else if bk["live"].as_bool() == Some(true) {
+                    push(enter, "WATCH");
                 }
                 if self.clipboard {
                     push(key("copy"), "COPY CODE");
@@ -2774,7 +2787,8 @@ impl OnlineScreen {
                     "on": !off,
                     "full": full && !off,
                     "open": !full && !off,
-                    "can_watch": !off && r.spectators < r.max_spectators,
+                    // a streamed match has no seat limit
+                    "can_watch": !off && (r.live_match > 0 || r.spectators < r.max_spectators),
                     "action": if !off && r.live_match > 0 && full {
                         format!("lobby:live:{}", r.live_match)
                     } else if off || full {
@@ -2852,7 +2866,7 @@ impl OnlineScreen {
             let slot = h_all / round.len() as f32;
             for (i, m) in round.iter().enumerate() {
                 let line = match m.state.as_str() {
-                    "live" => "LIVE NOW",
+                    "live" => "LIVE · ENTER TO WATCH",
                     "called" => "CALLED · PICKING",
                     "next" => "NEXT",
                     _ => "",
@@ -2911,7 +2925,7 @@ impl OnlineScreen {
                     "live": live, "calm": !live && m.state != "wait",
                     "wait": m.state == "wait",
                     "match_id": m.match_id,
-                    "action": format!("bk:match:{ri}:{i}"),
+                    "action": "bk:watch",
                 }));
             }
         }
@@ -3655,9 +3669,11 @@ impl OnlineScreen {
             ("remove", State::Servers) if hub => "online:remove".into(),
             ("create", State::Lobby) => "online:create".into(),
             ("watch", State::Lobby) => {
-                let code = self.focused_room().map(|r| r.code.clone());
-                match code {
-                    Some(c) => format!("lobby:watch:{c}"),
+                // a running match the server streams: watch it from its log
+                let room = self.focused_room().map(|r| (r.code.clone(), r.live_match));
+                match room {
+                    Some((_, id)) if id > 0 => format!("lobby:live:{id}"),
+                    Some((c, _)) => format!("lobby:watch:{c}"),
                     None => return false,
                 }
             }
@@ -4195,6 +4211,19 @@ impl OnlineScreen {
                     let c = self.client.clone();
                     self.jobs
                         .push(Job::Room(Pending::spawn(move || c.start_tournament(&code))));
+                }
+            }
+            ("bk", "watch") => {
+                // the bracket's live match, whichever box ENTER was on
+                let live = self.room.as_ref().and_then(|r| {
+                    let t = r.tournament.as_ref()?;
+                    let [ri, i] = t.live?;
+                    let m = t.rounds.get(ri as usize)?.get(i as usize)?;
+                    (m.state == "live" && m.match_id > 0).then(|| (m.match_id, r.code.clone()))
+                });
+                match live {
+                    Some((id, code)) => self.start_live_watch(id, Some(code)),
+                    None => self.notice("NOTHING LIVE", "THE NEXT MATCH IS NOT BEING FOUGHT YET."),
                 }
             }
             ("bk", _) => {}

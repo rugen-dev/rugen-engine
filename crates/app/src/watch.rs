@@ -268,7 +268,7 @@ mod tests {
         let n = steps(0, have, false, true);
         assert_eq!(n, CATCHUP_STEPS);
         let n = steps(have - LIVE_DELAY - CATCHUP_MARGIN - 10, have, false, true);
-        assert_eq!(n, CATCHUP_MARGIN + 10);
+        assert_eq!(n, (CATCHUP_MARGIN + 10).min(CATCHUP_STEPS));
         // within the delay: one frame per frame, none when caught up
         assert_eq!(steps(have - LIVE_DELAY, have, false, true), 1);
         assert_eq!(steps(have, have, false, true), 0);
