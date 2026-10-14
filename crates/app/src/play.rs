@@ -541,6 +541,9 @@ pub struct Match {
     pub start_label: String,
     /// What each side presses for TAG (Tag teams: the HUD hint).
     pub tag_labels: [String; 2],
+    /// Arena hints: what each side presses for X (jump off a ledge) and B
+    /// (pick up / throw an item).
+    pub arena_caps: [[String; 2]; 2],
     /// Profile stats already written for this match.
     pub stats_recorded: bool,
     /// TRAINING tools (hitboxes, ...): drawing and the dummy's inputs only.
@@ -746,6 +749,7 @@ impl Match {
             tutorial: None,
             start_label: "START".into(),
             tag_labels: ["TAG".into(), "TAG".into()],
+            arena_caps: [["X".into(), "B".into()], ["X".into(), "B".into()]],
             stats_recorded: false,
             training: None,
             run_hud: None,
@@ -2007,6 +2011,11 @@ impl Match {
             if let Some((left, right)) = self.run_hud.as_ref() {
                 lb.draw_run_strip(r, &lb_hud, u * ratio, left, right);
             }
+            if arena {
+                for (anchor, hint) in self.arena_hints(ground, cam_y) {
+                    lb.draw_hint(r, anchor, u * ratio, &hint);
+                }
+            }
         } else {
             // life bars (screen units via `hud`)
             for (i, p) in self
@@ -2100,6 +2109,56 @@ impl Match {
         self.stage_visual = stage_visual;
         self.lifebar = lifebar;
         (cam, clear)
+    }
+}
+
+impl Match {
+    /// In-world hints over the human fighters of an arena match (world
+    /// position of the head, hint): the ledge actions while hanging.
+    fn arena_hints(&self, ground: f32, cam_y: f32) -> Vec<([f32; 2], crate::lifebar::Hint)> {
+        let w = &self.world;
+        let mut out = Vec::new();
+        for (i, p) in w.players.iter().enumerate() {
+            if p.helper_index != 0 || p.removed || p.ai_level > 0 {
+                continue;
+            }
+            let side = p.input_slot.min(1);
+            let s = w.local_scale(i);
+            let h = w
+                .data_height
+                .get(p.data)
+                .copied()
+                .filter(|h| *h > 0.0)
+                .unwrap_or(60.0);
+            let anchor = [p.pos[0] * s, ground + p.pos[1] * s - h - cam_y];
+            if let Some(l) = p
+                .ledge
+                .filter(|l| l.action == rugen_sim::ledge::LedgeAction::Hang)
+            {
+                out.push((
+                    anchor,
+                    ledge_hint(l.left(), l.side, &self.arena_caps[side][0]),
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// The ledge panel: time left, then climb (up), roll in (toward the deck)
+/// and jump (the X key).
+pub fn ledge_hint(left: i32, side: f32, jump: &str) -> crate::lifebar::Hint {
+    use crate::lifebar::{Hint, HintSeg};
+    let tenths = (left.max(0) * 10 + 59) / 60;
+    let row = |cap: &str, label: &str| vec![HintSeg::Cap(cap.into()), HintSeg::Text(label.into())];
+    Hint {
+        dark: true,
+        title: Some(format!("LEDGE · {}.{} S", tenths / 10, tenths % 10)),
+        rows: vec![
+            row("↑", "CLIMB"),
+            row(if side > 0.0 { "←" } else { "→" }, "ROLL IN"),
+            row(jump, "JUMP"),
+        ],
     }
 }
 
@@ -2658,6 +2717,31 @@ mod tests {
 
     /// The tutorial's step title, hint and progress never overlap ("JUMP"
     /// sat on "PRESS ↑": fixed baselines ignored the font heights).
+    #[test]
+    fn ledge_hint_counts_down_and_points_at_the_deck() {
+        use crate::lifebar::HintSeg;
+        let h = ledge_hint(84, 1.0, "U");
+        assert_eq!(h.title.as_deref(), Some("LEDGE · 1.4 S"));
+        assert_eq!(
+            h.rows[1][0],
+            HintSeg::Cap("←".into()),
+            "right edge: roll in leftward"
+        );
+        assert_eq!(h.rows[2][0], HintSeg::Cap("U".into()));
+        assert_eq!(
+            ledge_hint(120, -1.0, "X").title.as_deref(),
+            Some("LEDGE · 2.0 S")
+        );
+        assert_eq!(
+            ledge_hint(1, -1.0, "X").rows[1][0],
+            HintSeg::Cap("→".into())
+        );
+        assert_eq!(
+            ledge_hint(0, -1.0, "X").title.as_deref(),
+            Some("LEDGE · 0.0 S")
+        );
+    }
+
     #[test]
     fn tutorial_lines_do_not_overlap() {
         // fight.def fonts: ink 14 units over the baseline for the title, 9

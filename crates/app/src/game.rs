@@ -1664,6 +1664,16 @@ impl Shell {
                                 self.input.devices()[side],
                             )
                             .plain();
+                            // arena hints: X jumps off a ledge, B grabs an item
+                            m.arena_caps[side] = [7, 5].map(|slot| {
+                                crate::keylabel::cap(
+                                    &self.config.input,
+                                    side,
+                                    slot,
+                                    self.input.devices()[side],
+                                )
+                                .plain()
+                            });
                         }
                         if setup.tutorial {
                             let keys = crate::keylabel::Labels::new(

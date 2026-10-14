@@ -93,6 +93,7 @@ pub struct ArenaAiState {
     pub cancels: u32,
     pub recoveries: u32,
     pub navs: u32,
+    pub ledges: u32,
 }
 
 impl ArenaAiState {
@@ -209,7 +210,10 @@ impl View {
         };
         let g = w.data[p.data].konst("movement.yaccel").unwrap_or(0.44) * s;
         // off-stage: the fall from here (as it goes now) lands on nothing
-        let off = airborne && !lands(w, [x, y], [vx, p.vel[1] * s], g, 0, 150);
+        // and catches no ledge
+        let fall = [vx, p.vel[1] * s];
+        let off =
+            airborne && !lands(w, [x, y], fall, g, 0, 150) && !grabs(w, i, [x, y], fall, g, 150);
         let opp = w
             .players
             .iter()
@@ -340,6 +344,78 @@ pub fn lands(
     true
 }
 
+/// Does player `i`'s body at `(x, y)` moving at `(vx, vy)` catch a ledge
+/// within `ticks` (stage units, ballistic)? Its facing stays as it is.
+pub fn grabs(
+    w: &World,
+    i: usize,
+    [mut x, mut y]: [f32; 2],
+    [vx, mut vy]: [f32; 2],
+    g: f32,
+    ticks: u32,
+) -> bool {
+    let p = &w.players[i];
+    if crate::ledge::edges(w).is_none() || p.ledge_grabs >= crate::ledge::REGRABS {
+        return false;
+    }
+    let bottom = w.stage.arena.blastzone.map_or(400.0, |b| b[3]);
+    for t in 0..ticks {
+        vy += g;
+        x += vx;
+        y += vy;
+        if vy >= 0.0
+            && t as i32 >= p.ledge_cool
+            && crate::ledge::window(w, i, x, y)
+                .is_some_and(|side| crate::ledge::faces(p.facing, vx, side))
+        {
+            return true;
+        }
+        if y > bottom {
+            return false;
+        }
+    }
+    false
+}
+
+/// On the ledge: wait a moment (shorter at higher levels), then climb, or
+/// roll / jump past an opponent waiting at the edge. A fresh press each
+/// time (the ledge reads presses made after the grab).
+fn ledge_choice(w: &World, i: usize, h: &crate::ledge::Hang) -> Buttons {
+    use crate::ledge::{ACT_AFTER, LedgeAction};
+    if h.action != LedgeAction::Hang {
+        return Buttons::default();
+    }
+    let p = &w.players[i];
+    let level = p.ai_level.clamp(1, 8);
+    let grabbed_at = w.frame.wrapping_sub(h.t as u32);
+    let wait = ACT_AFTER + 2 * (9 - level) + roll_at(grabbed_at, i, 6) as i32 % 12;
+    if h.t < wait && h.left() > 10 {
+        return Buttons::default();
+    }
+    let toward = -h.side;
+    // an opponent standing near this edge: get past it
+    let guarded = w.players.iter().enumerate().any(|(k, q)| {
+        k != i
+            && q.helper_index == 0
+            && !q.removed
+            && q.alive()
+            && q.team != p.team
+            && q.state_type != StateType::A
+            && (-20.0..90.0).contains(&((q.pos[0] * w.local_scale(k) - h.edge) * toward))
+    });
+    let mut b = Buttons::default();
+    if guarded && level >= 3 {
+        if roll_at(grabbed_at, i, 7) < 50 {
+            b.x = true;
+        } else {
+            b = dir_buttons(toward);
+        }
+    } else {
+        b.u = true;
+    }
+    b
+}
+
 /// Deterministic 0..100 roll for player `i` (no `world.rng`, so the
 /// character's own `Random` stream is untouched).
 fn roll(w: &World, i: usize, salt: u32) -> u32 {
@@ -412,6 +488,17 @@ pub fn filter(w: &mut World, i: usize, b: Buttons) -> Buttons {
         w.players[i].arena.script_len = 0;
         w.players[i].arena.last = b;
         return b;
+    }
+    if let Some(h) = w.players[i].ledge {
+        let out = ledge_choice(w, i, &h);
+        let st = &mut w.players[i].arena;
+        st.danger = 0;
+        st.script_len = 0;
+        st.last = out;
+        if h.t == 0 {
+            st.ledges += 1;
+        }
+        return out;
     }
     let v = View::new(w, i);
     let st = &mut w.players[i].arena;
@@ -536,14 +623,20 @@ fn dash_lands(w: &World, i: usize, v: &View, dir: f32) -> bool {
 /// direction does nothing else up here).
 fn air_filter(w: &World, i: usize, v: &View, mut out: Buttons) -> Buttons {
     let p = &w.players[i];
-    let jump = out.u && can_air_jump(w, i);
+    // common state 45 reads the held direction until its velocity is set
+    // (time 2): a direction held then still picks the jump
+    let airjump_start = p.state_no == 45 && p.state_time <= 2 && p.state_owner == p.data;
+    let jump = (out.u && can_air_jump(w, i)) || airjump_start;
     let dash = w.movement.air_dash && p.ctrl && !p.air_dash_used;
     for dir in [-1.0f32, 1.0] {
         let held = if dir < 0.0 { out.l } else { out.r };
         if !held {
             continue;
         }
-        let bad = (jump && !lands(w, [v.x, v.y], air_jump_vel(w, i, dir), v.g, 0, 150))
+        let vel = air_jump_vel(w, i, dir);
+        let bad = (jump
+            && !lands(w, [v.x, v.y], vel, v.g, 0, 150)
+            && !grabs(w, i, [v.x, v.y], vel, v.g, 150))
             || (dash && !dash_lands(w, i, v, dir));
         if bad {
             if dir < 0.0 {
@@ -553,7 +646,12 @@ fn air_filter(w: &World, i: usize, v: &View, mut out: Buttons) -> Buttons {
             }
         }
     }
-    if jump && !out.l && !out.r && !lands(w, [v.x, v.y], air_jump_vel(w, i, 0.0), v.g, 0, 150) {
+    if jump
+        && !airjump_start
+        && !out.l
+        && !out.r
+        && !lands(w, [v.x, v.y], air_jump_vel(w, i, 0.0), v.g, 0, 150)
+    {
         out.u = false;
     }
     out
@@ -595,9 +693,11 @@ fn recover(w: &mut World, i: usize, v: &View, tx: f32, ty: f32, toward: f32) -> 
     let dash_ok = w.movement.air_dash && p.ctrl && !p.air_dash_used && st_free && v.level >= 2;
     let pos = [v.x, v.y];
     if can_air_jump(w, i) {
-        // an air jump that brings the fighter down on something: take it
+        // an air jump that brings the fighter down on something, or to
+        // the ledge: take it
         for hold in [toward, 0.0] {
-            if lands(w, pos, air_jump_vel(w, i, hold), v.g, 0, 150) {
+            let vel = air_jump_vel(w, i, hold);
+            if lands(w, pos, vel, v.g, 0, 150) || grabs(w, i, pos, vel, v.g, 150) {
                 let mut j = dir_buttons(hold);
                 j.u = true;
                 return j;
@@ -1058,6 +1158,39 @@ mod tests {
                 p.pos, p.state_no, p.stocks
             );
             assert!(p.arena.recoveries > 0);
+        }
+    }
+
+    /// Out of air jumps below the deck: the CPU catches the ledge and
+    /// climbs back on.
+    #[test]
+    fn spent_cpu_recovers_through_the_ledge() {
+        for (x, facing) in [(330.0, -1.0), (-330.0, 1.0)] {
+            let Some(mut w) = island(4, true, 7) else {
+                return;
+            };
+            place(&mut w, 0, x, 20.0, facing);
+            w.change_state(0, 50, None, Some(true));
+            w.players[0].air_jump_count = 9;
+            w.players[0].air_dash_used = true;
+            let mut back = false;
+            for _ in 0..300 {
+                w.players[1].pos = [0.0, 0.0];
+                w.step(&[]);
+                let p = &w.players[0];
+                if p.state_type != StateType::A && p.ground == 0.0 && p.stocks == 3 {
+                    back = true;
+                    break;
+                }
+            }
+            let p = &w.players[0];
+            assert!(
+                back,
+                "x {x}: at {:?} state {} stocks {}",
+                p.pos, p.state_no, p.stocks
+            );
+            assert_eq!(p.arena.ledges, 1, "x {x}: through the ledge");
+            assert!(p.pos[0].abs() < 300.0);
         }
     }
 

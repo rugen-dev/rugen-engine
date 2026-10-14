@@ -294,6 +294,8 @@ num.p1.bank = 13
 num.p2.bank = 12
 label.bank = 17
 clock.bank = 15
+; in-world hints (the ledge timer)
+hint.title.bank = 13
 
 ; Team matches: one strip per partner under the name plate (face, life,
 ; caption); Simul partners get a long bar.

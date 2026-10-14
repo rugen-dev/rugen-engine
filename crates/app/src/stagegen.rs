@@ -720,6 +720,8 @@ spawn_y = -140
 air_jumps = 1
 air_dash = 1
 fast_fall = 1
+; catch the deck's edges and climb back on (on by default with a floor)
+ledge = 1
 
 [Platform]
 x = -540, -400

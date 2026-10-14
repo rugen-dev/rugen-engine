@@ -152,6 +152,11 @@ pub struct Player {
     pub drop_through: Option<(usize, i32)>,
     /// Lives left this round (`[Arena] stocks`); 0 = stocks disabled.
     pub stocks: i32,
+    /// On a ledge (see [`crate::ledge`]).
+    pub ledge: Option<crate::ledge::Hang>,
+    /// Ledge grabs this airtime, and ticks before the next one is allowed.
+    pub ledge_grabs: u8,
+    pub ledge_cool: i32,
     pub pal_no: i32,
     /// Set while a negative-state block or current state is being run; -1,-2,-3 or 0.
     pub minus: i8,
@@ -397,6 +402,9 @@ impl Player {
             down_tap: 0,
             drop_through: None,
             stocks: 0,
+            ledge: None,
+            ledge_grabs: 0,
+            ledge_cool: 0,
             pal_no,
             minus: 0,
             state_owner: data,

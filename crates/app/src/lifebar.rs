@@ -41,7 +41,8 @@
 //!   `card.color`, `card.border`, `pN.accent`, `pN.shadow`, `face.bg`,
 //!   `face.border`, `life.pN`, `life.empty`, `pip.color`, `power.off`,
 //!   `power.on`, `clock.color`, `clock.shadow`, `tag.pN.bank`, `name.bank`,
-//!   `num.pN.bank`, `label.bank`, `clock.bank`. Unset keys keep the ink look.
+//!   `num.pN.bank`, `label.bank`, `clock.bank`, `hint.title.bank` (the title
+//!   of an in-world hint, the ledge timer). Unset keys keep the ink look.
 //! - `[TeamHUD]` partner strips of a team match (face, small life bar and a
 //!   caption plate per partner, stacked from `pN.pos`, P2 mirrored):
 //!   `spacing`, `face.size`, `bar.size = w,h`, `simul.bar.width`, `border`,
@@ -319,6 +320,25 @@ struct ArenaStyle {
     num_bank: [i32; 2],
     label_bank: i32,
     clock_bank: i32,
+    /// The title of an in-world hint panel (`LEDGE · 1.4 S`).
+    hint_title_bank: i32,
+}
+
+/// One piece of a hint row: plain text or a key cap.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HintSeg {
+    Text(String),
+    Cap(String),
+}
+
+/// An in-world hint over a fighter (approved mockup "Arena features"):
+/// `dark` = a panel in the clock's colours with an optional title (the
+/// ledge), else a small card tag with a border (an item picked up).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hint {
+    pub dark: bool,
+    pub title: Option<String>,
+    pub rows: Vec<Vec<HintSeg>>,
 }
 
 impl Default for ArenaStyle {
@@ -346,6 +366,7 @@ impl Default for ArenaStyle {
             num_bank: [10, 9],
             label_bank: 8,
             clock_bank: 11,
+            hint_title_bank: 15,
         }
     }
 }
@@ -384,6 +405,7 @@ impl ArenaStyle {
             ],
             label_bank: bank("label.bank", d.label_bank),
             clock_bank: bank("clock.bank", d.clock_bank),
+            hint_title_bank: bank("hint.title.bank", d.hint_title_bank),
         }
     }
 }
@@ -1393,6 +1415,88 @@ impl Lifebar {
             if let Some(f) = self.fonts.get_mut(&2) {
                 f.draw(r, &line, at(640.0, by + 38.0), st.clock_bank, 0, 2.0 * us);
             }
+        }
+    }
+
+    /// An in-world hint (see [`Hint`]) centred over `anchor` (a world
+    /// position, the fighter's head). `px` = world units per fight.def
+    /// pixel; the panel is laid out in 1280x720 design pixels like the
+    /// arena cards.
+    pub fn draw_hint(&mut self, r: &mut Renderer, anchor: [f32; 2], px: f32, hint: &Hint) {
+        let st = self.arena.clone();
+        let s = px * self.localcoord[1] / 720.0;
+        let Some(f) = self.fonts.get(&1) else {
+            return;
+        };
+        let ink = self.text_ink(1, "A").unwrap_or([0.0, -7.0, 0.0]);
+        let mid = -(ink[1] + ink[2]) / 2.0;
+        let (pad, row_h, gap, cap_h) = (10.0, 20.0, 6.0, 20.0);
+        let seg_w = |seg: &HintSeg| match seg {
+            HintSeg::Text(t) => f.width(t, 1.0),
+            HintSeg::Cap(t) => f.width(t, 1.0).max(12.0) + 8.0,
+        };
+        let row_w = |row: &[HintSeg]| {
+            row.iter().map(seg_w).sum::<f32>() + 6.0 * row.len().saturating_sub(1) as f32
+        };
+        let mut w = hint.rows.iter().map(|r| row_w(r)).fold(0.0f32, f32::max);
+        if let Some(t) = &hint.title {
+            w = w.max(f.width(t, 1.0));
+        }
+        let rows = hint.rows.len() + usize::from(hint.title.is_some());
+        let (bw, bh) = (
+            w + 2.0 * pad,
+            rows as f32 * row_h + rows.saturating_sub(1) as f32 * gap + 2.0 * pad - 4.0,
+        );
+        // bottom centre 14 px over the anchor
+        let x0 = -bw / 2.0;
+        let y0 = -14.0 - bh;
+        let at = |x: f32, y: f32| [anchor[0] + x * s, anchor[1] + y * s];
+        let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
+            r.rect(at(x0, y0), at(x1, y1), c);
+        };
+        let (text_bank, cap_bg, cap_bank) = if hint.dark {
+            rect(r, x0, y0, x0 + bw, y0 + bh, st.clock);
+            (st.clock_bank, st.card, st.name_bank)
+        } else {
+            rect(
+                r,
+                x0 - 3.0,
+                y0 - 3.0,
+                x0 + bw + 3.0,
+                y0 + bh + 3.0,
+                st.border,
+            );
+            rect(r, x0, y0, x0 + bw, y0 + bh, st.card);
+            (st.name_bank, st.clock, st.clock_bank)
+        };
+        let mut y = y0 + pad - 2.0;
+        let Some(f) = self.fonts.get_mut(&1) else {
+            return;
+        };
+        if let Some(t) = &hint.title {
+            let base = y + row_h / 2.0 + mid;
+            f.draw(r, t, at(x0 + pad, base), st.hint_title_bank, 1, s);
+            y += row_h + gap;
+        }
+        for row in &hint.rows {
+            let base = y + row_h / 2.0 + mid;
+            let mut x = x0 + pad;
+            for seg in row {
+                match seg {
+                    HintSeg::Text(t) => {
+                        f.draw(r, t, at(x, base), text_bank, 1, s);
+                        x += f.width(t, 1.0) + 6.0;
+                    }
+                    HintSeg::Cap(t) => {
+                        let cw = f.width(t, 1.0).max(12.0) + 8.0;
+                        let cy = y + (row_h - cap_h) / 2.0;
+                        r.rect(at(x, cy), at(x + cw, cy + cap_h), cap_bg);
+                        f.draw(r, t, at(x + cw / 2.0, base), cap_bank, 0, s);
+                        x += cw + 6.0;
+                    }
+                }
+            }
+            y += row_h + gap;
         }
     }
 

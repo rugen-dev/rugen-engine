@@ -65,7 +65,8 @@ pub struct Stage {
 /// `blastzone = left, top, right, bottom` KOs players that cross it,
 /// `walls = 0` lets players leave the screen edges, `stocks = N` gives lives
 /// per round (respawn at `spawn_y`), `floor = x1, x2` limits the ground to a
-/// span (outside it players fall), and `air_jumps` / `air_dash` /
+/// span (outside it players fall), `ledge = 0` turns off the ledge grab at
+/// that span's edges, and `air_jumps` / `air_dash` /
 /// `fast_fall` override the `[game]` movement options for this stage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Arena {
@@ -77,6 +78,8 @@ pub struct Arena {
     pub air_jumps: Option<i32>,
     pub air_dash: Option<bool>,
     pub fast_fall: Option<bool>,
+    /// Ledge grab at the `floor` span's edges (`ledge = 0` turns it off).
+    pub ledge: bool,
 }
 
 impl Default for Arena {
@@ -90,6 +93,7 @@ impl Default for Arena {
             air_jumps: None,
             air_dash: None,
             fast_fall: None,
+            ledge: true,
         }
     }
 }
@@ -236,6 +240,9 @@ impl Stage {
             }
             if let Some(v) = a.i32("fast_fall") {
                 s.arena.fast_fall = Some(v != 0);
+            }
+            if let Some(v) = a.i32("ledge") {
+                s.arena.ledge = v != 0;
             }
         }
         for sec in def.sections_named("platform") {
@@ -994,7 +1001,9 @@ impl World {
             if !self.players[i].removed && !self.players[i].broken {
                 self.running = Some(i);
                 if self.players[i].tag == crate::team::TagPhase::None {
-                    self.run(i);
+                    if !self.ledge_step(i) {
+                        self.run(i);
+                    }
                 } else {
                     self.tag_phase_step(i);
                 }
@@ -1024,6 +1033,7 @@ impl World {
                 self.screen_bound(i);
             }
         }
+        self.check_ledges();
         self.check_blastzone();
         crate::arena_ai::observe(self);
 
@@ -1715,6 +1725,7 @@ impl World {
         // enter the get-hit state
         if self.players[i].gethit {
             let p = &mut self.players[i];
+            p.ledge = None;
             p.move_type = MoveType::H;
             p.hit_pause_time = 0;
             let custom = p.pending_state.is_some();
@@ -3339,6 +3350,9 @@ impl World {
         p.air_dash_time = 0;
         p.down_tap = 0;
         p.drop_through = None;
+        p.ledge = None;
+        p.ledge_grabs = 0;
+        p.ledge_cool = 0;
         p.state_owner = p.data;
         self.change_state(i, 50, None, Some(true));
         self.run_current(i);
@@ -3503,6 +3517,18 @@ impl World {
         }
         let p = &mut self.players[i];
         p.ground = keep.unwrap_or(below);
+        // standing on nothing (a throw or a get-up that ended over the pit):
+        // fall. Custom states and binds keep the body where content put it.
+        if p.ground >= NO_GROUND
+            && p.physics != Physics::A
+            && p.state_type != StateType::A
+            && p.bind.is_none()
+            && p.state_owner == p.data
+            && p.pos[1] >= -0.5
+        {
+            p.vel[1] = 0.0;
+            return true;
+        }
         // walked off the surface it stood on (the ground under the feet dropped
         // away this tick): the caller drops the player into the air-fall state.
         // A body content placed in the air (PosSet, binds) is left alone.
@@ -3720,6 +3746,14 @@ impl World {
             mix(p.power as u64);
             for v in &p.vars {
                 mix(*v as u64);
+            }
+            // arena-only state: mixed only when set, so classic matches
+            // hash as before
+            if let Some(h) = &p.ledge {
+                mix(h.hash());
+            }
+            if p.ledge_grabs != 0 || p.ledge_cool != 0 {
+                mix(u64::from(p.ledge_grabs) << 32 | p.ledge_cool as u64);
             }
         }
         h

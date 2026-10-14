@@ -210,7 +210,7 @@ fn main() {
             draws += 1;
         }
         eprintln!(
-            "match {m}: wins {:?}, frames {}, over {}, vetoes {:?} cancels {:?} recoveries {:?} navs {:?}",
+            "match {m}: wins {:?}, frames {}, over {}, vetoes {:?} cancels {:?} recoveries {:?} navs {:?} ledges {:?}",
             wn,
             w.frame,
             w.round.match_over,
@@ -218,6 +218,7 @@ fn main() {
             [w.players[0].arena.cancels, w.players[1].arena.cancels],
             [w.players[0].arena.recoveries, w.players[1].arena.recoveries],
             [w.players[0].arena.navs, w.players[1].arena.navs],
+            [w.players[0].arena.ledges, w.players[1].arena.ledges],
         );
     }
     println!(
