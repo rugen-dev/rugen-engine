@@ -257,8 +257,12 @@ box) and screenshots.
   Ikemen too).
 
 ### More modes
-- [ ] **Survival.** One life bar against an endless line of random opponents;
+- [x] **Survival.** (88b44ae) One life bar against an endless line of random opponents;
   a little life back between fights; count of wins on the result screen.
+  CHALLENGE title entry with a card per mode (mockup "Challenge modes");
+  one round per fight, +15 % life after a win, no `[Arena]` stages, best
+  wins per fighter in profile.json. No sim change (`RunRules` set the
+  rounds and P1's life on the built world; replays record them).
 - [ ] **Boss Rush.** The roster's `boss = 1` fighters (select.def) back to
   back; if none are flagged, the five strongest by the balance verdict.
 - [ ] **Time Attack.** The arcade ladder with a run timer; best times saved
