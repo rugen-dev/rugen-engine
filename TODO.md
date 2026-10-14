@@ -246,9 +246,15 @@ box) and screenshots.
   time over by life share, `Partner` / `EnemyNear(n)` / `NumEnemy` see the
   teams; Naruto / Sasuke's own simul tag system runs (partner waits off
   screen).
-- [ ] **Tag.** Like Simul but one active fighter per side; a tag button
+- [x] **Tag.** (1fcc4f9) Like Simul but one active fighter per side; a tag button
   swaps, the partner jumps in from the edge. Start with the Ikemen GO tag
   rules so tag-ready characters (Naruto and Sasuke carry tag code) behave.
+  `tag.zss` run natively (leave / wait / run in / jump in, red life,
+  computer swaps); new TAG binding (N / 8 / LT). Naruto / Sasuke's own
+  Uno tag system stays idle in Tag (it runs in Simul). Not done: Ikemen's
+  `TagIn` / `TagOut` controllers and `TeamLeader`-style triggers for
+  characters written for Ikemen's tag; Team.LifeShare (off by default in
+  Ikemen too).
 
 ### More modes
 - [ ] **Survival.** One life bar against an endless line of random opponents;
