@@ -393,7 +393,7 @@ fn fade(blend: Blend, opacity: f32) -> Blend {
     if opacity >= 1.0 {
         return blend;
     }
-    let a = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let a = libm::roundf(opacity.clamp(0.0, 1.0) * 255.0) as u8;
     let k = |src: u8| ((u16::from(src) * u16::from(a)) / 255) as u8;
     match blend {
         Blend::Alpha => Blend::Add {
