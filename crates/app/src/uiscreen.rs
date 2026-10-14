@@ -2346,6 +2346,7 @@ impl UiScreen {
             .map(|(_, m)| m.id)
             .unwrap_or_default();
         Some(Transition::Fight(FightSetup {
+            sim: Default::default(),
             life: None,
             p1: f.def.clone(),
             p2: f.def.clone(),

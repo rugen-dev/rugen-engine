@@ -215,6 +215,83 @@ pub fn match_zoom(net: Option<&NetMode>, cam: &crate::config::CameraCfg) -> (f32
     }
 }
 
+/// Simulation rules of a match that are not part of its setup otherwise:
+/// the camera limits (the camera moves the screen edges, so it is part of
+/// the simulation), the engine movement, the online rules (round timings
+/// from the bundled fight.def) and the rounds of an online room. A replay
+/// records the values the match really used and plays with them instead of
+/// the player's own settings; `None` / `false`: the settings (replays from
+/// before they were recorded).
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SimRules {
+    /// `[zoom_out, zoom_in]` the match was built with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<[f32; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub movement: Option<MovementRules>,
+    /// Played under the online rules (LAN, online rooms, quick match,
+    /// ranked): the bundled fight.def's round timings, whatever the theme.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub online: bool,
+    /// Rounds to win of an online room (the room's ROUNDS, or the bundled
+    /// fight.def's on LAN); `None`: the match's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_wins: Option<u8>,
+}
+
+impl SimRules {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// What every online room match (not arena) is played with: the fixed
+    /// online camera, the default movement, the online rules (replays
+    /// saved before the rules were recorded).
+    pub fn online_room(rounds: u8) -> Self {
+        let g = crate::config::GameCfg::default();
+        let (o, i) = rugen_sim::headless::ONLINE_ZOOM;
+        Self {
+            zoom: Some([o, i]),
+            movement: Some(MovementRules {
+                air_jumps: g.air_jumps,
+                air_dash: g.air_dash,
+                fast_fall: g.fast_fall,
+            }),
+            online: true,
+            match_wins: Some(rounds.clamp(1, 9)),
+        }
+    }
+}
+
+/// [`rugen_sim::world::Movement`] as a replay writes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MovementRules {
+    pub air_jumps: i32,
+    pub air_dash: bool,
+    pub fast_fall: bool,
+}
+
+impl From<MovementRules> for rugen_sim::world::Movement {
+    fn from(m: MovementRules) -> Self {
+        Self {
+            air_jumps: m.air_jumps,
+            air_dash: m.air_dash,
+            fast_fall: m.fast_fall,
+        }
+    }
+}
+
+impl From<rugen_sim::world::Movement> for MovementRules {
+    fn from(m: rugen_sim::world::Movement) -> Self {
+        Self {
+            air_jumps: m.air_jumps,
+            air_dash: m.air_dash,
+            fast_fall: m.fast_fall,
+        }
+    }
+}
+
 /// Everything needed to start a match.
 #[derive(Clone, Debug)]
 pub struct FightSetup {
@@ -250,6 +327,9 @@ pub struct FightSetup {
     /// [`rugen_sim::headless::online_seed`] of the match id. LAN matches
     /// agree on one in the handshake.
     pub seed: Option<u64>,
+    /// A replay's recorded camera, movement and online rules (default: the
+    /// settings, or the online rules of a net match).
+    pub sim: SimRules,
     /// LIFE every fighter gets instead of its own: `None` takes the
     /// options' (offline) or the room's (online), `Some(0)` each fighter's
     /// own (replays from before the setting), `Some(n)` n.
@@ -664,6 +744,9 @@ pub struct Match {
     pub leave: bool,
     /// Inputs recorded this match (local play only).
     pub record: Option<crate::replay::Replay>,
+    /// Camera, movement and online rules the match was built with (what a
+    /// replay of it records).
+    pub sim_rules: SimRules,
     /// Inputs to replay instead of live input, with a cursor.
     pub playback: Option<(Vec<[u16; 2]>, usize)>,
     /// Watching from the server's input log: the feed, the next frame, and
@@ -729,11 +812,16 @@ impl Match {
             });
         // a replay's recorded size, else the config's (online: the room's rules)
         let mut fighter_size = setup.fighter_size.unwrap_or(cfg.game.fighter_size);
-        let mut movement = rugen_sim::world::Movement {
-            air_jumps: cfg.game.air_jumps,
-            air_dash: cfg.game.air_dash,
-            fast_fall: cfg.game.fast_fall,
-        };
+        // a replay's recorded movement, else the config's (online: the
+        // room's through `match_config`; LAN: the host's, below)
+        let mut movement = setup.sim.movement.map_or(
+            rugen_sim::world::Movement {
+                air_jumps: cfg.game.air_jumps,
+                air_dash: cfg.game.air_dash,
+                fast_fall: cfg.game.fast_fall,
+            },
+            Into::into,
+        );
         // LIFE: a replay's recorded one, else the options' (online: the
         // room's, through `match_config`); 0 = each fighter's own
         let mut life = setup.life.unwrap_or(cfg.game.life);
@@ -812,12 +900,17 @@ impl Match {
             Some(NetMode::Stream(_)) | None => None,
         };
         // round timings come from fight.def: a user theme's only offline
-        let sim_motif = crate::themes::sim_motif(
-            motif,
-            matches!(
+        // (a replay of an online match: the online rules as it was played)
+        let online_rules = setup.sim.online
+            || matches!(
                 setup.net,
                 Some(NetMode::P2P { .. } | NetMode::Relay { .. } | NetMode::Stream(_))
-            ),
+            );
+        let sim_motif = crate::themes::sim_motif(motif, online_rules);
+        // a replay's recorded camera, else the settings (online: fixed)
+        let zoom = setup.sim.zoom.map_or_else(
+            || match_zoom(setup.net.as_ref(), &cfg.camera),
+            |[o, i]| (o, i),
         );
         let spec = rugen_sim::headless::MatchSpec {
             life: (life > 0).then_some(life),
@@ -826,7 +919,7 @@ impl Match {
             stage: setup.stage.as_deref(),
             data_dir,
             motif: &sim_motif,
-            zoom: match_zoom(setup.net.as_ref(), &cfg.camera),
+            zoom,
             movement,
             // a replay's recorded clock; offline: the options' round time;
             // online rooms: the room's (both sides run `match_config`); LAN
@@ -861,6 +954,17 @@ impl Match {
         if let Some(w) = cfg.game.match_wins.filter(|_| setup.net.is_some()) {
             world.round.config.match_wins = w;
         }
+        // a replay of an online match: the room's ROUNDS as it was played
+        if let Some(w) = setup.sim.match_wins.filter(|_| setup.net.is_none()) {
+            world.round.config.match_wins = w;
+        }
+        // what a recording of this match must play with
+        let sim_rules = SimRules {
+            zoom: Some([zoom.0, zoom.1]),
+            movement: Some(movement.into()),
+            online: online_rules,
+            match_wins: online_rules.then_some(world.round.config.match_wins),
+        };
         // a CHALLENGE run's fight: its rounds and P1's carried life
         if let Some(rules) = setup.run.filter(|_| setup.net.is_none() && teams.is_none()) {
             rules.apply(&mut world);
@@ -923,6 +1027,7 @@ impl Match {
             }
         };
         Ok(Self {
+            sim_rules,
             world,
             banks: SoundBanks::new(),
             flee_menu: None,
@@ -3797,6 +3902,7 @@ mod tests {
         let data = root.join("data");
         let cfg = Config::default();
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: kfm.clone(),
             p2: kfm,
@@ -3893,6 +3999,7 @@ mod tests {
         }
         let cfg = Config::default();
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: kfm.clone(),
             p2: kfm,
@@ -3948,6 +4055,7 @@ mod tests {
         let data = root.join("data");
         let cfg = Config::default();
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: kfm.clone(),
             p2: kfm,

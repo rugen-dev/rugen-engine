@@ -362,6 +362,10 @@ pub struct Replay {
     /// from before the setting, or a match played that way).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life: Option<i32>,
+    /// The camera, movement and online rules the match was played with
+    /// (absent from older replays: they play with the player's settings).
+    #[serde(default, skip_serializing_if = "crate::play::SimRules::is_empty")]
+    pub sim: crate::play::SimRules,
     /// The fighters and stage by id and content fingerprint (`p1`, `p2`,
     /// `stage` then hold at most a path relative to the game root); absent
     /// from replays that stored absolute paths.
@@ -402,6 +406,7 @@ impl Replay {
             seed: Some(seed),
             edits: Vec::new(),
             life,
+            sim: Default::default(),
             content: Some(ContentRefs {
                 p1: ContentRef::of(&setup.p1),
                 p2: ContentRef::of(&setup.p2),
@@ -598,6 +603,23 @@ impl Replay {
         if !self.edits.is_empty() {
             rules.push(format!("{} training edits", self.edits.len()));
         }
+        if let Some([o, i]) = self.sim.zoom {
+            rules.push(format!("zoom {o}-{i}"));
+        }
+        if let Some(m) = self.sim.movement {
+            rules.push(format!(
+                "air jumps {}{}{}",
+                m.air_jumps,
+                if m.air_dash { " · air dash" } else { "" },
+                if m.fast_fall { " · fast fall" } else { "" }
+            ));
+        }
+        if self.sim.online {
+            rules.push("online rules".into());
+        }
+        if let Some(w) = self.sim.match_wins {
+            rules.push(format!("{w} round(s) to win"));
+        }
         rows.push(("rules", rules.join(" · ")));
         rows.iter()
             .map(|(k, v)| format!("{k:<9} {v}"))
@@ -656,6 +678,7 @@ impl Replay {
             teams: self.teams.clone(),
             run: self.run,
             seed: Some(self.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED)),
+            sim: self.sim,
         }
     }
 
@@ -752,6 +775,7 @@ mod tests {
             seed: None,
             edits: Vec::new(),
             life: None,
+            sim: Default::default(),
             content: None,
             inputs: Vec::new(),
         }
@@ -936,6 +960,7 @@ mod tests {
             seed: None,
             edits: Vec::new(),
             life: None,
+            sim: Default::default(),
             content: None,
             inputs: Vec::new(),
         }
@@ -1013,6 +1038,7 @@ mod tests {
         let data = reference.join("data");
         let cfg = Config::default();
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: kfm.clone(),
             p2: kfm.clone(),
@@ -1213,5 +1239,90 @@ mod tests {
             text.contains("machine") && text.contains(std::env::consts::ARCH),
             "{text}"
         );
+    }
+
+    /// An offline replay keeps the camera and movement it was played with:
+    /// changing them in OPTIONS afterwards does not change the replay.
+    #[test]
+    fn replays_keep_their_camera_and_movement() {
+        use crate::config::Config;
+        use crate::play::{FightSetup, Match};
+        use rugen_sim::Buttons;
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let reference = base.join("reference/mugen-1.1b1");
+        let kfm = std::path::absolute(reference.join("chars/kfm/kfm.def")).unwrap();
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = reference.join("data");
+        let mut then = Config::default();
+        (then.camera.zoom_out, then.camera.zoom_in) = (0.3, 2.5);
+        then.game.air_jumps = 3;
+        then.game.air_dash = true;
+        let setup = FightSetup {
+            sim: Default::default(),
+            life: None,
+            p1: kfm.clone(),
+            p2: kfm,
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: Some(crate::game::Mode::Versus),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(11),
+        };
+        let mut audio = None;
+        let mut m = Match::load(&setup, &motif, &data, &then).expect("KFM match");
+        let mut rec = Replay::new(
+            &setup,
+            m.world.fighter_size,
+            m.world.arena_ai,
+            m.world.round.config.round_time,
+            m.world.seed(),
+            m.world.life,
+        );
+        rec.sim = m.sim_rules;
+        m.record = Some(rec);
+        for f in 0..700 {
+            let b = Buttons {
+                l: f % 120 < 90,
+                u: f % 120 == 100 || f % 120 == 108,
+                ..Default::default()
+            };
+            let c = Buttons {
+                r: f % 100 < 70,
+                ..Default::default()
+            };
+            m.tick([b, c], &mut audio);
+        }
+        let want = m.world.checksum();
+        let rec: Replay =
+            serde_json::from_slice(&serde_json::to_vec(&m.record.take().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(rec.sim.zoom, Some([0.3, 2.5]));
+        assert_eq!(rec.sim.movement.map(|m| m.air_jumps), Some(3));
+        assert!(!rec.sim.online && rec.sim.match_wins.is_none());
+        // watched later with the default options
+        let now = Config::default();
+        let play = |r: &Replay| {
+            let mut p = Match::load(&r.setup(), &motif, &data, &now).expect("replay");
+            p.playback = Some((r.inputs.clone(), 0));
+            let mut audio = None;
+            for _ in 0..r.inputs.len() {
+                p.tick([Buttons::default(); 2], &mut audio);
+            }
+            p.world.checksum()
+        };
+        assert_eq!(play(&rec), want);
+        let mut old = rec.clone();
+        old.sim = Default::default();
+        assert_ne!(play(&old), want, "an older replay follows the options");
     }
 }

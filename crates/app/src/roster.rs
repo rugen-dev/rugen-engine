@@ -761,6 +761,7 @@ impl Roster {
         let ai = |human: bool, lvl: i32| if human { 0 } else { lvl };
         let tutorial = self.mode == Mode::Tutorial;
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: p1.clone(),
             p2: if tutorial { p1 } else { p2 },

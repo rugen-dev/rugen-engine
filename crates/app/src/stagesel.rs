@@ -169,6 +169,7 @@ impl StagePlan {
     /// our fighter and the opponent (or their fighter once known).
     pub fn online(char_id: String, arena: bool, names: [String; 2]) -> Self {
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: PathBuf::new(),
             p2: PathBuf::new(),
@@ -1059,6 +1060,7 @@ mod tests {
         }
         let lib = Library::discover(Some(&root));
         let setup = FightSetup {
+            sim: Default::default(),
             life: None,
             p1: PathBuf::new(),
             p2: PathBuf::new(),

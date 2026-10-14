@@ -1127,6 +1127,7 @@ impl Shell {
         };
         Some(Transition::Versus(
             FightSetup {
+                sim: Default::default(),
                 life: None,
                 p1: p1.clone(),
                 p2: p2.clone(),
@@ -1320,6 +1321,7 @@ impl Shell {
                     .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| m.def_path(&d)))
                     .or_else(|| self.lib.default_stage());
                 self.transition(Transition::Fight(FightSetup {
+                    sim: Default::default(),
                     life: None,
                     p1,
                     p2,
@@ -1912,14 +1914,17 @@ impl Shell {
                         }
                         // never a recording of a replay being played
                         if setup.net.is_none() && self.replay.is_none() {
-                            m.record = Some(crate::replay::Replay::new(
+                            let mut rec = crate::replay::Replay::new(
                                 &setup,
                                 m.world.fighter_size,
                                 m.world.arena_ai,
                                 m.world.round.config.round_time,
                                 m.world.seed(),
                                 m.world.life,
-                            ));
+                            );
+                            // the camera and movement it is played with
+                            rec.sim = m.sim_rules;
+                            m.record = Some(rec);
                         }
                         if let Some(r) = self.replay.take() {
                             m.playback = Some((r.inputs, 0));
@@ -2569,6 +2574,7 @@ impl Shell {
                                     peer: m.peer_machine(),
                                     recorded_at: Some(crate::machine::now_rfc3339()),
                                     mine: Some(crate::machine::summary()),
+                                    sim: Some(m.sim_rules),
                                 },
                             );
                         }
