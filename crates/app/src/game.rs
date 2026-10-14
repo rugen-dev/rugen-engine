@@ -1159,13 +1159,8 @@ impl Shell {
         }
         let path = match &self.harness.record {
             Some(p) => p.clone(),
-            None => {
-                let t = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                self.lib.root.join("replays").join(format!("{t}.json"))
-            }
+            // `G6_Obito-vs-G6_Sakura-Forest-3f9a2c.json`
+            None => crate::replay::free_path(&self.lib.root.join("replays"), &rec.file_stem()),
         };
         match rec.save(&path, &self.lib.root) {
             Ok(()) => log::info!("replay saved to {}", path.display()),

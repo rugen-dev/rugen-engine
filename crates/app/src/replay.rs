@@ -192,6 +192,96 @@ fn path_is_def(p: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("def"))
 }
 
+/// Longest part of a replay file name (a fighter, a team, the stage).
+const NAME_PART_MAX: usize = 32;
+
+/// A fighter or stage id as part of a file name: `[A-Za-z0-9_]` only
+/// (spaces become `_`, anything else is dropped), at most
+/// [`NAME_PART_MAX`] characters; `unknown` when nothing is left.
+pub fn name_part(id: &str) -> String {
+    let s: String = id
+        .chars()
+        .filter_map(|c| match c {
+            c if c.is_ascii_alphanumeric() || c == '_' => Some(c),
+            ' ' => Some('_'),
+            _ => None,
+        })
+        .take(NAME_PART_MAX)
+        .collect();
+    if s.is_empty() { "unknown".into() } else { s }
+}
+
+/// A side of a replay file name: the fighter, or a team's members joined
+/// by `_and_` while that stays short, else the leader and `_team`.
+fn side_part(lead: &str, partners: &[String]) -> String {
+    let lead = name_part(lead);
+    if partners.is_empty() {
+        return lead;
+    }
+    let all: Vec<String> = std::iter::once(lead.clone())
+        .chain(partners.iter().map(|p| name_part(p)))
+        .collect();
+    let joined = all.join("_and_");
+    if joined.len() <= NAME_PART_MAX {
+        joined
+    } else {
+        let short: String = lead.chars().take(NAME_PART_MAX - 5).collect();
+        format!("{short}_team")
+    }
+}
+
+/// `dir/<stem>.json`, else `dir/<stem>-2.json`, `-3`, ... (the first free).
+pub fn free_path(dir: &Path, stem: &str) -> PathBuf {
+    let first = dir.join(format!("{stem}.json"));
+    if !first.exists() {
+        return first;
+    }
+    (2..10_000)
+        .map(|n| dir.join(format!("{stem}-{n}.json")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
+/// A replay file found in `replays/`.
+#[derive(Clone, Debug)]
+pub struct Saved {
+    pub path: PathBuf,
+    /// When it was recorded (Unix seconds): its `recorded_at`, else the
+    /// file's modification time (replays from before the header).
+    pub at: u64,
+    pub replay: Replay,
+}
+
+/// The replays in `dir`, newest first: readable names and the old
+/// `<unix time>.json` ones alike (files that are not replays are skipped).
+pub fn list_saved(dir: &Path) -> Vec<Saved> {
+    let mut out: Vec<Saved> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")))
+        .filter_map(|path| {
+            let replay = Replay::load(&path).ok()?;
+            let mtime = || {
+                std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs())
+            };
+            let at = replay
+                .recorded_at
+                .as_deref()
+                .and_then(crate::machine::parse_rfc3339)
+                .unwrap_or_else(mtime);
+            Some(Saved { path, at, replay })
+        })
+        .collect();
+    out.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.path.cmp(&b.path)));
+    out
+}
+
 /// The `mode` a replay records for a match started from `mode`.
 pub fn mode_name(mode: Option<crate::game::Mode>) -> &'static str {
     use crate::game::Mode;
@@ -345,6 +435,57 @@ impl Replay {
             }
         }
         setup
+    }
+
+    /// 6 hex characters of the match itself (seed and inputs): stable for
+    /// the same match, different for another one.
+    pub fn content_hash(&self) -> String {
+        // FNV-1a 64
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |b: &[u8]| {
+            for x in b {
+                h ^= u64::from(*x);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        eat(&self.seed.unwrap_or(0).to_le_bytes());
+        for [a, b] in &self.inputs {
+            eat(&a.to_le_bytes());
+            eat(&b.to_le_bytes());
+        }
+        format!("{:06x}", (h ^ (h >> 32)) & 0xff_ffff)
+    }
+
+    /// The file name a replay is saved under, without `.json`:
+    /// `<p1>-vs-<p2>-<stage>-<hash>` (ids, team members joined by `_and_`),
+    /// e.g. `G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-3f9a2c`.
+    pub fn file_stem(&self) -> String {
+        let refs = self.content.as_ref();
+        let id = |p: &Path, r: Option<&ContentRef>| {
+            r.map(|r| r.id.clone())
+                .filter(|i| !i.is_empty())
+                .or_else(|| ids_of(p).into_iter().next())
+                .unwrap_or_default()
+        };
+        let partners = |side: usize| -> Vec<String> {
+            self.teams.as_ref().map_or_else(Vec::new, |t| {
+                t.partners[side]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| id(p, refs.and_then(|r| r.partners[side].get(i))))
+                    .collect()
+            })
+        };
+        let mut parts = vec![
+            side_part(&id(&self.p1, refs.map(|r| &r.p1)), &partners(0)),
+            "vs".to_string(),
+            side_part(&id(&self.p2, refs.map(|r| &r.p2)), &partners(1)),
+        ];
+        if let Some(s) = &self.stage {
+            parts.push(name_part(&id(s, refs.and_then(|r| r.stage.as_ref()))));
+        }
+        parts.push(self.content_hash());
+        parts.join("-")
     }
 
     /// The replay as it is written: fighters and the stage at most relative
@@ -814,5 +955,86 @@ mod tests {
         let (_, sum) = play(&stored);
         assert_eq!(sum, want, "a replay stored by id plays the same match");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replay_names_are_readable_and_safe() {
+        assert_eq!(name_part("G6_Obito Rikudou"), "G6_Obito_Rikudou");
+        assert_eq!(name_part("Forest of Dead Trees!"), "Forest_of_Dead_Trees");
+        assert_eq!(name_part("../../etc/passwd"), "etcpasswd");
+        assert_eq!(name_part("ナルト"), "unknown");
+        assert_eq!(name_part(&"x".repeat(80)).len(), NAME_PART_MAX);
+        assert_eq!(side_part("Goku", &["KFM".into()]), "Goku_and_KFM");
+        assert_eq!(
+            side_part("G6_Obito_Rikudou", &["G6_Kakashi".into(), "G6_Sakura".into()]),
+            "G6_Obito_Rikudou_team"
+        );
+        let mut r: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"/home/u/RUGEN/chars/G6_Obito Rikudou.rgc/obito.def",
+                "p2":"chars/G6_Sakura.rgc/G6_Sakura.def",
+                "stage":"/x/stages/Forest of Dead Trees.rgs/forest.def",
+                "ai":[0,4],"seed":7,"inputs":[[1,2],[3,4]]}"#,
+        )
+        .unwrap();
+        let stem = r.file_stem();
+        assert!(
+            stem.starts_with("G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-"),
+            "{stem}"
+        );
+        assert_eq!(stem.len(), "G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-".len() + 6);
+        assert!(stem.len() + 5 < 120);
+        // stable for the same match, another match another name
+        assert_eq!(r.file_stem(), stem);
+        r.inputs.push([5, 6]);
+        assert_ne!(r.file_stem(), stem);
+        // the longest names stay under 120 characters
+        let long = "N".repeat(200);
+        let mut big = r.clone();
+        big.p1 = PathBuf::from(&long);
+        big.p2 = PathBuf::from(&long);
+        big.stage = Some(PathBuf::from(&long));
+        assert!(big.file_stem().len() + 5 < 120, "{}", big.file_stem());
+    }
+
+    /// Saving the same match twice gives `-2`; old `<unix time>.json` files
+    /// still load and list, sorted with the new ones by when they were
+    /// recorded.
+    #[test]
+    fn replay_files_stay_unique_and_old_names_list() {
+        let dir = std::env::temp_dir().join(format!("rugen-replay-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.clone();
+        let mut r: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"seed":3,"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        r.recorded_at = Some("2026-10-14T09:30:00Z".into());
+        let first = free_path(&dir, &r.file_stem());
+        r.save(&first, &root).unwrap();
+        let second = free_path(&dir, &r.file_stem());
+        assert_ne!(first, second);
+        assert!(second.to_string_lossy().ends_with("-2.json"), "{}", second.display());
+        r.recorded_at = Some("2026-10-14T09:40:00Z".into());
+        r.save(&second, &root).unwrap();
+        // a replay from before readable names: no header, a timestamp name
+        let old = dir.join("1700000000.json");
+        std::fs::write(
+            &old,
+            r#"{"version":1,"p1":"/home/u/RUGEN/chars/kfm/kfm.def","p2":"b","stage":null,"ai":[0,4],"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("notes.json"), "not a replay").unwrap();
+        let list = list_saved(&dir);
+        let names: Vec<String> = list
+            .iter()
+            .map(|s| s.path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        // the old file was written now (mtime): newest
+        assert_eq!(names[0], "1700000000.json");
+        assert!(names[1].ends_with("-2.json") && !names[2].ends_with("-2.json"));
+        assert!(Replay::load(&old).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

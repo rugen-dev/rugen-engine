@@ -38,7 +38,9 @@
 //! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 //! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
 //! rugen replay <file.json>                                      play back a recorded match
-//!   (quick play records to --record file.json, menu matches to replays/)
+//! rugen replay --list [--root dir]                              saved replays, newest first
+//!   (quick play records to --record file.json, menu matches to
+//!   replays/<p1>-vs-<p2>-<stage>-<hash>.json)
 //!
 //! `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 //! ```
@@ -150,7 +152,9 @@ rugen storyboard <file.def>                                   play a MUGEN story
 rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
 rugen replay <file.json>                                      play back a recorded match
-  (quick play records to --record file.json, menu matches to replays/)
+rugen replay --list [--root dir]                              saved replays, newest first
+  (quick play records to --record file.json, menu matches to
+  replays/<p1>-vs-<p2>-<stage>-<hash>.json)
 
 `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 ";
@@ -696,6 +700,37 @@ fn main() -> anyhow::Result<()> {
                 let (w, h, rgba) = fontgen::preview(&generator, 0);
                 play::write_png(std::path::Path::new(&p), w, h, &rgba)?;
                 println!("preview {p}");
+            }
+            Ok(())
+        }
+        Some("replay") if args.get(1).map(String::as_str) == Some("--list") => {
+            let root = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1));
+            let lib = rugen_content::Library::discover(root.map(std::path::Path::new));
+            let dir = lib.root.join("replays");
+            let list = replay::list_saved(&dir);
+            if list.is_empty() {
+                println!("no replays in {}", dir.display());
+            }
+            let mut out = std::io::stdout().lock();
+            for s in list {
+                let r = &s.replay;
+                let at = machine::rfc3339(s.at);
+                // `| head` closes the pipe early: stop quietly
+                use std::io::Write as _;
+                let ok = writeln!(
+                    out,
+                    "{}  {:<11}  {:<24}  {}",
+                    at[..16].replace('T', " "),
+                    r.mode.as_deref().unwrap_or("-"),
+                    r.engine.as_ref().map_or_else(|| "-".into(), |e| e.line()),
+                    s.path.file_name().unwrap_or_default().to_string_lossy()
+                );
+                if ok.is_err() {
+                    break;
+                }
             }
             Ok(())
         }
