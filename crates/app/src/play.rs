@@ -1239,6 +1239,7 @@ impl Match {
                 .filter(|s| s.tx_packets > 0)
                 .map(|s| (s.rx_wire, s.tx_wire)),
             ending: self.early.map(|(e, _)| e.ending()),
+            rounds: Some(self.world.round.wins),
         }
     }
 

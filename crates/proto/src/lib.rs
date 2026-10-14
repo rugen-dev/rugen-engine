@@ -343,6 +343,79 @@ pub struct RoomSummary {
     /// `host` is a username ([`ProfileInfo::verified`]).
     #[serde(default, skip_serializing_if = "is_false")]
     pub host_verified: bool,
+    /// The room runs a tournament bracket (absent: a 1 v 1 room, or an
+    /// older server). Older clients cannot join such a room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tournament: Option<TournamentBrief>,
+}
+
+/// A tournament room in the lobby list.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TournamentBrief {
+    /// Bracket size: 8 or 16.
+    pub size: u8,
+    pub entrants: u8,
+    /// `open` (taking entrants), `running` or `done`.
+    pub state: String,
+}
+
+/// One tournament entrant (seed order once drawn, join order before).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Entrant {
+    pub id: u64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub verified: bool,
+    pub rating: i32,
+    /// 1-based seed once the bracket is drawn, 0 before.
+    pub seed: u8,
+}
+
+/// One match of a bracket.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BracketMatch {
+    /// Accounts of the two sides (None: a bye or not decided yet).
+    pub p1: Option<u64>,
+    pub p2: Option<u64>,
+    /// Their seeds (0 = empty).
+    pub seeds: [u8; 2],
+    /// Rounds won per side (0-0 when unknown).
+    pub score: [u8; 2],
+    pub winner: Option<u64>,
+    /// `wait` (a side not decided), `next` (both known), `called` (the
+    /// server called it: matchup phase), `live` (being fought), `done`,
+    /// `bye`.
+    pub state: String,
+    /// The match id once called (0 before).
+    pub match_id: u64,
+}
+
+/// A room's tournament as members see it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TournamentView {
+    pub size: u8,
+    /// `open`, `running` or `done`.
+    pub state: String,
+    pub entrants: Vec<Entrant>,
+    /// Rounds from the first to the final (empty before the draw).
+    pub rounds: Vec<Vec<BracketMatch>>,
+    /// (round, index) of the called / live match.
+    pub live: Option<[u8; 2]>,
+    pub champion: Option<u64>,
+}
+
+impl TournamentView {
+    /// The round's name for a bracket of `rounds` rounds: FINAL,
+    /// SEMI-FINALS, QUARTER-FINALS, ROUND OF 16.
+    pub fn round_name(rounds: usize, round: usize) -> &'static str {
+        match rounds.saturating_sub(round) {
+            1 => "FINAL",
+            2 => "SEMI-FINALS",
+            3 => "QUARTER-FINALS",
+            4 => "ROUND OF 16",
+            _ => "ROUND",
+        }
+    }
 }
 
 impl RoomSummary {
@@ -395,6 +468,10 @@ pub struct RoomInfo {
     /// Pick / verdict / file sync phase before the match (API 3).
     #[serde(default)]
     pub matchup: Option<MatchupView>,
+    /// The room's tournament (absent: a 1 v 1 room). Members who do not
+    /// play the called match have `side` 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tournament: Option<TournamentView>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -893,6 +970,29 @@ mod tests {
         .unwrap();
         assert!(p.last_season.is_none());
         assert!(!serde_json::to_string(&p).unwrap().contains("last_season"));
+    }
+
+    #[test]
+    fn tournaments_are_additive_in_rooms() {
+        // an older server's room and lobby entry: no tournament
+        let r: RoomSummary = serde_json::from_str(
+            r#"{"code":"A","name":"n","host":"h","rules":{},"players":1,"spectators":0,"max_spectators":2,"locked":false,"in_match":false}"#,
+        )
+        .unwrap();
+        assert!(r.tournament.is_none());
+        assert!(!serde_json::to_string(&r).unwrap().contains("tournament"));
+        let t = TournamentView {
+            size: 8,
+            state: "running".into(),
+            live: Some([1, 0]),
+            ..Default::default()
+        };
+        let back: TournamentView =
+            serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back, t);
+        assert_eq!(TournamentView::round_name(3, 0), "QUARTER-FINALS");
+        assert_eq!(TournamentView::round_name(3, 2), "FINAL");
+        assert_eq!(TournamentView::round_name(4, 0), "ROUND OF 16");
     }
 
     #[test]

@@ -407,6 +407,8 @@ struct Form {
     public: bool,
     rules: Rules,
     spectators: u8,
+    /// A tournament room: bracket size 8 or 16 (0 = 1 v 1).
+    tournament: u8,
 }
 
 impl Default for Form {
@@ -417,6 +419,7 @@ impl Default for Form {
             public: true,
             rules: Rules::default(),
             spectators: 2,
+            tournament: 0,
         }
     }
 }
@@ -2195,6 +2198,16 @@ impl OnlineScreen {
                 push(key("create"), "CREATE");
                 push(esc, "BACK");
             }
+            State::Room if self.in_bracket() => {
+                let bk = self.bracket_json();
+                if bk["can_start"].as_bool() == Some(true) {
+                    push(enter, "START");
+                }
+                if self.clipboard {
+                    push(key("copy"), "COPY CODE");
+                }
+                push(esc, "LEAVE");
+            }
             State::Room => {
                 let r = self.room.as_ref();
                 let host = r.is_some_and(|r| r.side == 1);
@@ -2628,6 +2641,189 @@ impl OnlineScreen {
         })
     }
 
+    /// The room's bracket (tournament rooms), laid out for the BRACKET
+    /// view: one box per match at its place (columns by round, each box
+    /// centred between the two it comes from), the champion box, the
+    /// entrants before the draw.
+    fn bracket_json(&self) -> Value {
+        let Some((r, t)) = self
+            .room
+            .as_ref()
+            .and_then(|r| r.tournament.as_ref().map(|t| (r, t)))
+        else {
+            return json!({});
+        };
+        let me = self.my_id();
+        let name_of = |id: Option<u64>| -> Option<(String, u8, bool)> {
+            let id = id?;
+            let e = t.entrants.iter().find(|e| e.id == id);
+            Some((
+                e.map_or("?".to_string(), |e| e.name.to_uppercase()),
+                e.map_or(0, |e| e.seed),
+                id == me,
+            ))
+        };
+        let n = t.rounds.len();
+        let cols = n + 1;
+        let (x0, y0, w_all, h_all) = (48.0f32, 140.0f32, 1184.0f32, 500.0f32);
+        let gap = 20.0;
+        let colw = (w_all - gap * (cols as f32 - 1.0)) / cols as f32;
+        let bw = colw.min(260.0) - 4.0;
+        let short = |round: usize| match n.saturating_sub(round) {
+            1 => "F",
+            2 => "SF",
+            3 => "QF",
+            _ => "R16-",
+        };
+        let max_chars = ((bw - 50.0) / 10.0) as usize;
+        let mut boxes = Vec::new();
+        for (ri, round) in t.rounds.iter().enumerate() {
+            let slot = h_all / round.len() as f32;
+            for (i, m) in round.iter().enumerate() {
+                let line = match m.state.as_str() {
+                    "live" => "LIVE NOW",
+                    "called" => "CALLED · PICKING",
+                    "next" => "NEXT",
+                    _ => "",
+                };
+                let has_line = !line.is_empty() && slot >= 84.0;
+                let bh = if has_line { 78.0 } else { 58.0 };
+                let side = |k: usize| -> Value {
+                    let id = if k == 0 { m.p1 } else { m.p2 };
+                    let done = m.winner.is_some();
+                    match name_of(id) {
+                        Some((name, seed, you)) => {
+                            let win = done && m.winner == id;
+                            let score = if m.state == "done" && m.score != [0, 0] {
+                                m.score[k].to_string()
+                            } else if win && m.state != "bye" {
+                                "W".into()
+                            } else if m.state == "bye" {
+                                String::new()
+                            } else if done {
+                                "-".into()
+                            } else {
+                                String::new()
+                            };
+                            let you = if you { " ·YOU" } else { "" };
+                            json!({
+                                "text": format!("{seed} {}{you}", fit(&name, max_chars.saturating_sub(you.len() + 2))),
+                                "score": score,
+                                "win": win,
+                                "plain": !win,
+                                "tbd": false,
+                                "named": true,
+                            })
+                        }
+                        None => {
+                            let text = if m.state == "bye" {
+                                "BYE".to_string()
+                            } else if ri == 0 {
+                                "-".to_string()
+                            } else {
+                                format!("WINNER {}{}", short(ri - 1), 2 * i + k + 1)
+                            };
+                            json!({ "text": text, "score": "", "win": false, "plain": false, "tbd": true, "named": false })
+                        }
+                    }
+                };
+                let x = x0 + ri as f32 * (colw + gap);
+                let y = y0 + slot * (i as f32 + 0.5) - bh / 2.0;
+                let live = matches!(m.state.as_str(), "live" | "called");
+                boxes.push(json!({
+                    "x": x, "y": y, "w": bw, "h": bh,
+                    // the live box: a thick red frame and a hard shadow
+                    "ox": x - 2.0, "oy": y - 2.0, "ow": bw + 4.0, "oh": bh + 4.0,
+                    "sx": x + 6.0, "sy": y + 6.0,
+                    "a": side(0), "b": side(1),
+                    "line": line, "has_line": has_line,
+                    "live": live, "calm": !live && m.state != "wait",
+                    "wait": m.state == "wait",
+                    "match_id": m.match_id,
+                    "action": format!("bk:match:{ri}:{i}"),
+                }));
+            }
+        }
+        let champ = name_of(t.champion);
+        let cx = x0 + n as f32 * (colw + gap);
+        let heads: Vec<Value> = (0..cols)
+            .map(|c| {
+                let label = if c == n {
+                    "CHAMPION"
+                } else {
+                    rugen_proto::TournamentView::round_name(n, c)
+                };
+                json!({ "label": label, "x": x0 + c as f32 * (colw + gap), "w": bw })
+            })
+            .collect();
+        let live_name = t.live.map(|[ri, _]| match n.saturating_sub(ri as usize) {
+            1 => "FINAL",
+            2 => "SEMI-FINAL",
+            3 => "QUARTER-FINAL",
+            _ => "ROUND OF 16",
+        });
+        let live_state = t
+            .live
+            .and_then(|[ri, i]| t.rounds.get(ri as usize)?.get(i as usize))
+            .map(|m| m.state.clone());
+        let status = match (t.state.as_str(), live_name, live_state.as_deref()) {
+            ("open", ..) => format!("OPEN · {} / {} PLAYERS", t.entrants.len(), t.size),
+            ("done", ..) => format!(
+                "CHAMPION · {}",
+                champ.as_ref().map_or("?".into(), |c| c.0.clone())
+            ),
+            (_, Some(name), Some("live")) => format!("● {name} LIVE"),
+            (_, Some(name), _) => format!("{name} · PICKING FIGHTERS"),
+            _ => "NEXT MATCH SOON".into(),
+        };
+        let host = r.members.iter().any(|m| m.role == 0 && m.profile.id == me);
+        let entrants: Vec<Value> = t
+            .entrants
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                json!({
+                    "n": i + 1,
+                    "name": fit(&e.name.to_uppercase(), 16),
+                    "verified": e.verified,
+                    "rating": format!("{} {}", rugen_proto::rank_name(e.rating), e.rating),
+                    "you": e.id == me,
+                })
+            })
+            .collect();
+        let open = t.state == "open";
+        json!({
+            "status": status,
+            "live": live_state.as_deref() == Some("live"),
+            "calm": live_state.as_deref() != Some("live"),
+            "open": open,
+            "drawn": !open,
+            "heads": heads,
+            "boxes": boxes,
+            "champ": {
+                "x": cx, "y": y0 + h_all / 2.0 - 80.0, "w": bw, "h": 160.0,
+                "has": champ.is_some(),
+                "none": champ.is_none(),
+                "name": champ.as_ref().map_or(String::new(), |c| fit(&c.0, max_chars)),
+            },
+            "entrants": entrants,
+            "count": format!("{} / {}", t.entrants.len(), t.size),
+            "can_start": host && t.state != "running" && t.entrants.len() >= 2,
+            "start_label": if t.state == "done" { "START AGAIN" } else { "START THE BRACKET" },
+            "wait_line": if host {
+                "EMPTY PLACES ARE BYES FOR THE TOP SEEDS. START WHEN EVERYONE IS IN."
+            } else {
+                "THE HOST STARTS THE BRACKET. WAIT HERE: YOUR MATCH OPENS WHEN THE SERVER CALLS IT."
+            },
+            "note": format!(
+                "CODE {} · SEEDED BY RATING · THE SERVER CALLS EACH MATCH · FIRST TO {} {}",
+                r.code,
+                r.rules.rounds,
+                if r.rules.rounds == 1 { "ROUND" } else { "ROUNDS" }
+            ),
+        })
+    }
+
     fn room_json(&self) -> Value {
         let Some(r) = self.room.as_ref() else {
             let joining = self.jobs.iter().any(|j| matches!(j, Job::Room(_)));
@@ -2734,6 +2930,10 @@ impl OnlineScreen {
             }
             Some("cr_spect") => "SPECTATORS WATCH THE MATCH LIVE. THEY NEVER SLOW IT DOWN.",
             Some("cr_pass") => "OPTIONAL. PLAYERS TYPE IT TO JOIN, EVEN WITH THE CODE.",
+            Some("cr_format") if f.tournament > 0 => {
+                "BRACKET: UP TO 8 OR 16 PLAYERS, SINGLE ELIMINATION. YOU START IT; THE SERVER SEEDS BY RATING AND CALLS EACH MATCH."
+            }
+            Some("cr_format") => "1 VS 1: THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.",
             Some("cr_size") => {
                 "NORMAL: FIGHTERS ALREADY 58-82 PX TALL KEEP THEIR SIZE, OTHERS GET A ROUND STEP, x1.1 TO x3.0 OR /1.1 TO /3.0. NONE NEVER SCALES."
             }
@@ -2745,6 +2945,9 @@ impl OnlineScreen {
             }
         };
         let mut line = rules_tags(&f.rules);
+        if f.tournament > 0 {
+            line.insert(0, format!("BRACKET {}", f.tournament));
+        }
         if !f.public {
             line.push("CODE ONLY".into());
         }
@@ -2767,6 +2970,8 @@ impl OnlineScreen {
             "joins_sel": usize::from(!f.public),
             "spects": ["OFF", "2", "4", "6"],
             "spects_sel": spect.iter().position(|s| *s == f.spectators).unwrap_or(1),
+            "formats": ["1 VS 1", "BRACKET 8", "BRACKET 16"],
+            "formats_sel": match f.tournament { 8 => 1, 16 => 2, _ => 0 },
             "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.my_name()) } else { f.name.to_uppercase() },
             "preview_host": host,
             "preview_rules": line.join(" · "),
@@ -3033,6 +3238,18 @@ impl OnlineScreen {
                 "JOIN BY CODE".into(),
                 fit(&self.server_name().to_uppercase(), 28),
             ),
+            State::Room if self.in_bracket() => {
+                let r = self.room.as_ref();
+                let t = r.and_then(|r| r.tournament.as_ref());
+                (
+                    "BRACKET".into(),
+                    format!(
+                        "{} · {} PLAYERS · SINGLE ELIMINATION",
+                        fit(&r.map_or(String::new(), |r| r.name.to_uppercase()), 18),
+                        t.map_or(0, |t| t.size)
+                    ),
+                )
+            }
             State::Room => (
                 "ROOM".into(),
                 match &self.room {
@@ -3136,7 +3353,8 @@ impl OnlineScreen {
             "is_hub": hub,
             "is_lobby": self.state == State::Lobby,
             "is_create": self.state == State::Create,
-            "is_room": self.state == State::Room,
+            "is_room": self.state == State::Room && !self.in_bracket(),
+            "is_bracket": self.state == State::Room && self.in_bracket(),
             "is_join": self.state == State::Join,
             "is_queue": self.state == State::Queue,
             "is_board": self.state == State::Board,
@@ -3149,7 +3367,8 @@ impl OnlineScreen {
             "accts": if self.state == State::Profile { self.accts_json() } else { Vec::new() },
             "acct": if self.state == State::Profile { self.acct_json() } else { json!({}) },
             "lobby": if self.state == State::Lobby { self.lobby_json() } else { json!({}) },
-            "room": if self.state == State::Room { self.room_json() } else { json!({}) },
+            "room": if self.state == State::Room && !self.in_bracket() { self.room_json() } else { json!({}) },
+            "bk": if self.state == State::Room && self.in_bracket() { self.bracket_json() } else { json!({}) },
             "create": if self.state == State::Create { self.create_json() } else { json!({}) },
             "join": if self.state == State::Join { self.join_json() } else { json!({}) },
             "board": if self.state == State::Board { self.board_json() } else { json!({}) },
@@ -3172,6 +3391,11 @@ impl OnlineScreen {
         }
         self.rematch_focused = can_rematch;
         self.ui.set_data(data);
+    }
+
+    /// The room on screen runs a tournament bracket.
+    fn in_bracket(&self) -> bool {
+        self.room.as_ref().is_some_and(|r| r.tournament.is_some())
     }
 
     /// Text inputs take raw keys while they are being edited.
@@ -3701,6 +3925,7 @@ impl OnlineScreen {
                         f.rules.fighter_size = all[j].as_str().into();
                     }
                     "spect" => f.spectators = step(&[0, 2, 4, 6], f.spectators.into()) as u8,
+                    "format" => f.tournament = step(&[0, 8, 16], f.tournament.into()) as u8,
                     "go" => {
                         let opts = RoomOptions {
                             name: if f.name.trim().is_empty() {
@@ -3715,6 +3940,7 @@ impl OnlineScreen {
                                 ..f.rules.clone()
                             },
                             max_spectators: f.spectators,
+                            tournament: f.tournament,
                         };
                         let (c, ch) = (self.client.clone(), self.my_char());
                         self.room = None;
@@ -3780,6 +4006,14 @@ impl OnlineScreen {
                     }
                 }
             }
+            ("bk", "start") => {
+                if let Some(code) = self.room.as_ref().map(|r| r.code.clone()) {
+                    let c = self.client.clone();
+                    self.jobs
+                        .push(Job::Room(Pending::spawn(move || c.start_tournament(&code))));
+                }
+            }
+            ("bk", _) => {}
             ("board", "older") => self.step_season(-1),
             ("board", "tab:players") => self.board_tab(false),
             ("board", "tab:fighters") => self.board_tab(true),
@@ -4043,6 +4277,15 @@ impl OnlineScreen {
             .iter()
             .find(|m| m.role == 1)
             .map_or(0, |m| m.profile.id);
+        // a bracket: the called pair plays (P1 = the higher seed)
+        let (host, chal) = match r.tournament.as_ref().and_then(|t| {
+            let [round, i] = t.live?;
+            let m = t.rounds.get(round as usize)?.get(i as usize)?;
+            Some((m.p1?, m.p2?))
+        }) {
+            Some(p) => p,
+            None => (host, chal),
+        };
         // a new match in this room: its matchup phase (pick, verdict, sync)
         if r.side <= 2
             && let Some(mv) = &r.matchup
@@ -4078,7 +4321,9 @@ impl OnlineScreen {
                 println!("ROOM CODE: {}", r.code);
             }
         }
-        if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
+        if r.tournament.is_some() {
+            self.status.clear();
+        } else if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
             self.status = if r.opponent.is_none() && r.side <= 2 {
                 format!("ROOM {} - WAITING FOR A CHALLENGER", r.code)
             } else if r.side > 2 {

@@ -271,6 +271,9 @@ impl OnlineClient {
         if !opts.password.is_empty() {
             b["password"] = json!(opts.password);
         }
+        if opts.tournament > 0 {
+            b["tournament"] = json!(opts.tournament);
+        }
         Self::decode(self.call("POST", "/room", Some(b))?)
     }
 
@@ -282,13 +285,27 @@ impl OnlineClient {
         password: &str,
         spectate: bool,
     ) -> OnlineResult<RoomInfo> {
-        let mut b = self.with_key(json!({ "char": char_id, "spectate": spectate }))?;
+        // `tournament`: this client can take part in a bracket (servers
+        // refuse tournament rooms to clients that do not say so)
+        let mut b =
+            self.with_key(json!({ "char": char_id, "spectate": spectate, "tournament": true }))?;
         if !password.is_empty() {
             b["password"] = json!(password);
         }
         Self::decode(self.call(
             "POST",
             &format!("/room/{}/join", code.trim().to_ascii_uppercase()),
+            Some(b),
+        )?)
+    }
+
+    /// Host of a tournament room: draw the bracket with the entrants so far
+    /// (at least two) and start calling matches.
+    pub fn start_tournament(&self, code: &str) -> OnlineResult<RoomInfo> {
+        let b = self.with_key(json!({}))?;
+        Self::decode(self.call(
+            "POST",
+            &format!("/room/{}/start", code.trim().to_ascii_uppercase()),
             Some(b),
         )?)
     }
@@ -385,6 +402,9 @@ impl OnlineClient {
         }
         if let Some(e) = evidence.ending {
             b["ending"] = json!(e.as_str());
+        }
+        if let Some(r) = evidence.rounds {
+            b["rounds"] = json!(r);
         }
         Self::decode(self.call("POST", "/result", Some(b))?)
     }
@@ -773,6 +793,8 @@ pub struct RoomOptions {
     pub password: String,
     pub rules: Rules,
     pub max_spectators: u8,
+    /// A tournament room: bracket size 8 or 16 (0 = a 1 v 1 room).
+    pub tournament: u8,
 }
 
 /// What a result report carries for verification.
@@ -790,6 +812,8 @@ pub struct Evidence {
     pub turn_bytes: Option<(u64, u64)>,
     /// The match ended early: our forfeit or the other player's exit.
     pub ending: Option<rugen_proto::Ending>,
+    /// Rounds won by P1 and P2 (tournament brackets show the score).
+    pub rounds: Option<[u8; 2]>,
 }
 
 /// A call running on a worker thread; poll with [`Pending::take`].
