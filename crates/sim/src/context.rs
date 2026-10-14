@@ -201,10 +201,22 @@ impl Context for Ctx<'_> {
             T::MoveGuarded => Self::i(p.move_guarded()),
             T::MoveHit => Self::i(p.move_hit()),
             T::MoveReversed => Self::i(0),
+            T::NumEnemy if self.w.teams.active() => {
+                Self::i(self.w.enemy_roots(self.cur).len() as i32)
+            }
             T::NumEnemy => {
                 Self::i(self.w.players.iter().filter(|o| o.team != p.team).count() as i32)
             }
-            T::NumPartner => Self::i(0),
+            // Ikemen: the side's team size - 1 in Simul and Tag, else 0
+            T::NumPartner => {
+                let side = self.w.players[p.root].team as usize;
+                let mode = self.w.team_mode(side);
+                Self::i(if mode.has_partners() {
+                    self.w.teams.members[side].len().saturating_sub(1) as i32
+                } else {
+                    0
+                })
+            }
             T::NumProj => Self::i(self.w.num_proj(self.w.players[p.root].id, -1)),
             T::NumProjId => Self::i(self.w.num_proj(self.w.players[p.root].id, arg(0).to_i())),
             T::NumHelper => {
@@ -320,7 +332,7 @@ impl Context for Ctx<'_> {
             T::P2MoveType => self.p2().map_or(Value::Bottom, |e| {
                 Self::i(Self::move_type_mask(self.w.players[e].move_type) as i32)
             }),
-            T::TeamModeRaw => Self::i(0),
+            T::TeamModeRaw => Self::i(self.w.team_mode(p.team as usize).raw()),
             T::StateTypeIs { p2, mask } => {
                 let who = if *p2 { self.p2() } else { Some(self.cur) };
                 match who {
@@ -339,7 +351,16 @@ impl Context for Ctx<'_> {
                     None => Value::Bottom,
                 }
             }
-            T::TeamModeIs(m) => Self::b(*m == TeamMode::Single),
+            T::TeamModeIs(m) => {
+                use crate::team::TeamMode as M;
+                let mode = match self.w.team_mode(p.team as usize) {
+                    M::Single => TeamMode::Single,
+                    M::Simul => TeamMode::Simul,
+                    M::Turns => TeamMode::Turns,
+                    M::Tag => TeamMode::Tag,
+                };
+                Self::b(*m == mode)
+            }
             T::HitDefAttrIs { st, at } => {
                 // cns flags: ST bits match ours; attack-class bits are 1<<0.. there and 1<<6.. here
                 let want = st | (at << 6);
@@ -533,6 +554,20 @@ impl Context for Ctx<'_> {
         let target = match kind {
             Redirect::P2 | Redirect::Enemy | Redirect::EnemyNear => match id {
                 None | Some(0) => self.p2(),
+                // more enemies only in team matches: Enemy(n) by player
+                // order, EnemyNear(n) by distance (Ikemen)
+                Some(n) if n > 0 && self.w.teams.active() => {
+                    let mut e = self.w.enemy_roots(self.cur);
+                    if kind == Redirect::EnemyNear {
+                        let me = self.cur;
+                        e.sort_by(|&a, &b| {
+                            let da = self.w.rel_pos(me, a)[0].abs();
+                            let db = self.w.rel_pos(me, b)[0].abs();
+                            da.total_cmp(&db)
+                        });
+                    }
+                    e.get(n as usize).copied()
+                }
                 Some(_) => None,
             },
             Redirect::PlayerId => id.and_then(|id| self.w.players.iter().position(|o| o.id == id)),
@@ -571,7 +606,10 @@ impl Context for Ctx<'_> {
                         && (want <= 0 || o.helper_id == want)
                 })
             }
-            Redirect::Partner => None,
+            Redirect::Partner => {
+                let n = id.unwrap_or(0).max(0) as usize;
+                self.w.partners(self.cur).get(n).copied()
+            }
         };
         match target {
             Some(t) => {

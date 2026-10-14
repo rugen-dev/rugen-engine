@@ -3,8 +3,10 @@
 # grid pages (`paged`), PAGE n / N comes from `pages.grid`.
 # Data: title, prompt, grid[] {index kind press name face has_face warn broken
 # random empty p1 p2}, roster_line, filter, card1/card2 {name_up name_big name_small author portrait
-# status ok bad record picked cpu present},
-# ready, query, sort, keys {a b start}.
+# status ok bad record picked cpu present; facts* / slab_* = those flags
+# while no team mode is on; team_on team_off modes[] sizes[] {label on off}
+# slots[] {label face has_face picked next empty} team_hint},
+# ready, query, sort, keys {a b start team}, teams_ok, team_note.
 background = [0.95, 0.94, 0.89, 1.0]
 exit_time = 8
 
@@ -52,13 +54,31 @@ enter_time = 12
   [[node.children]]
   kind = "hbox"
   dock = "right"
-  x = 780
+  x = 640
   y = 13
-  w = 472
+  w = 612
   h = 30
   gap = 10
   justify = "end"
   align = "center"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{keys.team}"
+    h = 26
+    pad = 8
+    image = "ui/key9_dark.webp"
+    nine = [4, 4, 4, 8]
+    font = 2
+    bank = 11
+    visible = "teams_ok"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "TEAM MODE  "
+    font = 2
+    bank = 11
+    visible = "teams_ok"
 
     [[node.children.children]]
     kind = "text"
@@ -330,7 +350,7 @@ enter_time = 16
   w = 180
   font = 2
   bank = 9
-  visible = "card1.present"
+  visible = "card1.facts"
 
   [[node.children]]
   kind = "text"
@@ -340,7 +360,7 @@ enter_time = 16
   w = 180
   font = 2
   bank = 9
-  visible = "card1.blank"
+  visible = "card1.facts_blank"
 
   [[node.children]]
   kind = "text"
@@ -350,7 +370,7 @@ enter_time = 16
   w = 180
   font = 2
   bank = 9
-  visible = "card1.present"
+  visible = "card1.facts"
 
   [[node.children]]
   kind = "text"
@@ -360,7 +380,7 @@ enter_time = 16
   w = 175
   font = 2
   bank = 10
-  visible = "card1.bad"
+  visible = "card1.facts_bad"
 
   [[node.children]]
   kind = "text"
@@ -370,7 +390,7 @@ enter_time = 16
   w = 175
   font = 2
   bank = 9
-  visible = "card1.ok"
+  visible = "card1.facts_ok"
 
   [[node.children]]
   kind = "text"
@@ -385,7 +405,7 @@ enter_time = 16
   scale = 2
   bank = 10
   angle = -6
-  visible = "card1.picked"
+  visible = "card1.facts_picked"
 
   [[node.children]]
   kind = "text"
@@ -399,7 +419,7 @@ enter_time = 16
   font = 1
   scale = 3
   bank = 11
-  visible = "card1.name_big"
+  visible = "card1.slab_big"
 
   [[node.children]]
   kind = "text"
@@ -413,7 +433,7 @@ enter_time = 16
   font = 1
   scale = 2
   bank = 11
-  visible = "card1.name_small"
+  visible = "card1.slab_small"
 
   [[node.children]]
   kind = "text"
@@ -422,7 +442,131 @@ enter_time = 16
   y = 8
   font = 2
   bank = 10
-  visible = "card1.cpu"
+  visible = "card1.facts_cpu"
+
+  # team panel (a team mode on): mode and size segments, a row per fighter
+  [[node.children]]
+  kind = "hbox"
+  x = 196
+  y = 12
+  w = 204
+  h = 22
+  justify = "start"
+  items = "card1.modes"
+  visible = "card1.team_on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 6
+    color = [0.88, 0.13, 0.13, 1.0]
+    font = 2
+    bank = 11
+    visible = "item.on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 6
+    color = [0.9, 0.87, 0.8, 1.0]
+    font = 2
+    bank = 9
+    visible = "item.off"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 196
+  y = 38
+  w = 204
+  h = 22
+  justify = "start"
+  items = "card1.sizes"
+  visible = "card1.team_on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 7
+    color = [0.07, 0.07, 0.07, 1.0]
+    font = 2
+    bank = 11
+    visible = "item.on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 7
+    color = [0.9, 0.87, 0.8, 1.0]
+    font = 2
+    bank = 9
+    visible = "item.off"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 196
+  y = 66
+  w = 204
+  h = 132
+  gap = 4
+  items = "card1.slots"
+  visible = "card1.team_on"
+
+    [[node.children.children]]
+    kind = "hbox"
+    w = 204
+    h = 30
+    gap = 6
+    align = "center"
+    justify = "start"
+
+      [[node.children.children.children]]
+      kind = "image"
+      image = "{item.face}"
+      w = 26
+      h = 26
+      fit = "cover"
+      fit_y = 0.12
+      visible = "item.has_face"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 9
+      visible = "item.picked"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 10
+      visible = "item.next"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 8
+      visible = "item.empty"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card1.team_hint}"
+  x = 8
+  y = 194
+  w = 392
+  h = 20
+  pad = 6
+  color = [1.0, 1.0, 1.0, 1.0]
+  align = "left"
+  font = 2
+  bank = 9
+  visible = "card1.team_on"
+
 
 # 2P card (mirrored)
 [[node]]
@@ -504,7 +648,7 @@ enter_time = 16
   align = "right"
   font = 2
   bank = 9
-  visible = "card2.present"
+  visible = "card2.facts"
 
   [[node.children]]
   kind = "text"
@@ -515,7 +659,7 @@ enter_time = 16
   align = "right"
   font = 2
   bank = 9
-  visible = "card2.blank"
+  visible = "card2.facts_blank"
 
   [[node.children]]
   kind = "text"
@@ -526,7 +670,7 @@ enter_time = 16
   align = "right"
   font = 2
   bank = 9
-  visible = "card2.present"
+  visible = "card2.facts"
 
   [[node.children]]
   kind = "text"
@@ -537,7 +681,7 @@ enter_time = 16
   align = "right"
   font = 2
   bank = 10
-  visible = "card2.bad"
+  visible = "card2.facts_bad"
 
   [[node.children]]
   kind = "text"
@@ -548,7 +692,7 @@ enter_time = 16
   align = "right"
   font = 2
   bank = 9
-  visible = "card2.ok"
+  visible = "card2.facts_ok"
 
   [[node.children]]
   kind = "text"
@@ -563,7 +707,7 @@ enter_time = 16
   scale = 2
   bank = 10
   angle = 6
-  visible = "card2.picked"
+  visible = "card2.facts_picked"
 
   [[node.children]]
   kind = "text"
@@ -578,7 +722,7 @@ enter_time = 16
   font = 1
   scale = 3
   bank = 11
-  visible = "card2.name_big"
+  visible = "card2.slab_big"
 
   [[node.children]]
   kind = "text"
@@ -593,7 +737,7 @@ enter_time = 16
   font = 1
   scale = 2
   bank = 11
-  visible = "card2.name_small"
+  visible = "card2.slab_small"
 
   [[node.children]]
   kind = "text"
@@ -602,7 +746,131 @@ enter_time = 16
   y = 8
   font = 2
   bank = 10
-  visible = "card2.cpu"
+  visible = "card2.facts_cpu"
+
+  # team panel (a team mode on): mode and size segments, a row per fighter
+  [[node.children]]
+  kind = "hbox"
+  x = 24
+  y = 12
+  w = 204
+  h = 22
+  justify = "end"
+  items = "card2.modes"
+  visible = "card2.team_on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 6
+    color = [0.07, 0.07, 0.07, 1.0]
+    font = 2
+    bank = 11
+    visible = "item.on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 6
+    color = [0.9, 0.87, 0.8, 1.0]
+    font = 2
+    bank = 9
+    visible = "item.off"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 24
+  y = 38
+  w = 204
+  h = 22
+  justify = "end"
+  items = "card2.sizes"
+  visible = "card2.team_on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 7
+    color = [0.07, 0.07, 0.07, 1.0]
+    font = 2
+    bank = 11
+    visible = "item.on"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.label}"
+    h = 22
+    pad = 7
+    color = [0.9, 0.87, 0.8, 1.0]
+    font = 2
+    bank = 9
+    visible = "item.off"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 24
+  y = 66
+  w = 204
+  h = 132
+  gap = 4
+  items = "card2.slots"
+  visible = "card2.team_on"
+
+    [[node.children.children]]
+    kind = "hbox"
+    w = 204
+    h = 30
+    gap = 6
+    align = "center"
+    justify = "end"
+
+      [[node.children.children.children]]
+      kind = "image"
+      image = "{item.face}"
+      w = 26
+      h = 26
+      fit = "cover"
+      fit_y = 0.12
+      visible = "item.has_face"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 9
+      visible = "item.picked"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 10
+      visible = "item.next"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.label}"
+      font = 2
+      bank = 8
+      visible = "item.empty"
+
+  [[node.children]]
+  kind = "text"
+  text = "{card2.team_hint}"
+  x = 8
+  y = 194
+  w = 392
+  h = 20
+  pad = 6
+  color = [1.0, 1.0, 1.0, 1.0]
+  align = "right"
+  font = 2
+  bank = 9
+  visible = "card2.team_on"
+
 
 # between the cards: VS, then READY! once both fighters are locked (the
 # stage is picked on its own screen next)
@@ -620,6 +888,17 @@ bank = 9
 enter = "up"
 enter_time = 16
 enter_delay = 4
+
+[[node]]
+kind = "text"
+text = "SIDES MAY USE DIFFERENT MODES"
+x = 460
+y = 604
+w = 366
+align = "center"
+font = 2
+bank = 9
+visible = "team_note"
 
 [[node]]
 kind = "text"

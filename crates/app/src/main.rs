@@ -19,6 +19,8 @@
 //!   --watch                                                     both sides computer controlled
 //!   --training                                                  TRAINING mode (dummy P2, training pause menu)
 //!   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
+//!   --team1 / --team2 turns|simul|tag[:char,char]               team modes (offline): the side's mode and the
+//!                                                               partners after its first fighter
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
 //!   --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
 //! rugen list [--root dir]                                       list chars/ and stages/
@@ -140,6 +142,8 @@ rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboa
   --watch                                                     both sides computer controlled
   --training                                                  TRAINING mode (dummy P2, training pause menu)
   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
+  --team1 / --team2 turns|simul|tag[:char,char]               team modes (offline): the side's mode and the
+                                                              partners after its first fighter
   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
   --keys 90:Enter,120:k*40                                    harness: raw key presses at ticks (*n: held)
 rugen list [--root dir]                                       list chars/ and stages/
@@ -222,7 +226,11 @@ fn main() -> anyhow::Result<()> {
             let record = opt("--record");
             let keys = opt("--keys");
             let arena_ai = opt("--arena-ai");
+            let team1 = opt("--team1");
+            let team2 = opt("--team2");
             let taken = [
+                team1.clone(),
+                team2.clone(),
                 keys.clone(),
                 stage.clone(),
                 shot.clone(),
@@ -381,6 +389,41 @@ fn main() -> anyhow::Result<()> {
                     4
                 });
             let training = training && net_mode.is_none();
+            // --team1 turns:goku,kfm : a team mode and the partners after <char>
+            let teams = if team1.is_some() || team2.is_some() {
+                anyhow::ensure!(net_mode.is_none(), "team modes are offline only");
+                let mut t = play::TeamSetup::default();
+                for (side, arg) in [team1, team2].into_iter().enumerate() {
+                    let Some(arg) = arg else { continue };
+                    let (mode, names) = play::TeamSetup::parse_side(&arg).with_context(|| {
+                        format!(
+                            "--team{} expects single|turns|simul|tag[:char,char], got {arg:?}",
+                            side + 1
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        play::team_mode_ready(mode),
+                        "--team{}: {} is not available yet",
+                        side + 1,
+                        mode.as_str()
+                    );
+                    t.mode[side] = mode;
+                    for n in names {
+                        t.partners[side].push(resolve(&n)?);
+                    }
+                    let size = t.partners[side].len() + 1;
+                    anyhow::ensure!(
+                        mode.sizes().contains(&size),
+                        "--team{}: {} needs {:?} fighters, got {size}",
+                        side + 1,
+                        mode.as_str(),
+                        mode.sizes()
+                    );
+                }
+                Some(t)
+            } else {
+                None
+            };
             let setup = play::FightSetup {
                 p1: p1.clone(),
                 p2: p2.unwrap_or(p1),
@@ -393,6 +436,7 @@ fn main() -> anyhow::Result<()> {
                 fighter_size: None,
                 arena_ai: arena_ai.map(|v| v != "0" && v != "off" && v != "false"),
                 round_time: None,
+                teams,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

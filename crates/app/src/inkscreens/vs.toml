@@ -1,5 +1,5 @@
 # rugen VERSUS — Shonen Ink theme (UI book P.03). Coordinates are 1280x720.
-# Data: p1/p2 {name art has_art}, stage {name thumb has_thumb}, countdown.
+# Data: p1/p2 {name art has_art team}, stage {name thumb has_thumb}, countdown.
 background = [0.07, 0.07, 0.07, 1.0]
 exit_time = 8
 
@@ -96,6 +96,42 @@ angle = -3
 enter = "right"
 enter_time = 14
 enter_delay = 4
+
+# a team: its mode and partners under the name
+[[node]]
+kind = "text"
+dock = "left"
+text = "{p1.team}"
+x = 52
+y = 124
+h = 30
+pad = 10
+color = [0.07, 0.07, 0.07, 1.0]
+font = 2
+bank = 11
+angle = -3
+visible = "p1.team"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+[[node]]
+kind = "text"
+dock = "right"
+text = "{p2.team}"
+anchor = "tr"
+x = 52
+y = 562
+h = 30
+pad = 10
+color = [0.88, 0.13, 0.13, 1.0]
+font = 2
+bank = 11
+angle = -3
+visible = "p2.team"
+enter = "right"
+enter_time = 14
+enter_delay = 6
 
 [[node]]
 kind = "image"

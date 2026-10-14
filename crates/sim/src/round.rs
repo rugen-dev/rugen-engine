@@ -3,6 +3,7 @@
 use rugen_cns::state::{MoveType, StateType};
 
 use crate::player::assert;
+use crate::team::TeamMode;
 use crate::world::{Event, World};
 
 /// Timings from `fight.def [Round]` and `[Time]`, plus `mugen.cfg` rules.
@@ -214,20 +215,18 @@ impl World {
                 p.removed = true;
             }
         }
+        // (a Turns member waiting for its turn is not in the round)
         let roots: Vec<usize> = self
             .players
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.helper_index == 0)
+            .filter(|(_, p)| p.helper_index == 0 && !p.removed)
             .map(|(i, _)| i)
             .collect();
+        let keep_life = std::mem::take(&mut self.teams.keep_life);
         for i in roots {
             let data = self.data[self.players[i].data].clone();
-            let (x, facing) = if self.players[i].team == 0 {
-                (self.stage.p1_start_x, 1.0)
-            } else {
-                (self.stage.p2_start_x, -1.0)
-            };
+            let (x, facing) = self.start_pos(i);
             let x = x / self.local_scale(i);
             let int_persist = data.konst("data.intpersistindex").unwrap_or(60.0) as usize;
             let float_persist = data.konst("data.floatpersistindex").unwrap_or(40.0) as usize;
@@ -236,7 +235,9 @@ impl World {
             p.old_pos = p.pos;
             p.vel = [0.0, 0.0];
             p.facing = facing;
-            p.life = p.life_max;
+            if !keep_life {
+                p.life = p.life_max;
+            }
             p.ko = false;
             p.ctrl = false;
             p.hitdef = None;
@@ -316,11 +317,7 @@ impl World {
             if self.round.intro == cfg.ctrl_time {
                 for &i in &roots {
                     if !self.players[i].asserted(assert::NOINTRORESET) {
-                        let (x, facing) = if self.players[i].team == 0 {
-                            (self.stage.p1_start_x, 1.0)
-                        } else {
-                            (self.stage.p2_start_x, -1.0)
-                        };
+                        let (x, facing) = self.start_pos(i);
                         let x = x / self.local_scale(i);
                         let p = &mut self.players[i];
                         p.pos = [x, 0.0];
@@ -440,11 +437,17 @@ impl World {
                 ko[p.team as usize] = false;
             }
         }
+        if self.teams.active() {
+            ko = self.team_ko(roots);
+        }
         if self.round.time_left == 0 {
             let mut life = [0.0f32, 0.0];
             for &i in roots {
                 let p = &self.players[i];
                 life[p.team as usize] += p.life as f32 / p.life_max.max(1) as f32;
+            }
+            if self.teams.active() {
+                life = self.team_life(roots);
             }
             let (a, b) = (
                 libm::roundf(life[0] * 1000.0),
@@ -476,6 +479,9 @@ impl World {
     }
 
     fn end_round(&mut self) {
+        if self.teams.active() {
+            return self.end_team_round();
+        }
         let w = self.round.config.match_wins;
         let over = self.round.wins[0] >= w
             || self.round.wins[1] >= w
@@ -495,5 +501,74 @@ impl World {
         }
         self.round.round_no += 1;
         self.start_round();
+    }
+
+    /// [`end_round`](Self::end_round) of a team match: each side needs its
+    /// own number of wins, and a Turns side that lost sends its next fighter.
+    fn end_team_round(&mut self) {
+        let need = [self.wins_needed(0), self.wins_needed(1)];
+        let won = [0, 1].map(|s| self.round.wins[s] >= need[s]);
+        let over = won[0]
+            || won[1]
+            || (self.round.config.max_drawgames >= 0
+                && self.round.draws > self.round.config.max_drawgames);
+        if over {
+            self.round.match_over = true;
+            let winner = if won[0] {
+                0
+            } else if won[1] {
+                1
+            } else {
+                -1
+            };
+            self.events.push(Event::MatchOver(winner));
+            return;
+        }
+        self.turns_advance();
+        self.round.round_no += 1;
+        self.start_round();
+    }
+
+    /// Ikemen `roundEndDecision` KO check of a team match: a side is down
+    /// when every fighter is, or (`LoseOnKO`) when a human-controlled Simul
+    /// member / any Tag member is.
+    fn team_ko(&self, roots: &[usize]) -> [bool; 2] {
+        let mut ko = [true, true];
+        for (side, down) in ko.iter_mut().enumerate() {
+            for &i in roots
+                .iter()
+                .filter(|&&i| self.players[i].team as usize == side)
+            {
+                let p = &self.players[i];
+                if p.alive() {
+                    *down = false;
+                } else if (self.teams.mode[side] == TeamMode::Simul
+                    && self.teams.simul_lose_on_ko
+                    && p.ai_level == 0)
+                    || (self.teams.mode[side] == TeamMode::Tag && self.teams.tag_lose_on_ko)
+                {
+                    *down = true;
+                    break;
+                }
+            }
+        }
+        ko
+    }
+
+    /// Time over in a team match: each side's life share (Simul and Tag
+    /// fighters count `1 / team size` each, Ikemen `roundEndDecision`).
+    fn team_life(&self, roots: &[usize]) -> [f32; 2] {
+        let mut life = [0.0f32, 0.0];
+        for &i in roots {
+            let p = &self.players[i];
+            let side = p.team as usize;
+            life[side] += if self.teams.mode[side].has_partners() {
+                let n = self.teams.members[side].len().max(1) as f32;
+                (p.life as f32 / n) / p.life_max.max(1) as f32
+            } else {
+                p.life as f32 / p.life_max.max(1) as f32
+            };
+        }
+        life
     }
 }

@@ -993,6 +993,7 @@ mod tests {
             fighter_size: None,
             arena_ai: None,
             round_time: None,
+            teams: None,
         }
     }
 

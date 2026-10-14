@@ -149,8 +149,8 @@ pub struct StagePlan {
     pub setup: FightSetup,
     pub portraits: [Portrait; 2],
     pub names: [String; 2],
-    /// Both picks (manifest ids), to go back to the fighter select with them locked.
-    pub picks: [String; 2],
+    /// The picks (manifest ids, teams), to go back to the fighter select with them locked.
+    pub picks: crate::roster::Picks,
     /// Online: the host picks the stage for the matchup instead of a fight.
     pub online: Option<OnlineStage>,
 }
@@ -181,6 +181,7 @@ impl StagePlan {
             fighter_size: None,
             arena_ai: None,
             round_time: None,
+            teams: None,
         };
         Self {
             mode: Mode::Online,
@@ -190,7 +191,7 @@ impl StagePlan {
                 Portrait::new(names[1].clone(), None),
             ],
             names,
-            picks: [char_id.clone(), String::new()],
+            picks: crate::roster::Picks::single(char_id.clone(), String::new()),
             online: Some(OnlineStage { char_id, arena }),
         }
     }
@@ -474,7 +475,7 @@ impl StageSel {
     pub fn back(&mut self) -> Transition {
         match self.plan.take() {
             Some(p) if p.online.is_some() => Transition::OnlineSelect,
-            Some(p) => Transition::SelectAgain(p.mode, p.picks.map(Some)),
+            Some(p) => Transition::SelectAgain(p.mode, Box::new(p.picks)),
             None => Transition::Title,
         }
     }
@@ -1031,6 +1032,7 @@ mod tests {
             fighter_size: None,
             arena_ai: None,
             round_time: None,
+            teams: None,
         };
         let plan = StagePlan {
             mode: Mode::Versus,
@@ -1040,7 +1042,7 @@ mod tests {
                 Portrait::new("B".into(), None),
             ],
             names: ["A".into(), "B".into()],
-            picks: ["a".into(), "b".into()],
+            picks: crate::roster::Picks::single("a".into(), "b".into()),
             online: None,
         };
         let mut s = StageSel::new(plan, &lib);
@@ -1066,7 +1068,7 @@ mod tests {
         );
         match s.back() {
             Transition::SelectAgain(Mode::Versus, picks) => {
-                assert_eq!(picks, [Some("a".to_string()), Some("b".to_string())]);
+                assert_eq!(picks.ids, [vec!["a".to_string()], vec!["b".to_string()]]);
             }
             other => panic!("{other:?}"),
         }

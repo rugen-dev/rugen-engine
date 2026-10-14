@@ -36,6 +36,8 @@ pub enum TeamMode {
     Single,
     Simul,
     Turns,
+    /// Ikemen GO.
+    Tag,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -6,6 +6,7 @@
 //! (TRAINING: F1 hitboxes), +/- zoom.
 
 use rugen_sim::scale::FighterSize;
+use rugen_sim::team::TeamMode;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -152,6 +153,83 @@ pub struct FightSetup {
     /// Round clock (seconds, <= 0 = no clock) instead of the options' (a
     /// replay's recorded one).
     pub round_time: Option<i32>,
+    /// Team modes (offline only): each side's mode and partners; `None` is
+    /// a classic 1v1.
+    pub teams: Option<TeamSetup>,
+}
+
+/// The teams of an offline team match: `FightSetup::p1` / `p2` are each
+/// side's first fighter, `partners` the others in pick order.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TeamSetup {
+    #[serde(with = "team_modes")]
+    pub mode: [TeamMode; 2],
+    pub partners: [Vec<PathBuf>; 2],
+    /// Cache manifest ids of the partners (per-character stats; may be empty).
+    #[serde(default)]
+    pub ids: [Vec<String>; 2],
+}
+
+impl TeamSetup {
+    /// `TURNS · WITH GOKU, KUNG FU MAN`: a side's mode and partners for the
+    /// VS screen (empty for a single fighter).
+    pub fn line(&self, side: usize) -> String {
+        if self.mode[side] == TeamMode::Single {
+            return String::new();
+        }
+        let names: Vec<String> = self.partners[side]
+            .iter()
+            .map(|p| match rugen_content::manifest_for(p) {
+                Some((_, m)) => m.display_name.to_uppercase(),
+                None => p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_uppercase())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        format!(
+            "{} · WITH {}",
+            self.mode[side].as_str().to_uppercase(),
+            names.join(", ")
+        )
+    }
+
+    /// `turns:kfm,goku` (a mode, then the partners after the first fighter).
+    pub fn parse_side(s: &str) -> Option<(TeamMode, Vec<String>)> {
+        let (mode, rest) = s.split_once(':').unwrap_or((s, ""));
+        let mode = TeamMode::parse(mode)?;
+        let names = rest
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(String::from)
+            .collect();
+        Some((mode, names))
+    }
+}
+
+/// Team modes this build offers on the fighter select and `rugen play`.
+pub fn team_mode_ready(m: TeamMode) -> bool {
+    matches!(m, TeamMode::Single | TeamMode::Turns)
+}
+
+/// Team modes as their names in replays (`"turns"`).
+mod team_modes {
+    use rugen_sim::team::TeamMode;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(m: &[TeamMode; 2], s: S) -> Result<S::Ok, S::Error> {
+        [m[0].as_str(), m[1].as_str()].serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[TeamMode; 2], D::Error> {
+        let [a, b] = <[String; 2]>::deserialize(d)?;
+        let parse = |v: &str| {
+            TeamMode::parse(v)
+                .ok_or_else(|| serde::de::Error::custom(format!("unknown team mode {v:?}")))
+        };
+        Ok([parse(&a)?, parse(&b)?])
+    }
 }
 
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
@@ -537,8 +615,27 @@ impl Match {
             },
             fighter_size,
         };
-        let mut world = rugen_sim::headless::build_world(&spec)
-            .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
+        // team modes are offline only: online stays 1v1
+        let teams = setup.teams.as_ref().filter(|_| setup.net.is_none());
+        let mut world = match teams {
+            None => rugen_sim::headless::build_world(&spec),
+            Some(t) => {
+                let ts = rugen_sim::headless::TeamSpec {
+                    mode: t.mode,
+                    partners: [0, 1].map(|s| t.partners[s].iter().map(PathBuf::as_path).collect()),
+                    // a human side's Simul partners fight as the computer
+                    partner_ai: [0, 1].map(|s| {
+                        if setup.ai[s] > 0 {
+                            setup.ai[s]
+                        } else {
+                            cfg.game.ai_level.clamp(1, 8)
+                        }
+                    }),
+                };
+                rugen_sim::headless::build_team_world(&spec, &ts)
+            }
+        }
+        .with_context(|| format!("{} vs {}", setup.p1.display(), setup.p2.display()))?;
         // the room's ROUNDS (online; the same on both sides and in the server's re-simulation)
         if let Some(w) = cfg.game.match_wins.filter(|_| setup.net.is_some()) {
             world.round.config.match_wins = w;
@@ -879,10 +976,10 @@ impl Match {
         // harness: `RUGEN_HARNESS_LOWLIFE=1` makes P2 drop in one hit so matches end fast
         if std::env::var_os("RUGEN_HARNESS_LOWLIFE").is_some()
             && self.world.round.round_state() == 2
-            && self.world.players.len() > 1
-            && self.world.players[1].life > 1
+            && let Some(p2) = self.world.side_leader(1)
+            && self.world.players[p2].life > 1
         {
-            self.world.players[1].life = 1;
+            self.world.players[p2].life = 1;
         }
         if self.world.round.match_over {
             self.over_ticks += 1;
@@ -1194,6 +1291,9 @@ impl Match {
         if let (Some(e), Some(net)) = (self.early_end(), self.net.as_ref()) {
             let me = net.local_handle().min(1);
             return Some(if e == EarlyEnd::Fled { 1 - me } else { me });
+        }
+        if self.world.teams.active() {
+            return self.world.match_winner();
         }
         let w = self.world.round.wins;
         if !self.world.round.match_over || w[0] == w[1] {
@@ -1666,10 +1766,17 @@ impl Match {
         let cam_y = self.world.cam_y + shake[1];
         let zoom = self.world.cam_zoom * self.zoom;
         let bg_tint = tint(self.world.bgpalfx.sample());
-        let portraits = [
-            self.sprite_from(r, Some(self.world.players[0].data), 9000, 0),
-            self.sprite_from(r, Some(self.world.players[1].data), 9000, 0),
-        ];
+        // every root player's 9000,0 (team partners get small faces)
+        let portraits: Vec<_> = (0..self.world.players.len())
+            .map(|i| {
+                let (root, data) = (
+                    self.world.players[i].helper_index == 0,
+                    self.world.players[i].data,
+                );
+                root.then(|| self.sprite_from(r, Some(data), 9000, 0))
+                    .flatten()
+            })
+            .collect();
         let mut stage_visual = self.stage_visual.take();
         let mut lifebar = self.lifebar.take();
         let (w, h) = r.size();
@@ -1847,7 +1954,7 @@ impl Match {
                 &self.world,
                 &lb_hud,
                 u * ratio,
-                portraits,
+                &portraits,
                 x_off / ratio,
                 arena,
             );
@@ -2350,6 +2457,21 @@ mod tests {
             run(match_zoom(None, &close)),
             "the settings do shape the camera (the test means something)"
         );
+    }
+
+    /// `--team1 turns:goku,kfm`: the mode, then the partners.
+    #[test]
+    fn team_sides_parse() {
+        assert_eq!(
+            TeamSetup::parse_side("turns:goku, kfm"),
+            Some((TeamMode::Turns, vec!["goku".into(), "kfm".into()]))
+        );
+        assert_eq!(
+            TeamSetup::parse_side("single"),
+            Some((TeamMode::Single, vec![]))
+        );
+        assert_eq!(TeamSetup::parse_side("trio:goku"), None);
+        assert!(team_mode_ready(TeamMode::Turns));
     }
 
     /// LAN netplay settings desync: air jumps, air dash and fast fall came

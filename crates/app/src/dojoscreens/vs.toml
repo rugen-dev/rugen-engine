@@ -1,5 +1,5 @@
 # rugen VERSUS — Dojo theme. Coordinates are 1280x720.
-# Data: p1/p2 {name name_up art has_art}, stage {name thumb has_thumb}, countdown.
+# Data: p1/p2 {name name_up art has_art team}, stage {name thumb has_thumb}, countdown.
 # The hall split by a pillar: P1's half in vermilion light, P2's in brass,
 # the VS seal on the pillar inside an ensō.
 background = [0.078, 0.051, 0.043, 1.0]
@@ -97,6 +97,40 @@ bank = 12
 enter = "right"
 enter_time = 14
 enter_delay = 4
+
+# a team: its mode and partners by the name plaque
+[[node]]
+kind = "text"
+dock = "left"
+text = "{p1.team}"
+x = 48
+y = 148
+h = 32
+pad = 12
+color = [0.078, 0.051, 0.043, 0.88]
+font = 6
+bank = 14
+visible = "p1.team"
+enter = "left"
+enter_time = 14
+enter_delay = 6
+
+[[node]]
+kind = "text"
+dock = "right"
+text = "{p2.team}"
+anchor = "tr"
+x = 48
+y = 512
+h = 32
+pad = 12
+color = [0.078, 0.051, 0.043, 0.88]
+font = 6
+bank = 14
+visible = "p2.team"
+enter = "right"
+enter_time = 14
+enter_delay = 6
 
 [[node]]
 kind = "text"

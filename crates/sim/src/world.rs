@@ -42,6 +42,10 @@ pub struct Stage {
     pub screen_right: f32,
     pub p1_start_x: f32,
     pub p2_start_x: f32,
+    /// `p3startx` .. `p8startx` (team partners); `None` = the previous
+    /// partner of that side plus `partnerspacing` (Ikemen GO).
+    pub partner_start_x: [Option<f32>; 6],
+    pub partner_spacing: f32,
     pub tension: f32,
     pub start_x: f32,
     pub bound_high: f32,
@@ -137,6 +141,8 @@ impl Default for Stage {
             screen_right: 15.0,
             p1_start_x: -70.0,
             p2_start_x: 70.0,
+            partner_start_x: [None; 6],
+            partner_spacing: 25.0,
             tension: 50.0,
             start_x: 0.0,
             bound_high: -25.0,
@@ -255,6 +261,12 @@ impl Stage {
         if let Some(v) = g("playerinfo", "p2startx") {
             s.p2_start_x = v;
         }
+        if let Some(v) = g("playerinfo", "partnerspacing") {
+            s.partner_spacing = v;
+        }
+        for (k, x) in s.partner_start_x.iter_mut().enumerate() {
+            *x = g("playerinfo", &format!("p{}startx", k + 3));
+        }
         if let Some(v) = g("bound", "screenleft") {
             s.screen_left = v;
         }
@@ -367,6 +379,8 @@ pub struct World {
     /// Arena AI plugin for computer fighters on `[Arena]` stages (a match
     /// rule, see [`crate::arena_ai`]).
     pub arena_ai: bool,
+    /// Team modes (default: a classic 1v1, see [`crate::team`]).
+    pub teams: crate::team::Teams,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -411,6 +425,7 @@ impl World {
             bgpalfx: PalFx::default(),
             movement: Movement::default(),
             arena_ai: false,
+            teams: Default::default(),
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -509,6 +524,7 @@ impl World {
         p.size = crate::player::Size::from_data(&data);
         // every root player is its own root (helpers inherit it)
         p.root = idx;
+        p.input_slot = idx;
         self.players.push(p);
         // tests and tools can fight right away; `start_round` does the real intro sequence
         self.change_state(idx, 5900, None, None);
@@ -935,7 +951,10 @@ impl World {
                 self.players[i].ai = ai;
                 crate::arena_ai::filter(self, i, b)
             } else {
-                inputs.get(i).copied().unwrap_or_default()
+                inputs
+                    .get(self.players[i].input_slot)
+                    .copied()
+                    .unwrap_or_default()
             };
             let p = &mut self.players[i];
             let (back, fwd) = if p.facing < 0.0 {

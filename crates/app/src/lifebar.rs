@@ -42,6 +42,13 @@
 //!   `face.border`, `life.pN`, `life.empty`, `pip.color`, `power.off`,
 //!   `power.on`, `clock.color`, `clock.shadow`, `tag.pN.bank`, `name.bank`,
 //!   `num.pN.bank`, `label.bank`, `clock.bank`. Unset keys keep the ink look.
+//! - `[TeamHUD]` partner strips of a team match (face, small life bar and a
+//!   caption plate per partner, stacked from `pN.pos`, P2 mirrored):
+//!   `spacing`, `face.size`, `bar.size = w,h`, `simul.bar.width`, `border`,
+//!   colours `border.color`, `bar.bg`, `face.bg`, `life.color`,
+//!   `red.color` (life a Tag partner wins back), `down.color`, and
+//!   `label.font` (default: the name font at half scale). Without the
+//!   section the strips sit under the `[Name]` plates.
 //! - `[Time]` round tag: `round.text = ROUND %i`, `round.offset`,
 //!   `round.font`, `round.scale`, `round.bg.*` (all relative to `pos`).
 //! - `[Combo]` `teamN.angle = deg`: tilt counter and label counter-clockwise
@@ -55,7 +62,7 @@ use rugen_formats::air::Air;
 use rugen_formats::def::{Def, Section};
 use rugen_formats::fnt::Font;
 use rugen_formats::sff::Sff;
-use rugen_render::{Draw, PaletteId, Renderer, TextureId};
+use rugen_render::{Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::World;
 use rugen_sim::round::Finish;
 use rugen_sim::world::Event;
@@ -380,6 +387,64 @@ impl ArenaStyle {
     }
 }
 
+/// rugen: `[TeamHUD]`, the partner strips of a team match: a small face,
+/// a small life bar and a caption per partner (Turns: the fighters still to
+/// come or down), under each side's name plate.
+#[derive(Clone, Debug)]
+struct TeamStyle {
+    /// First strip per side; `None` = under the `[Name]` plate.
+    pos: [Option<[f32; 2]>; 2],
+    /// Vertical step between strips.
+    spacing: f32,
+    face: f32,
+    bar: [f32; 2],
+    /// Simul: partners fight at full strength, so their bars run as long
+    /// as this.
+    simul_bar: f32,
+    border: f32,
+    ink: [f32; 4],
+    paper: [f32; 4],
+    face_bg: [f32; 4],
+    life: [f32; 4],
+    /// Life a Tag partner wins back while out (Ikemen red life).
+    red: [f32; 4],
+    down: [f32; 4],
+    label: Option<Fnt>,
+}
+
+impl TeamStyle {
+    fn parse(s: &Section) -> Self {
+        let col = |k: &str, d: [f32; 4]| {
+            s.f32s(k)
+                .filter(|v| v.len() >= 3)
+                .map_or(d, |v| [v[0] / 255.0, v[1] / 255.0, v[2] / 255.0, 1.0])
+        };
+        let pos = |k: &str| s.f32s(k).filter(|v| v.len() >= 2).map(|v| [v[0], v[1]]);
+        let num = |k: &str, d: f32| s.f32(k).unwrap_or(d);
+        let size = |k: &str, d: [f32; 2]| {
+            s.f32s(k)
+                .filter(|v| v.len() >= 2)
+                .map_or(d, |v| [v[0], v[1]])
+        };
+        const INK: [f32; 4] = [0.078, 0.071, 0.063, 1.0];
+        Self {
+            pos: [pos("p1.pos"), pos("p2.pos")],
+            spacing: num("spacing", 34.0),
+            face: num("face.size", 30.0),
+            bar: size("bar.size", [160.0, 10.0]),
+            simul_bar: num("simul.bar.width", 300.0),
+            border: num("border", 2.0),
+            ink: col("border.color", INK),
+            paper: col("bar.bg", [1.0, 1.0, 1.0, 1.0]),
+            face_bg: col("face.bg", [0.949, 0.933, 0.894, 1.0]),
+            life: col("life.color", [0.91, 0.541, 0.541, 1.0]),
+            red: col("red.color", [1.0, 0.824, 0.247, 1.0]),
+            down: col("down.color", [0.725, 0.698, 0.643, 1.0]),
+            label: Fnt::parse(s, "label"),
+        }
+    }
+}
+
 pub struct Lifebar {
     sheet: SpriteSheet,
     air: Air,
@@ -406,6 +471,8 @@ pub struct Lifebar {
     winicon_label: [(Option<Fnt>, String, [f32; 2]); 2],
     /// rugen: `[ArenaHUD]` colours and banks.
     arena: ArenaStyle,
+    /// rugen: `[TeamHUD]` partner strips.
+    team: TeamStyle,
     round_text: Text,
     round_offset_time: i32,
     fight: Elem,
@@ -568,6 +635,7 @@ impl Lifebar {
             winicon_empty: [Elem::parse(wi, "p1.empty"), Elem::parse(wi, "p2.empty")],
             winicon_label: [label("p1"), label("p2")],
             arena: ArenaStyle::parse(sec("arenahud")),
+            team: TeamStyle::parse(sec("teamhud")),
             time_counter: (
                 pos2(tm, "counter.offset", [0.0, 0.0]),
                 Fnt::parse(tm, "counter"),
@@ -607,6 +675,9 @@ impl Lifebar {
     pub fn event(&mut self, w: &World, e: &Event) {
         match e {
             Event::RoundStart(n) => {
+                // a new round clears the last one's lines ("X WINS" ran on
+                // into the next round's FIGHT)
+                self.shown.clear();
                 let t = self.round_text.clone();
                 let line = t.text.replace("%i", &n.to_string());
                 let time = t.displaytime;
@@ -650,10 +721,8 @@ impl Lifebar {
             }
             Event::RoundWon(team) => {
                 let name = w
-                    .players
-                    .iter()
-                    .find(|p| p.helper_index == 0 && p.team == *team)
-                    .map(|p| w.data[p.data].display_name.clone())
+                    .side_leader(*team as usize)
+                    .map(|i| w.data[w.players[i].data].display_name.clone())
                     .unwrap_or_default();
                 let (t, line) = if w.round.finish == Finish::DoubleKO {
                     (self.dko.clone(), self.dko.text.clone())
@@ -754,6 +823,15 @@ impl Lifebar {
             cell_top + f32::from(t),
             cell_top + f32::from(b) + 1.0,
         ])
+    }
+
+    /// Baseline offset (fight.def units) that centres capitals on a line.
+    fn text_center(&self, f: Option<Fnt>) -> f32 {
+        let Some(Fnt { f, scale }) = f else {
+            return 0.0;
+        };
+        self.text_ink(f.index, "A")
+            .map_or(0.0, |[_, top, bottom]| -(top + bottom) / 2.0 * scale)
     }
 
     /// Unscaled width and height of `line` in fight.def font `index`.
@@ -921,6 +999,156 @@ impl Lifebar {
     /// stock (or round) pips, name, life in percent, a 10-segment life bar
     /// and the power bars — and a small clock box at the top. Laid out in
     /// 1280x720 design pixels scaled to the fight.def's height.
+    /// The partner strips of `side` (see [`TeamStyle`]).
+    fn draw_team(
+        &mut self,
+        r: &mut Renderer,
+        w: &World,
+        side: usize,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        portrait: &dyn Fn(usize) -> Option<Portrait>,
+    ) {
+        use rugen_sim::team::TeamMode;
+        let st = self.team.clone();
+        let mode = w.team_mode(side);
+        let leader = w.side_leader(side);
+        let members = &w.teams.members[side];
+        let active_member = leader.map_or(0, |i| w.players[i].member);
+        // p2 strips run right to left from their anchor
+        let dir = if side == 0 { 1.0 } else { -1.0 };
+        let label = st.label.or_else(|| {
+            self.names[side].font.map(|mut f| {
+                f.scale *= 0.5;
+                f
+            })
+        });
+        let anchor = st.pos[side].unwrap_or_else(|| {
+            let n = &self.names[side];
+            [n.pos[0], n.pos[1] + 14.0]
+        });
+        let bar_w = if mode == TeamMode::Simul {
+            st.simul_bar
+        } else {
+            st.bar[0]
+        };
+        let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
+            let (a, b) = (x0.min(x1), x0.max(x1));
+            r.rect(hud(a, y0), hud(b, y1), c);
+        };
+        for (row, &i) in members.iter().filter(|&&i| Some(i) != leader).enumerate() {
+            let p = &w.players[i];
+            let y = anchor[1] + row as f32 * st.spacing;
+            let x = anchor[0];
+            let f = st.face;
+            let b = st.border;
+            // mini face
+            rect(r, x, y, x + dir * f, y + f, st.ink);
+            rect(
+                r,
+                x + dir * b,
+                y + b,
+                x + dir * (f - b),
+                y + f - b,
+                st.face_bg,
+            );
+            if let Some((tex, pal, _)) = portrait(i) {
+                let (tw, th) = r.texture_size(tex);
+                let (tw, th) = (tw.max(1) as f32, th.max(1) as f32);
+                let inner = f - 2.0 * b;
+                let s = (inner / tw).max(inner / th);
+                let (sw, sh) = ((inner / s).min(tw), (inner / s).min(th));
+                let cx = x + dir * f / 2.0;
+                let mut d = Draw::new(tex, pal, hud(cx, y + f / 2.0), [sw / 2.0, sh / 2.0]);
+                d.src = Some([
+                    ((tw - sw) / 2.0) as u32,
+                    ((th - sh) * 0.15) as u32,
+                    sw as u32,
+                    sh as u32,
+                ]);
+                d.scale = [s * u, s * u];
+                d.hflip = side == 1;
+                if !p.alive() || (mode == TeamMode::Turns && p.member < active_member) {
+                    d.tint = Tint {
+                        mul: [0.6, 0.6, 0.6],
+                        color: 0.0,
+                        ..Default::default()
+                    };
+                }
+                r.draw(d);
+            }
+            // small life bar
+            let bx = x + dir * (f + 6.0);
+            let by = y + (f - st.bar[1]) / 2.0;
+            let (bh, bw) = (st.bar[1], bar_w);
+            rect(r, bx, by, bx + dir * bw, by + bh, st.ink);
+            rect(
+                r,
+                bx + dir * b,
+                by + b,
+                bx + dir * (bw - b),
+                by + bh - b,
+                st.paper,
+            );
+            let inner = bw - 2.0 * b;
+            let frac = |v: i32| (v.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
+            let fallen = !p.alive() || (mode == TeamMode::Turns && p.member < active_member);
+            let life = if fallen { 0.0 } else { frac(p.life) };
+            let red = life;
+            let x0 = bx + dir * b;
+            if red > life {
+                rect(
+                    r,
+                    x0 + dir * inner * life,
+                    by + b,
+                    x0 + dir * inner * red,
+                    by + bh - b,
+                    st.red,
+                );
+            }
+            if life > 0.0 {
+                rect(r, x0, by + b, x0 + dir * inner * life, by + bh - b, st.life);
+            } else {
+                rect(r, x0, by + b, x0 + dir * inner, by + bh - b, st.down);
+            }
+            // caption under the bar: NAME · STATE
+            let state = if fallen {
+                "DOWN"
+            } else {
+                match mode {
+                    TeamMode::Turns if p.member == active_member + 1 => "NEXT",
+                    TeamMode::Turns => "WAITING",
+                    _ => "",
+                }
+            };
+            let name = w.data[p.data].display_name.to_uppercase();
+            let line = if state.is_empty() {
+                name
+            } else {
+                format!("{name} · {state}")
+            };
+            // ... on a small plate right of the bar (p2: left of it)
+            if let Some(mut font) = label {
+                font.f.align = if side == 0 { 1 } else { -1 };
+                let tw = self.text_width(Some(font), &line);
+                let lx = bx + dir * (bw + 8.0);
+                let (pad, ph) = (4.0, st.face * 0.55);
+                let py = y + (f - ph) / 2.0;
+                rect(r, lx, py, lx + dir * (tw + 2.0 * pad), py + ph, st.ink);
+                rect(
+                    r,
+                    lx + dir * 1.0,
+                    py + 1.0,
+                    lx + dir * (tw + 2.0 * pad - 1.0),
+                    py + ph - 1.0,
+                    st.paper,
+                );
+                let base = py + ph / 2.0 + self.text_center(Some(font));
+                self.text(r, Some(font), &line, hud(lx + dir * pad, base), u);
+            }
+        }
+    }
+
     fn draw_arena(
         &mut self,
         r: &mut Renderer,
@@ -1125,22 +1353,18 @@ impl Lifebar {
         w: &World,
         hud: &dyn Fn(f32, f32) -> [f32; 2],
         u: f32,
-        portraits: [Option<Portrait>; 2],
+        portraits: &[Option<Portrait>],
         spread: f32,
         arena: bool,
     ) {
         let lc = self.localcoord;
         let spread = if lc[0] >= lc[1] * 1.7 { spread } else { 0.0 };
-        let roots: Vec<usize> = w
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.helper_index == 0)
-            .map(|(i, _)| i)
-            .take(2)
-            .collect();
+        // each side's main bar: its fighter (a team's fighter in the fight)
+        let roots: Vec<usize> = (0..2).filter_map(|s| w.side_leader(s)).collect();
+        let portrait = |i: usize| portraits.get(i).copied().flatten();
+        let side_portraits = [0, 1].map(|s| roots.get(s).and_then(|&i| portrait(i)));
         if arena {
-            self.draw_arena(r, w, &roots, hud, u, portraits);
+            self.draw_arena(r, w, &roots, hud, u, side_portraits);
         }
         for (side, &pi) in roots.iter().enumerate().filter(|_| !arena) {
             let dx = if side == 0 { -spread } else { spread };
@@ -1190,7 +1414,7 @@ impl Lifebar {
             let face = self.faces[side].clone();
             let base = hud(face.pos[0], face.pos[1]);
             self.draw_elem(r, &face.bg, base, u, None);
-            if let Some((tex, pal, axis)) = portraits[side] {
+            if let Some((tex, pal, axis)) = side_portraits[side] {
                 let pos = [
                     base[0] + face.face.offset[0] * u,
                     base[1] + face.face.offset[1] * u,
@@ -1253,7 +1477,7 @@ impl Lifebar {
                 ]
             };
             // empty marks for the rounds still needed
-            let needed = w.round.config.match_wins as usize;
+            let needed = w.wins_needed(p.team as usize) as usize;
             if self.winicon_empty[side].present() {
                 for k in wins..needed {
                     let e = self.winicon_empty[side].clone();
@@ -1284,6 +1508,13 @@ impl Lifebar {
                 r.rect(a, b, [1.0, 0.85, 0.2, 0.95]);
             }
         }
+        if w.teams.active() && !arena {
+            for side in 0..2 {
+                let dx = if side == 0 { -spread } else { spread };
+                let side_hud = move |x: f32, y: f32| hud(x + dx, y);
+                self.draw_team(r, w, side, &side_hud, u, &portrait);
+            }
+        }
         // clock
         let clock = w.round.clock();
         let (off, font) = self.time_counter;
@@ -1307,7 +1538,20 @@ impl Lifebar {
         if !arena && (rt.font.is_some() || rt.bg.present()) {
             let base = hud(self.time_pos[0], self.time_pos[1]);
             self.draw_elem(r, &rt.bg, base, u, None);
-            let line = rt.text.replace("%i", &w.round.round_no.max(1).to_string());
+            let mut line = rt.text.replace("%i", &w.round.round_no.max(1).to_string());
+            // team matches name their modes: "TURNS · ROUND 2"
+            if w.teams.active() {
+                let mut modes: Vec<String> = Vec::new();
+                for m in [w.team_mode(0), w.team_mode(1)] {
+                    let m = m.as_str().to_uppercase();
+                    if m != "SINGLE" && !modes.contains(&m) {
+                        modes.push(m);
+                    }
+                }
+                if !modes.is_empty() {
+                    line = format!("{} · {line}", modes.join("/"));
+                }
+            }
             let pos = hud(
                 self.time_pos[0] + rt.offset[0],
                 self.time_pos[1] + rt.offset[1],

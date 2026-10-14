@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use rugen_content::{Library, Manifest};
+use rugen_sim::team::TeamMode;
 use serde_json::{Value, json};
 
 use crate::game::{Mode, Transition};
@@ -39,6 +40,47 @@ enum Sort {
     Recent,
 }
 
+/// Each side's team: its mode and how many fighters it brings.
+pub type Team = (TeamMode, usize);
+
+/// The team entries X / Y step through (Ikemen team sizes 2..=4), the
+/// modes this build plays.
+fn team_choices() -> Vec<Team> {
+    TeamMode::ALL
+        .into_iter()
+        .filter(|&m| crate::play::team_mode_ready(m))
+        .flat_map(|m| m.sizes().map(move |n| (m, n)))
+        .collect()
+}
+
+/// The picks made so far (manifest ids, in pick order) and each side's
+/// team, handed to the stage select and back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Picks {
+    pub ids: [Vec<String>; 2],
+    pub team: [Team; 2],
+}
+
+impl Default for Picks {
+    fn default() -> Self {
+        Self {
+            ids: [Vec::new(), Vec::new()],
+            team: [(TeamMode::Single, 1); 2],
+        }
+    }
+}
+
+impl Picks {
+    /// One fighter per side.
+    pub fn single(p1: String, p2: String) -> Self {
+        let id = |s: String| if s.is_empty() { vec![] } else { vec![s] };
+        Self {
+            ids: [id(p1), id(p2)],
+            ..Default::default()
+        }
+    }
+}
+
 pub enum Outcome {
     None,
     /// Data changed; rebuild the bind context.
@@ -57,7 +99,12 @@ pub struct Roster {
     /// Sides whose fighter is chosen on this screen; a computer side that is
     /// not chosen gets a random fighter up front (the arcade opponent).
     chooses: [bool; 2],
-    picks: [Option<usize>; 2],
+    /// Each side's fighters so far (indices into `cells`), in pick order.
+    picks: [Vec<usize>; 2],
+    /// Each side's team mode and size (Single, 1 outside VS / WATCH).
+    team: [Team; 2],
+    /// Team modes may be chosen here (VS MODE and WATCH; offline only).
+    teams_ok: bool,
     /// Which side the next pick goes to (2 = everyone picked).
     picking: usize,
     pub query: String,
@@ -134,7 +181,9 @@ impl Roster {
             lib: lib.clone(),
             human,
             chooses,
-            picks: [None, None],
+            picks: [Vec::new(), Vec::new()],
+            team: [(TeamMode::Single, 1); 2],
+            teams_ok: matches!(mode, Mode::Versus | Mode::Watch),
             picking: if chooses[0] { 0 } else { 1 },
             query: String::new(),
             sort: Sort::Name,
@@ -154,7 +203,7 @@ impl Roster {
         // opponent brings their own, unknown until the matchup)
         for side in 0..2 {
             if !r.chooses[side] && mode != Mode::Online {
-                r.picks[side] = r.random_ok();
+                r.picks[side] = r.random_ok().into_iter().collect();
             }
         }
         r.picking = r.next_picking();
@@ -264,22 +313,66 @@ impl Roster {
         changed
     }
 
+    /// `side` has all the fighters its team brings.
+    fn done(&self, side: usize) -> bool {
+        self.picks[side].len() >= self.team[side].1
+    }
+
     fn all_picked(&self) -> bool {
         if self.mode == Mode::Online {
-            return self.picks[0].is_some();
+            return !self.picks[0].is_empty();
         }
-        (0..2).all(|s| self.picks[s].is_some())
+        (0..2).all(|s| self.done(s))
     }
 
     fn next_picking(&self) -> usize {
         (0..2)
-            .find(|&s| self.chooses[s] && self.picks[s].is_none())
+            .find(|&s| self.chooses[s] && !self.done(s))
             .unwrap_or(2)
     }
 
-    /// Sides whose fighter is still to be picked on this screen.
+    /// Sides whose fighters are still to be picked on this screen.
     pub fn open_picks(&self) -> [bool; 2] {
-        [0, 1].map(|s| self.chooses[s] && self.picks[s].is_none())
+        [0, 1].map(|s| self.chooses[s] && !self.done(s))
+    }
+
+    /// Step `side`'s team (mode and size) by `dir` through the choices;
+    /// picks beyond the new size are dropped. False when teams are not
+    /// offered here or the side is not picked on this screen.
+    pub fn step_team(&mut self, side: usize, dir: i32) -> bool {
+        if !self.teams_ok || side > 1 || !self.chooses[side] {
+            return false;
+        }
+        let choices = team_choices();
+        if choices.len() < 2 {
+            return false;
+        }
+        let at = choices
+            .iter()
+            .position(|&t| t == self.team[side])
+            .unwrap_or(0) as i32;
+        let n = choices.len() as i32;
+        self.team[side] = choices[((at + dir) % n + n) as usize % n as usize];
+        self.picks[side].truncate(self.team[side].1);
+        self.picking = self.next_picking();
+        self.ready_in = None;
+        self.arm_ready();
+        true
+    }
+
+    /// The side a single cursor's team keys change: the one picking now
+    /// (the last one once everyone picked).
+    pub fn team_side(&self) -> usize {
+        if self.picking < 2 {
+            self.picking
+        } else {
+            (0..2).rev().find(|&s| self.chooses[s]).unwrap_or(0)
+        }
+    }
+
+    /// Team modes can be chosen on this screen.
+    pub fn teams_ok(&self) -> bool {
+        self.teams_ok && team_choices().len() > 1
     }
 
     /// Both humans pick at the same time (each with their own cursor).
@@ -292,15 +385,15 @@ impl Roster {
     pub fn cancel(&mut self, side: Option<usize>) -> bool {
         let side = match side {
             // two cursors: each player's back only touches their own pick
-            Some(s) if self.dual() => Some(s).filter(|&s| self.picks[s].is_some()),
+            Some(s) if self.dual() => Some(s).filter(|&s| !self.picks[s].is_empty()),
             // one cursor picks everything: back always undoes the last pick
             _ => (0..2)
                 .rev()
-                .find(|&s| self.chooses[s] && self.picks[s].is_some()),
+                .find(|&s| self.chooses[s] && !self.picks[s].is_empty()),
         };
         match side {
             Some(s) => {
-                self.picks[s] = None;
+                self.picks[s].pop();
                 self.picking = self.next_picking();
                 self.ready_in = None;
                 true
@@ -312,15 +405,24 @@ impl Roster {
 
     /// Picks handed back by the stage select (manifest ids): locked again,
     /// no countdown; one more back changes just that fighter.
-    pub fn restore(&mut self, picks: &[Option<String>; 2]) {
-        for (side, id) in picks.iter().enumerate() {
-            let Some(id) = id else { continue };
-            if let Some(i) = self.cells.iter().position(|c| &c.manifest.id == id) {
-                self.picks[side] = Some(i);
-                if side == 0 || !self.dual() {
-                    self.hover = Some(i);
-                } else {
-                    self.hover2 = Some(i);
+    pub fn restore(&mut self, picks: &Picks) {
+        for side in 0..2 {
+            if self.teams_ok {
+                self.team[side] = picks.team[side];
+            }
+            let ids = &picks.ids[side];
+            if ids.is_empty() {
+                continue;
+            }
+            self.picks[side].clear();
+            for id in ids.iter().take(self.team[side].1) {
+                if let Some(i) = self.cells.iter().position(|c| &c.manifest.id == id) {
+                    self.picks[side].push(i);
+                    if side == 0 || !self.dual() {
+                        self.hover = Some(i);
+                    } else {
+                        self.hover2 = Some(i);
+                    }
                 }
             }
         }
@@ -386,18 +488,18 @@ impl Roster {
             self.hover = Some(cell);
         }
         let target = match side {
-            Some(s) if self.chooses[s] && self.picks[s].is_none() => Some(s),
+            Some(s) if self.chooses[s] && !self.done(s) => Some(s),
             Some(_) => None,
             None if self.picking < 2 => Some(self.picking),
             None => None,
         };
         if let Some(s) = target {
-            self.picks[s] = Some(cell);
+            self.picks[s].push(cell);
             self.picking = self.next_picking();
             self.arm_ready();
         }
         // online: one pick and back to the matchup
-        if self.mode == Mode::Online && self.picks[0].is_some() {
+        if self.mode == Mode::Online && !self.picks[0].is_empty() {
             return self.go();
         }
         Outcome::Refresh
@@ -437,18 +539,20 @@ impl Roster {
             }
             _ if head.starts_with("random") && self.all_picked() => self.go(),
             "random2" => {
-                if self.dual() && self.picks[1].is_none() {
-                    self.picks[1] = self.random_ok();
-                    self.hover2 = self.picks[1];
+                if self.dual() && !self.done(1) {
+                    let r = self.random_ok();
+                    self.picks[1].extend(r);
+                    self.hover2 = r;
                     self.picking = self.next_picking();
                     self.arm_ready();
                 }
                 Outcome::Refresh
             }
             "random" if self.dual() => {
-                if self.picks[0].is_none() {
-                    self.picks[0] = self.random_ok();
-                    self.hover = self.picks[0];
+                if !self.done(0) {
+                    let r = self.random_ok();
+                    self.picks[0].extend(r);
+                    self.hover = r;
                     self.picking = self.next_picking();
                     self.arm_ready();
                 }
@@ -456,12 +560,30 @@ impl Roster {
             }
             "random" => {
                 if self.picking < 2 {
-                    self.picks[self.picking] = self.random_ok();
-                    self.hover = self.picks[self.picking];
+                    let r = self.random_ok();
+                    self.picks[self.picking].extend(r);
+                    self.hover = r;
                     self.picking = self.next_picking();
                     self.arm_ready();
                 }
                 Outcome::Refresh
+            }
+            // team:<side>:<+1|-1>; side `cur` is whoever picks now
+            "team" => {
+                let mut parts = arg.split(':');
+                let side = match parts.next() {
+                    Some("cur") => Some(self.team_side()),
+                    Some(s) => s.parse::<usize>().ok(),
+                    None => None,
+                };
+                let dir = parts
+                    .next()
+                    .and_then(|d| d.parse::<i32>().ok())
+                    .unwrap_or(1);
+                match side {
+                    Some(s) if self.step_team(s, dir.signum()) => Outcome::Refresh,
+                    _ => Outcome::None,
+                }
             }
             // an empty slot: nothing to pick
             "search" | "empty" => Outcome::None,
@@ -483,7 +605,7 @@ impl Roster {
     }
 
     fn portrait(&self, side: usize) -> Portrait {
-        let c = self.picks[side].and_then(|i| self.cells.get(i));
+        let c = self.picks[side].first().and_then(|&i| self.cells.get(i));
         let img = c.and_then(|c| {
             let p = c.manifest.portrait_big.as_ref()?;
             let (w, h, rgba) = rugen_content::read_png(&c.dir.join(&p.file)).ok()?;
@@ -499,15 +621,31 @@ impl Roster {
     fn setup(&mut self) -> Option<Transition> {
         if self.mode == Mode::Online {
             // the host picks the stage on its own screen next
-            let id = self.cells.get(self.picks[0]?)?.manifest.id.clone();
+            let id = self.cells.get(*self.picks[0].first()?)?.manifest.id.clone();
             return Some(Transition::OnlineFighter(id));
         }
-        let def = |me: &Self, side: usize| -> Option<(PathBuf, String)> {
-            let c = me.cells.get(me.picks[side]?)?;
+        let def = |me: &Self, side: usize, k: usize| -> Option<(PathBuf, String)> {
+            let c = me.cells.get(*me.picks[side].get(k)?)?;
             Some((c.manifest.def_path(&c.dir), c.manifest.id.clone()))
         };
-        let (p1, id1) = def(self, 0)?;
-        let (p2, id2) = def(self, 1)?;
+        let (p1, id1) = def(self, 0, 0)?;
+        let (p2, id2) = def(self, 1, 0)?;
+        // a team on either side: the partners after the first picks
+        let teams = (self.team.iter().any(|t| t.0 != TeamMode::Single)).then(|| {
+            let mut t = crate::play::TeamSetup {
+                mode: self.team.map(|t| t.0),
+                ..Default::default()
+            };
+            for side in 0..2 {
+                for k in 1..self.picks[side].len() {
+                    if let Some((path, id)) = def(self, side, k) {
+                        t.partners[side].push(path);
+                        t.ids[side].push(id);
+                    }
+                }
+            }
+            t
+        });
         // arcade: the ladder decides (a random first stage), no stage select
         let stage = if self.mode == Mode::Arcade {
             self.arcade_stage()
@@ -534,6 +672,7 @@ impl Roster {
             fighter_size: None,
             arena_ai: None,
             round_time: None,
+            teams,
         };
         if tutorial {
             let mut setup = setup;
@@ -546,14 +685,25 @@ impl Roster {
         }
         let name = |me: &Self, s: usize| {
             me.picks[s]
-                .and_then(|i| me.cells.get(i))
+                .first()
+                .and_then(|&i| me.cells.get(i))
                 .map(|c| c.manifest.display_name.clone())
                 .unwrap_or_default()
+        };
+        let picks = Picks {
+            ids: [0, 1].map(|s| {
+                self.picks[s]
+                    .iter()
+                    .filter_map(|&i| self.cells.get(i))
+                    .map(|c| c.manifest.id.clone())
+                    .collect()
+            }),
+            team: self.team,
         };
         Some(Transition::StageSelect(Box::new(StagePlan {
             mode: self.mode,
             names: [name(self, 0), name(self, 1)],
-            picks: [setup.ids[0].clone(), setup.ids[1].clone()],
+            picks,
             setup,
             portraits,
             online: None,
@@ -586,8 +736,8 @@ impl Roster {
             "thumb": thumb,
             "badge": badge,
             "broken": is_broken(&c.manifest),
-            "p1": self.picks[0] == Some(cell),
-            "p2": self.picks[1] == Some(cell),
+            "p1": self.picks[0].contains(&cell),
+            "p2": self.picks[1].contains(&cell),
             "hover": self.hover == Some(cell),
         })
     }
@@ -634,8 +784,29 @@ impl Roster {
         grid
     }
 
-    /// A player's card: their pick, else what their cursor is on.
+    /// A player's card: their pick, else what their cursor is on. With a
+    /// team mode on, the team panel takes the facts' place (`facts_*` are
+    /// the facts' flags, false then).
     fn card_json(&self, side: usize, profile: &Profile) -> Value {
+        let mut v = self.card_json_inner(side, profile);
+        let team = v["team_on"] == json!(true);
+        for (out, flag) in [
+            ("facts", "present"),
+            ("facts_blank", "blank"),
+            ("facts_ok", "ok"),
+            ("facts_bad", "bad"),
+            ("facts_picked", "picked"),
+            ("facts_cpu", "cpu"),
+            ("slab_big", "name_big"),
+            ("slab_small", "name_small"),
+        ] {
+            let on = v[flag] == json!(true);
+            v[out] = Value::from(on && !team);
+        }
+        v
+    }
+
+    fn card_json_inner(&self, side: usize, profile: &Profile) -> Value {
         // one cursor picks every side; two cursors each fill their own card
         let (hover, slot) = if self.dual() && side == 1 {
             (self.hover2, self.hover_slot[1])
@@ -647,14 +818,21 @@ impl Roster {
         } else {
             self.picking == side
         };
-        let cell = self.picks[side].or(if cursor { hover } else { None });
+        // a side still picking shows what its cursor is on, else its first pick
+        let picking = cursor && !self.done(side);
+        let cell = if picking {
+            hover
+        } else {
+            self.picks[side].first().copied()
+        };
         let mut v = self.char_json(cell, profile);
         // a cursor on an empty slot / the random cell: a blank card
-        let blank = match (self.picks[side], cursor, slot) {
-            (None, true, Slot::Empty) => "NO FIGHTER",
-            (None, true, Slot::Random) => "RANDOM",
+        let blank = match (picking, slot) {
+            (true, Slot::Empty) => "NO FIGHTER",
+            (true, Slot::Random) => "RANDOM",
             _ => "",
         };
+        self.team_json(side, picking, &mut v);
         v["blank"] = Value::from(!blank.is_empty());
         v["blank_text"] = Value::from(blank);
         let Some(c) = cell.and_then(|i| self.cells.get(i)) else {
@@ -728,9 +906,59 @@ impl Roster {
             crate::uiscreen::plural(plays as usize, "PLAY", "PLAYS"),
             crate::uiscreen::plural(wins as usize, "WIN", "WINS")
         ));
-        v["picked"] = Value::from(self.picks[side].is_some());
+        v["picked"] = Value::from(self.done(side));
         v["cpu"] = Value::from(!self.human[side]);
         v
+    }
+
+    /// The team panel of a card (shown instead of the facts while a team
+    /// mode is on): the mode and size segments, a row per fighter.
+    fn team_json(&self, side: usize, picking: bool, v: &mut Value) {
+        let (mode, size) = self.team[side];
+        let on = mode != TeamMode::Single;
+        let modes: Vec<Value> = TeamMode::ALL
+            .into_iter()
+            .filter(|&m| crate::play::team_mode_ready(m))
+            .map(|m| json!({ "label": m.as_str().to_uppercase(), "on": m == mode, "off": m != mode }))
+            .collect();
+        let sizes: Vec<Value> = (2..=rugen_sim::team::MAX_MEMBERS)
+            .map(|n| json!({ "label": n.to_string(), "on": n == size, "off": n != size }))
+            .collect();
+        let mut slots = Vec::new();
+        for k in 0..size {
+            let c = self.picks[side].get(k).and_then(|&i| self.cells.get(i));
+            let next = k == self.picks[side].len() && picking;
+            let face = c
+                .and_then(|c| {
+                    let m = &c.manifest;
+                    let p = m.portrait_small.as_ref().or(m.portrait_big.as_ref())?;
+                    Some(c.dir.join(&p.file).display().to_string())
+                })
+                .unwrap_or_default();
+            slots.push(json!({
+                "label": match c {
+                    Some(c) => format!("{} · {}", k + 1, c.manifest.display_name.to_uppercase()),
+                    None if next => format!("{} · PICKING...", k + 1),
+                    None => format!("{}", k + 1),
+                },
+                "picked": c.is_some(),
+                "face": face,
+                "has_face": c.is_some() && !face.is_empty(),
+                "next": next,
+                "empty": c.is_none() && !next,
+            }));
+        }
+        v["team_on"] = Value::from(on);
+        v["team_off"] = Value::from(!on);
+        v["modes"] = Value::from(modes);
+        v["sizes"] = Value::from(sizes);
+        v["slots"] = Value::from(slots);
+        v["team_hint"] = Value::from(match mode {
+            TeamMode::Single => "",
+            TeamMode::Turns => "TURNS: THE WINNER STAYS AND KEEPS ITS LIFE",
+            TeamMode::Simul => "SIMUL: PARTNERS FIGHT SIDE BY SIDE",
+            TeamMode::Tag => "TAG: SWAP PARTNERS MID-FIGHT WITH THE TAG BUTTON",
+        });
     }
 
     fn char_json(&self, cell: Option<usize>, profile: &Profile) -> Value {
@@ -798,8 +1026,17 @@ impl Roster {
             "READY!".to_string()
         } else if self.all_picked() {
             format!("READY  -  {next}")
+        } else if self.team.iter().any(|t| t.0 != TeamMode::Single) && self.dual() {
+            "PICK YOUR TEAMS".to_string()
+        } else if self.picking < 2 && self.team[self.picking].1 > 1 {
+            format!(
+                "P{} : FIGHTER {} OF {}",
+                self.picking + 1,
+                self.picks[self.picking].len() + 1,
+                self.team[self.picking].1
+            )
         } else if self.dual() {
-            match (self.picks[0].is_some(), self.picks[1].is_some()) {
+            match (self.done(0), self.done(1)) {
                 (false, false) => "P1 AND P2 : CHOOSE YOUR FIGHTERS".to_string(),
                 (true, false) => "P2 : CHOOSE YOUR FIGHTER".to_string(),
                 _ => "P1 : CHOOSE YOUR FIGHTER".to_string(),
@@ -816,7 +1053,8 @@ impl Roster {
         } else {
             format!("READY  -  {next}")
         };
-        let shown = self.char_json(self.hover.or(self.picks[0]).or(self.picks[1]), profile);
+        let first = |s: usize| self.picks[s].first().copied();
+        let shown = self.char_json(self.hover.or(first(0)).or(first(1)), profile);
         let warns = self
             .cells
             .iter()
@@ -846,9 +1084,12 @@ impl Roster {
             "card1": self.card_json(0, profile),
             "card2": self.card_json(1, profile),
             "shown": shown,
-            "p1": self.char_json(self.picks[0], profile),
-            "p2": self.char_json(self.picks[1], profile),
-            "versus": self.human[1] || self.picks[1].is_some(),
+            "p1": self.char_json(first(0), profile),
+            "p2": self.char_json(first(1), profile),
+            "versus": self.human[1] || !self.picks[1].is_empty(),
+            "teams_ok": self.teams_ok(),
+            "team_any": self.team.iter().any(|t| t.0 != TeamMode::Single),
+            "team_note": self.team.iter().any(|t| t.0 != TeamMode::Single) && !self.all_picked(),
             "ready": self.all_picked(),
             "dual": self.dual(),
             "query": self.query,
@@ -903,7 +1144,10 @@ mod tests {
         assert_eq!(d["card2"]["blank_text"], "RANDOM");
         assert_eq!(d["grid"][5]["press"], "empty");
         assert!(matches!(r.action("empty"), Outcome::None));
-        assert!(r.picks == [None, None], "an empty slot picks nobody");
+        assert!(
+            r.picks.iter().all(Vec::is_empty),
+            "an empty slot picks nobody"
+        );
         // back onto the fighter: the card fills in again
         assert!(r.hover_order(0));
         assert_eq!(r.data(&p, "")["card1"]["present"], true);
@@ -933,7 +1177,7 @@ mod tests {
         let lib = Library::discover(Some(&root));
         let mut r = Roster::new(Mode::Online, &lib, 4);
         assert!(!r.dual());
-        assert!(r.picks[1].is_none(), "no CPU opponent online");
+        assert!(r.picks[1].is_empty(), "no CPU opponent online");
         let d = r.data(&Profile::default(), "ONLINE");
         assert_eq!(d["title"], "ONLINE");
         assert_eq!(d["card2"]["cpu"], false);
@@ -957,6 +1201,80 @@ mod tests {
             Outcome::Go(t) => assert!(matches!(*t, Transition::Online)),
             _ => panic!("back returns to the online screen"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// VS MODE with teams: X / Y step a side's team (mode and size), the
+    /// side then picks that many fighters; the fight gets the partners.
+    #[test]
+    fn versus_picks_teams() {
+        let reference =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/mugen-1.1b1");
+        if !reference.join("chars/kfm/kfm.def").exists() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("rugen-roster-teams-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        copy_dir(&reference.join("chars/kfm"), &root.join("chars/kfm"));
+        copy_dir(&reference.join("data"), &root.join("data"));
+        let lib = Library::discover(Some(&root));
+        let p = Profile::default();
+        let mut r = Roster::new(Mode::Versus, &lib, 4);
+        assert!(r.teams_ok());
+        assert_eq!(r.data(&p, "")["card1"]["team_on"], false);
+        // P1: TURNS for 2, P2 stays single
+        assert!(r.step_team(0, 1));
+        assert_eq!(r.team[0], (TeamMode::Turns, 2));
+        let d = r.data(&p, "");
+        assert_eq!(d["card1"]["team_on"], true);
+        assert_eq!(
+            d["card1"]["facts"], false,
+            "the team panel takes the facts' place"
+        );
+        assert_eq!(d["card1"]["slots"].as_array().unwrap().len(), 2);
+        assert_eq!(d["card1"]["slots"][0]["next"], true);
+        assert_eq!(d["prompt"], "PICK YOUR TEAMS");
+        assert!(matches!(r.action("pick:0"), Outcome::Refresh));
+        assert!(!r.done(0));
+        assert!(matches!(r.action("pick2:0"), Outcome::Refresh));
+        assert!(r.done(1));
+        assert!(matches!(r.action("pick:0"), Outcome::Refresh));
+        assert!(r.all_picked());
+        let d = r.data(&p, "");
+        assert_eq!(d["card1"]["slots"][1]["label"], "2 · KUNG FU MAN");
+        // a smaller team drops the extra pick, back takes one pick away
+        assert!(r.step_team(0, -1));
+        assert_eq!(r.team[0], (TeamMode::Single, 1));
+        assert_eq!(r.picks[0].len(), 1);
+        assert!(r.step_team(0, 1));
+        assert!(r.cancel(Some(0)));
+        assert!(r.picks[0].is_empty());
+        r.action("pick:0");
+        r.action("pick:0");
+        match r.go() {
+            Outcome::Go(t) => match *t {
+                Transition::StageSelect(plan) => {
+                    let t = plan.setup.teams.expect("a team match");
+                    assert_eq!(t.mode, [TeamMode::Turns, TeamMode::Single]);
+                    assert_eq!(t.partners[0].len(), 1);
+                    assert!(t.partners[1].is_empty());
+                    assert_eq!(plan.picks.team[0], (TeamMode::Turns, 2));
+                    assert_eq!(plan.picks.ids[0].len(), 2);
+                    // back from the stage select: the team comes back locked
+                    let mut again = Roster::new(Mode::Versus, &lib, 4);
+                    again.restore(&plan.picks);
+                    assert_eq!(again.team[0], (TeamMode::Turns, 2));
+                    assert_eq!(again.picks[0].len(), 2);
+                    assert!(again.all_picked());
+                }
+                other => panic!("{other:?}"),
+            },
+            _ => panic!("everyone picked"),
+        }
+        // modes without teams never offer them
+        let mut a = Roster::new(Mode::Arcade, &lib, 4);
+        assert!(!a.teams_ok());
+        assert!(!a.step_team(0, 1));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

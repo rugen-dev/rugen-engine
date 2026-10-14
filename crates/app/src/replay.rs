@@ -34,6 +34,9 @@ pub struct Replay {
     /// replays from before it was recorded play with the options' clock.
     #[serde(default)]
     pub round_time: Option<i32>,
+    /// Team modes and partners (offline team matches); absent for 1v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teams: Option<crate::play::TeamSetup>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
@@ -56,6 +59,7 @@ impl Replay {
             fighter_size,
             arena_ai,
             round_time: Some(round_time),
+            teams: setup.teams.clone(),
             inputs: Vec::new(),
         }
     }
@@ -73,6 +77,7 @@ impl Replay {
             fighter_size: Some(self.fighter_size),
             arena_ai: Some(self.arena_ai),
             round_time: self.round_time,
+            teams: self.teams.clone(),
         }
     }
 
@@ -139,6 +144,7 @@ mod tests {
             fighter_size: FighterSize::Normal,
             arena_ai: false,
             round_time: None,
+            teams: None,
             inputs: Vec::new(),
         }
         .setup();
@@ -152,5 +158,29 @@ mod tests {
             Some(-1),
             "no clock is recorded too"
         );
+    }
+
+    /// A team match replays as one: modes and partners ride along; 1v1
+    /// replays write no `teams` and old ones read as 1v1.
+    #[test]
+    fn replays_keep_their_teams() {
+        use rugen_sim::team::TeamMode;
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"inputs":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.setup().teams, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("teams"));
+        let mut setup = old.setup();
+        setup.teams = Some(crate::play::TeamSetup {
+            mode: [TeamMode::Turns, TeamMode::Single],
+            partners: [vec!["c".into(), "d".into()], vec![]],
+            ids: Default::default(),
+        });
+        let r = Replay::new(&setup, FighterSize::Normal, false, 60);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains(r#""mode":["turns","single"]"#), "{json}");
+        let back: Replay = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.setup().teams, setup.teams);
     }
 }

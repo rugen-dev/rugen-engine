@@ -1300,4 +1300,22 @@ p1.suicide.spr = 100,0
 p2.suicide.spr = 100,0
 p1.perfect.spr = 100,0
 p2.perfect.spr = 100,0
+
+; Team matches: one strip per partner under the name plate (face, life,
+; caption); Simul partners get a long bar.
+[TeamHUD]
+p1.pos = 147,112
+p2.pos = 1133,112
+spacing = 36
+face.size = 30
+bar.size = 160,12
+simul.bar.width = 230
+border = 2
+border.color = 20,18,16
+bar.bg = 255,255,255
+face.bg = 242,238,228
+life.color = 232,138,138
+red.color = 255,210,63
+down.color = 185,178,164
+label.font = 1,9,1
 "#;

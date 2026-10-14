@@ -931,6 +931,7 @@ impl Parser<'_> {
                     Tok::Ident(s) if s == "single" => TeamMode::Single,
                     Tok::Ident(s) if s == "simul" => TeamMode::Simul,
                     Tok::Ident(s) if s == "turns" => TeamMode::Turns,
+                    Tok::Ident(s) if s == "tag" => TeamMode::Tag,
                     t => return Err(Error::new(format!("TeamMode: invalid mode {t:?}"))),
                 };
                 self.emit(Op::Trigger(T::TeamModeIs(mode)));

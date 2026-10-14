@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::team::TeamMode;
 use crate::world::Movement;
 use crate::{CharData, FxData, Stage, World};
 
@@ -32,8 +33,29 @@ pub struct MatchSpec<'a> {
     pub fighter_size: crate::scale::FighterSize,
 }
 
+/// The partners of a team match (see [`crate::team`]): `MatchSpec::p1` /
+/// `p2` are each side's first fighter.
+#[derive(Clone, Debug, Default)]
+pub struct TeamSpec<'a> {
+    pub mode: [TeamMode; 2],
+    /// Each side's other fighters, in pick order.
+    pub partners: [Vec<&'a Path>; 2],
+    /// Computer level of each side's partners (Simul partners of a human
+    /// side are computer players; Turns / Tag members follow the side).
+    pub partner_ai: [i32; 2],
+}
+
 /// Build the world and start the first round.
 pub fn build_world(spec: &MatchSpec) -> crate::Result<World> {
+    build(spec, None)
+}
+
+/// [`build_world`] for a team match.
+pub fn build_team_world(spec: &MatchSpec, teams: &TeamSpec) -> crate::Result<World> {
+    build(spec, Some(teams))
+}
+
+fn build(spec: &MatchSpec, teams: Option<&TeamSpec>) -> crate::Result<World> {
     let mut stage = match spec.stage {
         Some(p) => Stage::from_def(&rugen_formats::def::Def::open(p)?),
         None => Stage::default(),
@@ -71,6 +93,40 @@ pub fn build_world(spec: &MatchSpec) -> crate::Result<World> {
     };
     world.players[0].ai_level = spec.ai[0].clamp(0, 8);
     world.players[1].ai_level = spec.ai[1].clamp(0, 8);
+    if let Some(t) = teams {
+        world.set_teams(t.mode);
+        let mut loaded: Vec<(&Path, std::sync::Arc<CharData>)> = vec![
+            (spec.p1, world.data[0].clone()),
+            (spec.p2, world.data[1].clone()),
+        ];
+        // Ikemen's player order: P3 / P4 are the second picks, P5 / P6 the third...
+        let most = t.partners.iter().map(Vec::len).max().unwrap_or(0);
+        let mut added = vec![spec.p1, spec.p2];
+        for m in 0..most {
+            for side in 0..2 {
+                let Some(&path) = t.partners[side].get(m) else {
+                    continue;
+                };
+                let data = match loaded.iter().find(|(p, _)| *p == path) {
+                    Some((_, d)) => d.clone(),
+                    None => {
+                        let d = CharData::load_with_data(path, spec.data_dir)?;
+                        loaded.push((path, d.clone()));
+                        d
+                    }
+                };
+                // a fighter picked again wears its next palette
+                let pal = added.iter().filter(|p| **p == path).count() as i32 + 1;
+                added.push(path);
+                let i = world.add_member(data, side as u8, pal);
+                world.players[i].ai_level = match t.mode[side] {
+                    TeamMode::Simul => t.partner_ai[side],
+                    _ => spec.ai[side],
+                }
+                .clamp(0, 8);
+            }
+        }
+    }
     world.start_round();
     Ok(world)
 }
@@ -100,7 +156,11 @@ pub fn replay(world: &mut World, inputs: &[u8], stop_frame: Option<u32>) -> Repl
     Replayed {
         frames: world.frame,
         checksum: world.checksum(),
-        winner: (world.round.match_over && w[0] != w[1]).then(|| usize::from(w[1] > w[0])),
+        winner: if world.teams.active() {
+            world.match_winner()
+        } else {
+            (world.round.match_over && w[0] != w[1]).then(|| usize::from(w[1] > w[0]))
+        },
         match_over: world.round.match_over,
     }
 }

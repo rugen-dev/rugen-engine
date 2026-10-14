@@ -212,6 +212,12 @@ pub struct Player {
     pub keyctrl: bool,
     pub children: Vec<i32>,
     pub removed: bool,
+    // ---- teams (see `crate::team`)
+    /// Input slot driving this root (`World::step`'s `inputs[slot]`): its
+    /// own index in 1v1; Turns / Tag members share their side's.
+    pub input_slot: usize,
+    /// Position in its team (0 = the first pick).
+    pub member: u8,
     /// Set by `World::step_checked` when this player's content panicked: it no
     /// longer runs states and loses the round.
     pub broken: bool,
@@ -424,6 +430,8 @@ impl Player {
             keyctrl: true,
             children: Vec::new(),
             removed: false,
+            input_slot: 0,
+            member: 0,
             broken: false,
             loop_warned: false,
             pctype: ProjContact::None,

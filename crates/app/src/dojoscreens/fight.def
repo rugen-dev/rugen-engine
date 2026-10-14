@@ -294,3 +294,21 @@ num.p1.bank = 13
 num.p2.bank = 12
 label.bank = 17
 clock.bank = 15
+
+; Team matches: one strip per partner under the name plate (face, life,
+; caption); Simul partners get a long bar.
+[TeamHUD]
+p1.pos = 140,112
+p2.pos = 1140,112
+spacing = 36
+face.size = 30
+bar.size = 160,12
+simul.bar.width = 230
+border = 2
+border.color = 29,23,20
+bar.bg = 238,225,196
+face.bg = 214,196,160
+life.color = 180,48,26
+red.color = 227,179,76
+down.color = 160,140,110
+label.font = 1,14,1

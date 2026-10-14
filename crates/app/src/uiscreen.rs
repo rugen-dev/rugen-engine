@@ -604,7 +604,7 @@ impl UiScreen {
     }
 
     /// Back on the fighter select from the stage select: both picks locked again.
-    pub fn restore_picks(&mut self, picks: &[Option<String>; 2], sys: &SystemData) {
+    pub fn restore_picks(&mut self, picks: &crate::roster::Picks, sys: &SystemData) {
         if let Some(r) = self.roster.as_mut() {
             r.restore(picks);
         }
@@ -831,6 +831,7 @@ impl UiScreen {
             "c": self.hint_cap(0, 6),
             "x": self.hint_cap(0, 7),
             "s": self.hint_cap(0, 10),
+            "team": format!("{} / {}", self.hint_cap(0, 7), self.hint_cap(0, 8)),
             "start": self.hint_cap(0, crate::keylabel::START),
         })
     }
@@ -1017,9 +1018,16 @@ impl UiScreen {
                         .map(|(_, _, b)| String::from_utf8_lossy(b).to_string())
                         .unwrap_or_default()
                 };
+                // a team: the mode and the partners under the name
+                let team = |i: usize| {
+                    setup
+                        .and_then(|s| s.teams.as_ref())
+                        .map(|t| t.line(i - 1))
+                        .unwrap_or_default()
+                };
                 let side = |i: usize| {
                     let has = self.mem.contains_key(&format!("p{i}"));
-                    json!({ "name": name(i), "name_up": name(i).to_uppercase(), "art": format!("mem:p{i}"), "has_art": has })
+                    json!({ "name": name(i), "name_up": name(i).to_uppercase(), "art": format!("mem:p{i}"), "has_art": has, "team": team(i) })
                 };
                 let (stage_name, stage_thumb) = setup
                     .and_then(|s| s.stage.as_ref())
@@ -1894,6 +1902,7 @@ impl UiScreen {
             fighter_size: None,
             arena_ai: None,
             round_time: None,
+            teams: None,
         }))
     }
 
@@ -1931,6 +1940,27 @@ impl UiScreen {
             back: b.b,
         };
         let dual = self.roster.as_ref().is_some_and(|r| r.dual());
+        // fighter select with team modes: X / Y step the team (VS: each
+        // player their own side), they do not pick
+        let mut pressed = pressed;
+        if let Some(r) = self.roster.as_mut().filter(|r| r.teams_ok())
+            && !self.ui.text_focused()
+        {
+            let mut changed = false;
+            for (p, b) in pressed.iter_mut().enumerate() {
+                let dir = i32::from(b.y) - i32::from(b.x);
+                if b.x || b.y {
+                    let side = if dual { p } else { r.team_side() };
+                    changed |= dir != 0 && r.step_team(side, dir);
+                    b.x = false;
+                    b.y = false;
+                }
+            }
+            if changed {
+                sfx(sys.title.move_snd);
+                self.refresh_data(sys);
+            }
+        }
         let listening = self
             .settings
             .controls

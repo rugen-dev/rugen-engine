@@ -27,6 +27,7 @@ pub mod projectile;
 pub mod round;
 pub mod scale;
 pub mod sctrl;
+pub mod team;
 pub mod world;
 
 #[cfg(test)]

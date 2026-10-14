@@ -60,7 +60,7 @@ pub enum Transition {
     Select(Mode),
     /// Back from the stage select: the fighter select with these picks
     /// (manifest ids) locked again.
-    SelectAgain(Mode, [Option<String>; 2]),
+    SelectAgain(Mode, Box<crate::roster::Picks>),
     /// Both fighters picked: choose the stage (`ui/stages.toml`).
     StageSelect(Box<crate::stagesel::StagePlan>),
     /// Online match from the `[net]` section of rugen.toml.
@@ -840,6 +840,7 @@ impl Shell {
                 fighter_size: None,
                 arena_ai: None,
                 round_time: None,
+                teams: None,
             },
             [side(&p1), side(&p2)],
         ))
@@ -1005,6 +1006,7 @@ impl Shell {
                     fighter_size: None,
                     arena_ai: None,
                     round_time: None,
+                    teams: None,
                 }));
             }
             Transition::Resume => {
