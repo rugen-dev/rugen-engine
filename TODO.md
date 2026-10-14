@@ -391,20 +391,24 @@ box) and screenshots.
 ### Reach
 - [ ] **Translations (i18n).** Move every UI string into `motif/lang/en.toml`
   keyed by id; add `pt-BR`, `es`, `fr`, `it`, `de`, `pl`, `tr`, `id`, `fil`
-  and `ja`. Add accented Latin glyphs to the generated fonts; Japanese needs
-  its own pixel font (kana plus common kanji). Language picker in INTERFACE,
+  and `ja`. Accented Latin glyphs are in every generated text font (a24f1ef:
+  Latin-1, Latin Extended-A, Romanian, typographic quotes); Japanese needs
+  its own pixel font (kana plus common kanji): DotGothic16 (OFL) rasterises
+  crisply at its 16 px grid (`fontgen --grid 62.5`, 13 px capitals) but
+  lacks Ğ İ Ş and most of Latin Extended-A, so it can only back the
+  Japanese strings. Language picker in INTERFACE,
   default from the OS locale. Buttons must fit the longest language.
-- [ ] **Steam Deck layout.** A 1280x800 profile: controller-first hints,
+- [x] **Steam Deck layout.** (6aec258, 13ee138) A 1280x800 profile: controller-first hints,
   bigger text, no hover-only actions, suspend and resume safe.
-  Partly done (6aec258): `[video] profile = auto|deck|desktop` (detected
-  on a Deck), first launch fullscreen 1280x800, pad-first hints with the
-  Deck's button names, pause on focus loss, no catch-up burst after a
-  suspend; every action already works by pad (the only hover effect is
-  `hover_scale`, visual), layouts checked at 1280x800 in both themes
-  (`~/.cache/rugen-work/creators/shots/deck-*.png`). Left unticked:
-  **bigger text**. The menus draw 1:1 at 1280x800 with pixel fonts (small
-  font 11 px); scaling them by a non-integer factor blurs them and the
-  next size up (the 23 px menu font) overflows fixed boxes everywhere. It
-  needs a 13-14 px "small" font per theme (fontgen output is not
-  reproducible on this machine: ui-gen rewrites the ink fonts) and a pass
-  over every screen of both themes.
+  `[video] profile = auto|deck|desktop` (detected on a Deck), first launch
+  fullscreen 1280x800, pad-first hints with the Deck's button names, pause
+  on focus loss, no catch-up burst after a suspend; every action works by
+  pad (the only hover effect is `hover_scale`, visual). Bigger text: text
+  drawn 1:1 in fonts 1 and 2 uses `rugen-deck` (Pixelify Sans at 2x of its
+  own pixel grid, 14 px capitals, 10 px x-height; `fontN.deck` in both
+  themes' `system.def`), layouts keep the rows of the font they name, and
+  screen nodes take Deck-only `deck = { ... }` overrides where the text needs
+  room. Every screen of both themes checked at `--window 1280x800`, desktop
+  layouts compared unchanged at 1600x900
+  (`~/.cache/rugen-work/decktext/shots/`). Fontgen output is reproducible
+  (test `generated_themes_match_the_committed_files`).
