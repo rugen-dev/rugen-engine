@@ -2445,6 +2445,10 @@ impl Match {
                 it.scale = [it.scale[0] * u, it.scale[1] * u];
             }
         }
+        if let Some(sv) = stage_visual.as_ref().filter(|_| !no_bg) {
+            self.draw_floor_fx(r, &items, ground - cam_y, sv.reflection, true);
+            self.draw_floor_fx(r, &items, ground - cam_y, sv.shadow, false);
+        }
         for it in &items {
             let frame = &it.frame;
             let origin = [it.pos[0], ground + it.pos[1] - cam_y];
@@ -2715,6 +2719,108 @@ impl Match {
 }
 
 impl Match {
+    /// Fighters' shadows (subtractive, black) or reflections (additive) on
+    /// the floor, MUGEN `[Shadow]` / `[Reflection]`: each body's picture
+    /// flipped about the ground line, squashed by `yscale`, sheared by
+    /// `xshear` and faded by `fade.range`. `floor` is the ground's y.
+    fn draw_floor_fx(
+        &self,
+        r: &mut Renderer,
+        items: &[Item],
+        floor: f32,
+        fx: crate::stage::FloorFx,
+        reflection: bool,
+    ) {
+        use rugen_sim::player::assert;
+        if fx.intensity <= 0.0 || fx.yscale == 0.0 {
+            return;
+        }
+        let w = &self.world;
+        if !reflection
+            && w.players
+                .iter()
+                .any(|p| !p.removed && p.asserted(assert::GLOBALNOSHADOW))
+        {
+            return;
+        }
+        for it in items {
+            let (Some((tex, pal, axis)), None, 'P') = (it.spr, it.screen, it.who.0) else {
+                continue;
+            };
+            if !reflection && w.players[it.who.1].asserted(assert::NOSHADOW) {
+                continue;
+            }
+            let y = it.pos[1];
+            let mut alpha = 1.0;
+            if let Some([top, bottom]) = fx.fade {
+                if y <= top {
+                    continue;
+                }
+                if y < bottom {
+                    alpha = (y - top) / (bottom - top);
+                }
+            }
+            let (tw, th) = r.texture_size(tex);
+            let frame = &it.frame;
+            // the image's own scale, its vertical part flipped and squashed
+            let sx = frame.xscale * it.scale[0] * fx.xscale;
+            let sy = frame.yscale * it.scale[1] * fx.yscale;
+            let anchor = [it.pos[0] + fx.offset[0], floor - y * fx.yscale + fx.offset[1]];
+            let pos = [
+                anchor[0] + frame.x as f32 * it.scale[0] * it.facing,
+                anchor[1] - frame.y as f32 * sy * it.vfacing,
+            ];
+            let hflip = (it.facing < 0.0) != frame.hflip;
+            // a positive yscale turns the picture upside down
+            let vflip = ((it.vfacing < 0.0) != frame.vflip) != (fx.yscale > 0.0);
+            let (w_, h_) = (tw as f32 * sx.abs(), th as f32 * sy.abs());
+            let (ax, ay) = (axis[0] * sx.abs(), axis[1] * sy.abs());
+            let (x0, x1) = if hflip {
+                (pos[0] + ax - w_, pos[0] + ax)
+            } else {
+                (pos[0] - ax, pos[0] - ax + w_)
+            };
+            let (y0, y1) = if vflip {
+                (pos[1] + ay - h_, pos[1] + ay)
+            } else {
+                (pos[1] - ay, pos[1] - ay + h_)
+            };
+            // the end away from the ground leans left by xshear per unit
+            let lean = |yy: f32| -fx.xshear * (yy - anchor[1]).abs();
+            let c = |x: f32, yy: f32| [x + lean(yy), yy];
+            let mut corners = [c(x0, y0), c(x1, y0), c(x1, y1), c(x0, y1)];
+            if hflip {
+                corners = [corners[1], corners[0], corners[3], corners[2]];
+            }
+            if vflip {
+                corners = [corners[3], corners[2], corners[1], corners[0]];
+            }
+            let a = (fx.intensity * alpha).clamp(0.0, 255.0) as u8;
+            let (tint, blend) = if reflection {
+                (it.tint, Blend::Add { src: a, dst: 255 })
+            } else {
+                (
+                    Tint {
+                        mul: [1.0; 3],
+                        add: [1.0; 3],
+                        ..Default::default()
+                    },
+                    Blend::Sub { src: a, dst: 255 },
+                )
+            };
+            r.draw_quad(&rugen_render::Quad {
+                tex,
+                pal,
+                corners,
+                color: [1.0; 4],
+                tint,
+                blend,
+                clip: None,
+                strips: 1,
+            });
+        }
+    }
+
     /// In-world hints over the human fighters of an arena match (world
     /// position of the head, hint): the ledge actions while hanging.
     fn arena_hints(&self, ground: f32, cam_y: f32) -> Vec<([f32; 2], crate::lifebar::Hint)> {
