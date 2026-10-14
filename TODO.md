@@ -283,7 +283,7 @@ themes, deck profile checked at 1280x800.
   fighter grid (←→ mode, ↑↓ size 2–4, rules line, slots preview, READY
   per side), VS MODE and WATCH only; replaces the X / Y stepping. A VS team
   match hides the `[Arena]` stages.
-- [ ] **Online consent on PROFILE.** A per-server ONLINE CONSENT row (AGREE
+- [x] **Online consent on PROFILE.** (b022098) A per-server ONLINE CONSENT row (AGREE
   / WITHDRAW) saved in the profile; withdrawing stops uploads. NOT NOW
   still lasts the session.
 - [ ] **Training life / power refill.** LIFE refill (off / after combo) and
