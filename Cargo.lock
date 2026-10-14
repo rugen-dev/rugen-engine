@@ -2743,6 +2743,7 @@ dependencies = [
  "env_logger",
  "gilrs",
  "image-webp",
+ "libc",
  "libm",
  "log",
  "png",
@@ -2903,6 +2904,7 @@ dependencies = [
  "rugen-formats",
  "rugen-proto",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

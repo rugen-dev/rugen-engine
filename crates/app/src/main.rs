@@ -77,6 +77,7 @@ mod options;
 mod pixelize;
 mod play;
 mod practice;
+mod prepare;
 mod repeat;
 mod replay;
 mod roster;
@@ -94,6 +95,7 @@ mod storyboard;
 mod system;
 mod teamstep;
 mod themes;
+mod timing;
 mod title;
 mod training;
 mod tutorial;
@@ -208,6 +210,7 @@ fn harness_window(args: &[String]) -> Option<(u32, u32)> {
 }
 
 fn main() -> anyhow::Result<()> {
+    timing::launch();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if matches!(
         argv.first().map(String::as_str),

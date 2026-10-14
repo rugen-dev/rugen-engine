@@ -422,7 +422,7 @@ pub fn bosses(lib: &rugen_content::Library) -> (Vec<String>, bool) {
         .unwrap_or_default();
     let mut cands = Vec::new();
     for e in lib.chars() {
-        let Ok((_, m)) = lib.prepare_char(&e) else {
+        let Some((_, m)) = crate::prepare::ready_char(lib, &e) else {
             continue;
         };
         if m.verify.as_ref().is_some_and(|v| v.is_broken()) {
@@ -451,7 +451,7 @@ pub fn fight_stages(lib: &rugen_content::Library) -> Vec<PathBuf> {
     let all: Vec<PathBuf> = lib
         .stages()
         .iter()
-        .filter_map(|e| lib.prepare_stage(e).ok().map(|(d, m)| m.def_path(&d)))
+        .filter_map(|e| crate::prepare::ready_stage(lib, e).map(|(d, m)| m.def_path(&d)))
         .collect();
     let plain: Vec<PathBuf> = all
         .iter()

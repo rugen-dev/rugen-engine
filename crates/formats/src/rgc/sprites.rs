@@ -284,9 +284,7 @@ fn compress_all(blocks: &[Block]) -> Vec<Vec<u8>> {
             zstd::bulk::compress(&b.px, LEVEL).unwrap_or_default()
         }
     };
-    let threads = std::thread::available_parallelism()
-        .map_or(1, |n| n.get())
-        .clamp(1, 16);
+    let threads = crate::encode_threads();
     if threads == 1 || blocks.len() < 16 {
         return blocks.iter().map(z).collect();
     }

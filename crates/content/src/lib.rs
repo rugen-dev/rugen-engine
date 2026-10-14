@@ -215,10 +215,42 @@ pub struct Imported {
     pub result: Result<PathBuf>,
 }
 
-/// Conversions run one at a time (the launch import and a menu may both ask).
-static CONVERTING: Mutex<()> = Mutex::new(());
-/// Manifests are written one at a time too.
-static DESCRIBING: Mutex<()> = Mutex::new(());
+/// Keys being converted or described right now: different fighters work
+/// in parallel (the game's background preparation), the same one never
+/// twice at once (a menu asking for what a worker is converting waits).
+static BUSY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static BUSY_DONE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Holds a [`BUSY`] key until dropped.
+struct KeyLock(String);
+
+impl KeyLock {
+    fn take(key: String) -> Self {
+        let mut busy = BUSY.lock().unwrap_or_else(|e| e.into_inner());
+        while busy.contains(&key) {
+            busy = BUSY_DONE.wait(busy).unwrap_or_else(|e| e.into_inner());
+        }
+        busy.push(key.clone());
+        KeyLock(key)
+    }
+
+    /// The conversion of `id` (case-insensitive) into `dir`.
+    fn convert(dir: &Path, id: &str) -> Self {
+        Self::take(format!(
+            "convert:{}:{}",
+            dir.display(),
+            id.to_ascii_lowercase()
+        ))
+    }
+}
+
+impl Drop for KeyLock {
+    fn drop(&mut self) {
+        let mut busy = BUSY.lock().unwrap_or_else(|e| e.into_inner());
+        busy.retain(|k| k != &self.0);
+        BUSY_DONE.notify_all();
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -667,13 +699,13 @@ impl Library {
         entry: &Entry,
         stage: bool,
     ) -> Result<(PathBuf, Option<String>, Option<VerifyInfo>)> {
-        let _guard = CONVERTING.lock().unwrap_or_else(|e| e.into_inner());
         let kind = Self::rgc_kind(stage);
         let dir = entry
             .source
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| self.root.clone());
+        let _guard = KeyLock::convert(&dir, &entry.id);
         let src_name = entry
             .source
             .file_name()
@@ -786,7 +818,7 @@ impl Library {
         if fresh(&sig) {
             return Ok((out, None));
         }
-        let _guard = CONVERTING.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = KeyLock::take(format!("convert:{}", out.display()));
         let sig = folder_signature(&root);
         if fresh(&sig) {
             return Ok((out, None));
@@ -853,6 +885,12 @@ impl Library {
         (m.cache_version < CACHE_VERSION && dir.join(&m.def).is_file()).then_some(dir)
     }
 
+    /// [`Self::sweep_legacy`] for a caller preparing entries itself (the
+    /// game's background preparation): call before any conversion starts.
+    pub fn tidy(&self) {
+        self.sweep_legacy();
+    }
+
     /// Remove what older engines cached: extracted copies (manifest v6 and
     /// before, with their `.rugen-opt/`), RGPK upload packages and unpacked
     /// downloads.
@@ -890,7 +928,7 @@ impl Library {
             .cache_dir()
             .join(kind_dir)
             .join(format!("{}-{key}", sanitize(&entry.id)));
-        let _guard = DESCRIBING.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = KeyLock::take(format!("describe:{}", dir.display()));
         if let Some(mut m) = read_any_manifest(&dir)
             && m.readable()
             && m.source_hash == key
@@ -1260,7 +1298,7 @@ pub fn refresh_working_copy(def: &Path, data_dir: &Path) -> Option<Result<bool>>
         return Some(Ok(false));
     }
     let r = (|| {
-        let _guard = CONVERTING.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = KeyLock::take(format!("convert:{}", content.display()));
         let kind = if w.stage {
             rgc::Kind::Stage
         } else {

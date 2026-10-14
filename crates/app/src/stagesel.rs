@@ -119,10 +119,9 @@ pub fn load_stages(lib: &Library, mode: Mode) -> Vec<StageItem> {
         .stages()
         .into_iter()
         .map(|entry| {
-            let prepared = lib
-                .prepare_stage(&entry)
-                .map_err(|e| log::warn!("stage {}: {e}", entry.id))
-                .ok();
+            // not ready yet (converting in the background): listed by its
+            // id, filled in when done (StageSel::refresh_prepared)
+            let prepared = crate::prepare::ready_stage(lib, &entry);
             StageItem {
                 bundled: entry.source.starts_with(&bundled_root),
                 dir: prepared.as_ref().map(|(d, _)| d.clone()),
@@ -299,6 +298,29 @@ fn stage_info(def: &Path, stage: &rugen_sim::Stage, item_arena: bool, bundled: b
 }
 
 impl StageSel {
+    /// Fill in stages the background preparation finished. `true` when
+    /// anything changed (or a ring moved).
+    pub fn refresh_prepared(&mut self, lib: &Library) -> bool {
+        let Some(p) = crate::prepare::get() else {
+            return false;
+        };
+        let mut changed = false;
+        for it in self.items.iter_mut().filter(|it| it.manifest.is_none()) {
+            match p.state(true, &it.entry.id) {
+                Some(crate::prepare::State::Ready(r)) => {
+                    it.dir = Some(r.0);
+                    it.manifest = Some(r.1);
+                    changed = true;
+                }
+                Some(crate::prepare::State::Failed(_)) => {}
+                Some(_) => changed = true,
+                None => {}
+            }
+        }
+        let _ = lib;
+        changed
+    }
+
     pub fn new(plan: StagePlan, lib: &Library) -> Self {
         let t = std::time::Instant::now();
         let mut items = load_stages(lib, plan.mode);
@@ -505,7 +527,16 @@ impl StageSel {
             return Some(Transition::OnlinePicked(o.char_id, stage));
         }
         let stage = i
-            .and_then(|i| self.items.get(i)?.def())
+            .and_then(|i| {
+                let it = self.items.get(i)?;
+                // a stage still being prepared: the versus screen waits for it
+                it.def().or_else(|| {
+                    crate::prepare::get().map(|p| {
+                        p.prioritize(true, &it.entry.id);
+                        crate::prepare::pending_path(true, &it.entry.id)
+                    })
+                })
+            })
             .or_else(lib_default);
         let mut plan = self.plan.take()?;
         plan.setup.stage = stage;
@@ -906,9 +937,18 @@ impl StageSel {
                         },
                     ),
                 };
+                let pending = t
+                    .index
+                    .checked_sub(1)
+                    .and_then(|i| self.items.get(i))
+                    .filter(|it| it.manifest.is_none())
+                    .and_then(|it| crate::prepare::get()?.state(true, &it.entry.id))
+                    .map(|st| st.progress());
                 json!({
                     "x": libm::roundf(t.x),
                     "index": t.index,
+                    "preparing": pending.is_some(),
+                    "progress": pending.unwrap_or(1.0),
                     "name": name,
                     "thumb": thumb,
                     "has_thumb": !thumb.is_empty(),
@@ -954,8 +994,8 @@ fn draw_stage(r: &mut Renderer, visual: &mut StageVisual, size: [f32; 2], start_
     let k = dst.h / size[1];
     let screen_w = dst.w / k;
     let cam = [start_x, 0.0];
+    let _ = screen_w;
     let view = View {
-        src: [cam[0] - screen_w / 2.0, 0.0],
         k,
         dst: [dst.x, dst.y, dst.w, dst.h],
     };

@@ -700,3 +700,75 @@ fn fighters_turn_after_the_round_is_decided() {
         b.pos[0]
     );
 }
+
+/// Owner report (round 2): "knockback hits an invisible wall". A fighter
+/// sent flying from near the middle of a zooming HD stage goes on until a
+/// visible screen edge (the other fighter a full zoomed-out screen away) or
+/// the stage's `rightbound` stops it, and the camera follows: the screen's
+/// edges reach `boundright` + MUGEN 1.1's zoom room + half a zoomed-out
+/// screen (Ikemen GO `Camera.maxRight`), not `boundright` + half a zoom-1
+/// screen, which stopped the camera, and so the fighter, 900 units early on
+/// the Forest of Dead Trees.
+#[test]
+fn knockback_goes_far_and_the_camera_follows() {
+    let Some(d) = kfm() else { return };
+    // the owner's Forest of Dead Trees with his zoom_out 0.6
+    let stage = Stage {
+        width: 1280.0,
+        height: 720.0,
+        zoffset: 650.0,
+        bound_left: -860.0,
+        bound_right: 760.0,
+        left_bound: -2000.0,
+        right_bound: 1800.0,
+        screen_left: 60.0,
+        screen_right: 60.0,
+        tension: 100.0,
+        p1_start_x: -500.0,
+        p2_start_x: 500.0,
+        zoom_out: 0.6,
+        zoom_in: 0.85,
+        ..Stage::default()
+    };
+    let mut w = World::new(stage, 1);
+    w.add_player(d.clone(), 0, 1);
+    w.add_player(d, 1, 2);
+    w.start_round();
+    skip_intro(&mut w);
+    let s = w.local_scale(1);
+    // both near the middle
+    w.players[0].pos[0] = -40.0 / s;
+    w.players[1].pos[0] = 40.0 / s;
+    // P2 flies backwards (a custom get-hit state: VelSet every tick)
+    let text = "[Statedef 7950]\ntype = A\nmovetype = H\nphysics = N\nanim = 5030\nctrl = 0\n\n\
+        [State 7950, fly]\ntype = VelSet\ntrigger1 = 1\nx = -14\ny = 0\n";
+    let k = w.players[1].data;
+    let d2 = w.data[k].with_states("compat", text).unwrap();
+    w.data[k] = d2;
+    w.change_state(1, 7950, None, Some(false));
+    let start = w.players[1].pos[0] * s;
+    let mut last = start;
+    for t in 0..200 {
+        run(&mut w, 1);
+        let x = w.players[1].pos[0] * s;
+        // never off the visible screen
+        assert!(
+            x <= w.screen_right() - w.stage.screen_right + 0.5,
+            "tick {t}: P2 at {x} past the screen edge {}",
+            w.screen_right()
+        );
+        last = x;
+    }
+    let p1 = w.players[0].pos[0] * w.local_scale(0);
+    let full_screen = w.stage.width / w.stage.zoom_out;
+    let stop = w.stage.right_bound.min(p1 + full_screen - 120.0);
+    assert!(
+        last > 1340.0 + 100.0,
+        "P2 went from {start} to {last}: past the old wall at 1340"
+    );
+    assert!(
+        (last - stop).abs() < 30.0,
+        "P2 stopped at {last}, expected at a visible limit near {stop}"
+    );
+    assert!(w.screen_right() >= last, "the camera followed");
+}

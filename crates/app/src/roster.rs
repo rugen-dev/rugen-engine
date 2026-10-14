@@ -20,6 +20,10 @@ pub const GRID_PAGE: usize = 60;
 pub struct RosterCell {
     pub dir: PathBuf,
     pub manifest: Manifest,
+    /// Still being converted / verified in the background
+    /// ([`crate::prepare`]): `manifest` is a placeholder (the id as its
+    /// name), drawn dimmed with a progress ring; a pick waits for it.
+    pub pending: Option<f32>,
 }
 
 /// Ticks between the last pick and leaving for the stage select / VS screen.
@@ -138,19 +142,67 @@ fn verdict_of(m: &Manifest) -> (&'static str, String) {
     }
 }
 
+/// The letter a fighter still being prepared shows: the first letter of
+/// its first word without digits ("G6 Boruto" → B, "Rock Lee" → R).
+fn initial(name: &str) -> String {
+    let words: Vec<&str> = name
+        .split([' ', '_', '-'])
+        .filter(|w| !w.is_empty())
+        .collect();
+    words
+        .iter()
+        .find(|w| !w.chars().any(|c| c.is_ascii_digit()))
+        .or(words.first())
+        .and_then(|w| w.chars().find(|c| c.is_alphanumeric()))
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default()
+}
+
 fn is_broken(m: &Manifest) -> bool {
     m.verify.as_ref().is_some_and(|v| v.is_broken())
 }
 
 impl Roster {
     pub fn new(mode: Mode, lib: &Library, ai_level: i32) -> Self {
+        let t0 = std::time::Instant::now();
         let mut cells = Vec::new();
-        for e in lib.chars() {
-            match crate::verify::prepare_verified(lib, &e) {
-                Ok((dir, m)) => cells.push(RosterCell { dir, manifest: m }),
-                Err(err) => log::warn!("{}: {err}", e.id),
+        match crate::prepare::get() {
+            // the game prepares in the background: what is not ready yet
+            // shows as a placeholder that fills in
+            Some(p) => {
+                for (e, st) in p.entries(false) {
+                    match st {
+                        crate::prepare::State::Ready(r) => cells.push(RosterCell {
+                            dir: r.0,
+                            manifest: r.1,
+                            pending: None,
+                        }),
+                        crate::prepare::State::Failed(_) => {}
+                        st => cells.push(RosterCell {
+                            dir: PathBuf::new(),
+                            manifest: crate::prepare::placeholder(&e, false),
+                            pending: Some(st.progress()),
+                        }),
+                    }
+                }
+            }
+            None => {
+                for e in lib.chars() {
+                    match crate::verify::prepare_verified(lib, &e) {
+                        Ok((dir, m)) => cells.push(RosterCell {
+                            dir,
+                            manifest: m,
+                            pending: None,
+                        }),
+                        Err(err) => log::warn!("{}: {err}", e.id),
+                    }
+                }
             }
         }
+        crate::timing::took(
+            &format!("the roster ({} fighters)", cells.len()),
+            t0.elapsed(),
+        );
         let human = match mode {
             Mode::Versus => [true, true],
             Mode::Arcade
@@ -222,6 +274,53 @@ impl Roster {
         r
     }
 
+    /// Fill in fighters the background preparation finished (and move the
+    /// rings of those still on their way). `true` when anything changed.
+    pub fn refresh_prepared(&mut self) -> bool {
+        let Some(p) = crate::prepare::get() else {
+            return false;
+        };
+        let mut changed = false;
+        for c in self.cells.iter_mut().filter(|c| c.pending.is_some()) {
+            match p.state(false, &c.manifest.id) {
+                Some(crate::prepare::State::Ready(r)) => {
+                    c.dir = r.0;
+                    c.manifest = r.1;
+                    c.pending = None;
+                    changed = true;
+                }
+                Some(crate::prepare::State::Failed(e)) => {
+                    // shown as broken: verification never got to run
+                    c.manifest.verify = Some(rugen_content::VerifyInfo {
+                        engine_version: env!("CARGO_PKG_VERSION").into(),
+                        verdict: "broken".into(),
+                        issues: vec![e],
+                        when: 0,
+                    });
+                    c.pending = None;
+                    changed = true;
+                }
+                Some(st) => {
+                    let v = st.progress();
+                    if c.pending.is_some_and(|old| (old - v).abs() > 0.01) {
+                        c.pending = Some(v);
+                        changed = true;
+                    }
+                }
+                None => {}
+            }
+        }
+        // picked fighters still on their way go first
+        for side in 0..2 {
+            for &i in &self.picks[side] {
+                if let Some(c) = self.cells.get(i).filter(|c| c.pending.is_some()) {
+                    p.prioritize(false, &c.manifest.id);
+                }
+            }
+        }
+        changed
+    }
+
     /// The last pick went in: leave for the stage select after a beat.
     fn arm_ready(&mut self) {
         if self.all_picked() && self.mode != Mode::Online {
@@ -238,7 +337,7 @@ impl Roster {
 
     fn random_ok(&mut self) -> Option<usize> {
         let ok: Vec<usize> = (0..self.cells.len())
-            .filter(|&i| !is_broken(&self.cells[i].manifest))
+            .filter(|&i| !is_broken(&self.cells[i].manifest) && self.cells[i].pending.is_none())
             .collect();
         let pool = if ok.is_empty() {
             (0..self.cells.len()).collect()
@@ -492,6 +591,15 @@ impl Roster {
         if is_broken(&self.cells[cell].manifest) {
             return Outcome::None;
         }
+        if self.cells[cell].pending.is_some() {
+            // online matches only bring finished, verified fighters
+            if self.mode == Mode::Online {
+                return Outcome::None;
+            }
+            if let Some(p) = crate::prepare::get() {
+                p.prioritize(false, &self.cells[cell].manifest.id);
+            }
+        }
         if side.is_none_or(|s| s == 0) {
             self.hover = Some(cell);
         }
@@ -617,6 +725,13 @@ impl Roster {
         }
         let def = |me: &Self, side: usize, k: usize| -> Option<(PathBuf, String)> {
             let c = me.cells.get(*me.picks[side].get(k)?)?;
+            // not ready yet: the versus screen waits for it (crate::prepare)
+            if c.pending.is_some() {
+                return Some((
+                    crate::prepare::pending_path(false, &c.manifest.id),
+                    c.manifest.id.clone(),
+                ));
+            }
             Some((c.manifest.def_path(&c.dir), c.manifest.id.clone()))
         };
         let (p1, id1) = def(self, 0, 0)?;
@@ -762,6 +877,10 @@ impl Roster {
                 v["has_face"] = Value::from(!face.is_empty());
                 v["face_ok"] = Value::from(!face.is_empty() && !is_broken(m));
                 v["face_grey"] = Value::from(!face.is_empty() && is_broken(m));
+                let pending = self.cells[c].pending;
+                v["preparing"] = Value::from(pending.is_some());
+                v["progress"] = Value::from(pending.unwrap_or(1.0));
+                v["initial"] = Value::from(initial(&m.display_name));
                 v["warn"] = Value::from(m.verify.as_ref().is_some_and(|v| v.verdict == "warn"));
                 v["press"] = Value::from(format!("pick:{i}"));
                 v["kind"] = Value::from(if is_broken(m) { "broken" } else { "char" });
@@ -883,7 +1002,13 @@ impl Roster {
                 false,
             ),
             Some(v) if v.verdict == "broken" => ("⚠ BROKEN".to_string(), false),
-            _ => ("NOT CHECKED".to_string(), true),
+            _ => match c.pending {
+                Some(p) => (
+                    format!("PREPARING · {}%", libm::roundf(p * 100.0) as i32),
+                    true,
+                ),
+                None => ("NOT CHECKED".to_string(), true),
+            },
         };
         // the official blocklist wins: this fighter is refused online everywhere
         let (status, ok) = match official_block(m) {

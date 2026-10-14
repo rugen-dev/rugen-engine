@@ -149,9 +149,7 @@ fn encode_one(key: (i32, i32), bytes: &[u8]) -> Encoded {
 /// Encode every sound of `snd` (in parallel).
 pub fn encode(snd: &Snd) -> (Vec<u8>, Stats) {
     let items: Vec<((i32, i32), &[u8])> = snd.sounds.iter().map(|(k, s)| (*k, &**s)).collect();
-    let threads = std::thread::available_parallelism()
-        .map_or(1, |n| n.get())
-        .clamp(1, 16);
+    let threads = crate::encode_threads();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut done: Vec<Option<Encoded>> = (0..items.len()).map(|_| None).collect();
     let results = std::thread::scope(|s| {

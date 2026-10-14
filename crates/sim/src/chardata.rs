@@ -353,7 +353,29 @@ impl CharData {
     /// `data_dir` holds the engine's `common1.cns`; the char's own directory is searched first.
     /// Uses precompiled logic when it is valid.
     pub fn load_with_data(def_path: &Path, data_dir: &Path) -> Result<Arc<Self>> {
+        if let Some(d) = take_preloaded(def_path, data_dir) {
+            return Ok(d);
+        }
         Self::load_opts(def_path, data_dir, LoadOptions::default())
+    }
+
+    /// Load a character ahead of time (a versus screen before the fight):
+    /// the next [`CharData::load_with_data`] of the same files takes it
+    /// instead of reading them again. Kept for a minute, a few at a time.
+    pub fn preload(def_path: &Path, data_dir: &Path) {
+        if let Ok(d) = Self::load_opts(def_path, data_dir, LoadOptions::default()) {
+            let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+            p.retain(|e| e.3.elapsed() < PRELOAD_KEEP && e.0 != def_path);
+            p.push((
+                def_path.to_path_buf(),
+                data_dir.to_path_buf(),
+                d,
+                std::time::Instant::now(),
+            ));
+            while p.len() > 4 {
+                p.remove(0);
+            }
+        }
     }
 
     /// Load compiling the text files, ignoring any precompiled logic
@@ -795,6 +817,25 @@ pub fn load_consts(def: &Def, localcoord_w: f32) -> IndexMap<String, f32> {
     let f = m.get("data.fall.defence_up").copied().unwrap_or(50.0);
     m.insert("data.fall.defence_mul".into(), 100.0 / (f + 100.0));
     m
+}
+
+/// Characters loaded ahead of a fight ([`CharData::preload`]): def, data
+/// dir, data, when.
+type Preloaded = (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Arc<CharData>,
+    std::time::Instant,
+);
+static PRELOADED: std::sync::Mutex<Vec<Preloaded>> = std::sync::Mutex::new(Vec::new());
+const PRELOAD_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Take a fresh preloaded copy of `def_path` (identical to loading it now).
+fn take_preloaded(def_path: &Path, data_dir: &Path) -> Option<Arc<CharData>> {
+    let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+    p.retain(|e| e.3.elapsed() < PRELOAD_KEEP);
+    let i = p.iter().position(|e| e.0 == def_path && e.1 == data_dir)?;
+    Some(p.remove(i).2)
 }
 
 #[cfg(test)]

@@ -180,6 +180,63 @@ Sasuke with `RUGEN_GOLDEN_CHARS ... -- --ignored`). Shots in
   any sim change (LOGIC_SCHEMA), sprites / AIR are stored pixel- and
   byte-exact.
 
+### Compatibility round 2 (owner report)
+
+The owner's install (0.6.4, 86 G6 fighters, Forest of Dead Trees, zoom_out
+0.6 / zoom_in 0.85) and his replays, on copies in
+`~/.cache/rugen-work/compat2/` (shots in `shots/`, logs `logs-*.txt`).
+Checked against Ikemen GO's source and the MUGEN docs (no Ikemen runtime:
+no Xvfb on this machine).
+
+- [x] **Knockback hits an invisible wall** (3c4ef48, 0a85152). Two causes:
+  the fight view was the stage's height times the window's aspect, so a
+  320x240 stage showed 427 units in 16:9 while fighters are held inside 320
+  (the wall stood 53 / zoom units inside the visible edge; MUGEN and Ikemen
+  fill the window with the stage's width and cut its height, cuthigh /
+  cutlow / overdrawlow); and a zoomed-out camera stopped at boundright plus
+  half a zoom-1 screen instead of Ikemen's maxRight (bounds + MUGEN 1.1's
+  zoom room + half a zoomed-out screen), 900 units early on the Forest.
+  "Some attacks work": the gap changed with the zoom. HD stages without
+  [Bound] scale its defaults by localcoord / 320. Regression:
+  `compat_tests::knockback_goes_far_and_the_camera_follows`;
+  `examples/replaybound` counts fighters held at a bound in the replays
+  (5820 frames before, the rest now at the stage's rightbound or a full
+  screen from the other fighter). KFM and community goldens re-recorded.
+- [x] **Stages look broken** (9bbaab9, db82566, c2e665b, 0a85152). The
+  background drawer zoomed every layer with the camera, drew parallax as
+  plain rectangles and ignored most element parameters; it now follows
+  Ikemen's element maths (per-layer zoom by zoomdelta / delta around the
+  ground line, scalestart / scaledelta, parallax xscale shear and width
+  trapezoids drawn row by row, tilespacing, window / maskwindow /
+  windowdelta, velocity, sin, positionlink, BGCtrl, mask, roundpos, StageInfo
+  xscale / yscale / hires, debugbg, resetbg, no motion in pauses). The ground
+  line no longer rises when zooming out (the Forest showed black under its
+  floor). Fighters now cast [Shadow] / [Reflection] (MUGEN's default shadow
+  was missing), and stage music inside a converted stage is found
+  (bgmvolume honoured). Unit tests in `stage.rs`.
+- [x] **Slow first launch, laggy fight entry** (7ccc1bd, fdc7826, f05525d,
+  fcefebc). Before: with 86 zips the first frame came 531 s after launch
+  (the title waited on every conversion, 8 min 51 s in all, peak 3.1 GB);
+  with the cache deleted 11.1 s, plus 16.3 s frozen opening the fighter
+  select (verification on the UI thread); fight entry on a cold cache 85 ms
+  to load and 811 ms to the first fight frame, ~1370 palettes uploaded (a
+  71 ms frame). Now the title draws in 0.33-0.61 s and holds 60 fps while
+  everything converts on one low-priority worker (every core but two:
+  ~6.1 s a fighter, two workers measured no faster and 0.5 GB heavier);
+  stages first; the select shows unready fighters dimmed with a progress
+  ring (both themes), PREPARING n / N on title / select / stages, a pick
+  jumps the queue, the VS screen holds with a ring until it is ready and
+  preloads both fighters (21 ms load, first fight frame 42 ms after the VS
+  screen on a cold copy, 79 palettes, first 300 frames max 27 ms).
+  Shots: `compat2/shots/prep-*.png`.
+- [ ] **Left for 0.7.0** (on-demand sprite streaming): sprites of a fighter
+  are still decoded and uploaded on first draw during the fight (no hitch
+  over 20 ms measured, but a fighter with big supers can still stall a
+  frame); a conversion uses ~1.5 GB at its peak (whole SFF in memory);
+  conversion speed is bound by zstd-19 and Opus, not the threads; menu
+  backdrops (system.def BGs) keep masking colour 0 (rugen's own screenpacks
+  rely on it, MUGEN does not).
+
 ## Gameplay
 
 - [x] **Hit sparks and fighter size.** (88f615c) fightfx hit sparks are not zoomed with

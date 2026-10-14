@@ -212,6 +212,10 @@ impl ResultSource for Match {
 
 /// Display name and big art for a prepared character .def (from its cache manifest).
 pub(crate) fn char_card(def: &std::path::Path) -> (String, Option<crate::uiscreen::MemImage>) {
+    // still being prepared: its id until then
+    if let Some((_, id)) = crate::prepare::pending_of(def) {
+        return (id.replace('_', " "), None);
+    }
     let found = rugen_content::manifest_for(def);
     let Some((dir, man)) = found else {
         return (
@@ -431,6 +435,34 @@ pub struct Shell {
     booted: bool,
     /// The TEAM MODE step's last choice per mode (VS MODE, WATCH).
     last_teams: Vec<(Mode, crate::teamstep::Choice)>,
+    /// A fight whose fighter or stage is still being prepared in the
+    /// background: the versus screen stays up (with a ring) until it is ready.
+    waiting_fight: Option<FightSetup>,
+    /// Harness: a mid-run screenshot due this frame (RUGEN_HARNESS_SHOTS).
+    extra_shot: Option<PathBuf>,
+}
+
+/// `RUGEN_HARNESS_FAST=n`: ticks per drawn frame instead of the wall clock.
+fn harness_fast() -> Option<u32> {
+    static V: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("RUGEN_HARNESS_FAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n > 0)
+    })
+}
+
+/// `RUGEN_HARNESS_SHOTS=t1,t2,...`: extra screenshots at those ticks.
+fn harness_shots() -> &'static [u32] {
+    static V: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        std::env::var("RUGEN_HARNESS_SHOTS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|t| t.trim().parse().ok())
+            .collect()
+    })
 }
 
 impl Shell {
@@ -451,19 +483,12 @@ impl Shell {
         let mut lib = lib;
         lib.keep_originals = config.content.keep_originals;
         crate::themes::init(&lib);
-        // convert what is new in chars/ and stages/ while the title shows
-        // (menus that need an entry first convert it themselves)
+        // convert and verify what is new in chars/ and stages/ in the
+        // background while the title shows (crate::prepare); menus show
+        // what is not ready yet and wait only for a fighter that is picked
         if !quick {
-            let l = lib.clone();
-            let _ = std::thread::Builder::new()
-                .name("import".into())
-                .spawn(move || {
-                    for i in l.import_new() {
-                        if let Err(e) = i.result {
-                            log::warn!("{}: {e}", i.id);
-                        }
-                    }
-                });
+            lib.tidy();
+            crate::prepare::start(&lib);
         }
         let data_dir = lib.data_dir();
         let motif_dir = lib.motif_dir_for(&config.video.theme);
@@ -547,6 +572,8 @@ impl Shell {
             frame_stats: crate::framestats::Reporter::default(),
             booted: false,
             last_teams: Vec::new(),
+            waiting_fight: None,
+            extra_shot: None,
         }
     }
 
@@ -1043,7 +1070,18 @@ impl Shell {
 
     /// The run's next fight on `stage` (else the ladder's next stage).
     fn run_fight(&mut self, stage: Option<PathBuf>) -> Option<Transition> {
-        let chars = self.lib.chars();
+        // opponents among the fighters ready to fight (crate::prepare)
+        let chars: Vec<_> = self
+            .lib
+            .chars()
+            .into_iter()
+            .filter(|e| {
+                crate::prepare::get().is_none_or(|p| {
+                    p.state(false, &e.id)
+                        .is_none_or(|s| matches!(s, crate::prepare::State::Ready(_)))
+                })
+            })
+            .collect();
         let run = self.run.as_mut()?;
         if chars.is_empty() {
             return None;
@@ -1060,7 +1098,7 @@ impl Shell {
         let p1 = run.p1.clone();
         let mode = run.mode;
         let rules = run.rules();
-        let (dir, man) = self.lib.prepare_char(&pick).ok()?;
+        let (dir, man) = crate::prepare::ready_char(&self.lib, &pick)?;
         let p2 = man.def_path(&dir);
         let stage = match stage {
             Some(s) => Some(s),
@@ -1762,6 +1800,8 @@ impl Shell {
             }
             Transition::Versus(setup, sides) => {
                 self.play_system_music("vs");
+                // load both fighters and the stage while the versus screen shows
+                crate::prepare::preload(&setup, &self.data_dir);
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Versus) => {
                         match UiScreen::load_versus(
@@ -1789,6 +1829,21 @@ impl Shell {
                 };
             }
             Transition::Fight(setup) => {
+                // a pick still converting in the background: wait on the
+                // versus screen (or wherever we are), then fight
+                if !crate::prepare::waiting_for(&setup).is_empty() {
+                    if self.waiting_fight.is_none() {
+                        log::info!("the fight waits for a fighter or stage being prepared");
+                    }
+                    self.waiting_fight = Some(setup);
+                    return;
+                }
+                let mut setup = setup;
+                if !crate::prepare::resolve_pending(&mut setup) {
+                    log::error!("a fighter or stage of this fight could not be prepared");
+                    self.transition(Transition::Title);
+                    return;
+                }
                 self.drop_pause();
                 self.parked = None;
                 // the fight being replaced (rematch, next arcade stage, online
@@ -1802,7 +1857,11 @@ impl Shell {
                     (Some(_), Some(om)) => crate::online::match_config(&self.config, &om.rules),
                     _ => self.config.clone(),
                 };
-                match Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg) {
+                crate::timing::fight_requested();
+                let load_start = Instant::now();
+                let loaded = Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg);
+                crate::timing::took("loading the fight", load_start.elapsed());
+                match loaded {
                     Ok(mut m) => {
                         m.start_label = crate::keylabel::Labels::new(
                             &self.config.input,
@@ -1840,7 +1899,7 @@ impl Shell {
                                 Some(crate::tutorial::Tutorial::new(&m.world.data[0], &keys));
                         }
                         if let Some(a) = self.audio.as_mut() {
-                            a.play_music(m.bgm.as_deref(), 1.0, true);
+                            a.play_music(m.bgm.as_deref(), m.bgm_volume, true);
                         }
                         if setup.net.is_some() {
                             m.ranked = self.online_match.as_ref().map(|om| om.ranked);
@@ -2039,6 +2098,17 @@ impl Shell {
     /// One shell tick (menus or a match), measured by the latency probe.
     fn tick(&mut self) {
         let start = Instant::now();
+        // a fight waiting for a fighter or stage being prepared
+        if let Some(setup) = self.waiting_fight.as_ref() {
+            let waits = crate::prepare::waiting_for(setup);
+            if waits.is_empty() {
+                if let Some(setup) = self.waiting_fight.take() {
+                    self.transition(Transition::Fight(setup));
+                }
+            } else if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
+                u.set_waiting(&waits, sys);
+            }
+        }
         self.tick_inner();
         if crate::framestats::enabled() {
             crate::framestats::add(crate::framestats::Phase::Update, start.elapsed());
@@ -2066,12 +2136,19 @@ impl Shell {
         // the tick length can stretch a little during online matches
         // (time sync); it is read again before every tick
         let mut len = self.tick_len();
+        // harness: RUGEN_HARNESS_FAST=n runs n ticks per drawn frame
+        if let Some(n) = harness_fast() {
+            self.tick_acc = len * n;
+        }
         while self.tick_acc >= len {
             self.tick_acc -= len;
             self.tick();
             len = self.tick_len();
             // a harness screenshot shows exactly frame N, even after a slow frame
-            if self.quit || (self.shot_armed && self.harness.shot.is_some()) {
+            if self.quit
+                || (self.shot_armed && self.harness.shot.is_some())
+                || self.extra_shot.is_some()
+            {
                 break;
             }
         }
@@ -2596,6 +2673,17 @@ impl Shell {
         let held = self.pause.is_some() || (self.debug_ui.is_some() && self.is_match());
         if (advanced || held) && counted {
             self.ticks += 1;
+            // harness: RUGEN_HARNESS_SHOTS=t1,t2,... also writes <shot>-<t>.png
+            if harness_shots().contains(&self.ticks)
+                && let Some(base) = &self.harness.shot
+            {
+                let stem = base.with_extension("");
+                self.extra_shot = Some(PathBuf::from(format!(
+                    "{}-{}.png",
+                    stem.display(),
+                    self.ticks
+                )));
+            }
             if let Some(n) = self.harness.frames
                 && self.ticks >= n
             {
@@ -2667,6 +2755,15 @@ impl Shell {
         if profiling {
             crate::framestats::add(crate::framestats::Phase::Build, build_start.elapsed());
         }
+        if let Some(path) = self.extra_shot.take() {
+            let (w, h) = r.size();
+            let rgba = r.end_to_image(&cam, clear, w, h);
+            match crate::play::write_png(&path, w, h, &rgba) {
+                Ok(()) => log::info!("wrote {}", path.display()),
+                Err(e) => log::error!("shot {}: {e}", path.display()),
+            }
+            return;
+        }
         if self.shot_armed
             && let Some(path) = self.harness.shot.take()
         {
@@ -2696,6 +2793,7 @@ impl Shell {
             };
             self.frame_stats.frame(&name, r);
         }
+        crate::timing::presented(matches!(self.screen, Screen::Match(_)) && self.pause.is_none());
         match ended {
             Ok(()) => {
                 let t = r.timing();

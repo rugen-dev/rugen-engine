@@ -341,6 +341,51 @@ pub(crate) fn draw_pips(
     }
 }
 
+/// `ring`: a progress ring (a picture still loading): `value` 0..1 filled
+/// clockwise from the top in `color2`, the rest in `color`, `border` thick.
+pub(crate) fn draw_ring(
+    p: &mut dyn Painter,
+    n: &NodeDef,
+    ctx: &Ctx,
+    r: Rect,
+    alpha: f32,
+    clip: Option<Rect>,
+) {
+    let v = n
+        .value
+        .as_deref()
+        .map(|v| value_num(ctx.bound(crate::bind_path(v))))
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let radius = r.w.min(r.h) / 2.0;
+    let t = n.border.unwrap_or(4.0).min(radius);
+    let segs = 48;
+    // each segment a little longer than its arc so neighbours meet
+    let len = 2.0 * std::f32::consts::PI * (radius - t / 2.0) / segs as f32 + 1.0;
+    for k in 0..segs {
+        let f = k as f32 / segs as f32;
+        let color = if f < v {
+            n.color2.unwrap_or(RED)
+        } else {
+            n.color.unwrap_or([0.0, 0.0, 0.0, 0.45])
+        };
+        p.set_transform(Some(crate::Rot {
+            deg: f * 360.0,
+            cx,
+            cy,
+        }));
+        let seg = Rect {
+            x: cx - len / 2.0,
+            y: cy - radius,
+            w: len,
+            h: t,
+        };
+        p.draw_rect(seg, fade(color, alpha), 0.0, clip);
+    }
+    p.set_transform(None);
+}
+
 /// `choice`: segmented boxes, the selected one filled with `color2`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_choice(

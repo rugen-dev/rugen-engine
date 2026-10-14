@@ -205,6 +205,9 @@ pub enum Kind {
     /// Host-drawn content in the node's rectangle, in draw order (`id`
     /// names it: a live stage preview, ...). See [`Painter::draw_slot`].
     Slot,
+    /// A progress ring filling clockwise from the top: `value` (0..1) of
+    /// it in `color2` over a `color` track, `border` thick.
+    Ring,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -2775,6 +2778,10 @@ impl Ui {
         match n.kind {
             Kind::Pips => {
                 widgets::draw_pips(p, n, &inst.ctx, rect, alpha, clip);
+                return;
+            }
+            Kind::Ring => {
+                widgets::draw_ring(p, n, &inst.ctx, rect, alpha, clip);
                 return;
             }
             Kind::Choice => {

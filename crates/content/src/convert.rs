@@ -382,9 +382,7 @@ pub fn convert(src: &Source, out: &Path, data_dir: &Path, prev: Option<&Path>) -
         });
         // the rest, a few files per thread
 
-        let threads = std::thread::available_parallelism()
-            .map_or(2, |n| n.get())
-            .clamp(1, 8);
+        let threads = rugen_formats::encode_threads().clamp(1, 8);
         let workers: Vec<_> = (0..threads)
             .map(|_| {
                 s.spawn(|| {

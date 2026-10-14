@@ -342,6 +342,12 @@ pub struct UiScreen {
     roster: Option<Roster>,
     /// Stage select only.
     stages: Option<crate::stagesel::StageSel>,
+    /// Background preparation last shown: (ready, total) fighters and
+    /// stages; `None` once everything is ready.
+    prep_seen: Option<(usize, usize)>,
+    /// Versus screen: what the fight still waits for (`waiting` in the
+    /// data: on, name, progress, line).
+    waiting: Value,
     /// Buttons held this tick (auto-repeat on the stage strip).
     held: [Buttons; 2],
     /// Wheel turned over the stage select since the last tick.
@@ -935,8 +941,10 @@ impl UiScreen {
     /// Title facts: featured fighters (newest archive first) and the arenas.
     fn load_title_facts(&mut self, lib: &rugen_content::Library) {
         let mut feats: Vec<(std::time::SystemTime, Featured)> = Vec::new();
+        // only what is prepared: the rest is converting in the background
+        // (crate::prepare) and joins when ready
         for e in lib.chars() {
-            let Ok((dir, m)) = lib.prepare_char(&e) else {
+            let Some((dir, m)) = crate::prepare::ready_char(lib, &e) else {
                 continue;
             };
             let file = m
@@ -970,8 +978,11 @@ impl UiScreen {
             .iter()
             .find(|e| e.id.eq_ignore_ascii_case("training"))
             .or_else(|| stages.first())
-            .and_then(|e| lib.prepare_stage(e).ok());
-        self.try_stage = lib.default_stage();
+            .and_then(|e| crate::prepare::ready_stage(lib, e));
+        self.try_stage = match crate::prepare::get() {
+            Some(_) => first.as_ref().map(|(d, m)| m.def_path(d)),
+            None => lib.default_stage(),
+        };
         let (count, name) = match first {
             Some((_, m)) => (stages.len(), m.display_name.to_uppercase()),
             None if self.try_stage.is_some() => (1, "TRAINING ROOM".to_string()),
@@ -1171,6 +1182,8 @@ impl UiScreen {
             feature_at: 0,
             arenas: Value::Null,
             try_stage: None,
+            prep_seen: None,
+            waiting: Value::Null,
             ticks: 0,
             lib: None,
             from_pause: false,
@@ -1179,6 +1192,7 @@ impl UiScreen {
         };
         if kind == UiKind::Title {
             s.load_title_facts(lib);
+            s.lib = Some(lib.clone());
         }
         if kind == UiKind::Challenge {
             let (bosses, flagged) = crate::challenge::bosses(lib);
@@ -1625,8 +1639,85 @@ impl UiScreen {
         let mut data = data;
         if let Value::Object(m) = &mut data {
             m.insert("hint".into(), self.hint_json());
+            // fighters and stages still converting in the background
+            let prep = crate::prepare::get().map(|p| {
+                let (cr, ct) = p.counts(false);
+                let (sr, st) = p.counts(true);
+                (cr + sr, ct + st)
+            });
+            m.insert(
+                "preparing".into(),
+                match prep {
+                    Some((r, t)) if r < t => json!({
+                        "on": true,
+                        "line": format!("PREPARING {r} / {t}"),
+                        "progress": r as f32 / t.max(1) as f32,
+                    }),
+                    _ => json!({ "on": false, "line": "", "progress": 1.0 }),
+                },
+            );
+            m.insert("waiting".into(), self.waiting.clone());
         }
         self.ui.set_data(data);
+    }
+
+    /// Follow the background preparation (crate::prepare): fighters and
+    /// stages fill in as they become ready, rings and the PREPARING n / N
+    /// line move, the title's facts count what is ready.
+    fn watch_preparation(&mut self, sys: &SystemData) {
+        let Some(p) = crate::prepare::get() else {
+            return;
+        };
+        if self.ticks % 6 != 0 || self.prep_seen.is_none() && p.all_done() && self.ticks > 6 {
+            return;
+        }
+        let (cr, ct) = p.counts(false);
+        let (sr, st) = p.counts(true);
+        let now = (cr + sr, ct + st);
+        let mut changed = self.prep_seen != Some(now);
+        if let Some(r) = self.roster.as_mut() {
+            changed |= r.refresh_prepared();
+        }
+        if let (Some(s), Some(lib)) = (self.stages.as_mut(), self.lib.as_ref()) {
+            changed |= s.refresh_prepared(lib);
+        }
+        if self.kind == UiKind::Title
+            && self.prep_seen.is_some_and(|(r, _)| r != now.0)
+            && let Some(lib) = self.lib.clone()
+        {
+            self.load_title_facts(&lib);
+        }
+        self.prep_seen = (now.0 < now.1).then_some(now);
+        if changed {
+            self.refresh_data(sys);
+        }
+    }
+
+    /// The versus screen waits for `waits` (stage?, id, progress): a ring
+    /// and PREPARING <NAME> until they are ready (empty: done waiting).
+    pub fn set_waiting(&mut self, waits: &[(bool, String, f32)], sys: &SystemData) {
+        let v = match waits.first() {
+            None => Value::Null,
+            Some((stage, id, _)) => {
+                let progress = waits.iter().map(|w| w.2).sum::<f32>() / waits.len() as f32;
+                let name = id.replace('_', " ").to_uppercase();
+                json!({
+                    "on": true,
+                    "name": name,
+                    "progress": progress,
+                    "line": format!(
+                        "PREPARING {}{} · {}%",
+                        if *stage { "STAGE " } else { "" },
+                        name,
+                        libm::roundf(progress * 100.0) as i32
+                    ),
+                })
+            }
+        };
+        if v != self.waiting {
+            self.waiting = v;
+            self.refresh_data(sys);
+        }
     }
 
     pub fn capturing(&self) -> bool {
@@ -2285,6 +2376,7 @@ impl UiScreen {
             return Some(t);
         }
         self.ticks += 1;
+        self.watch_preparation(sys);
         if self.kind == UiKind::Title && self.featured.len() > 1 && self.ticks % FEATURE_TICKS == 0
         {
             self.feature_at = (self.feature_at + 1) % self.featured.len();
@@ -2399,7 +2491,13 @@ impl UiScreen {
             vs_refresh = *left % 60 == 0;
         }
         if let Some(s) = vs_done {
-            return Some(Transition::Fight(s));
+            // a pick still being prepared in the background: stay on the
+            // versus screen with a ring until it is ready
+            let waits = crate::prepare::waiting_for(&s);
+            if waits.is_empty() {
+                return Some(Transition::Fight(s));
+            }
+            self.set_waiting(&waits, sys);
         }
         if vs_refresh {
             self.refresh_data(sys);
@@ -2724,6 +2822,10 @@ pub fn decode_webp(bytes: &[u8]) -> anyhow::Result<MemImage> {
 
 /// Stage display name and thumbnail path for a prepared stage .def.
 fn stage_card(def: &Path) -> (String, String) {
+    // still being prepared: its id until then
+    if let Some((_, id)) = crate::prepare::pending_of(def) {
+        return (id.replace('_', " ").to_uppercase(), String::new());
+    }
     let found = rugen_content::manifest_for(def);
     let dir = found.as_ref().map(|(d, _)| d.as_path());
     let man = found.as_ref().map(|(_, m)| m.clone());
