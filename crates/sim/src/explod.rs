@@ -46,6 +46,9 @@ pub enum Space {
     #[default]
     Stage,
     Screen,
+    /// Not given: front / back / left / right mean screen, the rest stage
+    /// (Ikemen `Space_none`, resolved by [`World::explod_set_pos`]).
+    Unset,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -73,11 +76,15 @@ pub struct Explod {
     /// Player id the position follows while `bindtime != 0`.
     pub bind_id: i32,
     pub bindtime: i32,
-    /// Base position (stage space, explod-local scale), set from the bind target or absolute.
+    /// Base position (stage units), set from the bind target or absolute.
+    /// In [`Space::Screen`] `pos + offset + rel` is a screen position
+    /// instead: stage units at camera zoom 1, x from the screen centre, y
+    /// from the top (Ikemen draws screen sprites unzoomed, unshaken).
     pub pos: [f32; 2],
     /// Offset from `pos` (already facing-adjusted).
     pub rel: [f32; 2],
-    /// Screen-space offset for front/back/left/right.
+    /// Anchor offset: the screen edge for left / right, the bound
+    /// player's position for a screen-space p1 / p2 explod.
     pub offset: [f32; 2],
     pub facing: f32,
     pub vfacing: f32,
@@ -98,6 +105,10 @@ pub struct Explod {
     pub pausemovetime: i32,
     pub angle: f32,
     pub animfreeze: bool,
+    /// MUGEN `ownpal`: drawn with its own `palfx` instead of following
+    /// its owner's PalFX (the default for fightfx animations).
+    pub ownpal: bool,
+    pub palfx: crate::fx::PalFx,
     pub removed: bool,
 }
 
@@ -111,7 +122,7 @@ impl Explod {
             anim: AnimState::start(anim_no),
             time: 0,
             postype: PosType::P1,
-            space: Space::Stage,
+            space: Space::Unset,
             bind_id: -2,
             bindtime: 1,
             pos: [0.0, 0.0],
@@ -136,6 +147,8 @@ impl Explod {
             pausemovetime: 0,
             angle: 0.0,
             animfreeze: false,
+            ownpal: src == AnimSrc::Fx,
+            palfx: crate::fx::PalFx::default(),
             removed: false,
         }
     }
@@ -148,6 +161,22 @@ impl Explod {
         ]
     }
 
+    /// The space this explod is drawn in, `Unset` resolved like Ikemen.
+    pub fn resolved_space(&self) -> Space {
+        match self.space {
+            Space::Unset => match self.postype {
+                PosType::Front | PosType::Back | PosType::Left | PosType::Right => Space::Screen,
+                _ => Space::Stage,
+            },
+            s => s,
+        }
+    }
+
+    /// Drawn in screen space (fixed on screen, unzoomed).
+    pub fn on_screen(&self) -> bool {
+        self.resolved_space() == Space::Screen
+    }
+
     pub fn air<'a>(&self, w: &'a World) -> Option<&'a Air> {
         match self.src {
             AnimSrc::Player(d) => Some(&w.data[d].air),
@@ -158,19 +187,45 @@ impl Explod {
 
 impl World {
     /// Resolve the explod's base position from its postype (Ikemen `Explod.setPos`).
+    ///
+    /// Screen-space explods keep screen positions (see [`Explod::pos`]): the
+    /// left / right edges are half the stage's screen width from the centre
+    /// here, and the renderer moves them out to the window's real edges.
     pub(crate) fn explod_set_pos(&self, e: &mut Explod, c: usize) {
-        let (xmin, xmax) = (self.screen_left(), self.screen_left() + self.stage.width);
+        e.space = e.resolved_space();
+        let half = self.stage.width / 2.0;
         let p_pos = |e: &mut Explod, i: usize| {
             let p = &self.players[i];
             e.bind_id = p.id;
             e.facing = p.facing;
             e.rel[0] *= p.facing;
             let s = self.local_scale(i);
-            e.pos = [p.pos[0] * s, p.pos[1] * s];
             if e.space == Space::Screen {
+                // Ikemen: the player's stage position, read as a screen one
                 e.offset = [p.pos[0] * s, self.stage.zoffset + p.pos[1] * s];
                 e.pos = [0.0, 0.0];
+            } else {
+                e.pos = [p.pos[0] * s, p.pos[1] * s];
             }
+        };
+        // left / right: the screen edge, or in stage space where that edge
+        // is now (the explod then stays there)
+        let edge = |e: &mut Explod, right: bool| {
+            e.offset = if e.space == Space::Screen {
+                [if right { half } else { -half }, 0.0]
+            } else {
+                e.pos = [0.0, 0.0];
+                let z = self.cam_zoom.max(0.05);
+                e.rel[0] /= z;
+                [
+                    if right {
+                        self.screen_right()
+                    } else {
+                        self.screen_left()
+                    },
+                    0.0,
+                ]
+            };
         };
         match e.postype {
             PosType::P1 => p_pos(e, c),
@@ -191,24 +246,16 @@ impl World {
                         e.rel[0] = -e.rel[0];
                     }
                     e.postype = PosType::Right;
-                    e.offset = [xmax, 0.0];
                 } else {
                     e.postype = PosType::Left;
-                    e.offset = [xmin, 0.0];
                 }
-                e.space = Space::Screen;
+                edge(e, right);
             }
-            PosType::Left => {
-                e.offset = [xmin, 0.0];
-                e.space = Space::Screen;
-            }
-            PosType::Right => {
-                e.offset = [xmax, 0.0];
-                e.space = Space::Screen;
-            }
+            PosType::Left => edge(e, false),
+            PosType::Right => edge(e, true),
             PosType::None => {
                 if e.space == Space::Screen {
-                    e.offset = [xmin, 0.0];
+                    e.offset = [-half, 0.0];
                 }
             }
         }
@@ -294,6 +341,9 @@ impl World {
         }
         if !e.animfreeze {
             e.anim.step(action);
+        }
+        if e.ownpal {
+            e.palfx.step();
         }
     }
 

@@ -570,6 +570,21 @@ impl World {
         self.stage.width / self.data[d].localcoord[0] * zoom
     }
 
+    /// The PalFX player `i` is drawn with: its own with `ownpal`, else its
+    /// root's (Ikemen `getPalfx`). Drawing only.
+    pub fn drawn_palfx(&self, i: usize) -> &crate::fx::PalFx {
+        let p = &self.players[i];
+        let k = if p.ownpal { i } else { p.root };
+        &self.players.get(k).unwrap_or(p).palfx
+    }
+
+    /// Stage units per local unit of data slot `d` for what it draws in
+    /// screen space: its localcoord alone. FIGHTER SIZE zooms the fighter in
+    /// the stage, never a screen overlay authored for a whole screen.
+    pub fn screen_scale(&self, d: usize) -> f32 {
+        self.stage.width / self.data[d].localcoord[0]
+    }
+
     /// Stage units per fightfx unit for an effect owned by player `owner`:
     /// fightfx's localcoord, zoomed by the owner's FIGHTER SIZE so hit
     /// sparks and dust match the fighter that made them. Drawing only.
@@ -654,7 +669,13 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(i, o)| {
-                *i != me && !o.removed && !o.standby && o.player_type && o.team != p.team
+                // a Tag fighter entering the screen is cosmetic until in place
+                *i != me
+                    && !o.removed
+                    && !o.standby
+                    && o.player_type
+                    && o.team != p.team
+                    && o.tag == crate::team::TagPhase::None
             })
             .min_by(|(a, _), (b, _)| {
                 let da = self.rel_pos(me, *a)[0].abs();
@@ -872,11 +893,16 @@ impl World {
                 "P{} attempted to change to invalid action {no}",
                 i + 1
             ));
+            // MUGEN: the player is left without a valid animation and draws
+            // nothing until a valid one (Goku's FX helpers change to actions
+            // his AIR lacks and were drawn as copies of his stance)
+            self.players[i].anim_none = true;
             return;
         };
         let p = &mut self.players[i];
         p.prev_anim_no = p.anim.action;
         p.anim = AnimState::start(no);
+        p.anim_none = false;
         p.anim_owner = owner;
         if let Some((e, t)) = elem {
             p.anim.set_elem(action, e, t);
@@ -1048,8 +1074,20 @@ impl World {
                 i += 1;
                 continue;
             }
+            // auto-turn (Ikemen): with ctrl (or after the round is decided) in
+            // stand / crouch / walk, and at the end of the landing (52), so a
+            // jump that crossed over near a wall turns before what follows
             let p = &self.players[i];
-            if p.helper_index == 0 && p.ctrl && !p.pause_bool && matches!(p.state_no, 0 | 11 | 20) {
+            let landed = p.state_no == 52
+                && self.data[p.anim_owner]
+                    .air
+                    .get(p.anim.action)
+                    .is_none_or(|a| p.anim.anim_time(a) == 0);
+            if p.helper_index == 0
+                && !p.pause_bool
+                && (p.ctrl || self.round.round_state() > 2)
+                && (matches!(p.state_no, 0 | 11 | 20) || landed)
+            {
                 self.auto_turn(i);
             }
             let p = &self.players[i];
@@ -1123,6 +1161,7 @@ impl World {
         let mut i = 0;
         while i < self.players.len() {
             if !self.players[i].removed && !self.players[i].broken {
+                self.players[i].acted = false;
                 self.running = Some(i);
                 if self.players[i].tag == crate::team::TagPhase::None {
                     if !self.ledge_step(i) {
@@ -1247,7 +1286,7 @@ impl World {
         let Some(ai) = p.afterimage.as_ref() else {
             return;
         };
-        if !ai.is_active() {
+        if !ai.is_active() || p.anim_none {
             return;
         }
         if p.hit_pause_time > 0 && !ai.ignorehitpause {
@@ -1469,7 +1508,8 @@ impl World {
         h.pos[1] = p0[1];
         h.old_pos = h.pos;
         h.helper_index = helpers as i32 + 1;
-        h.size = crate::player::Size::from_data(&self.data[parent.data]);
+        h.size = parent.size;
+        h.ownpal = false;
         h.helper_id = helper_id.max(0);
         h.parent_id = parent.id;
         h.root = parent.root;
@@ -1625,13 +1665,18 @@ impl World {
             .as_ref()
             .map_or(0, |c| self.eval(i, c).to_i().max(0));
         self.apply_explod_spec(i, &mut e, spec, true);
+        // ownpal without its own palfx.*: the creator's palette effect as it
+        // is now, unaffected by later PalFX (MUGEN docs; Goku's Kaioken
+        // aura helper, tinted red, flashes the screen red with one)
+        if e.ownpal && spec.palfx.is_none() && e.src != AnimSrc::Fx {
+            e.palfx = self.drawn_palfx(i).clone();
+        }
         self.explod_set_pos(&mut e, i);
         self.explods.push(e);
         Some(self.explods.len() - 1)
     }
 
     fn apply_explod_spec(&mut self, i: usize, e: &mut Explod, spec: &ExplodSpec, fresh: bool) {
-        let ls = self.local_scale(i);
         let two = |w: &mut World, v: &Option<Vec<Code>>| -> Option<[f32; 2]> {
             let v = v.as_ref()?;
             let a = v.first().map_or(0.0, |c| w.eval(i, c).to_f());
@@ -1644,6 +1689,13 @@ impl World {
         if let Some(sp) = spec.space {
             e.space = sp;
         }
+        // screen-space explods are laid out on the screen: the owner's
+        // localcoord, never its FIGHTER SIZE zoom
+        let ls = if e.on_screen() {
+            self.screen_scale(self.players[i].data)
+        } else {
+            self.local_scale(i)
+        };
         if let Some(v) = two(self, &spec.pos) {
             e.rel = [v[0] * ls, v[1] * ls];
         }
@@ -1733,6 +1785,12 @@ impl World {
         if let Some(c) = &spec.animfreeze {
             e.animfreeze = self.eval(i, c).to_b();
         }
+        if let Some(c) = &spec.ownpal {
+            e.ownpal = self.eval(i, c).to_b();
+        }
+        if let Some(pf) = &spec.palfx {
+            e.palfx = self.eval_palfx(i, pf);
+        }
         if fresh && let Some(c) = &spec.animelem {
             let el = self.eval(i, c).to_i();
             if let Some(a) = e.air(self).and_then(|a| a.get(e.anim.action)).cloned() {
@@ -1761,6 +1819,7 @@ impl World {
             return;
         }
         e.id = -1; // sparks are anonymous: not found by NumExplod / RemoveExplod
+        e.ownpal = true;
         e.postype = PosType::None;
         e.space = Space::Stage;
         e.bindtime = 0;
@@ -1808,11 +1867,13 @@ impl World {
         if self.players[i].pause_bool {
             return;
         }
-        // animate (not during hit pause)
+        // animate (not during hit pause, but still in the tick whose hit
+        // started one: Ikemen steps when `acttmp > 0`, so `animelem = 2`
+        // does not hold again once the pause ends)
         let data = self.data[self.players[i].anim_owner].clone();
         {
             let p = &mut self.players[i];
-            if p.hit_pause_time == 0
+            if (p.hit_pause_time == 0 || p.acted)
                 && let Some(a) = data.air.get(p.anim.action)
             {
                 p.anim.step(a);
@@ -2080,6 +2141,7 @@ impl World {
         let guarding = collision::compute_guard_flag(&self.players[i]);
         self.players[i].guarding = guarding;
         if self.players[i].hit_pause_time == 0 {
+            self.players[i].acted = true;
             // forced stay in 5110 then get up
             let p = &self.players[i];
             if p.state_no == 5110 && p.state_time >= 1 && p.ghv.down_recovertime <= 0 && p.alive() {
@@ -2759,8 +2821,12 @@ impl World {
                 self.players[i].angle *= v;
             }
             Sctrl::PalFx(spec) => {
-                let pf = self.eval_palfx(i, spec);
-                self.players[i].palfx = pf;
+                // a helper without ownpal shares its root's palette: Ikemen
+                // ignores its PalFX
+                if self.players[i].ownpal {
+                    let pf = self.eval_palfx(i, spec);
+                    self.players[i].palfx = pf;
+                }
             }
             Sctrl::AllPalFx(spec) => {
                 self.allpalfx = self.eval_palfx(i, spec);
@@ -2868,10 +2934,13 @@ impl World {
                 player_type,
                 supermovetime,
                 pausemovetime,
+                ownpal,
                 size,
             } => {
-                // size.* in the parent's context; omitted ones are the root's constants
-                let mut sz = crate::player::Size::from_data(&self.data[self.players[i].data]);
+                // size.* in the parent's context; omitted ones are inherited
+                // from the parent (MUGEN docs, Ikemen `newHelper`: h.size =
+                // c.size), so a helper of a scaled helper keeps its scale
+                let mut sz = self.players[i].size;
                 for (key, codes) in size {
                     let v: Vec<f32> = codes.iter().map(|c| self.eval(i, c).to_f()).collect();
                     let v0 = v[0];
@@ -2906,11 +2975,13 @@ impl World {
                 let kc = keyctrl.as_ref().is_some_and(|c| self.eval(i, c).to_b());
                 let smt = supermovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
                 let pmt = pausemovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let own = ownpal.as_ref().is_some_and(|c| self.eval(i, c).to_b());
                 let pt = postype.unwrap_or(PosType::P1);
                 if let Some(h) = self.spawn_helper(i, st, hid, [px, py], pt, f, kc, *player_type) {
                     self.players[h].super_move_time = smt;
                     self.players[h].pause_move_time = pmt;
                     self.players[h].size = sz;
+                    self.players[h].ownpal = own;
                 }
             }
             Sctrl::DestroySelf {
@@ -3743,12 +3814,15 @@ impl World {
             (f32::MAX, f32::MIN, 0.0f32, 0.0f32);
         // the camera works in stage units; positions are in each fighter's
         // own (localcoord) units
-        for (i, p) in self
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| !p.removed && !p.standby && p.helper_index == 0 && p.player_type)
-        {
+        for (i, p) in self.players.iter().enumerate().filter(|(_, p)| {
+            // Tag fighters entering or leaving are not followed: the
+            // camera holds still through a swap
+            !p.removed
+                && !p.standby
+                && p.helper_index == 0
+                && p.player_type
+                && p.tag == crate::team::TagPhase::None
+        }) {
             let s = self.local_scale(i);
             let (x, y) = (p.pos[0] * s, p.pos[1] * s);
             leftest = leftest.min(x);
@@ -3794,9 +3868,18 @@ impl World {
             tl += diff / 2.0;
             tr -= diff / 2.0;
         }
-        // room to zoom in: tighten the edges toward the players
+        // room to zoom in: tighten the edges toward the players, except while
+        // a Tag fighter enters or leaves: the camera holds through a swap
+        // (it still pans or pulls back to keep the fighters in place on screen)
+        let swapping = self.players.iter().any(|p| {
+            !p.removed
+                && !matches!(
+                    p.tag,
+                    crate::team::TagPhase::None | crate::team::TagPhase::Waiting
+                )
+        });
         let max_scale = st.zoom_in;
-        if half * 2.0 / (tr - tl) < max_scale {
+        if !swapping && half * 2.0 / (tr - tl) < max_scale {
             let mut dl = (leftest - tension - tl).max(0.0);
             let mut dr = (rightest + tension - tr).min(0.0);
             if dl - dr > 0.0 && half * 2.0 / ((tr + dr) - (tl + dl)) > max_scale {
@@ -4894,8 +4977,11 @@ mod tests {
             },
         );
         let mut hit_frame = None;
+        let mut move_hit = false;
         for f in 0..30 {
             run(&mut w, 1, Buttons::default());
+            // read while the attack lasts: back in state 0 resets them
+            move_hit |= w.players[0].move_hit() > 0 || w.players[0].hit_count > 0;
             if w.players[1].state_no == 5000 && hit_frame.is_none() {
                 hit_frame = Some(f);
             }
@@ -4912,10 +4998,7 @@ mod tests {
             life0,
             w.players[1].life
         );
-        assert!(
-            w.players[0].move_hit() > 0 || w.players[0].hit_count > 0,
-            "MoveHit / HitCount on attacker"
-        );
+        assert!(move_hit, "MoveHit / HitCount on attacker");
         run(&mut w, 90, Buttons::default());
         assert_eq!(w.players[1].state_no, 0, "P2 recovered to stand");
         assert!(w.players[1].ctrl);
@@ -4944,11 +5027,13 @@ mod tests {
             hold,
         ]);
         let mut guarded = false;
+        let mut move_guarded = false;
         for _ in 0..40 {
             w.step(&[Buttons::default(), hold]);
             if (150..=155).contains(&w.players[1].state_no) {
                 guarded = true;
             }
+            move_guarded |= w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0;
         }
         assert!(
             guarded,
@@ -4956,7 +5041,7 @@ mod tests {
             w.players[1].state_no
         );
         assert_eq!(w.players[1].life, life0, "no chip damage from a normal");
-        assert!(w.players[0].move_guarded() > 0 || w.players[0].guard_count > 0);
+        assert!(move_guarded, "MoveGuarded / GuardCount on attacker");
     }
 
     /// P2 overrides P1's standing normal with a custom state via HitOverride.

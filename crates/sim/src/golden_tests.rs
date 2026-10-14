@@ -129,8 +129,11 @@ fn kfm_matches_are_bit_identical() {
 
 const GOLDEN_KFM: [(u64, u32, [u8; 2]); 4] = [
     (0x4d93d67f889e5e19, 12000, [1, 0]),
-    (0x06349344b07c143a, 20000, [2, 1]),
-    (0xeccb0277ef3cb214, 12000, [1, 0]),
+    // the attacker's animation steps in the tick its hit starts a
+    // hitpause (Ikemen acttmp), since the compat fix for Goku's endless
+    // B air combo: AI matches with hits differ from then on
+    (0x112ef8d316dc78d9, 20000, [2, 1]),
+    (0xb4935f252c715b6e, 12000, [1, 0]),
     // examples/arena has items and hazards (moving / dropping platforms,
     // wind) since those features, on purpose
     (0xc540f0b530e524f5, 4000, [0, 0]),
@@ -182,9 +185,12 @@ fn community_matches_are_bit_identical() {
 }
 
 const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2]); 3] = [
-    (0x6766b21d8016fc94, 12000, [1, 0]),
-    (0x648e097b8dc77328, 20000, [1, 2]),
-    (0x72e835bd3538dacd, 12000, [0, 2]),
+    // re-recorded with the hitpause animation step (see GOLDEN_KFM)
+    (0xe86442fa2ca1cddd, 12000, [1, 0]),
+    (0xd8a3ac02e4f7d455, 20000, [2, 0]),
+    // and with Goku's FX helpers left without an animation after a
+    // ChangeAnim to an action his AIR lacks (no boxes)
+    (0x211d2cf47e342d49, 12000, [0, 1]),
 ];
 
 /// The fighter debugger's trace records what the state machine did, never

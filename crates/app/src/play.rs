@@ -15,7 +15,7 @@ use anyhow::Context;
 use rugen_audio::{Audio, BankId, SoundKey};
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
-use rugen_sim::explod::{AnimSrc, Trans};
+use rugen_sim::explod::{AnimSrc, PosType, Trans};
 use rugen_sim::fx::PalFxOut;
 use rugen_sim::world::Event;
 use rugen_sim::{Buttons, CharData, World};
@@ -348,6 +348,14 @@ struct Item {
     blend: Blend,
     angle: f32,
     tint: Tint,
+    /// Screen space: `pos` is a screen position (stage units at zoom 1, x
+    /// from the centre, y from the top), drawn unzoomed and unshaken; the
+    /// value moves it by that many half-widths of the window's extra width
+    /// over the stage's (-1 = left anchored, 1 = right, 0 = centred).
+    screen: Option<f32>,
+    /// What it is, for the `RUGEN_HARNESS_DRAWLOG` dump: kind (P player,
+    /// I afterimage, E explod, J projectile), player / explod index, action.
+    who: (char, usize, i32, usize),
 }
 
 /// Final blend for a sprite: the `Trans` controller wins over the AIR frame.
@@ -364,6 +372,42 @@ fn resolve_blend(frame: &rugen_formats::air::Frame, trans: Trans, alpha: [i32; 2
         },
         Trans::Sub => Blend::Sub { src: 255, dst: 255 },
     }
+}
+
+/// Order of two draws at the same layer and sprpriority, from the draw's
+/// kind (`who.0`) and its push index: Ikemen queues projectiles, then
+/// players, then explods, and draws what was queued later behind.
+fn queue_order(kind: char, seq: usize) -> std::cmp::Reverse<(u8, usize)> {
+    let group = match kind {
+        'J' => 0,
+        'P' | 'I' => 1,
+        _ => 2,
+    };
+    std::cmp::Reverse((group, seq))
+}
+
+/// `blend` drawn at `opacity` (0..=1): a plain draw becomes a translucent
+/// one (MUGEN addalpha src = a, dst = 1 - a), an additive or subtractive
+/// one weakens its source.
+fn fade(blend: Blend, opacity: f32) -> Blend {
+    if opacity >= 1.0 {
+        return blend;
+    }
+    let a = libm::roundf(opacity.clamp(0.0, 1.0) * 255.0) as u8;
+    let k = |src: u8| ((u16::from(src) * u16::from(a)) / 255) as u8;
+    match blend {
+        Blend::Alpha => Blend::Add {
+            src: a,
+            dst: 255 - a,
+        },
+        Blend::Add { src, dst } => Blend::Add { src: k(src), dst },
+        Blend::Sub { src, dst } => Blend::Sub { src: k(src), dst },
+    }
+}
+
+/// PalFX multiply for a subtractive draw (Ikemen `toShader`, `useNeg`).
+fn sub_mul(m: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|i| (m[(i + 1) % 3] + m[(i + 2) % 3]) / 2.0)
 }
 
 fn tint(p: PalFxOut) -> Tint {
@@ -1139,6 +1183,7 @@ impl Match {
         {
             self.world.players[p2].life = 1;
         }
+        harness_states(&mut self.world);
         if self.world.round.match_over {
             self.over_ticks += 1;
             // linger on the win pose, then hand over to the result screen
@@ -1895,6 +1940,10 @@ impl Match {
                 continue;
             };
             let sprite_data = p.data;
+            let invisible = p.asserted(rugen_sim::player::assert::INVISIBLE);
+            let p_action = p.anim.action;
+            let p_owner = p.anim_owner;
+            let p_none = p.anim_none;
             // rollback corrections ease in on screen (display only)
             let off = self.smooth.offset(crate::smooth::Key::Player(p.id));
             let (pos, facing, prio) = (
@@ -1902,7 +1951,8 @@ impl Match {
                 p.facing,
                 p.spr_priority,
             );
-            let blend = resolve_blend(&frame, p.trans, p.alpha);
+            // a Tag fighter leaving the screen fades out in steps
+            let blend = fade(resolve_blend(&frame, p.trans, p.alpha), p.tag_opacity());
             let angle = if p.angle_drawn {
                 p.angle * p.facing
             } else {
@@ -1913,7 +1963,7 @@ impl Match {
                 p.angle_scale[0] * p.size.xscale,
                 p.angle_scale[1] * p.size.yscale,
             ];
-            let pfx = tint(p.palfx.sample().stacked(all_pfx));
+            let pfx = tint(self.world.drawn_palfx(i).sample().stacked(all_pfx));
             // afterimages first so they sit behind the player
             let aimg = p
                 .afterimage
@@ -1946,8 +1996,15 @@ impl Match {
                         blend,
                         angle: img.angle * img.facing,
                         tint: tint(img_pfx.stacked(all_pfx)),
+                        screen: None,
+                        who: ('I', i, img.action, img.anim_owner),
                     });
                 }
+            }
+            // AssertSpecial invisible hides the body; its afterimages stay
+            // (Ikemen); a helper never given an animation draws nothing
+            if invisible || p_none {
+                continue;
             }
             let spr = self.sprite_from(r, Some(sprite_data), frame.group, frame.number);
             items.push(Item {
@@ -1964,6 +2021,8 @@ impl Match {
                 blend,
                 angle,
                 tint: pfx,
+                screen: None,
+                who: ('P', i, p_action, p_owner),
             });
         }
         let explods: Vec<rugen_sim::explod::Explod> = self
@@ -1974,9 +2033,22 @@ impl Match {
             .cloned()
             .collect();
         for e in explods {
-            let (src, scale) = match e.src {
-                AnimSrc::Player(d) => (Some(d), self.world.data_scale(d)),
-                AnimSrc::Fx => (None, self.world.fx_scale(e.owner)),
+            // screen-space explods: the owner's localcoord without its
+            // FIGHTER SIZE, like their positions (World::screen_scale)
+            let screen = e.on_screen().then_some(match e.postype {
+                PosType::Left | PosType::None => -1.0,
+                PosType::Right => 1.0,
+                _ => 0.0,
+            });
+            let (src, scale) = match (e.src, screen.is_some()) {
+                (AnimSrc::Player(d), false) => (Some(d), self.world.data_scale(d)),
+                (AnimSrc::Player(d), true) => (Some(d), self.world.screen_scale(d)),
+                (AnimSrc::Fx, false) => (None, self.world.fx_scale(e.owner)),
+                (AnimSrc::Fx, true) => (
+                    None,
+                    self.world.stage.width
+                        / self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
+                ),
             };
             let Some(frame) = e
                 .air(&self.world)
@@ -1988,11 +2060,15 @@ impl Match {
             };
             let spr = self.sprite_from(r, src, frame.group, frame.number);
             let blend = resolve_blend(&frame, e.trans, e.alpha);
-            let owner_pfx = self
-                .world
-                .players
-                .get(e.owner)
-                .map_or(PalFxOut::default(), |p| p.palfx.sample());
+            // ownpal: the explod's own PalFX; else its owner's, as it is now
+            // (MUGEN: "affected by subsequent execution of the player's PalFX")
+            let owner_pfx = if e.ownpal {
+                e.palfx.sample()
+            } else if e.owner < self.world.players.len() {
+                self.world.drawn_palfx(e.owner).sample()
+            } else {
+                PalFxOut::default()
+            };
             items.push(Item {
                 spr,
                 pos: e.draw_pos(),
@@ -2013,6 +2089,8 @@ impl Match {
                 blend,
                 angle: e.angle * e.facing,
                 tint: tint(owner_pfx.stacked(all_pfx)),
+                screen,
+                who: ('E', e.owner, e.anim.action, src.unwrap_or(usize::MAX)),
             });
         }
         let keys = crate::smooth::proj_keys(&self.world);
@@ -2038,7 +2116,7 @@ impl Match {
             };
             let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
             let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
-            let owner_pfx = self.world.players[pr.owner].palfx.sample();
+            let owner_pfx = self.world.drawn_palfx(pr.owner).sample();
             items.push(Item {
                 spr,
                 pos: [pr.pos[0] + off[0], pr.pos[1] + off[1]],
@@ -2053,9 +2131,53 @@ impl Match {
                 blend,
                 angle: 0.0,
                 tint: tint(owner_pfx.stacked(all_pfx)),
+                screen: None,
+                who: ('J', pr.owner, pr.anim_no, d),
             });
         }
-        items.sort_by_key(|it| (it.layer, it.prio, it.seq));
+        // equal sprpriority: what is queued later is drawn behind (Ikemen
+        // `DrawList.draw`), queued as projectiles, players (afterimages
+        // before their player), then explods. Two copies of one sprite at the
+        // same priority, an additive glow over a subtractive shade (Goku's
+        // ki blasts), stack as their author saw them
+        items.sort_by_key(|it| (it.layer, it.prio, queue_order(it.who.0, it.seq)));
+        // subtractive draws use PalFX's "negative" multiply (Ikemen
+        // `toShader` under TT_sub): each channel takes the mean of the other
+        // two, so a palfx that keeps blue subtracts red
+        for it in items.iter_mut() {
+            if matches!(it.blend, Blend::Sub { .. }) {
+                it.tint.mul = sub_mul(it.tint.mul);
+            }
+        }
+        // harness: `RUGEN_HARNESS_DRAWLOG=120` dumps what frame 120 draws
+        // (`120-180`: every frame of the range)
+        let logged = std::env::var("RUGEN_HARNESS_DRAWLOG").ok().and_then(|v| {
+            let (a, b) = v.split_once('-').unwrap_or((&v, &v));
+            Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))
+        });
+        if logged.is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
+            for it in &items {
+                log::info!(
+                    "draw f{} {}{} d{} st {} action {} spr {},{} pos {:?} fac {} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    self.world.frame,
+                    it.who.0,
+                    it.who.1,
+                    it.who.3,
+                    self.world.players.get(it.who.1).map_or(-1, |p| p.state_no),
+                    it.who.2,
+                    it.frame.group,
+                    it.frame.number,
+                    it.pos,
+                    it.facing,
+                    it.scale,
+                    it.screen,
+                    it.blend,
+                    it.tint,
+                    it.prio,
+                    it.layer
+                );
+            }
+        }
         items
     }
 
@@ -2223,7 +2345,20 @@ impl Match {
                     .collect(),
             );
         }
-        match stage_visual.as_mut() {
+        // AssertSpecial nobg / nofg / nobardisplay from any fighter (a super's
+        // cut-in hides the stage and the bars)
+        let asserted = |f: u32| {
+            self.world
+                .players
+                .iter()
+                .any(|p| !p.removed && p.asserted(f))
+        };
+        let (no_bg, no_fg, no_bars) = (
+            asserted(rugen_sim::player::assert::NOBG),
+            asserted(rugen_sim::player::assert::NOFG),
+            asserted(rugen_sim::player::assert::NOBARDISPLAY),
+        );
+        match stage_visual.as_mut().filter(|_| !no_bg) {
             Some(sv) => sv.draw(
                 r,
                 0,
@@ -2232,11 +2367,27 @@ impl Match {
                 screen_w * u,
                 bg_tint,
             ),
+            None if no_bg => r.rect([-8000.0, -8000.0], [8000.0, 8000.0], [0.0, 0.0, 0.0, 1.0]),
             None => r.rect(
                 [-4000.0, ground],
                 [4000.0, ground + 1.0],
                 [0.35, 0.35, 0.35, 1.0],
             ),
+        }
+        // screen space (Ikemen draws it with camera scale 1 and no shake):
+        // into world units around the unshaken view, `u` world units per
+        // screen unit
+        let mut items = items;
+        let screen_left = self.world.cam_x - screen_w * u / 2.0;
+        let extra_half = (screen_w - stage.width) / 2.0;
+        for it in items.iter_mut() {
+            if let Some(anchor) = it.screen {
+                it.pos = [
+                    screen_left + (screen_w / 2.0 + it.pos[0] + anchor * extra_half) * u,
+                    hud_top + it.pos[1] * u - ground + cam_y,
+                ];
+                it.scale = [it.scale[0] * u, it.scale[1] * u];
+            }
         }
         for it in &items {
             let frame = &it.frame;
@@ -2300,7 +2451,7 @@ impl Match {
         self.draw_debug_marker(r, u);
         self.draw_hazards(r, ground, cam_y, cam_x, screen_w * u);
         self.draw_arena_items(r, ground, cam_y);
-        if let Some(sv) = stage_visual.as_mut() {
+        if let Some(sv) = stage_visual.as_mut().filter(|_| !no_bg && !no_fg) {
             sv.draw(
                 r,
                 1,
@@ -2373,7 +2524,7 @@ impl Match {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        if self.hud_hidden {
+        if self.hud_hidden || no_bars {
         } else if let Some(lb) = lifebar.as_mut() {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
@@ -2799,6 +2950,41 @@ fn glyph(c: char) -> [u8; 5] {
     }
 }
 
+/// Harness: `RUGEN_HARNESS_STATE=1:1300@120,2:200@150` puts player 1 into
+/// state 1300 at the first fight frame from world frame 120 on (and P2 into
+/// 200 from 150) with full power,
+/// so a super can be shot without its command; `RUGEN_HARNESS_POWER=1`
+/// keeps both root players' power full.
+fn harness_states(w: &mut World) {
+    if std::env::var_os("RUGEN_HARNESS_POWER").is_some() {
+        for p in w.players.iter_mut().filter(|p| p.helper_index == 0) {
+            p.power = p.power_max;
+        }
+    }
+    let Some(spec) = std::env::var("RUGEN_HARNESS_STATE").ok() else {
+        return;
+    };
+    for tok in spec.split(',') {
+        let parse = || -> Option<(usize, i32, u32)> {
+            let (who, rest) = tok.trim().split_once(':')?;
+            let (state, at) = rest.split_once('@')?;
+            Some((who.parse().ok()?, state.parse().ok()?, at.parse().ok()?))
+        };
+        // the first fight frame (round state 2) at or after `at`, once
+        thread_local!(static FIRED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
+        if let Some((who, state, at)) = parse()
+            && w.frame >= at
+            && w.round.round_state() == 2
+            && !FIRED.with_borrow(|f| f.iter().any(|t| t == tok))
+            && let Some(i) = w.side_leader(who.saturating_sub(1).min(1))
+        {
+            FIRED.with_borrow_mut(|f| f.push(tok.to_string()));
+            w.players[i].power = w.players[i].power_max;
+            w.change_state(i, state, None, Some(false));
+        }
+    }
+}
+
 /// Draw centered text with the pixel font; `px` = pixel size in logical units.
 /// `--script`: comma-separated tokens of key letters held for one tick
 /// (`U D L R a b c x y z s`, `.` = nothing) with an optional `*n` repeat,
@@ -3062,6 +3248,35 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Owner report 4 (Goku's ki blasts dark): the blast is an additive
+    /// helper and a subtractive one on the same sprite and sprpriority,
+    /// created in that order. Ikemen draws the later one behind, so the
+    /// glow lands on top of the shade, and the shade's PalFX multiply is the
+    /// mean of the other two channels.
+    #[test]
+    fn equal_priority_draws_stack_like_ikemen() {
+        // helpers P7 (add, pushed first) and P8 (sub): P8 sorts first = behind
+        assert!(queue_order('P', 7) > queue_order('P', 8));
+        // players over explods, projectiles over players
+        assert!(queue_order('E', 0) < queue_order('P', 9));
+        assert!(queue_order('P', 9) < queue_order('J', 20));
+        // Goku's FXSUB helper: mul = 0,256,512 subtracts mostly red
+        assert_eq!(sub_mul([0.0, 1.0, 2.0]), [1.5, 1.0, 0.5]);
+        assert_eq!(sub_mul([1.0; 3]), [1.0; 3]);
+    }
+
+    /// The Tag fighter leaving fades through 100, 80, 60, 40, 20, 0 %.
+    #[test]
+    fn tag_fade_blends() {
+        assert_eq!(fade(Blend::Alpha, 1.0), Blend::Alpha);
+        assert_eq!(fade(Blend::Alpha, 0.6), Blend::Add { src: 153, dst: 102 });
+        assert_eq!(fade(Blend::Alpha, 0.0), Blend::Add { src: 0, dst: 255 });
+        assert_eq!(
+            fade(Blend::Add { src: 255, dst: 255 }, 0.2),
+            Blend::Add { src: 51, dst: 255 }
+        );
+    }
 
     /// Online camera determinism: the camera is part of the simulation, so
     /// two players with different zoom settings (and the server's

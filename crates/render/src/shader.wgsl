@@ -41,15 +41,17 @@ fn vs_main(in: VsIn) -> VsOut {
 // color.a scales the source; fx_mul.a is colour saturation (+2 when inverting);
 // fx_add.a is the destination scale for Add/Sub blends, or -1 for normal alpha.
 fn finish(c_in: vec4<f32>, in: VsOut) -> vec4<f32> {
+    // MUGEN / Ikemen order: invert, colour (the mean of r, g, b), add, then
+    // multiply: palfx add = 255 whitens even with mul < 256
     var rgb = c_in.rgb;
     let invert = in.fx_mul.a >= 2.0;
     let sat = select(in.fx_mul.a, in.fx_mul.a - 2.0, invert);
-    let grey = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
-    rgb = mix(vec3<f32>(grey), rgb, sat);
-    rgb = rgb * in.fx_mul.rgb + in.fx_add.rgb;
     if (invert) {
         rgb = vec3<f32>(1.0) - rgb;
     }
+    let grey = (rgb.r + rgb.g + rgb.b) / 3.0;
+    rgb = mix(vec3<f32>(grey), rgb, sat);
+    rgb = (rgb + in.fx_add.rgb) * in.fx_mul.rgb;
     rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * in.color.rgb;
     let a = c_in.a * in.color.a;
     let out_a = select(c_in.a * (1.0 - in.fx_add.a), a, in.fx_add.a < 0.0);

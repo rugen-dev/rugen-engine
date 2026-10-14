@@ -146,8 +146,17 @@ impl Context for Ctx<'_> {
             ),
             T::Ctrl => Self::b(p.ctrl),
             T::Facing => Self::i(if p.facing < 0.0 { -1 } else { 1 }),
-            T::GameHeight => Self::f(self.w.stage.height),
-            T::GameWidth => Self::f(self.w.stage.width),
+            // the screen in the fighter's own localcoord (Ikemen
+            // `screenWidth() / cam.Scale`), the units its screen-space
+            // explods are laid out in
+            T::GameHeight => {
+                let s = self.w.screen_scale(p.data) * self.w.cam_zoom.max(0.05);
+                Self::f(self.w.stage.height / s)
+            }
+            T::GameWidth => {
+                let s = self.w.screen_scale(p.data) * self.w.cam_zoom.max(0.05);
+                Self::f(self.w.stage.width / s)
+            }
             T::GameTime => Self::i(self.w.frame as i32),
             T::HitCount => Self::i(p.hit_count),
             T::UniqHitCount => Self::i(p.uniq_hit_count),
@@ -316,8 +325,8 @@ impl Context for Ctx<'_> {
             T::ScreenPos(Axis::Y) => {
                 Self::f(p.pos[1] + self.w.stage.zoffset / self.w.local_scale(self.cur))
             }
-            T::ScreenHeight => Self::f(self.w.stage.height),
-            T::ScreenWidth => Self::f(self.w.stage.width),
+            T::ScreenHeight => Self::f(self.w.stage.height / self.w.screen_scale(p.data)),
+            T::ScreenWidth => Self::f(self.w.stage.width / self.w.screen_scale(p.data)),
             T::StateNo => Self::i(p.state_no),
             T::TeamSide => Self::i(p.team as i32 + 1),
             T::TicksPerSecond => Self::i(60),

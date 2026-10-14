@@ -267,6 +267,19 @@ pub struct Player {
     pub angle_drawn: bool,
     pub angle_scale: [f32; 2],
     pub palfx: PalFx,
+    /// Own palette effects (MUGEN `ownpal`): roots always; a helper only
+    /// with `ownpal = 1`, else it shows its root's PalFX and its own PalFX
+    /// controllers do nothing (Ikemen `getPalfx`, `palFX.Run`).
+    pub ownpal: bool,
+    /// Its states ran outside a hitpause this tick (Ikemen `acttmp > 0`):
+    /// the animation still steps at the end of the tick in which a hit
+    /// started a hitpause.
+    pub acted: bool,
+    /// The last ChangeAnim asked for an action its AIR lacks: MUGEN leaves
+    /// the player without a valid animation, drawing nothing and without
+    /// boxes, until a valid change. The previous anim state stays for
+    /// triggers.
+    pub anim_none: bool,
     pub afterimage: Option<Box<AfterImage>>,
     /// `[Size]` in effect: the cns constants for a root, the Helper's
     /// `size.*` parameters (else the root's constants) for a helper.
@@ -482,6 +495,9 @@ impl Player {
             angle_drawn: false,
             angle_scale: [1.0, 1.0],
             palfx: PalFx::default(),
+            ownpal: true,
+            acted: false,
+            anim_none: false,
             afterimage: None,
             size: Size::default(),
         }

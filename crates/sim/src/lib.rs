@@ -34,6 +34,8 @@ pub mod team;
 pub mod world;
 
 #[cfg(test)]
+mod compat_tests;
+#[cfg(test)]
 mod golden_tests;
 #[cfg(test)]
 mod safety_tests;
