@@ -355,7 +355,7 @@ struct Item {
     screen: Option<f32>,
     /// What it is, for the `RUGEN_HARNESS_DRAWLOG` dump: kind (P player,
     /// I afterimage, E explod, J projectile), player / explod index, action.
-    who: (char, usize, i32),
+    who: (char, usize, i32, usize),
 }
 
 /// Final blend for a sprite: the `Trans` controller wins over the AIR frame.
@@ -1923,6 +1923,8 @@ impl Match {
             let sprite_data = p.data;
             let invisible = p.asserted(rugen_sim::player::assert::INVISIBLE);
             let p_action = p.anim.action;
+            let p_owner = p.anim_owner;
+            let p_none = p.anim_none;
             // rollback corrections ease in on screen (display only)
             let off = self.smooth.offset(crate::smooth::Key::Player(p.id));
             let (pos, facing, prio) = (
@@ -1975,12 +1977,13 @@ impl Match {
                         angle: img.angle * img.facing,
                         tint: tint(img_pfx.stacked(all_pfx)),
                         screen: None,
-                        who: ('I', i, img.action),
+                        who: ('I', i, img.action, img.anim_owner),
                     });
                 }
             }
-            // AssertSpecial invisible hides the body; its afterimages stay (Ikemen)
-            if invisible {
+            // AssertSpecial invisible hides the body; its afterimages stay
+            // (Ikemen); a helper never given an animation draws nothing
+            if invisible || p_none {
                 continue;
             }
             let spr = self.sprite_from(r, Some(sprite_data), frame.group, frame.number);
@@ -1999,7 +2002,7 @@ impl Match {
                 angle,
                 tint: pfx,
                 screen: None,
-                who: ('P', i, p_action),
+                who: ('P', i, p_action, p_owner),
             });
         }
         let explods: Vec<rugen_sim::explod::Explod> = self
@@ -2067,7 +2070,7 @@ impl Match {
                 angle: e.angle * e.facing,
                 tint: tint(owner_pfx.stacked(all_pfx)),
                 screen,
-                who: ('E', e.owner, e.anim.action),
+                who: ('E', e.owner, e.anim.action, src.unwrap_or(usize::MAX)),
             });
         }
         let keys = crate::smooth::proj_keys(&self.world);
@@ -2109,7 +2112,7 @@ impl Match {
                 angle: 0.0,
                 tint: tint(owner_pfx.stacked(all_pfx)),
                 screen: None,
-                who: ('J', pr.owner, pr.anim_no),
+                who: ('J', pr.owner, pr.anim_no, d),
             });
         }
         // equal sprpriority: what is queued later is drawn behind (Ikemen
@@ -2135,10 +2138,12 @@ impl Match {
         if logged.is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
             for it in &items {
                 log::info!(
-                    "draw f{} {}{} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    "draw f{} {}{} d{} st {} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
                     self.world.frame,
                     it.who.0,
                     it.who.1,
+                    it.who.3,
+                    self.world.players.get(it.who.1).map_or(-1, |p| p.state_no),
                     it.who.2,
                     it.frame.group,
                     it.frame.number,
