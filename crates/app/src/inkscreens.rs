@@ -681,6 +681,7 @@ pub fn screens(ui: &Path) -> anyhow::Result<()> {
         ("online.toml", ONLINE_TOML),
         ("stages.toml", STAGES_TOML),
         ("challenge.toml", CHALLENGE_TOML),
+        ("practice.toml", PRACTICE_TOML),
         ("debug.toml", DEBUG_TOML),
     ] {
         std::fs::write(ui.join(name), text)?;
@@ -698,4 +699,5 @@ const RESULT_TOML: &str = include_str!("inkscreens/result.toml");
 const ONLINE_TOML: &str = include_str!("inkscreens/online.toml");
 const STAGES_TOML: &str = include_str!("inkscreens/stages.toml");
 const CHALLENGE_TOML: &str = include_str!("inkscreens/challenge.toml");
+const PRACTICE_TOML: &str = include_str!("inkscreens/practice.toml");
 const DEBUG_TOML: &str = include_str!("inkscreens/debug.toml");

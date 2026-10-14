@@ -267,6 +267,33 @@ https://claude.ai/artifact/EzYKJY1QXwfNLLpncKHKrV, with local copies in
 order; each item is one branch, with tests, docs (rugen.dev page plus README
 box) and screenshots.
 
+### Menus v2 (owner approved)
+Mockups "v2 · PRACTICE hub" and "v2 · Team mode step" on the canvas; both
+themes, deck profile checked at 1280x800.
+- [ ] **PRACTICE page.** TRAINING, TUTORIAL and WATCH become one PRACTICE
+  entry on the title; its page (TITLE › PRACTICE, Esc back) has the
+  TRAINING, WATCH and DEBUGGER (NEW) cards (keyboard, pad, mouse).
+- [ ] **LESSONS inside Training.** The tutorial lessons run from the
+  Training pause menu with the current fighter against the dummy, then
+  free training again; no separate Tutorial entry.
+- [ ] **In-game DEBUGGER.** PRACTICE → DEBUGGER picks 1 or 2 fighters and a
+  stage, then opens the fighter debugger; DEBUGGER in the Training pause
+  menu and F12 in Training open it on the current match. Offline only.
+- [ ] **Team mode step.** SINGLE / TURNS / SIMUL / TAG cards before the
+  fighter grid (←→ mode, ↑↓ size 2–4, rules line, slots preview, READY
+  per side), VS MODE and WATCH only; replaces the X / Y stepping. A VS team
+  match hides the `[Arena]` stages.
+- [ ] **Online consent on PROFILE.** A per-server ONLINE CONSENT row (AGREE
+  / WITHDRAW) saved in the profile; withdrawing stops uploads. NOT NOW
+  still lasts the session.
+- [ ] **Training life / power refill.** LIFE refill (off / after combo) and
+  POWER (normal / always full) for both fighters; recorded in Training
+  replays, never online.
+- [ ] **Global LIFE setting.** OPTIONS → GAMEPLAY LIFE 1000–10000 (step 500,
+  default 5000) overrides every fighter's `[Data] life`; part of the match
+  setup (replays, LAN handshake, room rule; quick match and ranked use
+  5000). Older replays keep each fighter's own life.
+
 ### Training lab
 - [x] **Hitbox display.** (3af85f0) Toggle in the Training pause menu and on a key
   (F1). Draw Clsn1 red and Clsn2 blue from the sim's current frame, after the

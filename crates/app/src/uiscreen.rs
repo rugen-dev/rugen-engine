@@ -40,6 +40,8 @@ pub enum UiKind {
     Stages,
     /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
     Challenge,
+    /// PRACTICE page: TRAINING, WATCH and the DEBUGGER (`ui/practice.toml`).
+    Practice,
     /// The fighter debugger's panel around a running match (`ui/debug.toml`).
     Debug,
 }
@@ -566,6 +568,7 @@ fn menu_desc(id: &str) -> &'static str {
         "timeattack" => "Clear the ladder against the clock",
         "versus" => "Two players, one keyboard",
         "arena" => "Platforms and stocks: knock them off the stage",
+        "practice" => "Training, lessons, watch and the debugger",
         "training" => "Free practice, no clock",
         "tutorial" => "Learn the basics step by step",
         "watch" => "Sit back: CPU vs CPU",
@@ -575,6 +578,18 @@ fn menu_desc(id: &str) -> &'static str {
         "options" => "Video, audio and controls",
         "exit" => "See you next chapter",
         _ => "",
+    }
+}
+
+/// Where leaving a fighter select goes: the online screen, PRACTICE for
+/// the modes it opens (when the theme has the page), else the title.
+fn select_exit(mode: Mode, motif: &Path) -> Transition {
+    match mode {
+        Mode::Online => Transition::Online,
+        Mode::Training | Mode::Watch if UiScreen::available(motif, UiKind::Practice) => {
+            Transition::Practice
+        }
+        _ => Transition::Title,
     }
 }
 
@@ -638,6 +653,7 @@ impl UiScreen {
             UiKind::Controls => "controls.toml",
             UiKind::Stages => "stages.toml",
             UiKind::Challenge => "challenge.toml",
+            UiKind::Practice => "practice.toml",
             UiKind::Debug => "debug.toml",
         }
     }
@@ -1381,11 +1397,25 @@ impl UiScreen {
                         .map(|i| i + 1)
                         .unwrap_or(menu.len())
                 };
-                let at = pos(&menu, "training");
-                menu.insert(
-                    at,
-                    json!({ "id": "tutorial", "label": "TUTORIAL", "action": "mode:tutorial" }),
-                );
+                // PRACTICE: one entry for TRAINING, WATCH and the debugger
+                // where TRAINING was (a theme without the page keeps them)
+                if UiScreen::available(&self.motif, UiKind::Practice) {
+                    let at = menu
+                        .iter()
+                        .position(|m| m["id"] == "training" || m["id"] == "watch");
+                    menu.retain(|m| m["id"] != "training" && m["id"] != "watch");
+                    let at = at.unwrap_or_else(|| pos(&menu, "versus"));
+                    menu.insert(
+                        at,
+                        json!({ "id": "practice", "label": "PRACTICE", "action": "practice" }),
+                    );
+                } else {
+                    let at = pos(&menu, "training");
+                    menu.insert(
+                        at,
+                        json!({ "id": "tutorial", "label": "TUTORIAL", "action": "mode:tutorial" }),
+                    );
+                }
                 // CHALLENGE (the runs against the CPU) right after arcade
                 if UiScreen::available(&self.motif, UiKind::Challenge) {
                     let at = pos(&menu, "arcade");
@@ -1452,6 +1482,13 @@ impl UiScreen {
                 })
             }
             UiKind::Debug => self.debug.clone(),
+            UiKind::Practice => json!({
+                "cards": crate::practice::cards(),
+                "note": crate::practice::NOTE,
+                "profile": self.profile_json(),
+                "keys": self.keys_json(),
+                "version": env!("CARGO_PKG_VERSION"),
+            }),
             UiKind::Challenge => json!({
                 "cards": self.challenge,
                 "profile": self.profile_json(),
@@ -1665,11 +1702,7 @@ impl UiScreen {
                     self.refresh_data(sys);
                     return None;
                 }
-                Some(if mode == Mode::Online {
-                    Transition::Online
-                } else {
-                    Transition::Title
-                })
+                Some(select_exit(mode, &self.motif))
             }
             _ => Some(Transition::Title),
         }
@@ -1709,11 +1742,7 @@ impl UiScreen {
                     self.refresh_data(sys);
                     return None;
                 }
-                Some(if mode == Mode::Online {
-                    Transition::Online
-                } else {
-                    Transition::Title
-                })
+                Some(select_exit(mode, &self.motif))
             }
             UiKind::Pause => {
                 // B inside a training panel: back to its menu entry
@@ -1726,7 +1755,7 @@ impl UiScreen {
                 Some(Transition::Resume)
             }
             UiKind::Options => self.escape(sys),
-            UiKind::Challenge => {
+            UiKind::Challenge | UiKind::Practice => {
                 sfx(sys.title.cancel_snd);
                 Some(Transition::Title)
             }
@@ -2013,6 +2042,7 @@ impl UiScreen {
             "online" => Some(Transition::Online),
             "profile" => Some(Transition::Profile),
             "challenge" => Some(Transition::Challenge),
+            "practice" => Some(Transition::Practice),
             "back" | "title" if matches!(self.kind, UiKind::Options) => {
                 self.guard(Transition::Title, sys)
             }

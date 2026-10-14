@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
-//!   --open online|profile|options|controls                      harness: start on that screen
+//!   --open online|profile|options|controls|practice|challenge   harness: start on that screen
 //!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 //!   --window 1280x800                                           harness: window size (logical px), not fullscreen
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
@@ -76,6 +76,7 @@ mod online;
 mod options;
 mod pixelize;
 mod play;
+mod practice;
 mod repeat;
 mod replay;
 mod roster;
@@ -138,7 +139,7 @@ fn relocate(
 /// `rugen --help` (the usage above).
 const USAGE: &str = "\
 rugen [--root dir]                                            full game: title, select, fight
-  --open online|profile|options|controls                      harness: start on that screen
+  --open online|profile|options|controls|practice|challenge   harness: start on that screen
   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
   --window 1280x800                                           harness: window size (logical px), not fullscreen
 rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
@@ -1050,6 +1051,8 @@ fn main() -> anyhow::Result<()> {
             let start = match opt("--open").as_deref() {
                 Some("online") => game::Transition::Online,
                 Some("profile") => game::Transition::Profile,
+                Some("practice") => game::Transition::Practice,
+                Some("challenge") => game::Transition::Challenge,
                 Some("options") => game::Transition::Options,
                 Some("controls") => game::Transition::Controls(0),
                 _ => game::Transition::Title,

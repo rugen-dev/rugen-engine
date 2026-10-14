@@ -136,6 +136,8 @@ pub enum Transition {
     Continue,
     /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
     Challenge,
+    /// PRACTICE page: TRAINING, WATCH, DEBUGGER (`ui/practice.toml`).
+    Practice,
     /// Play a storyboard (cutscene), then go on with the transition.
     Story(PathBuf, Box<Transition>),
     /// Pause menu: back to the match.
@@ -1335,12 +1337,17 @@ impl Shell {
                     }
                 }
             }
-            Transition::Challenge => {
+            Transition::Challenge | Transition::Practice => {
                 self.run = None;
+                let kind = if matches!(t, Transition::Challenge) {
+                    UiKind::Challenge
+                } else {
+                    UiKind::Practice
+                };
                 self.screen = match self.system.as_ref() {
-                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Challenge) => {
+                    Some(sys) if UiScreen::available(&self.motif_dir, kind) => {
                         match UiScreen::load(
-                            UiKind::Challenge,
+                            kind,
                             &self.motif_dir,
                             &self.lib.root,
                             sys,
@@ -1349,7 +1356,7 @@ impl Shell {
                         ) {
                             Ok(u) => Screen::Ui(Box::new(u)),
                             Err(e) => {
-                                log::error!("ui/challenge.toml: {e:#}");
+                                log::error!("{kind:?} page: {e:#}");
                                 self.transition(Transition::Title);
                                 return;
                             }
