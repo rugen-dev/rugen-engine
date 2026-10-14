@@ -92,6 +92,16 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 "Seconds on the round clock. Infinite turns the timer off.",
             ),
             row(
+                "life",
+                "LIFE",
+                Widget::Slider(
+                    (crate::config::clamp_life(c.game.life) - crate::config::LIFE_MIN) as f32
+                        / (crate::config::LIFE_MAX - crate::config::LIFE_MIN) as f32,
+                ),
+                crate::config::clamp_life(c.game.life).to_string(),
+                "Every fighter's life, whatever its own files say. Online rooms set their own; quick match and ranked use 5000.",
+            ),
+            row(
                 "air_jumps",
                 "AIR JUMPS",
                 Widget::Choice(
@@ -444,7 +454,7 @@ pub fn options_data(
     } else {
         // what the tab holds (its subtitle already says what it is for)
         let inside = match TABS[tab].0 {
-            "gameplay" => "Computer level, round clock, movement, fighter size and camera.",
+            "gameplay" => "Computer level, round clock, life, movement, fighter size and camera.",
             "video" => "Fullscreen, window size and the mouse.",
             "audio" => "Master and music volume.",
             "online" => "Input delay, direct connections and the server.",
@@ -493,6 +503,15 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "music" => c.audio.music = step(c.audio.music, 0.1 * d, 0.0, 1.0),
         "zoom_out" => c.camera.zoom_out = step(c.camera.zoom_out, 0.05 * d, 0.25, 1.0),
         "zoom_in" => c.camera.zoom_in = step(c.camera.zoom_in, 0.05 * d, 0.6, 1.6),
+        "life" => {
+            let (lo, hi) = (crate::config::LIFE_MIN, crate::config::LIFE_MAX);
+            let next = crate::config::clamp_life(c.game.life) + dir * crate::config::LIFE_STEP;
+            c.game.life = if wrap && next > hi {
+                lo
+            } else {
+                next.clamp(lo, hi)
+            };
+        }
         "fullscreen" => c.video.fullscreen = !c.video.fullscreen,
         "air_dash" => c.game.air_dash = !c.game.air_dash,
         "fast_fall" => c.game.fast_fall = !c.game.fast_fall,
@@ -567,6 +586,13 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
         "music" => c.audio.music = snap(0.0, 1.0, 0.05),
         "zoom_out" => c.camera.zoom_out = snap(0.25, 1.0, 0.05),
         "zoom_in" => c.camera.zoom_in = snap(0.6, 1.6, 0.05),
+        "life" => {
+            let (lo, hi) = (
+                crate::config::LIFE_MIN as f32,
+                crate::config::LIFE_MAX as f32,
+            );
+            c.game.life = snap(lo, hi, crate::config::LIFE_STEP as f32) as i32;
+        }
         "ai" => c.game.ai_level = (i as i32).clamp(1, 8),
         "fullscreen" => c.video.fullscreen = on,
         "air_dash" => c.game.air_dash = on,
@@ -1057,6 +1083,18 @@ mod tests {
         assert_eq!(c.game.fighter_size, FighterSize::None, "enter wraps");
         adjust(&mut c, "fighter_size", 1, false);
         assert_eq!(c.game.fighter_size, FighterSize::Chibi);
+        // LIFE: 1000..10000 in steps of 500, 5000 by default
+        assert_eq!(c.game.life, 5000);
+        adjust(&mut c, "life", 1, false);
+        assert_eq!(c.game.life, 5500);
+        c.game.life = 10000;
+        adjust(&mut c, "life", 1, false);
+        assert_eq!(c.game.life, 10000, "clamped");
+        adjust(&mut c, "life", 1, true);
+        assert_eq!(c.game.life, 1000, "enter wraps");
+        assert!(pick(&mut c, "life", "0.5"));
+        assert_eq!(c.game.life, 5500);
+        assert_eq!(crate::config::clamp_life(7777), 8000);
         c.game.round_time = 99;
         adjust(&mut c, "round_time", 1, false);
         assert_eq!(c.game.round_time, 0, "99 -> infinite");
@@ -1064,14 +1102,14 @@ mod tests {
         assert_eq!(c.game.round_time, 0, "clamped at the end");
         adjust(&mut c, "round_time", 1, true);
         assert_eq!(c.game.round_time, 30, "enter wraps");
-        let d = options_data(0, &c, &[], Some("rows[6].row"));
+        let d = options_data(0, &c, &[], Some("rows[7].row"));
         assert!(
             d["help"]
                 .as_str()
                 .unwrap()
                 .starts_with("Normal: fighters already")
         );
-        let d = options_data(0, &c, &[], Some("rows[7].row"));
+        let d = options_data(0, &c, &[], Some("rows[8].row"));
         assert_eq!(d["rows"][1]["sel"], 0);
         assert!(
             d["help"]

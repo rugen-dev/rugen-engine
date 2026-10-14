@@ -283,6 +283,10 @@ pub struct Rules {
     /// "normal". Missing (servers and clients before it) = "normal", which
     /// quick match and ranked always use.
     pub fighter_size: String,
+    /// LIFE every fighter gets instead of its own `[Data] life` (1000 to
+    /// 10000 in steps of 500; 0 = each fighter's own). Missing (servers and
+    /// clients before it) = 5000, which quick match and ranked always use.
+    pub life: u16,
 }
 
 impl Default for Rules {
@@ -294,9 +298,13 @@ impl Default for Rules {
             chars: "free".into(),
             stage: String::new(),
             fighter_size: "normal".into(),
+            life: LIFE_DEFAULT,
         }
     }
 }
+
+/// [`Rules::life`] of rooms that do not say, quick match and ranked.
+pub const LIFE_DEFAULT: u16 = 5000;
 
 /// [`Rules::fighter_size`] values.
 pub const FIGHTER_SIZES: [&str; 4] = ["none", "chibi", "small", "normal"];
@@ -823,6 +831,9 @@ mod tests {
     fn rules_without_fighter_size_mean_normal() {
         let r: Rules = serde_json::from_str(r#"{"rounds":3,"round_time":60}"#).unwrap();
         assert_eq!(r.fighter_size, "normal");
+        // and without LIFE, 5000 (what quick match and ranked play)
+        assert_eq!(r.life, LIFE_DEFAULT);
+        assert_eq!(LIFE_DEFAULT, 5000);
         assert_eq!(r.rounds, 3);
         let back: Rules = serde_json::from_value(
             serde_json::to_value(Rules {

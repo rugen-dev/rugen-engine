@@ -55,11 +55,27 @@ pub struct GameCfg {
     /// rest get a round x1.1..x3.0 or /1.1../3.0 step (0.1 apart) into it (320x240 units: `normal`
     /// 58-82, `small` 62-78, `chibi` 44-56); `none` never scales.
     pub fighter_size: rugen_sim::scale::FighterSize,
+    /// LIFE: every fighter's life (LifeMax) in offline matches, overriding
+    /// their own `[Data] life`; 1000..=10000 in steps of [`LIFE_STEP`].
+    /// Online rooms bring theirs (quick match and ranked: [`LIFE_DEFAULT`]).
+    pub life: i32,
     /// Rounds to win, from an online room's ROUNDS (never saved): set only
     /// by [`crate::online::match_config`], which also makes `round_time`
     /// the room's.
     #[serde(skip)]
     pub match_wins: Option<u8>,
+}
+
+/// The LIFE setting's default (and the life of quick match and ranked).
+pub const LIFE_DEFAULT: i32 = 5000;
+/// LIFE's range and step.
+pub const LIFE_MIN: i32 = 1000;
+pub const LIFE_MAX: i32 = 10000;
+pub const LIFE_STEP: i32 = 500;
+
+/// A LIFE value on the setting's grid (1000..=10000, steps of 500).
+pub fn clamp_life(v: i32) -> i32 {
+    ((v + LIFE_STEP / 2).div_euclid(LIFE_STEP) * LIFE_STEP).clamp(LIFE_MIN, LIFE_MAX)
 }
 
 impl Default for GameCfg {
@@ -72,6 +88,7 @@ impl Default for GameCfg {
             arena_ai: true,
             round_time: 99,
             fighter_size: rugen_sim::scale::FighterSize::Normal,
+            life: LIFE_DEFAULT,
             match_wins: None,
         }
     }

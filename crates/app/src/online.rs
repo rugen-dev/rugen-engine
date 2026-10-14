@@ -783,8 +783,17 @@ fn rules_tags(r: &Rules) -> Vec<String> {
             "FREE PICK".into()
         },
         format!("{} SIZE", room_size(r).label()),
+        match room_life(r) {
+            Some(l) => format!("LIFE {l}"),
+            None => "OWN LIFE".into(),
+        },
         r.mode.to_uppercase(),
     ]
+}
+
+/// The room's LIFE as the match simulates it (`None`: each fighter's own).
+fn room_life(r: &Rules) -> Option<i32> {
+    (r.life > 0).then(|| crate::config::clamp_life(i32::from(r.life)))
 }
 
 /// The room's FIGHTER SIZE (anything unknown counts as normal, like a missing field).
@@ -1495,6 +1504,7 @@ impl OnlineScreen {
             rules: h.rules.clone(),
         });
         self.pending_fight = Some(FightSetup {
+            life: None,
             p1,
             p2,
             stage: Some(stage),
@@ -1606,6 +1616,7 @@ impl OnlineScreen {
             return;
         }
         let setup = FightSetup {
+            life: None,
             p1: p.p1.clone(),
             p2: p.p2.clone(),
             stage: p.stage.clone(),
@@ -1631,6 +1642,7 @@ impl OnlineScreen {
                 i32::from(p.rules.round_time)
             },
             p.seed,
+            room_life(&p.rules),
         );
         r.ai = [0, 0];
         r.run = Some(crate::play::RunRules {
@@ -1945,6 +1957,7 @@ impl OnlineScreen {
         };
         let portraits = [side(&p1), side(&p2)];
         let setup = FightSetup {
+            life: None,
             p1,
             p2,
             stage: Some(stage),
@@ -3513,6 +3526,9 @@ impl OnlineScreen {
                 "BRACKET: UP TO 8 OR 16 PLAYERS, SINGLE ELIMINATION. YOU START IT; THE SERVER SEEDS BY RATING AND CALLS EACH MATCH."
             }
             Some("cr_format") => "1 VS 1: THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.",
+            Some("cr_life") => {
+                "EVERY FIGHTER'S LIFE IN THIS ROOM, WHATEVER ITS OWN FILES SAY. QUICK MATCH AND RANKED USE 5000."
+            }
             Some("cr_size") => {
                 "NORMAL: FIGHTERS ALREADY 58-82 PX TALL KEEP THEIR SIZE, OTHERS GET A ROUND STEP, x1.1 TO x3.0 OR /1.1 TO /3.0. NONE NEVER SCALES."
             }
@@ -3545,6 +3561,11 @@ impl OnlineScreen {
             "chars_sel": usize::from(f.rules.chars == "mirror"),
             "sizes": FighterSize::ALL.iter().map(|v| v.label()).collect::<Vec<_>>(),
             "sizes_sel": FighterSize::ALL.iter().position(|v| *v == room_size(&f.rules)).unwrap_or(3),
+            "lifes": [match room_life(&f.rules) {
+                Some(l) => format!("◀  {l}  ▶"),
+                None => "◀  OWN  ▶".to_string(),
+            }],
+            "lifes_sel": 0,
             "joins": ["ANYONE", "CODE ONLY"],
             "joins_sel": usize::from(!f.public),
             "spects": ["OFF", "2", "4", "6"],
@@ -4581,6 +4602,11 @@ impl OnlineScreen {
                         f.rules.fighter_size = all[j].as_str().into();
                     }
                     "spect" => f.spectators = step(&[0, 2, 4, 6], f.spectators.into()) as u8,
+                    "life" => {
+                        let lifes: Vec<i64> = (2..=20).map(|k| k * 500).collect();
+                        let cur = room_life(&f.rules).unwrap_or(5000).into();
+                        f.rules.life = step(&lifes, cur) as u16;
+                    }
                     "format" => f.tournament = step(&[0, 8, 16], f.tournament.into()) as u8,
                     "go" => {
                         let opts = RoomOptions {
@@ -4857,6 +4883,7 @@ impl OnlineScreen {
             .or_else(|| self.lib.default_stage());
         log::info!("online: direct match as side {}", self.direct_side + 1);
         self.pending_fight = Some(FightSetup {
+            life: None,
             p1,
             p2,
             stage,
@@ -5877,6 +5904,8 @@ pub fn match_config(base: &Config, rules: &Rules) -> Config {
         rules.round_time as i32
     };
     c.game.fighter_size = room_size(rules);
+    // the room's LIFE (0: each fighter's own); quick match and ranked: 5000
+    c.game.life = room_life(rules).unwrap_or(0);
     c.game.match_wins = Some(rules.rounds.clamp(1, 9));
     // the camera is part of the simulation (`play::match_zoom` enforces it too)
     (c.camera.zoom_out, c.camera.zoom_in) = rugen_sim::headless::ONLINE_ZOOM;
@@ -5988,6 +6017,27 @@ mod tests {
             c.decl.name.clear();
         }
         assert_eq!(stage_line(&v, true), "STAGE: HIDDEN_SAND");
+    }
+
+    #[test]
+    fn rooms_carry_their_life() {
+        let mut base = Config::default();
+        base.game.life = 9000;
+        let rules = |life: u16| Rules {
+            life,
+            ..Default::default()
+        };
+        // the room's LIFE, never the player's option
+        assert_eq!(match_config(&base, &rules(3000)).game.life, 3000);
+        // quick match / ranked and rooms that do not say: 5000
+        assert_eq!(match_config(&base, &Rules::default()).game.life, 5000);
+        let old: Rules = serde_json::from_str(r#"{"rounds":2}"#).unwrap();
+        assert_eq!(old.life, 5000);
+        assert_eq!(match_config(&base, &old).game.life, 5000);
+        // 0: each fighter's own; odd values snap to the grid
+        assert_eq!(match_config(&base, &rules(0)).game.life, 0);
+        assert_eq!(match_config(&base, &rules(4321)).game.life, 4500);
+        assert!(rules_tags(&rules(3000)).contains(&"LIFE 3000".to_string()));
     }
 
     #[test]

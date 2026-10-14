@@ -48,7 +48,7 @@ const PROTOCOL: &str = " v=";
 /// carry the engine movement (air jumps, air dash, fast fall) next to the
 /// fighter size. 3: they carry the match seed too. Builds before 2 (0.6.1
 /// and earlier) send no number.
-pub const LAN_PROTOCOL: u32 = 3;
+pub const LAN_PROTOCOL: u32 = 4;
 
 /// The oldest LAN protocol a peer may run: a protocol 2 peer agrees on
 /// everything but the seed, so both sides play seed 1 with it.
@@ -56,6 +56,10 @@ pub const LAN_PROTOCOL_MIN: u32 = 2;
 
 /// The first LAN protocol whose host sends the match seed.
 pub const LAN_PROTOCOL_SEED: u32 = 3;
+
+/// First LAN protocol whose host sends the LIFE setting (rugen 0.6.4); an
+/// older peer plays each fighter's own life, so the host does too.
+pub const LAN_PROTOCOL_LIFE: u32 = 4;
 
 pub struct Socket {
     socket: UdpSocket,

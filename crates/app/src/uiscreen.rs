@@ -2255,6 +2255,7 @@ impl UiScreen {
             .map(|(_, m)| m.id)
             .unwrap_or_default();
         Some(Transition::Fight(FightSetup {
+            life: None,
             p1: f.def.clone(),
             p2: f.def.clone(),
             stage,

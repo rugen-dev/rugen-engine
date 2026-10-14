@@ -1120,6 +1120,7 @@ mod tests {
 
     fn setup(mode: Option<crate::game::Mode>) -> crate::play::FightSetup {
         crate::play::FightSetup {
+            life: None,
             p1: "a.def".into(),
             p2: "b.def".into(),
             stage: None,

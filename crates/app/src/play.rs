@@ -58,6 +58,9 @@ pub(crate) struct LanRules {
     pub movement: rugen_sim::world::Movement,
     /// The match seed (LAN protocol 3); a protocol 2 host sends none.
     pub seed: Option<u64>,
+    /// The LIFE setting (LAN protocol 4; <= 0: each fighter's own); an
+    /// older host sends none.
+    pub life: Option<i32>,
 }
 
 impl LanRules {
@@ -75,6 +78,9 @@ impl LanRules {
         if let Some(seed) = self.seed {
             s.push_str(&format!(";seed={seed}"));
         }
+        if let Some(life) = self.life {
+            s.push_str(&format!(";life={life}"));
+        }
         s
     }
 
@@ -82,6 +88,7 @@ impl LanRules {
     pub fn decode(s: &str) -> Option<Self> {
         let (mut size, mut jumps, mut dash, mut fall) = (None, None, None, None);
         let mut seed = None;
+        let mut life = None;
         for kv in s.split(';') {
             let (k, v) = kv.split_once('=')?;
             let flag = || match v {
@@ -95,6 +102,7 @@ impl LanRules {
                 "air_dash" => dash = flag(),
                 "fast_fall" => fall = flag(),
                 "seed" => seed = v.parse::<u64>().ok(),
+                "life" => life = v.parse::<i32>().ok().map(|l| l.clamp(0, 99_999)),
                 _ => {} // a newer host's extra rule
             }
         }
@@ -106,6 +114,7 @@ impl LanRules {
                 fast_fall: fall?,
             },
             seed,
+            life,
         })
     }
 }
@@ -147,6 +156,26 @@ pub(crate) fn lan_seed(
         }
     } else {
         agreed.and_then(|r| r.seed).unwrap_or(legacy)
+    }
+}
+
+/// The LIFE of a LAN match: the host's own when the guest knows the setting
+/// (protocol 4), else each fighter's own (0) on both sides; the guest takes
+/// what the host sent (none from an older host: their own).
+pub(crate) fn lan_life(
+    side: usize,
+    peer_protocol: Option<u32>,
+    mine: i32,
+    agreed: Option<&LanRules>,
+) -> i32 {
+    if side == 0 {
+        if peer_protocol.is_some_and(|v| v >= rugen_net::LAN_PROTOCOL_LIFE) {
+            mine
+        } else {
+            0
+        }
+    } else {
+        agreed.and_then(|r| r.life).unwrap_or(0)
     }
 }
 
@@ -220,6 +249,10 @@ pub struct FightSetup {
     /// [`rugen_sim::headless::online_seed`] of the match id. LAN matches
     /// agree on one in the handshake.
     pub seed: Option<u64>,
+    /// LIFE every fighter gets instead of its own: `None` takes the
+    /// options' (offline) or the room's (online), `Some(0)` each fighter's
+    /// own (replays from before the setting), `Some(n)` n.
+    pub life: Option<i32>,
 }
 
 /// What a CHALLENGE run changes in one of its fights. Applied to the world
@@ -694,6 +727,9 @@ impl Match {
             air_dash: cfg.game.air_dash,
             fast_fall: cfg.game.fast_fall,
         };
+        // LIFE: a replay's recorded one, else the options' (online: the
+        // room's, through `match_config`); 0 = each fighter's own
+        let mut life = setup.life.unwrap_or(cfg.game.life);
         let mut seed = match &setup.net {
             None | Some(NetMode::SyncTest) => setup.seed.unwrap_or_else(fresh_seed),
             // set from the match id; a setup without one plays the legacy seed
@@ -713,6 +749,7 @@ impl Match {
                     fighter_size,
                     movement,
                     seed: Some(seed),
+                    life: Some(life),
                 }
                 .encode();
                 let rules = if *side == 0 {
@@ -731,6 +768,7 @@ impl Match {
                 let agreed = lan_agreement(*side, shake.peer_protocol, shake.rules.as_deref())
                     .with_context(|| format!("netplay with {remote}"))?;
                 seed = lan_seed(*side, shake.peer_protocol, seed, agreed.as_ref());
+                life = lan_life(*side, shake.peer_protocol, life, agreed.as_ref());
                 if let Some(r) = agreed {
                     fighter_size = r.fighter_size;
                     movement = r.movement;
@@ -768,7 +806,7 @@ impl Match {
             ),
         );
         let spec = rugen_sim::headless::MatchSpec {
-            life: None,
+            life: (life > 0).then_some(life),
             p1: &setup.p1,
             p2: &setup.p2,
             stage: setup.stage.as_deref(),
@@ -3556,6 +3594,7 @@ mod tests {
         let data = root.join("data");
         let cfg = Config::default();
         let setup = FightSetup {
+            life: None,
             p1: kfm.clone(),
             p2: kfm,
             stage: None,
@@ -3579,6 +3618,7 @@ mod tests {
             m.world.arena_ai,
             m.world.round.config.round_time,
             m.world.seed(),
+            m.world.life,
         ));
         let walk = Buttons {
             r: true,
@@ -3673,6 +3713,7 @@ mod tests {
                 fast_fall: false,
             },
             seed: Some(77),
+            life: Some(5000),
         };
         let wire = host.encode();
         assert!(!wire.contains(' '), "the punch format splits at spaces");
@@ -3705,6 +3746,17 @@ mod tests {
             lan_seed(1, old, 5, from_old.as_ref()),
             rugen_sim::headless::LEGACY_SEED
         );
+
+        // LIFE (protocol 4): the guest plays the host's; a protocol 3 peer
+        // knows nothing of it, so both sides play each fighter's own
+        assert_eq!(lan_life(0, v, 5000, None), 5000);
+        assert_eq!(lan_life(1, v, 1000, guest.as_ref()), 5000);
+        let p3 = Some(rugen_net::LAN_PROTOCOL_SEED);
+        assert_eq!(lan_life(0, p3, 5000, None), 0);
+        let no_life = LanRules { life: None, ..host }.encode();
+        assert!(!no_life.contains("life"));
+        let from_p3 = lan_agreement(1, p3, Some(&no_life)).unwrap();
+        assert_eq!(lan_life(1, p3, 5000, from_p3.as_ref()), 0);
 
         // and the worlds really agree (bundled KFM, skipped when absent)
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

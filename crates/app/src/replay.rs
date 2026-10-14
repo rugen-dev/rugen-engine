@@ -49,19 +49,25 @@ pub struct Replay {
     /// took effect on; absent for every other match.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<(u32, crate::training::Edits)>,
+    /// The LIFE every fighter had; absent: each fighter's own (replays
+    /// from before the setting, or a match played that way).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life: Option<i32>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
 
 impl Replay {
     /// A recording of `setup`, simulated with `fighter_size`, `arena_ai`,
-    /// a `round_time` clock and the match `seed`.
+    /// a `round_time` clock, the match `seed` and `life` (`None`: each
+    /// fighter's own).
     pub fn new(
         setup: &FightSetup,
         fighter_size: FighterSize,
         arena_ai: bool,
         round_time: i32,
         seed: u64,
+        life: Option<i32>,
     ) -> Self {
         Self {
             version: REPLAY_VERSION,
@@ -76,12 +82,14 @@ impl Replay {
             run: setup.run,
             seed: Some(seed),
             edits: Vec::new(),
+            life,
             inputs: Vec::new(),
         }
     }
 
     pub fn setup(&self) -> FightSetup {
         FightSetup {
+            life: Some(self.life.unwrap_or(0)),
             p1: self.p1.clone(),
             p2: self.p2.clone(),
             stage: self.stage.clone(),
@@ -149,6 +157,24 @@ mod tests {
         assert_eq!(back.setup().fighter_size, Some(FighterSize::Chibi));
     }
 
+    /// LIFE: a recording keeps it; one from before the setting plays each
+    /// fighter's own life (`Some(0)`), whatever the options say now.
+    #[test]
+    fn replays_keep_their_life() {
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.life, None);
+        assert_eq!(old.setup().life, Some(0), "old replays: each fighter's own");
+        let text = serde_json::to_string(&old).unwrap();
+        assert!(!text.contains("life"), "absent stays absent: {text}");
+        let r = Replay::new(&old.setup(), FighterSize::Normal, false, 99, 7, Some(5000));
+        let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        assert_eq!(back.life, Some(5000));
+        assert_eq!(back.setup().life, Some(5000));
+    }
+
     /// A match played with ROUND TIME 30 replays with 30, whatever the
     /// options say when it is watched.
     #[test]
@@ -166,14 +192,15 @@ mod tests {
             run: None,
             seed: None,
             edits: Vec::new(),
+            life: None,
             inputs: Vec::new(),
         }
         .setup();
-        let r = Replay::new(&setup, FighterSize::Normal, false, 30, 1);
+        let r = Replay::new(&setup, FighterSize::Normal, false, 30, 1, None);
         let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
         assert_eq!(back.round_time, Some(30));
         assert_eq!(back.setup().round_time, Some(30));
-        let none = Replay::new(&setup, FighterSize::Normal, false, -1, 1);
+        let none = Replay::new(&setup, FighterSize::Normal, false, -1, 1, None);
         assert_eq!(
             none.setup().round_time,
             Some(-1),
@@ -198,7 +225,7 @@ mod tests {
             partners: [vec!["c".into(), "d".into()], vec![]],
             ids: Default::default(),
         });
-        let r = Replay::new(&setup, FighterSize::Normal, false, 60, 1);
+        let r = Replay::new(&setup, FighterSize::Normal, false, 60, 1, None);
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains(r#""mode":["turns","single"]"#), "{json}");
         let back: Replay = serde_json::from_str(&json).unwrap();
@@ -220,7 +247,7 @@ mod tests {
             match_wins: 1,
             p1_life: Some(640),
         });
-        let r = Replay::new(&setup, FighterSize::Normal, false, 60, 1);
+        let r = Replay::new(&setup, FighterSize::Normal, false, 60, 1, None);
         let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
         assert_eq!(back.setup().run, setup.run);
     }
@@ -235,7 +262,14 @@ mod tests {
         .unwrap();
         assert_eq!(old.seed, None);
         assert_eq!(old.setup().seed, Some(rugen_sim::headless::LEGACY_SEED));
-        let r = Replay::new(&old.setup(), FighterSize::Normal, false, 60, 0xDEAD_BEEF);
+        let r = Replay::new(
+            &old.setup(),
+            FighterSize::Normal,
+            false,
+            60,
+            0xDEAD_BEEF,
+            None,
+        );
         let json = serde_json::to_string(&r).unwrap();
         let back: Replay = serde_json::from_str(&json).unwrap();
         assert_eq!(back.seed, Some(0xDEAD_BEEF));

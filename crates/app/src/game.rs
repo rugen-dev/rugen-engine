@@ -1088,6 +1088,7 @@ impl Shell {
         };
         Some(Transition::Versus(
             FightSetup {
+                life: None,
                 p1: p1.clone(),
                 p2: p2.clone(),
                 stage,
@@ -1285,6 +1286,7 @@ impl Shell {
                     .and_then(|e| self.lib.prepare_stage(&e).ok().map(|(d, m)| m.def_path(&d)))
                     .or_else(|| self.lib.default_stage());
                 self.transition(Transition::Fight(FightSetup {
+                    life: None,
                     p1,
                     p2,
                     stage,
@@ -1860,6 +1862,7 @@ impl Shell {
                                 m.world.arena_ai,
                                 m.world.round.config.round_time,
                                 m.world.seed(),
+                                m.world.life,
                             ));
                         }
                         if let Some(r) = self.replay.take() {

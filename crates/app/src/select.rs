@@ -182,6 +182,7 @@ impl SelectScreen {
         let ai = |human: bool| if human { 0 } else { self.ai_level };
         let tutorial = self.mode == Mode::Tutorial;
         let setup = FightSetup {
+            life: None,
             p1: p1.clone(),
             p2: if tutorial { p1 } else { p2 },
             stage,

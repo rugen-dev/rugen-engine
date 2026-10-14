@@ -484,6 +484,7 @@ fn main() -> anyhow::Result<()> {
                 None
             };
             let setup = play::FightSetup {
+                life: None,
                 p1: p1.clone(),
                 p2: p2.unwrap_or(p1),
                 stage,

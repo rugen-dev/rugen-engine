@@ -28,7 +28,8 @@ pub use quality::{
 };
 pub use relay::{Exit, RelaySocket, slot_addr};
 pub use socket::{
-    HandshakeRules, LAN_PROTOCOL, LAN_PROTOCOL_MIN, LAN_PROTOCOL_SEED, Punched, Socket,
+    HandshakeRules, LAN_PROTOCOL, LAN_PROTOCOL_LIFE, LAN_PROTOCOL_MIN, LAN_PROTOCOL_SEED, Punched,
+    Socket,
 };
 
 use std::net::SocketAddr;
