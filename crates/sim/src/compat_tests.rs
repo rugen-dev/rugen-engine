@@ -244,3 +244,200 @@ fn goku_super_cut_in_fills_the_screen() {
         assert!(w.players.iter().any(|p| p.asserted(assert::NOBARDISPLAY)));
     }
 }
+
+/// Owner report 3 (Susanoo's dark copy misaligned): a helper's omitted
+/// `size.*` come from the helper that creates it (MUGEN docs, Ikemen
+/// `newHelper`), not from the root's constants.
+#[test]
+fn helpers_inherit_their_parents_size() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    let text = format!(
+        "{}{}{}",
+        state_text(
+            7200,
+            "[State 7200, a]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7201\nid = 71\n\
+             size.xscale = .6\nsize.yscale = .5\n"
+        ),
+        state_text(
+            7201,
+            "[State 7201, b]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7202\nid = 72\n"
+        ),
+        state_text(7202, "[State 7202, c]\ntype = Null\ntrigger1 = 1\n"),
+    );
+    let d = w.data[0].with_states("compat", &text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7200, None, None);
+    run(&mut w, 4);
+    let by_id = |hid: i32| {
+        w.players
+            .iter()
+            .find(|p| !p.removed && p.helper_index > 0 && p.helper_id == hid)
+            .unwrap_or_else(|| panic!("helper {hid}"))
+    };
+    let (a, b) = (by_id(71), by_id(72));
+    assert_eq!((a.size.xscale, a.size.yscale), (0.6, 0.5));
+    assert_eq!((b.size.xscale, b.size.yscale), (0.6, 0.5));
+}
+
+/// A helper without `ownpal` shows its root's PalFX and ignores its own
+/// PalFX controllers (Ikemen `getPalfx` / `palFX.Run`); with `ownpal = 1`
+/// its PalFX is its own.
+#[test]
+fn helper_palfx_follows_ownpal() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    let text = format!(
+        "{}{}",
+        state_text(
+            7300,
+            "[State 7300, shared]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7301\nid = 81\n\n\
+             [State 7300, own]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7301\nid = 82\n\
+             ownpal = 1\n\n\
+             [State 7300, root]\ntype = PalFX\ntrigger1 = time = 0\ntime = 100\nadd = 0,0,200\n"
+        ),
+        state_text(
+            7301,
+            "[State 7301, white]\ntype = PalFX\ntrigger1 = 1\ntime = 100\nadd = 255,255,255\n"
+        ),
+    );
+    let d = w.data[0].with_states("compat", &text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7300, None, None);
+    run(&mut w, 3);
+    let idx = |hid: i32| {
+        w.players
+            .iter()
+            .position(|p| !p.removed && p.helper_index > 0 && p.helper_id == hid)
+            .unwrap_or_else(|| panic!("helper {hid}"))
+    };
+    let (shared, own) = (idx(81), idx(82));
+    assert!(
+        !w.players[shared].palfx.active(),
+        "its own PalFX did nothing"
+    );
+    assert_eq!(
+        w.drawn_palfx(shared).add,
+        [0, 0, 200],
+        "drawn with the root's"
+    );
+    assert_eq!(w.drawn_palfx(own).add, [255, 255, 255]);
+}
+
+/// HitDef `palfx.*` tints the target on a hit (the white flash of a ki
+/// blast or a super).
+#[test]
+fn hitdef_palfx_reaches_the_target() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    w.players[0].pos[0] = -20.0;
+    w.players[1].pos[0] = 20.0;
+    // KFM's light punch (anim 200) reaches with its Clsn1
+    let text = "[Statedef 7400]\ntype = S\nmovetype = A\nphysics = S\nanim = 200\nctrl = 0\n\n\
+        [State 7400, hit]\ntype = HitDef\ntrigger1 = time = 0\nattr = S, NA\ndamage = 10\n\
+        animtype = light\nguardflag = MA\nhitflag = MAF\npausetime = 0,0\n\
+        palfx.time = 20\npalfx.add = 255,255,255\npalfx.mul = 128,128,128\n";
+    let d = w.data[0].with_states("compat", text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7400, None, None);
+    let mut hit = false;
+    for _ in 0..12 {
+        run(&mut w, 1);
+        if w.players[1].palfx.active() {
+            hit = true;
+            break;
+        }
+    }
+    assert!(hit, "P2 was hit and tinted");
+    assert_eq!(w.players[1].palfx.add, [255, 255, 255]);
+    assert_eq!(w.players[1].palfx.mul, [128, 128, 128]);
+}
+
+/// Explods follow their owner's PalFX unless `ownpal = 1`, which gives them
+/// their own (`palfx.*`, Ikemen); fightfx sparks are always `ownpal`.
+#[test]
+fn explod_ownpal_and_palfx() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    with_state(
+        &mut w,
+        7500,
+        "[State 7500, follows]\ntype = Explod\ntrigger1 = time = 0\nanim = 0\nid = 1\nremovetime = -1\n\n\
+         [State 7500, own]\ntype = Explod\ntrigger1 = time = 0\nanim = 0\nid = 2\nremovetime = -1\n\
+         ownpal = 1\npalfx.time = -1\npalfx.add = 50,60,70\n",
+    );
+    run(&mut w, 2);
+    let a = explod_by_id(&w, 1);
+    assert!(!a.ownpal);
+    let b = explod_by_id(&w, 2);
+    assert!(b.ownpal);
+    assert!(b.palfx.active());
+    assert_eq!(b.palfx.add, [50, 60, 70]);
+}
+
+/// Sasuke's Susanoo (awakening 552 -> helper 4050, `size.xscale = .6`)
+/// creates its dark "Negro" copy (4460, no size) at the same scale, so the
+/// two line up.
+#[test]
+#[ignore]
+fn sasuke_susanoo_copies_line_up() {
+    let Some(dir) = golden_dir() else { return };
+    let sasuke = dir.join("G6_Sasuke_Rinnegan/G6_Sasuke_Rinnegan.def");
+    let goku = dir.join("Goku/Goku.def");
+    let mut w = community(&sasuke, &goku, FighterSize::Normal);
+    w.players[0].power = w.players[0].power_max;
+    w.change_state(0, 552, None, None);
+    let mut seen = false;
+    for _ in 0..300 {
+        run(&mut w, 1);
+        let body = w.players.iter().find(|p| !p.removed && p.state_no == 4050);
+        let shade = w.players.iter().find(|p| !p.removed && p.state_no == 4460);
+        if let (Some(b), Some(s)) = (body, shade) {
+            assert_eq!(s.size.xscale, b.size.xscale);
+            assert_eq!(s.size.yscale, b.size.yscale);
+            assert!((b.size.xscale - 0.6).abs() < 1e-6);
+            assert_eq!(s.pos, b.pos, "bound to the body");
+            seen = true;
+        }
+    }
+    assert!(seen, "Susanoo and its shade appeared");
+}
+
+/// Goku's ki blast (state 400): the glow helper (410, additive, PalFX mul
+/// 356) is created before the shade (411, subtractive): the renderer draws
+/// the later one behind (see the app's draw order test).
+#[test]
+#[ignore]
+fn goku_ki_blast_glow_and_shade() {
+    let Some(dir) = golden_dir() else { return };
+    let sasuke = dir.join("G6_Sasuke_Rinnegan/G6_Sasuke_Rinnegan.def");
+    let goku = dir.join("Goku/Goku.def");
+    let mut w = community(&goku, &sasuke, FighterSize::Normal);
+    w.change_state(0, 400, None, None);
+    let mut seen = false;
+    for _ in 0..120 {
+        run(&mut w, 1);
+        let glow = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.state_no == 410);
+        let shade = w
+            .players
+            .iter()
+            .position(|p| !p.removed && p.state_no == 411);
+        if let (Some(g), Some(s)) = (glow, shade) {
+            use crate::explod::Trans;
+            assert!(g < s, "glow queued before the shade");
+            assert_eq!(w.players[g].trans, Trans::Add);
+            assert_eq!(w.players[s].trans, Trans::Sub);
+            assert_eq!(w.drawn_palfx(g).mul, [356; 3]);
+            assert_eq!(w.drawn_palfx(s).mul, [0, 256, 512]);
+            seen = true;
+        }
+    }
+    assert!(seen, "the ki blast helpers appeared");
+}

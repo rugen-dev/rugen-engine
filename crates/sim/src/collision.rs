@@ -9,6 +9,33 @@ use crate::hit::{
 use crate::player::Player;
 use crate::world::{Event, World};
 
+/// A HitDef's `palfx.*` parameters (MUGEN: applied to the target on a hit),
+/// `None` without a positive `palfx.time`.
+fn hit_palfx(f: &dyn Fn(&str, usize) -> Option<f32>) -> Option<crate::fx::PalFx> {
+    let time = f("palfx.time", 0)? as i32;
+    if time <= 0 {
+        return None;
+    }
+    let mut pf = crate::fx::PalFx {
+        time,
+        ..Default::default()
+    };
+    let rgb = |key: &str, def: i32| [0, 1, 2].map(|k| f(key, k).map_or(def, |v| v as i32));
+    pf.add = rgb("palfx.add", 0);
+    pf.mul = rgb("palfx.mul", 256);
+    if f("palfx.sinadd", 0).is_some() {
+        let period = f("palfx.sinadd", 3).map_or(0, |v| v as i32);
+        let side = if period < 0 { -1 } else { 1 };
+        pf.cycletime[0] = period.abs();
+        pf.sinadd = rgb("palfx.sinadd", 0).map(|v| v * side);
+    }
+    if let Some(c) = f("palfx.color", 0) {
+        pf.color = c / 256.0;
+    }
+    pf.invertall = f("palfx.invertall", 0).is_some_and(|v| v != 0.0);
+    Some(pf)
+}
+
 /// Evaluate a HitDef controller into concrete values with MUGEN defaults.
 pub fn eval_hitdef(w: &mut World, i: usize, spec: &HitDefSpec) -> HitDef {
     let data = w.data[w.players[i].data].clone();
@@ -147,6 +174,7 @@ pub fn eval_hitdef(w: &mut World, i: usize, spec: &HitDefSpec) -> HitDef {
         fall_envshake_freq: f("fall.envshake.freq", 0).unwrap_or(60.0),
         fall_envshake_ampl: f("fall.envshake.ampl", 0).map_or(-4, |v| v as i32),
         fall_envshake_phase: f("fall.envshake.phase", 0),
+        palfx: hit_palfx(&f),
         active: true,
         owner_id: w.players[i].id,
     };
@@ -823,6 +851,7 @@ pub(crate) fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, src: Hi
             let data_g = w.data[w.players[g].data].clone();
             let g_pos_y = w.players[g].pos[1];
             let cid = w.players[c].id;
+            let mut hit_palfx_now = None;
             let ghv = &mut w.players[g].ghv;
             ghv.selective_reset();
             ghv.attr = hd.attr;
@@ -872,6 +901,7 @@ pub(crate) fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, src: Hi
                 ghv.fall_envshake_freq = hd.fall_envshake_freq;
                 ghv.fall_envshake_ampl = (hd.fall_envshake_ampl as f32 * scale) as i32;
                 ghv.fall_envshake_phase = hd.fall_envshake_phase;
+                hit_palfx_now = hd.palfx.clone();
                 if hd.envshake_time > 0 {
                     w.envshake = crate::fx::EnvShake {
                         time: hd.envshake_time,
@@ -941,6 +971,9 @@ pub(crate) fn hit_result(w: &mut World, c: usize, g: usize, hd: &HitDef, src: Hi
             ghv.air_animtype = hd.air_animtype;
             ghv.fall_animtype = hd.fall_animtype;
             ghv.animtype = hit::gethit_animtype(ghv, gst);
+            if let Some(pf) = hit_palfx_now {
+                w.players[g].palfx = pf;
+            }
             // mindist / maxdist snapping
             let by_x = match src {
                 HitSrc::Proj(k) => w.projs[k].pos[0],

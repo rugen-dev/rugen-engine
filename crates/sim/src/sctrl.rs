@@ -39,6 +39,9 @@ pub struct ExplodSpec {
     pub angle: Option<Code>,
     pub animelem: Option<Code>,
     pub animfreeze: Option<Code>,
+    pub ownpal: Option<Code>,
+    /// `palfx.*` (Ikemen): the explod's own PalFX, used with `ownpal = 1`.
+    pub palfx: Option<Box<PalFxSpec>>,
 }
 
 /// `trans = none/add/add1/addalpha/sub` (case-insensitive).
@@ -68,6 +71,18 @@ pub struct PalFxSpec {
 }
 
 impl PalFxSpec {
+    /// Was any parameter given?
+    pub fn any(&self) -> bool {
+        self.time.is_some()
+            || self.add.is_some()
+            || self.mul.is_some()
+            || self.sinadd.is_some()
+            || self.sinmul.is_some()
+            || self.sincolor.is_some()
+            || self.invertall.is_some()
+            || self.color.is_some()
+    }
+
     pub fn compile(c: &Controller, prefix: &str) -> Result<Self> {
         let k = |n: &str| format!("{prefix}{n}");
         Ok(Self {
@@ -169,6 +184,11 @@ impl ExplodSpec {
             angle: one(c, "angle")?,
             animelem: one(c, "animelem")?,
             animfreeze: one(c, "animfreeze")?,
+            ownpal: one(c, "ownpal")?,
+            palfx: {
+                let pf = PalFxSpec::compile(c, "palfx.")?;
+                pf.any().then(|| Box::new(pf))
+            },
         })
     }
 }

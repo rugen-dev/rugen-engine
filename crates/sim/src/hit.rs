@@ -382,6 +382,8 @@ pub struct HitDef {
     pub fall_envshake_freq: f32,
     pub fall_envshake_ampl: i32,
     pub fall_envshake_phase: Option<f32>,
+    /// `palfx.*`: the target's palette effect on a hit (not on guard).
+    pub palfx: Option<crate::fx::PalFx>,
     /// Set after the first contact when `hitonce`, or when the HitDef is spent.
     pub active: bool,
     /// Attacker's state type when the HitDef was declared (for the attr check).

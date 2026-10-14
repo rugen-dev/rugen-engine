@@ -1755,6 +1755,12 @@ impl World {
         if let Some(c) = &spec.animfreeze {
             e.animfreeze = self.eval(i, c).to_b();
         }
+        if let Some(c) = &spec.ownpal {
+            e.ownpal = self.eval(i, c).to_b();
+        }
+        if let Some(pf) = &spec.palfx {
+            e.palfx = self.eval_palfx(i, pf);
+        }
         if fresh && let Some(c) = &spec.animelem {
             let el = self.eval(i, c).to_i();
             if let Some(a) = e.air(self).and_then(|a| a.get(e.anim.action)).cloned() {
@@ -1783,6 +1789,7 @@ impl World {
             return;
         }
         e.id = -1; // sparks are anonymous: not found by NumExplod / RemoveExplod
+        e.ownpal = true;
         e.postype = PosType::None;
         e.space = Space::Stage;
         e.bindtime = 0;

@@ -374,6 +374,23 @@ fn resolve_blend(frame: &rugen_formats::air::Frame, trans: Trans, alpha: [i32; 2
     }
 }
 
+/// Order of two draws at the same layer and sprpriority, from the draw's
+/// kind (`who.0`) and its push index: Ikemen queues projectiles, then
+/// players, then explods, and draws what was queued later behind.
+fn queue_order(kind: char, seq: usize) -> std::cmp::Reverse<(u8, usize)> {
+    let group = match kind {
+        'J' => 0,
+        'P' | 'I' => 1,
+        _ => 2,
+    };
+    std::cmp::Reverse((group, seq))
+}
+
+/// PalFX multiply for a subtractive draw (Ikemen `toShader`, `useNeg`).
+fn sub_mul(m: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|i| (m[(i + 1) % 3] + m[(i + 2) % 3]) / 2.0)
+}
+
 fn tint(p: PalFxOut) -> Tint {
     Tint {
         mul: p.mul,
@@ -1924,7 +1941,7 @@ impl Match {
                 p.angle_scale[0] * p.size.xscale,
                 p.angle_scale[1] * p.size.yscale,
             ];
-            let pfx = tint(p.palfx.sample().stacked(all_pfx));
+            let pfx = tint(self.world.drawn_palfx(i).sample().stacked(all_pfx));
             // afterimages first so they sit behind the player
             let aimg = p
                 .afterimage
@@ -2020,11 +2037,15 @@ impl Match {
             };
             let spr = self.sprite_from(r, src, frame.group, frame.number);
             let blend = resolve_blend(&frame, e.trans, e.alpha);
-            let owner_pfx = self
-                .world
-                .players
-                .get(e.owner)
-                .map_or(PalFxOut::default(), |p| p.palfx.sample());
+            // ownpal: the explod's own PalFX; else its owner's, as it is now
+            // (MUGEN: "affected by subsequent execution of the player's PalFX")
+            let owner_pfx = if e.ownpal {
+                e.palfx.sample()
+            } else if e.owner < self.world.players.len() {
+                self.world.drawn_palfx(e.owner).sample()
+            } else {
+                PalFxOut::default()
+            };
             items.push(Item {
                 spr,
                 pos: e.draw_pos(),
@@ -2072,7 +2093,7 @@ impl Match {
             };
             let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
             let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
-            let owner_pfx = self.world.players[pr.owner].palfx.sample();
+            let owner_pfx = self.world.drawn_palfx(pr.owner).sample();
             items.push(Item {
                 spr,
                 pos: [pr.pos[0] + off[0], pr.pos[1] + off[1]],
@@ -2091,16 +2112,31 @@ impl Match {
                 who: ('J', pr.owner, pr.anim_no),
             });
         }
-        items.sort_by_key(|it| (it.layer, it.prio, it.seq));
+        // equal sprpriority: what is queued later is drawn behind (Ikemen
+        // `DrawList.draw`), queued as projectiles, players (afterimages
+        // before their player), then explods. Two copies of one sprite at the
+        // same priority, an additive glow over a subtractive shade (Goku's
+        // ki blasts), stack as their author saw them
+        items.sort_by_key(|it| (it.layer, it.prio, queue_order(it.who.0, it.seq)));
+        // subtractive draws use PalFX's "negative" multiply (Ikemen
+        // `toShader` under TT_sub): each channel takes the mean of the other
+        // two, so a palfx that keeps blue subtracts red
+        for it in items.iter_mut() {
+            if matches!(it.blend, Blend::Sub { .. }) {
+                it.tint.mul = sub_mul(it.tint.mul);
+            }
+        }
         // harness: `RUGEN_HARNESS_DRAWLOG=120` dumps what frame 120 draws
-        if std::env::var("RUGEN_HARNESS_DRAWLOG")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            == Some(self.world.frame)
-        {
+        // (`120-180`: every frame of the range)
+        let logged = std::env::var("RUGEN_HARNESS_DRAWLOG").ok().and_then(|v| {
+            let (a, b) = v.split_once('-').unwrap_or((&v, &v));
+            Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))
+        });
+        if logged.is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
             for it in &items {
                 log::info!(
-                    "draw {}{} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    "draw f{} {}{} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    self.world.frame,
                     it.who.0,
                     it.who.1,
                     it.who.2,
@@ -2889,7 +2925,8 @@ fn glyph(c: char) -> [u8; 5] {
 }
 
 /// Harness: `RUGEN_HARNESS_STATE=1:1300@120,2:200@150` puts player 1 into
-/// state 1300 at world frame 120 (and P2 into 200 at 150) with full power,
+/// state 1300 at the first fight frame from world frame 120 on (and P2 into
+/// 200 from 150) with full power,
 /// so a super can be shot without its command; `RUGEN_HARNESS_POWER=1`
 /// keeps both root players' power full.
 fn harness_states(w: &mut World) {
@@ -2907,10 +2944,15 @@ fn harness_states(w: &mut World) {
             let (state, at) = rest.split_once('@')?;
             Some((who.parse().ok()?, state.parse().ok()?, at.parse().ok()?))
         };
+        // the first fight frame (round state 2) at or after `at`, once
+        thread_local!(static FIRED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
         if let Some((who, state, at)) = parse()
-            && at == w.frame
+            && w.frame >= at
+            && w.round.round_state() == 2
+            && !FIRED.with_borrow(|f| f.iter().any(|t| t == tok))
             && let Some(i) = w.side_leader(who.saturating_sub(1).min(1))
         {
+            FIRED.with_borrow_mut(|f| f.push(tok.to_string()));
             w.players[i].power = w.players[i].power_max;
             w.change_state(i, state, None, Some(false));
         }
@@ -3180,6 +3222,23 @@ fn stun_servers(ticket: &rugen_net::online::SessionTicket) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Owner report 4 (Goku's ki blasts dark): the blast is an additive
+    /// helper and a subtractive one on the same sprite and sprpriority,
+    /// created in that order. Ikemen draws the later one behind, so the
+    /// glow lands on top of the shade, and the shade's PalFX multiply is the
+    /// mean of the other two channels.
+    #[test]
+    fn equal_priority_draws_stack_like_ikemen() {
+        // helpers P7 (add, pushed first) and P8 (sub): P8 sorts first = behind
+        assert!(queue_order('P', 7) > queue_order('P', 8));
+        // players over explods, projectiles over players
+        assert!(queue_order('E', 0) < queue_order('P', 9));
+        assert!(queue_order('P', 9) < queue_order('J', 20));
+        // Goku's FXSUB helper: mul = 0,256,512 subtracts mostly red
+        assert_eq!(sub_mul([0.0, 1.0, 2.0]), [1.5, 1.0, 0.5]);
+        assert_eq!(sub_mul([1.0; 3]), [1.0; 3]);
+    }
 
     /// Online camera determinism: the camera is part of the simulation, so
     /// two players with different zoom settings (and the server's

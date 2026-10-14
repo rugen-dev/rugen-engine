@@ -105,6 +105,10 @@ pub struct Explod {
     pub pausemovetime: i32,
     pub angle: f32,
     pub animfreeze: bool,
+    /// MUGEN `ownpal`: drawn with its own `palfx` instead of following
+    /// its owner's PalFX (the default for fightfx animations).
+    pub ownpal: bool,
+    pub palfx: crate::fx::PalFx,
     pub removed: bool,
 }
 
@@ -143,6 +147,8 @@ impl Explod {
             pausemovetime: 0,
             angle: 0.0,
             animfreeze: false,
+            ownpal: src == AnimSrc::Fx,
+            palfx: crate::fx::PalFx::default(),
             removed: false,
         }
     }
@@ -335,6 +341,9 @@ impl World {
         }
         if !e.animfreeze {
             e.anim.step(action);
+        }
+        if e.ownpal {
+            e.palfx.step();
         }
     }
 
