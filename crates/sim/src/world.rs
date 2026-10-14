@@ -731,38 +731,31 @@ impl World {
     }
 
     /// Stage x range players are held inside: the view at the furthest zoom
-    /// out the stage allows, around the camera. A hard hit sends the target
-    /// flying while the camera pulls back instead of bouncing it off the
-    /// current screen edge; stages without zoom keep MUGEN's screen bounds.
-    /// Never past the furthest edge the camera can show (`boundleft` minus
-    /// half a screen), so a zoomed-in camera at the stage edge can always
-    /// pan or pull back to keep both players in view.
+    /// out the stage allows, around the camera, so a hard hit sends the
+    /// target flying while the camera pulls back instead of bouncing it off
+    /// the current screen edge; but never past the edge of the screen as it
+    /// is when the camera stands at `boundleft` / `boundright` (MUGEN: the
+    /// camera's centre stays inside the bounds and players inside the
+    /// screen), so the stage's ends hold the fighters where its art ends.
     pub fn play_bounds(&self) -> (f32, f32) {
         let st = &self.stage;
         let zoom = st.zoom_out.min(self.cam_zoom).max(0.05);
         let half = st.width / (2.0 * zoom);
-        let (min_left, max_right) = self.camera_limits();
+        let here = st.width / (2.0 * self.cam_zoom.max(0.05));
         (
-            (self.cam_x - half).max(min_left) + st.screen_left,
-            (self.cam_x + half).min(max_right) - st.screen_right,
+            (self.cam_x - half).max(st.bound_left - here) + st.screen_left,
+            (self.cam_x + half).min(st.bound_right + here) - st.screen_right,
         )
     }
 
-    /// The furthest the screen's edges can go (stage units), as Ikemen GO's
-    /// `Camera.minLeft` / `maxRight`: `boundleft` / `boundright` are the
-    /// camera's centre at zoom 1; a stage that zooms out lets its edges go
-    /// half a zoomed-out screen past them, plus MUGEN 1.1's extra room for
-    /// the zoom (`(1 - zoomout) * 100 / zoomout * 1.6` per 320 of width).
+    /// The furthest the screen's edges can go (stage units): the camera's
+    /// centre at `boundleft` / `boundright` (MUGEN's camera bounds), fully
+    /// zoomed out.
     pub fn camera_limits(&self) -> (f32, f32) {
         let st = &self.stage;
         let zo = st.zoom_out.clamp(0.05, 1.0);
-        let extra = if zo < 1.0 {
-            (1.0 - zo) * 100.0 * zo * (1.0 / zo) * (1.0 / zo) * 1.6 * (st.width / 320.0)
-        } else {
-            0.0
-        };
         let half = st.width / (2.0 * zo);
-        (st.bound_left - extra - half, st.bound_right + extra + half)
+        (st.bound_left - half, st.bound_right + half)
     }
 
     // ------------------------------------------------------------ state changes
@@ -3953,9 +3946,9 @@ impl World {
         // pulls the camera back at once
         let span = rightest - leftest + st.screen_left + st.screen_right;
         let new_scale = new_scale.min(half * 2.0 / span.max(1.0)).max(zoom_out);
-        let hw = half / new_scale;
         self.cam_zoom = new_scale;
-        self.cam_x = target_x.clamp(min_left + hw, (max_right - hw).max(min_left + hw));
+        // the centre never leaves [boundleft, boundright] (at any zoom)
+        self.cam_x = target_x.clamp(st.bound_left, st.bound_right.max(st.bound_left));
         // vertical follow toward the highest player; never let it leave the top
         let follow = (highest + st.floor_tension).min(0.0) * st.vertical_follow;
         let keep_visible = highest + st.zoffset / new_scale - vmargin;
