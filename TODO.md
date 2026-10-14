@@ -335,35 +335,76 @@ box) and screenshots.
   `shot-wind-ink.png`.
 
 ### Online
-- [ ] **Ranked seasons.** A season id and dates on the server; ratings soft
+- [x] **Ranked seasons.** (ead3a26; rugen-server 29a621e, bf34e9d) A season id and dates on the server; ratings soft
   reset at season start (pull toward 1200), last season's tier kept as a
   badge on the profile.
-- [ ] **Per-fighter leaderboards.** Server keeps wins and rating per
+  `rugen_proto::season_reset` is the pure reset (tested); the server keeps
+  every finished season's final standings (schema v7) and serves them with
+  `?season=N`; the badge is the tier of the final rating. LEADERBOARD steps
+  through past seasons with left / right. `POST /v1/admin/season_end` ends
+  a season early. Shots: `~/.cache/rugen-work/ro/shots/board-{ink,dojo}.png`,
+  `board-s2.png`.
+- [x] **Per-fighter leaderboards.** (fad0209; rugen-server 22e3365) Server keeps wins and rating per
   fingerprint; LEADERBOARD gets a FIGHTERS tab.
-- [ ] **Tournament brackets.** In a room: 8 or 16 players, single
+  Per player and fighter, per season (schema v8), ranked only; a new
+  season starts a player's fighter rating from a soft reset of the last
+  one. Tab switches PLAYERS / FIGHTERS, a FIGHTER stepper cycles the
+  fighters with a board. Shots: `~/.cache/rugen-work/ro/shots/fboard-{ink,dojo}.png`.
+- [x] **Tournament brackets.** (1a2c5c7; rugen-server bd91875) In a room: 8 or 16 players, single
   elimination, the server seeds by rating and calls each match; spectators
   watch the bracket.
+  FORMAT on CREATE ROOM; the host starts the bracket (2+ entrants, byes
+  for the top seeds); a disputed / failed match is called once more, then
+  a walkover (the player still in the room, else the one further on, else
+  the higher seed; 3 min without a start). Scores come from the reports'
+  additive `rounds`. Shots: `~/.cache/rugen-work/ro/shots/bracket-{ink,dojo}.png`,
+  `create-format-{ink,dojo}.png`.
 
 ### Live watching (shared base for replays and brackets)
-- [ ] **One match format: header + input stream.** Header: rugen version,
+- [x] **One match format: header + input stream.** (5ee5279) Header: rugen version,
   fighter and stage fingerprints, fighter size, rules, round seed. Body: the
   confirmed inputs per frame. Saved replays stay `.json`; the live stream is
   compact binary (~2 bytes per player per frame, ~15 KB a minute).
-- [ ] **Server keeps the input log of every live match.** The relay already
+  `rugen_proto::stream`: `MatchHeader` (fingerprints, names and package
+  sizes, rules, seed, players, game version) and RGM1 chunks; uploads
+  ride the relay session (`STREAM` / `STREAM_ACK`) when the ticket says
+  `live`.
+- [x] **Server keeps the input log of every live match.** (078857f; rugen-server 7e7d96d, 8468e4b) The relay already
   forwards the inputs; keep a copy, fan out to spectators from the server (not
   from P1), drop the log when the match ends unless it is shared.
-- [ ] **Watch any live match, even mid-match.** WATCH downloads missing
+  Each player feeds only its own half of every frame; bounded (15 min a
+  match, `RUGEN_LIVE_MB` = 64 for all); a finished match's log stays 15
+  minutes (late viewers, sharing from the result screen), then goes.
+  `GET /v1/live`, `GET /v1/live/{id}?from=N` (binary chunks).
+- [x] **Watch any live match, even mid-match.** (bbe2cf4) WATCH downloads missing
   fighters and stage through the package sync, fetches the backlog from frame
   0, fast-forwards the sim without drawing ("CATCHING UP…"), then follows
   live a few seconds behind the players (smooth start, no relaying to a
   player in tournaments).
-- [ ] **WATCH from the lobby and the bracket.** Live rooms show WATCH in the
+  `watch::Feed` polls the log, `watch::Prep` downloads what is missing,
+  `NetMode::Stream` plays it with the header's seed and the online rules;
+  start buffer 1.5 s, catch-up at 120 frames a drawn frame (silent, not
+  drawn), then 3 s behind. A match of another game version is refused.
+  Tested with two clients and a spectator on a local server, a room match
+  and a bracket match. Shots: `~/.cache/rugen-work/ro/shots/watch-{ink,dojo}.png`,
+  `watch-catchup-{ink,dojo}.png`.
+- [x] **WATCH from the lobby and the bracket.** (b820af7) Live rooms show WATCH in the
   lobby; the bracket's live match opens it on ENTER.
+  ROOMS also lists live quick / ranked matches. Shots:
+  `~/.cache/rugen-work/ro/shots/lobby-live-ink.png`,
+  `bracket-live-{ink,dojo}.png`, `bracket-watch-ink.png`.
 
 ### Replays
-- [ ] **Shareable replays.** Keep a finished match's input log on the server
+- [x] **Shareable replays.** (c2fbd19; rugen-server d25b85e) Keep a finished match's input log on the server
   (see *Live watching*), get a short code; WATCH → BY CODE downloads and plays it,
   fetching missing fighters through the existing package sync. Kept 30 days.
+  REPLAYS on the hub: SHARE (8-character code, copied), COPY CODE, SAVE
+  FILE (`replays/<code>.json`, not for arena rooms), BY CODE, RECENT. The
+  server takes the stream from its live log, else the players' reports;
+  `shared_replays` (schema v9) is in every backup, bounded by
+  `RUGEN_REPLAY_DAYS` / `RUGEN_REPLAY_MB`, 50 shares a day per account.
+  Shots: `~/.cache/rugen-work/ro/shots/replays-{ink,dojo}.png`,
+  `replays-shared-ink.png`, `replay-watch-ink.png`.
 
 ### Creators
 - [x] **User themes folder.** (7149d7c) `themes/` next to `chars/`; any folder with a

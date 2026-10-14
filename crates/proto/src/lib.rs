@@ -13,6 +13,7 @@ pub mod fair;
 pub mod relay;
 pub mod room_code;
 pub mod size;
+pub mod stream;
 pub mod trust;
 
 pub use account::{AccountInfo, Session};
@@ -80,9 +81,38 @@ pub struct ProfileInfo {
     /// accounts never carry it, so a username cannot be impersonated.
     #[serde(default, skip_serializing_if = "is_false")]
     pub verified: bool,
+    /// How the player finished the last season it played in (the badge
+    /// kept on the profile and the boards); absent from older servers and
+    /// for players who never finished a season.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_season: Option<SeasonBadge>,
 }
 
-fn is_false(v: &bool) -> bool {
+/// A finished season's standing, kept as a badge: the tier of the rating
+/// the player ended the season with ([`rank_name`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SeasonBadge {
+    pub season: u32,
+    /// Final rating of that season (before the soft reset).
+    pub rating: i32,
+    /// Final leaderboard position (1-based).
+    pub rank: u32,
+    /// [`rank_name`] of `rating`.
+    pub tier: String,
+}
+
+impl SeasonBadge {
+    pub fn new(season: u32, rating: i32, rank: u32) -> Self {
+        Self {
+            season,
+            rating,
+            rank,
+            tier: rank_name(rating).to_string(),
+        }
+    }
+}
+
+pub(crate) fn is_false(v: &bool) -> bool {
     !*v
 }
 
@@ -284,6 +314,11 @@ pub struct SessionTicket {
     /// these instead of `udp`. Unknown kinds are skipped.
     #[serde(default)]
     pub transports: Vec<RelayTransport>,
+    /// The server keeps this match's input log for viewers: players send
+    /// their confirmed inputs on the relay session ([`relay::STREAM`]).
+    /// False from older servers (nothing is sent then).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub live: bool,
 }
 
 impl SessionTicket {
@@ -314,6 +349,83 @@ pub struct RoomSummary {
     /// `host` is a username ([`ProfileInfo::verified`]).
     #[serde(default, skip_serializing_if = "is_false")]
     pub host_verified: bool,
+    /// The room runs a tournament bracket (absent: a 1 v 1 room, or an
+    /// older server). Older clients cannot join such a room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tournament: Option<TournamentBrief>,
+    /// The match running in the room when the server keeps its input log:
+    /// viewers open it with `GET /v1/live/{id}` (0: none, or an older server).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub live_match: u64,
+}
+
+/// A tournament room in the lobby list.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TournamentBrief {
+    /// Bracket size: 8 or 16.
+    pub size: u8,
+    pub entrants: u8,
+    /// `open` (taking entrants), `running` or `done`.
+    pub state: String,
+}
+
+/// One tournament entrant (seed order once drawn, join order before).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Entrant {
+    pub id: u64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub verified: bool,
+    pub rating: i32,
+    /// 1-based seed once the bracket is drawn, 0 before.
+    pub seed: u8,
+}
+
+/// One match of a bracket.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BracketMatch {
+    /// Accounts of the two sides (None: a bye or not decided yet).
+    pub p1: Option<u64>,
+    pub p2: Option<u64>,
+    /// Their seeds (0 = empty).
+    pub seeds: [u8; 2],
+    /// Rounds won per side (0-0 when unknown).
+    pub score: [u8; 2],
+    pub winner: Option<u64>,
+    /// `wait` (a side not decided), `next` (both known), `called` (the
+    /// server called it: matchup phase), `live` (being fought), `done`,
+    /// `bye`.
+    pub state: String,
+    /// The match id once called (0 before).
+    pub match_id: u64,
+}
+
+/// A room's tournament as members see it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TournamentView {
+    pub size: u8,
+    /// `open`, `running` or `done`.
+    pub state: String,
+    pub entrants: Vec<Entrant>,
+    /// Rounds from the first to the final (empty before the draw).
+    pub rounds: Vec<Vec<BracketMatch>>,
+    /// (round, index) of the called / live match.
+    pub live: Option<[u8; 2]>,
+    pub champion: Option<u64>,
+}
+
+impl TournamentView {
+    /// The round's name for a bracket of `rounds` rounds: FINAL,
+    /// SEMI-FINALS, QUARTER-FINALS, ROUND OF 16.
+    pub fn round_name(rounds: usize, round: usize) -> &'static str {
+        match rounds.saturating_sub(round) {
+            1 => "FINAL",
+            2 => "SEMI-FINALS",
+            3 => "QUARTER-FINALS",
+            4 => "ROUND OF 16",
+            _ => "ROUND",
+        }
+    }
 }
 
 impl RoomSummary {
@@ -366,6 +478,10 @@ pub struct RoomInfo {
     /// Pick / verdict / file sync phase before the match (API 3).
     #[serde(default)]
     pub matchup: Option<MatchupView>,
+    /// The room's tournament (absent: a 1 v 1 room). Members who do not
+    /// play the called match have `side` 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tournament: Option<Box<TournamentView>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -397,11 +513,38 @@ pub struct MatchInfo {
     pub matchup: Option<MatchupView>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A ranked season: ratings soft-reset toward the start rating when it
+/// ends ([`season_reset`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Season {
     pub number: u32,
     pub name: String,
     pub ends_at: u64,
+    /// Unix time it started (0 from older servers).
+    #[serde(default)]
+    pub started_at: u64,
+    /// Seconds left when the server answered (0: over, or an older
+    /// server: use `ends_at`). Immune to a wrong client clock.
+    #[serde(default)]
+    pub secs_left: u64,
+}
+
+impl Season {
+    /// "ENDS IN 12 DAYS" / "ENDS IN 5 HOURS" / "ENDED"; `now` = Unix time
+    /// of the client, used only when the server did not say.
+    pub fn ends_line(&self, now: u64) -> String {
+        let left = if self.secs_left > 0 {
+            self.secs_left
+        } else {
+            self.ends_at.saturating_sub(now)
+        };
+        match left {
+            0 => "ENDED".into(),
+            s if s >= 2 * 86_400 => format!("ENDS IN {} DAYS", s / 86_400),
+            s if s >= 2 * 3600 => format!("ENDS IN {} HOURS", s / 3600),
+            _ => "ENDS SOON".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -409,6 +552,93 @@ pub struct Leaderboard {
     pub season: Season,
     pub rows: Vec<ProfileInfo>,
     pub me: Option<(usize, ProfileInfo)>,
+    /// Finished seasons the server keeps final standings of, newest first
+    /// (`GET /leaderboard?season=N`); empty from older servers.
+    #[serde(default)]
+    pub past: Vec<u32>,
+    /// `rows` are a finished season's final standings (ratings as they
+    /// ended it), not the live board.
+    #[serde(default)]
+    pub finished: bool,
+    /// A per-fighter board (`GET /leaderboard?fighter=FP`): the fighter it
+    /// ranks; `rows` then carry each player's rating and record with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fighter: Option<FighterEntry>,
+    /// The fighters with a board that season, most played first (asked with
+    /// `fighters=1` or `fighter=`); empty from older servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fighters: Vec<FighterEntry>,
+}
+
+/// A fighter (content fingerprint) with a per-fighter leaderboard.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FighterEntry {
+    pub fingerprint: String,
+    /// The name its players declared.
+    pub name: String,
+    /// Players ranked with it this season.
+    pub players: u32,
+    /// Ranked appearances this season.
+    pub games: u32,
+}
+
+/// One player's line in a season reset: the rating and record it ends
+/// the season with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Standing {
+    pub account: u64,
+    pub rating: i32,
+    pub wins: u32,
+    pub losses: u32,
+}
+
+/// What a season reset decides ([`season_reset`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SeasonReset {
+    /// Final standings of the players who played the season (a win or a
+    /// loss), best first: (account, final rating, wins, losses, 1-based
+    /// position).
+    pub results: Vec<(u64, i32, u32, u32, u32)>,
+    /// New rating of every account (records restart at 0-0).
+    pub ratings: Vec<(u64, i32)>,
+}
+
+/// Rating a season reset pulls everyone toward (the start rating).
+pub const SEASON_PIVOT: i32 = 1200;
+
+/// A rating after the soft reset: halfway to [`SEASON_PIVOT`] (integer
+/// division, rounded toward the pivot).
+pub fn soft_reset(rating: i32) -> i32 {
+    let d = rating - SEASON_PIVOT;
+    SEASON_PIVOT + d / 2
+}
+
+/// The end of a season, as a pure function of the standings: the final
+/// positions of the players who played (rating, then the older account
+/// first, like the leaderboard) and everyone's new rating.
+pub fn season_reset(players: &[Standing]) -> SeasonReset {
+    let mut played: Vec<&Standing> = players.iter().filter(|p| p.wins + p.losses > 0).collect();
+    played.sort_by_key(|p| (std::cmp::Reverse(p.rating), p.account));
+    SeasonReset {
+        results: played
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.account, p.rating, p.wins, p.losses, i as u32 + 1))
+            .collect(),
+        ratings: players
+            .iter()
+            .map(|p| (p.account, soft_reset(p.rating)))
+            .collect(),
+    }
+}
+
+/// Which season `now` falls in when season 1 started at `first_start` and
+/// each lasts `len` seconds: (number, its start). Times before the first
+/// start are season 1.
+pub fn season_at(first_start: u64, len: u64, now: u64) -> (u32, u64) {
+    let len = len.max(1);
+    let n = now.saturating_sub(first_start) / len;
+    (n as u32 + 1, first_start + n * len)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -668,6 +898,111 @@ mod tests {
             serde_json::from_str(r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":"h:1"}"#)
                 .unwrap();
         assert!(old.transports.is_empty() && old.turn().is_none());
+    }
+
+    #[test]
+    fn season_reset_pulls_toward_1200_and_ranks_who_played() {
+        assert_eq!(soft_reset(1600), 1400);
+        assert_eq!(soft_reset(1200), 1200);
+        assert_eq!(soft_reset(1000), 1100);
+        assert_eq!(soft_reset(1201), 1200);
+        assert_eq!(soft_reset(1199), 1200);
+        assert_eq!(soft_reset(1803), 1501);
+        // the reset never crosses the pivot and never moves it
+        for r in 0..3000 {
+            let n = soft_reset(r);
+            assert!((n - 1200).abs() <= (r - 1200).abs());
+            assert!((n - 1200).signum() * (r - 1200).signum() >= 0);
+        }
+        let st = |account, rating, wins, losses| Standing {
+            account,
+            rating,
+            wins,
+            losses,
+        };
+        let r = season_reset(&[
+            st(7, 1500, 3, 1),
+            st(3, 1700, 9, 2),
+            st(9, 1250, 0, 0),
+            st(5, 1500, 1, 4),
+        ]);
+        // best first; a tie goes to the older (lower) account
+        assert_eq!(
+            r.results,
+            vec![(3, 1700, 9, 2, 1), (5, 1500, 1, 4, 2), (7, 1500, 3, 1, 3)]
+        );
+        assert_eq!(r.ratings, vec![(7, 1350), (3, 1450), (9, 1225), (5, 1350)]);
+        assert_eq!(season_reset(&[]), SeasonReset::default());
+        let b = SeasonBadge::new(2, 1450, 4);
+        assert_eq!(b.tier, "GOLD");
+    }
+
+    #[test]
+    fn seasons_follow_the_clock() {
+        let day = 86_400;
+        assert_eq!(season_at(1000, 90 * day, 1000), (1, 1000));
+        assert_eq!(season_at(1000, 90 * day, 500), (1, 1000));
+        assert_eq!(season_at(1000, 90 * day, 1000 + 90 * day - 1), (1, 1000));
+        assert_eq!(
+            season_at(1000, 90 * day, 1000 + 90 * day),
+            (2, 1000 + 90 * day)
+        );
+        assert_eq!(season_at(0, 10, 35), (4, 30));
+        let s = Season {
+            number: 3,
+            name: "SEASON 3".into(),
+            ends_at: 100 * day,
+            started_at: 0,
+            secs_left: 0,
+        };
+        assert_eq!(s.ends_line(88 * day), "ENDS IN 12 DAYS");
+        assert_eq!(s.ends_line(100 * day - 5 * 3600), "ENDS IN 5 HOURS");
+        assert_eq!(s.ends_line(100 * day), "ENDED");
+        let told = Season {
+            secs_left: 3 * day,
+            ..s.clone()
+        };
+        assert_eq!(
+            told.ends_line(0),
+            "ENDS IN 3 DAYS",
+            "the server's count wins"
+        );
+        // an older server's season and board still decode
+        let old: Leaderboard = serde_json::from_str(
+            r#"{"season":{"number":1,"name":"SEASON 1","ends_at":5},"rows":[],"me":null}"#,
+        )
+        .unwrap();
+        assert!(old.past.is_empty() && !old.finished && old.season.started_at == 0);
+        assert!(old.fighter.is_none() && old.fighters.is_empty());
+        let p: ProfileInfo = serde_json::from_str(
+            r#"{"id":1,"name":"x","avatar":0,"rating":1200,"best_rating":1200,"wins":0,"losses":0,"rank":"SILVER"}"#,
+        )
+        .unwrap();
+        assert!(p.last_season.is_none());
+        assert!(!serde_json::to_string(&p).unwrap().contains("last_season"));
+    }
+
+    #[test]
+    fn tournaments_are_additive_in_rooms() {
+        // an older server's room and lobby entry: no tournament
+        let r: RoomSummary = serde_json::from_str(
+            r#"{"code":"A","name":"n","host":"h","rules":{},"players":1,"spectators":0,"max_spectators":2,"locked":false,"in_match":false}"#,
+        )
+        .unwrap();
+        assert!(r.tournament.is_none());
+        assert!(!serde_json::to_string(&r).unwrap().contains("tournament"));
+        let t = TournamentView {
+            size: 8,
+            state: "running".into(),
+            live: Some([1, 0]),
+            ..Default::default()
+        };
+        let back: TournamentView =
+            serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back, t);
+        assert_eq!(TournamentView::round_name(3, 0), "QUARTER-FINALS");
+        assert_eq!(TournamentView::round_name(3, 2), "FINAL");
+        assert_eq!(TournamentView::round_name(4, 0), "ROUND OF 16");
     }
 
     #[test]

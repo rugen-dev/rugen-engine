@@ -9,9 +9,9 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
+# the match header inside binary stream chunks
+serde_json = "1"
 
 [lints]
 workspace = true
 
-[dev-dependencies]
-serde_json = "1"

@@ -8,10 +8,11 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 pub use rugen_proto::{
-    AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo,
-    MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay,
-    ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, Session,
-    SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode, ping_bars, rank_name,
+    AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, FighterEntry, Leaderboard,
+    MatchInfo, MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered,
+    Replay, ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, SeasonBadge, ServerInfo,
+    ServerMsg, Session, SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode,
+    ping_bars, rank_name,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -270,6 +271,9 @@ impl OnlineClient {
         if !opts.password.is_empty() {
             b["password"] = json!(opts.password);
         }
+        if opts.tournament > 0 {
+            b["tournament"] = json!(opts.tournament);
+        }
         Self::decode(self.call("POST", "/room", Some(b))?)
     }
 
@@ -281,13 +285,27 @@ impl OnlineClient {
         password: &str,
         spectate: bool,
     ) -> OnlineResult<RoomInfo> {
-        let mut b = self.with_key(json!({ "char": char_id, "spectate": spectate }))?;
+        // `tournament`: this client can take part in a bracket (servers
+        // refuse tournament rooms to clients that do not say so)
+        let mut b =
+            self.with_key(json!({ "char": char_id, "spectate": spectate, "tournament": true }))?;
         if !password.is_empty() {
             b["password"] = json!(password);
         }
         Self::decode(self.call(
             "POST",
             &format!("/room/{}/join", code.trim().to_ascii_uppercase()),
+            Some(b),
+        )?)
+    }
+
+    /// Host of a tournament room: draw the bracket with the entrants so far
+    /// (at least two) and start calling matches.
+    pub fn start_tournament(&self, code: &str) -> OnlineResult<RoomInfo> {
+        let b = self.with_key(json!({}))?;
+        Self::decode(self.call(
+            "POST",
+            &format!("/room/{}/start", code.trim().to_ascii_uppercase()),
             Some(b),
         )?)
     }
@@ -384,6 +402,9 @@ impl OnlineClient {
         }
         if let Some(e) = evidence.ending {
             b["ending"] = json!(e.as_str());
+        }
+        if let Some(r) = evidence.rounds {
+            b["rounds"] = json!(r);
         }
         Self::decode(self.call("POST", "/result", Some(b))?)
     }
@@ -591,6 +612,69 @@ impl OnlineClient {
         Ok(())
     }
 
+    /// A binary GET (stream chunks); JSON errors become [`OnlineError::Server`].
+    fn get_bytes(&self, path: &str) -> OnlineResult<Vec<u8>> {
+        let url = format!("{}{path}", self.base()?);
+        let mut resp = self
+            .agent()
+            .get(&url)
+            .header(API_HEADER, API)
+            .call()
+            .map_err(|e| OnlineError::Http(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let bytes = resp
+            .body_mut()
+            .with_config()
+            .limit(4 << 20)
+            .read_to_vec()
+            .map_err(|e| OnlineError::Http(e.to_string()))?;
+        if status != 200 {
+            let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("http {status}"));
+            return Err(OnlineError::Server(msg));
+        }
+        Ok(bytes)
+    }
+
+    /// Public live matches (`GET /v1/live`); empty from older servers.
+    pub fn live_matches(&self) -> OnlineResult<Vec<rugen_proto::stream::LiveMatch>> {
+        match self.call("GET", "/v1/live", None) {
+            Ok(v) => Self::decode(v),
+            Err(OnlineError::Server(_)) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A live (or just finished) match's stream from frame `from` (the
+    /// header comes with frame 0).
+    pub fn live_chunk(&self, match_id: u64, from: u32) -> OnlineResult<rugen_proto::stream::Chunk> {
+        let k = self.key()?;
+        let b = self.get_bytes(&format!("/v1/live/{match_id}?key={k}&from={from}"))?;
+        rugen_proto::stream::decode_chunk(&b)
+            .ok_or_else(|| OnlineError::Decode("bad stream chunk".into()))
+    }
+
+    /// Share a finished match we played: its short code (kept 30 days on
+    /// the official server; the same code if it was shared already).
+    pub fn share_replay(&self, match_id: u64) -> OnlineResult<rugen_proto::stream::SharedReplay> {
+        let b = self.with_key(json!({ "match_id": match_id }))?;
+        Self::decode(self.call("POST", "/v1/replays", Some(b))?)
+    }
+
+    /// A shared replay by code (any spelling: `r7kq-dx4m`): its header and
+    /// every frame. No account needed.
+    pub fn shared_replay(&self, code: &str) -> OnlineResult<rugen_proto::stream::Chunk> {
+        let code = rugen_proto::stream::replay_code::normalize(code)
+            .ok_or_else(|| OnlineError::Server("not a replay code".into()))?;
+        let b = self.get_bytes(&format!("/v1/replays/{code}"))?;
+        rugen_proto::stream::decode_chunk(&b)
+            .ok_or_else(|| OnlineError::Decode("bad replay".into()))
+    }
+
     /// Tell the server this match desynchronised (it will not resolve by agreement).
     pub fn report_desync(&self, match_id: u64, frame: u32) -> OnlineResult<()> {
         let b = self.with_key(json!({ "frame": frame }))?;
@@ -607,9 +691,45 @@ impl OnlineClient {
     }
 
     pub fn leaderboard(&self) -> OnlineResult<Leaderboard> {
-        let path = match &self.key {
-            Some(k) => format!("/leaderboard?key={k}"),
-            None => "/leaderboard".into(),
+        self.leaderboard_of(None)
+    }
+
+    /// The board of a finished season (`Some(n)`, its final standings) or
+    /// the live one (`None`). Older servers ignore `season` and answer the
+    /// live board (`finished` false).
+    pub fn leaderboard_of(&self, season: Option<u32>) -> OnlineResult<Leaderboard> {
+        self.board_query(season, None)
+    }
+
+    /// A per-fighter board of `season` (`None`: the running one): of
+    /// `fighter` (a fingerprint), or of the most played fighter when
+    /// `None`; the answer lists the fighters with a board. Older servers
+    /// answer the players' board (no `fighters`).
+    pub fn fighter_board(
+        &self,
+        season: Option<u32>,
+        fighter: Option<&str>,
+    ) -> OnlineResult<Leaderboard> {
+        self.board_query(season, Some(fighter.unwrap_or("")))
+    }
+
+    fn board_query(&self, season: Option<u32>, fighter: Option<&str>) -> OnlineResult<Leaderboard> {
+        let mut q: Vec<String> = Vec::new();
+        match fighter {
+            Some("") => q.push("fighters=1".into()),
+            Some(fp) => q.push(format!("fighter={fp}")),
+            None => {}
+        }
+        if let Some(k) = &self.key {
+            q.push(format!("key={k}"));
+        }
+        if let Some(n) = season {
+            q.push(format!("season={n}"));
+        }
+        let path = if q.is_empty() {
+            "/leaderboard".to_string()
+        } else {
+            format!("/leaderboard?{}", q.join("&"))
         };
         Self::decode(self.call("GET", &path, None)?)
     }
@@ -736,6 +856,8 @@ pub struct RoomOptions {
     pub password: String,
     pub rules: Rules,
     pub max_spectators: u8,
+    /// A tournament room: bracket size 8 or 16 (0 = a 1 v 1 room).
+    pub tournament: u8,
 }
 
 /// What a result report carries for verification.
@@ -753,6 +875,8 @@ pub struct Evidence {
     pub turn_bytes: Option<(u64, u64)>,
     /// The match ended early: our forfeit or the other player's exit.
     pub ending: Option<rugen_proto::Ending>,
+    /// Rounds won by P1 and P2 (tournament brackets show the score).
+    pub rounds: Option<[u8; 2]>,
 }
 
 /// A call running on a worker thread; poll with [`Pending::take`].

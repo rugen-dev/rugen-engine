@@ -244,6 +244,8 @@ pub struct Netplay {
     /// The other player's address in the ggrs session: only its
     /// disconnect ends the match (a spectator leaving never does).
     remote: Option<SocketAddr>,
+    /// Confirmed inputs for the server's input log (relay sessions).
+    uplink: Option<std::sync::Arc<relay::Uplink>>,
 }
 
 impl Netplay {
@@ -307,7 +309,9 @@ impl Netplay {
         let meter = socket.turn_meter();
         let link = socket.link();
         let exit = socket.exit();
+        let uplink = socket.uplink();
         let mut n = Self::start(socket, &players, local_handle, opts)?;
+        n.uplink = uplink.enabled.then_some(uplink);
         n.remote = Some(slot_addr(1 - local_handle as u8));
         n.turn_meter = meter;
         n.link = Some(link);
@@ -347,6 +351,7 @@ impl Netplay {
             exit: None,
             peer_lost: false,
             remote: None,
+            uplink: None,
         }
     }
 
@@ -682,6 +687,13 @@ impl Netplay {
                 }
             }
             self.mispredict.confirmed(s.confirmed_frame());
+            // the server's input log: every frame both players confirmed
+            if let Some(u) = &self.uplink
+                && self.log_start == Some(0)
+            {
+                let n = (s.confirmed_frame() + 1).clamp(0, self.log.len() as i32) as usize;
+                u.confirm(&self.log[..n]);
+            }
             self.stats.predicted = self.mispredict.predicted;
             self.stats.mispredicted = self.mispredict.wrong;
             self.stats.frames_ahead = s.frames_ahead();

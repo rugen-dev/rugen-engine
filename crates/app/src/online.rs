@@ -100,6 +100,59 @@ pub struct LastResult {
 
 static LAST_RESULT: Mutex<Option<LastResult>> = Mutex::new(None);
 
+/// The last online match we played, for REPLAYS (share it, save it);
+/// kept in `cache/last_online_match.json` so it survives a restart.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Played {
+    pub server: String,
+    pub match_id: u64,
+    /// "NARUTO VS SASUKE · 2-1"
+    pub title: String,
+    /// "RANKED · 1:42 · 13 OCT"
+    pub line: String,
+    /// What a local replay file needs (the fighters are on this machine).
+    pub p1: PathBuf,
+    pub p2: PathBuf,
+    pub stage: Option<PathBuf>,
+    pub seed: u64,
+    pub rules: Rules,
+    pub inputs: Vec<[u16; 2]>,
+}
+
+static LAST_PLAYED: Mutex<Option<Played>> = Mutex::new(None);
+
+fn played_path(root: &Path) -> PathBuf {
+    root.join("cache").join("last_online_match.json")
+}
+
+/// An online match we played is over: REPLAYS can share it.
+pub fn note_played(root: &Path, p: Played) {
+    if let Ok(text) = serde_json::to_vec(&p) {
+        let path = played_path(root);
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(path, text);
+    }
+    if let Ok(mut l) = LAST_PLAYED.lock() {
+        *l = Some(p);
+    }
+}
+
+/// The last match we played (this session, else the one kept on disk).
+fn last_played(root: &Path) -> Option<Played> {
+    let mut l = LAST_PLAYED.lock().ok()?;
+    if l.is_none() {
+        *l = std::fs::read(played_path(root))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
+    }
+    l.clone()
+}
+
+/// `RESUME` room value that reopens REPLAYS after watching a shared replay.
+const RESUME_REPLAYS: &str = "#replays";
+
 /// Match ids already played from this machine (a stale room view never restarts one).
 static STARTED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
@@ -161,6 +214,10 @@ enum State {
     Direct,
     /// Bring-your-own-character matchup before a match.
     Matchup,
+    /// Opening a match to watch: its stream and its files.
+    Watch,
+    /// REPLAYS: share the last match by code, watch one by code.
+    Replays,
     /// PROFILE: the account on every server (list) and the selected
     /// server's account or form (panel).
     Profile,
@@ -336,7 +393,12 @@ enum Job {
     /// Our last result again (signed once the opponent reported).
     Result(Pending<ResultAck>),
     Me(Pending<ProfileInfo>),
-    Rooms(Pending<Vec<RoomSummary>>),
+    /// The lobby: public rooms and the live matches outside rooms.
+    Rooms(Pending<(Vec<RoomSummary>, Vec<rugen_proto::stream::LiveMatch>)>),
+    /// Sharing the last match (REPLAYS).
+    Share(Pending<rugen_proto::stream::SharedReplay>),
+    /// A shared replay by code.
+    Fetch(String, Pending<rugen_proto::stream::Chunk>),
     Room(Pending<RoomInfo>),
     Queue(Pending<QueueStatus>),
     Board(Pending<Leaderboard>),
@@ -385,6 +447,16 @@ fn room_error(room: &RoomSummary) -> Option<String> {
     }
 }
 
+/// A match being opened for watching.
+struct Watching {
+    match_id: u64,
+    feed: crate::watch::Feed,
+    prep: Option<crate::watch::Prep>,
+    /// The room it is played in (the screen comes back there).
+    room: Option<String>,
+    error: Option<String>,
+}
+
 /// One row of the server list.
 #[derive(Clone, Debug, Default)]
 struct ServerRow {
@@ -407,6 +479,8 @@ struct Form {
     public: bool,
     rules: Rules,
     spectators: u8,
+    /// A tournament room: bracket size 8 or 16 (0 = 1 v 1).
+    tournament: u8,
 }
 
 impl Default for Form {
@@ -417,6 +491,7 @@ impl Default for Form {
             public: true,
             rules: Rules::default(),
             spectators: 2,
+            tournament: 0,
         }
     }
 }
@@ -441,6 +516,16 @@ pub struct OnlineScreen {
     servers: Vec<ServerRow>,
     me: Option<ProfileInfo>,
     rooms: Vec<RoomSummary>,
+    /// Live matches outside rooms (quick match, ranked), for WATCH.
+    lives: Vec<rugen_proto::stream::LiveMatch>,
+    /// Watching a match from the server's input log: fetching it, then the fight.
+    watch: Option<Watching>,
+    /// REPLAYS: the code typed under BY CODE.
+    rp_typed: String,
+    /// REPLAYS: the code the last match was shared under.
+    rp_shared: Option<rugen_proto::stream::SharedReplay>,
+    /// REPLAYS: the last thing that happened (saved, copied, an error).
+    rp_note: String,
     room: Option<RoomInfo>,
     /// Ticket already used for a fight (so a stale poll does not restart it).
     used_ticket: Option<u32>,
@@ -450,6 +535,16 @@ pub struct OnlineScreen {
     queue: Option<QueueStatus>,
     ranked: bool,
     board: Option<Leaderboard>,
+    /// LEADERBOARD: the finished season on display (`None`: the live one).
+    board_season: Option<u32>,
+    /// Seasons the board can step through: the live one, then the
+    /// finished ones newest first (from the last board).
+    board_seasons: Vec<u32>,
+    /// LEADERBOARD on its FIGHTERS tab (per-fighter boards).
+    board_fighters: bool,
+    /// The fighter (fingerprint) whose board is shown (`None`: the most
+    /// played one).
+    board_fighter: Option<String>,
     jobs: Vec<Job>,
     tick: u32,
     /// Set when a match is about to start; the shell takes it.
@@ -527,6 +622,37 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
         return (profile.online_id, profile.online_key.clone());
     }
     (0, String::new())
+}
+
+/// Unix time now (seconds).
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// "TODAY", "YESTERDAY", "11 OCT" (UTC).
+fn when_text(at: u64, now: u64) -> String {
+    let day = |t: u64| t / 86_400;
+    match day(now).saturating_sub(day(at)) {
+        0 => "TODAY".into(),
+        1 => "YESTERDAY".into(),
+        _ => {
+            // civil date from days since 1970 (Howard Hinnant's algorithm)
+            let z = day(at) as i64 + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            const MONTHS: [&str; 12] = [
+                "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+            ];
+            format!("{d} {}", MONTHS[(m - 1) as usize])
+        }
+    }
 }
 
 fn ping_text(ms: Option<u32>) -> String {
@@ -684,6 +810,11 @@ impl OnlineScreen {
                 .collect(),
             me: None,
             rooms: Vec::new(),
+            lives: Vec::new(),
+            watch: None,
+            rp_typed: String::new(),
+            rp_shared: None,
+            rp_note: String::new(),
             room: None,
             used_ticket: None,
             typed: String::new(),
@@ -692,6 +823,10 @@ impl OnlineScreen {
             queue: None,
             ranked: true,
             board: None,
+            board_season: None,
+            board_seasons: Vec::new(),
+            board_fighters: false,
+            board_fighter: None,
             jobs: Vec::new(),
             tick: 0,
             started: None,
@@ -739,7 +874,9 @@ impl OnlineScreen {
         // back from a match: straight into the same server (and room)
         if let Some((server, room)) = RESUME.lock().ok().and_then(|mut r| r.take()) {
             s.connect(&server);
-            if let Some(code) = room {
+            if room.as_deref() == Some(RESUME_REPLAYS) {
+                s.pending_action = Some("replays".into());
+            } else if let Some(code) = room {
                 s.state = State::Room;
                 s.status = format!("ROOM {code}");
                 let c = s.client.clone();
@@ -1266,6 +1403,284 @@ impl OnlineScreen {
         });
         self.state = State::Matchup;
         self.status = format!("ROOM {} - FETCHING THE FIGHTERS", r.code);
+    }
+
+    /// Watch live match `id` from the server's input log (any moment of the
+    /// match: the backlog comes first, then the fight catches up).
+    fn start_live_watch(&mut self, id: u64, room: Option<String>) {
+        log::info!("online: watching match {id}");
+        self.watch = Some(Watching {
+            match_id: id,
+            feed: crate::watch::Feed::follow(self.client.clone(), id),
+            prep: None,
+            room,
+            error: None,
+        });
+        self.state = State::Watch;
+        self.status = "CONNECTING TO THE MATCH...".into();
+    }
+
+    /// The watched match: its files once the header arrived, the fight
+    /// once they are here.
+    fn poll_watch(&mut self) {
+        let Some(w) = self.watch.as_mut() else { return };
+        if w.error.is_some() {
+            return;
+        }
+        if let Some(e) = w.feed.error() {
+            w.error = Some(format!("THE MATCH STREAM STOPPED: {}", e.to_uppercase()));
+            return;
+        }
+        let Some(h) = w.feed.header() else { return };
+        // another game version may simulate the match differently
+        let mine = crate::matchup::engine();
+        if !h.engine.is_empty() && h.engine != mine {
+            w.error = Some(format!(
+                "THIS MATCH IS PLAYED WITH {}, YOU RUN {}: BOTH NEED THE SAME VERSION TO WATCH.",
+                h.engine.to_uppercase(),
+                mine.to_uppercase()
+            ));
+            return;
+        }
+        let prep = w
+            .prep
+            .get_or_insert_with(|| {
+                crate::watch::Prep::start(self.client.clone(), self.lib.clone(), h.clone())
+            })
+            .snapshot();
+        if let Some(e) = prep.error {
+            w.error = Some(e.to_uppercase());
+            return;
+        }
+        let Some([p1, p2, stage]) = prep.defs else {
+            return;
+        };
+        let feed = w.feed.clone();
+        let (id, room) = (w.match_id, w.room.clone());
+        self.watch = None;
+        if let Ok(mut r) = RESUME.lock() {
+            *r = Some((self.client.server.clone(), room));
+        }
+        self.started = Some(OnlineMatch {
+            server: self.client.server.clone(),
+            match_id: id,
+            players: [h.players[0].id, h.players[1].id],
+            my_side: 0,
+            ranked: h.ranked,
+            spectator: true,
+            rules: h.rules.clone(),
+        });
+        self.pending_fight = Some(FightSetup {
+            p1,
+            p2,
+            stage: Some(stage),
+            ai: [0, 0],
+            net: Some(NetMode::Stream(feed)),
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(h.seed),
+        });
+        self.state = State::Lobby;
+    }
+
+    fn watch_json(&self) -> Value {
+        let Some(w) = self.watch.as_ref() else {
+            return json!({});
+        };
+        let h = w.feed.header();
+        let prep = w.prep.as_ref().map(|p| p.snapshot()).unwrap_or_default();
+        let (have, _) = w.feed.status();
+        let rows: Vec<Value> = prep
+            .progress
+            .iter()
+            .map(|(label, f)| {
+                json!({
+                    "label": fit(label, 18),
+                    "pct": format!("{}%", (f * 100.0) as u32),
+                    "w": (f * 360.0).max(4.0),
+                    "done": *f >= 1.0,
+                })
+            })
+            .collect();
+        let line = match (&w.error, &h) {
+            (Some(e), _) => e.clone(),
+            (None, None) => "CONNECTING TO THE MATCH...".into(),
+            (None, Some(_)) if prep.progress.iter().any(|p| p.1 < 1.0) => {
+                "MISSING FIGHTERS DOWNLOAD BEFORE IT PLAYS".into()
+            }
+            (None, Some(_)) => "STARTING...".into(),
+        };
+        json!({
+            "title": h.as_ref().map_or("LIVE MATCH".into(), |h| h.title()),
+            "players": h.as_ref().map_or(String::new(), |h| format!(
+                "{} VS {}",
+                h.players[0].name.to_uppercase(),
+                h.players[1].name.to_uppercase()
+            )),
+            "frames": format!("{} S PLAYED", have / 60),
+            "line": line,
+            "error": w.error.is_some(),
+            "ok": w.error.is_none(),
+            "rows": rows,
+        })
+    }
+
+    /// Download shared replay `code`, then watch it like a live match.
+    fn fetch_replay(&mut self, code: &str) {
+        let Some(code) = rugen_proto::stream::replay_code::normalize(code) else {
+            self.rp_note = "TYPE THE 8 CHARACTERS OF THE CODE.".into();
+            return;
+        };
+        let c = self.client.clone();
+        let k = code.clone();
+        self.rp_note = "FETCHING THE REPLAY...".into();
+        self.jobs.push(Job::Fetch(
+            code,
+            Pending::spawn(move || c.shared_replay(&k)),
+        ));
+    }
+
+    /// A shared replay arrived: its files, then the fight.
+    fn start_replay(&mut self, code: &str, c: rugen_proto::stream::Chunk) {
+        let Some(h) = c.header.clone() else {
+            self.rp_note = "THIS REPLAY HAS NO HEADER.".into();
+            return;
+        };
+        self.profile.note_replay(crate::uiscreen::RecentReplay {
+            server: self.client.server.clone(),
+            code: code.to_string(),
+            title: h.title(),
+            at: now_secs(),
+        });
+        self.profile.save(&self.root);
+        log::info!("online: replay {code} ({} frames)", c.inputs.len());
+        self.watch = Some(Watching {
+            match_id: h.match_id,
+            feed: crate::watch::Feed::complete(h, c.inputs),
+            prep: None,
+            room: Some(RESUME_REPLAYS.into()),
+            error: None,
+        });
+        self.state = State::Watch;
+    }
+
+    /// SAVE FILE: the last match as a local replay (`replays/<code>.json`).
+    fn save_last_replay(&mut self) {
+        let Some(p) = last_played(&self.root) else {
+            self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into();
+            return;
+        };
+        // arena rooms move fighters with rules a local replay file cannot hold
+        if p.rules.mode == "arena" {
+            self.rp_note = "ARENA MATCHES CAN ONLY BE SHARED BY CODE.".into();
+            return;
+        }
+        let setup = FightSetup {
+            p1: p.p1.clone(),
+            p2: p.p2.clone(),
+            stage: p.stage.clone(),
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(p.seed),
+        };
+        let mut r = crate::replay::Replay::new(
+            &setup,
+            room_size(&p.rules),
+            false,
+            if p.rules.round_time == 0 {
+                -1
+            } else {
+                i32::from(p.rules.round_time)
+            },
+            p.seed,
+        );
+        r.ai = [0, 0];
+        r.run = Some(crate::play::RunRules {
+            match_wins: p.rules.rounds.clamp(1, 9),
+            p1_life: None,
+        });
+        r.inputs = p.inputs.clone();
+        let name = self
+            .rp_shared
+            .as_ref()
+            .map_or_else(|| format!("online-{}", p.match_id), |s| s.code.clone());
+        let path = self.root.join("replays").join(format!("{name}.json"));
+        self.rp_note = match r.save(&path) {
+            Ok(()) => format!("SAVED: REPLAYS/{}.JSON", name.to_uppercase()),
+            Err(e) => format!("NOT SAVED: {}", e.to_string().to_uppercase()),
+        };
+    }
+
+    fn replays_json(&self) -> Value {
+        let played = last_played(&self.root)
+            .filter(|p| official::same_server(&p.server, &self.client.server));
+        let shared = self
+            .rp_shared
+            .as_ref()
+            .filter(|r| played.as_ref().is_some_and(|p| p.match_id == r.match_id));
+        let code_cells = |code: &str, active: Option<usize>| -> Vec<Value> {
+            let chars: Vec<char> = code.chars().collect();
+            let mut v = Vec::new();
+            for i in 0..rugen_proto::stream::replay_code::LEN {
+                if i == 4 {
+                    v.push(json!({ "dash": true, "cell": false }));
+                }
+                let c = chars.get(i).map(|c| c.to_string()).unwrap_or_default();
+                v.push(json!({
+                    "dash": false, "cell": true, "c": c,
+                    "active": active == Some(i), "idle": active != Some(i),
+                }));
+            }
+            v
+        };
+        let typing = self.ui.text_focused() && self.ui.focused() == Some("rp_code");
+        let recent: Vec<Value> = self
+            .profile
+            .recent_replays
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| official::same_server(&r.server, &self.client.server))
+            .take(4)
+            .map(|(i, r)| {
+                json!({
+                    "title": fit(&r.title, 22),
+                    "when": when_text(r.at, now_secs()),
+                    "action": format!("rp:recent:{i}"),
+                })
+            })
+            .collect();
+        json!({
+            "has_last": played.is_some(),
+            "no_last": played.is_none(),
+            "title": played.as_ref().map_or(String::new(), |p| fit(&p.title, 30)),
+            "line": played.as_ref().map_or(String::new(), |p| p.line.clone()),
+            "shared": shared.is_some(),
+            "unshared": played.is_some() && shared.is_none(),
+            "code": code_cells(&shared.map_or(String::new(), |r| r.code.clone()), None),
+            "share_label": if shared.is_some() { "COPY CODE" } else { "SHARE" },
+            "can_save": played.as_ref().is_some_and(|p| p.rules.mode != "arena"),
+            "typed": code_cells(&self.rp_typed, typing.then_some(self.rp_typed.len())),
+            "recent": recent,
+            "has_recent": !recent.is_empty(),
+            "no_recent": recent.is_empty(),
+            "note": self.rp_note.clone(),
+            "keep": format!("ONLY THE INPUTS ARE UPLOADED (A FEW KB). KEPT {} DAYS ON THE SERVER.", 30),
+            "copy": self.clipboard,
+        })
     }
 
     /// The shell's fighter pick (select screen in online mode) came back.
@@ -1871,6 +2286,18 @@ impl OnlineScreen {
     /// QUICK MATCH / RANKED / ROOMS / LEADERBOARD on the connected server.
     fn run_action(&mut self, a: &str) {
         match a {
+            "replays" => {
+                self.state = State::Replays;
+                self.rp_note.clear();
+                // the last match we played on this server
+                let mine = last_played(&self.root)
+                    .filter(|p| official::same_server(&p.server, &self.client.server));
+                if self.rp_shared.as_ref().map(|r| r.match_id) != mine.map(|p| p.match_id) {
+                    self.rp_shared = None;
+                }
+                self.ui.set_input("rp_code", &self.rp_typed);
+                self.pending_focus_key = Some("rp_code".into());
+            }
             "quick" => self.enter_queue(false),
             "ranked" => {
                 // rankings belong to named accounts (servers that have them)
@@ -1896,15 +2323,17 @@ impl OnlineScreen {
                 // a fresh list (the first one focuses its top room)
                 self.rooms.clear();
                 let c = self.client.clone();
-                self.jobs
-                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
+                self.jobs.push(Job::Rooms(Pending::spawn(move || {
+                    Ok((c.rooms()?, c.live_matches().unwrap_or_default()))
+                })));
             }
             "board" => {
-                let c = self.client.clone();
-                self.board = None;
+                self.board_season = None;
+                self.board_seasons.clear();
+                self.board_fighters = false;
+                self.board_fighter = None;
                 self.state = State::Board;
-                self.jobs
-                    .push(Job::Board(Pending::spawn(move || c.leaderboard())));
+                self.fetch_board();
             }
             _ => log::warn!("online: unknown hub action {a:?}"),
         }
@@ -2169,10 +2598,33 @@ impl OnlineScreen {
                 push(esc, "BACK");
             }
             State::Lobby => {
-                push(enter, "JOIN");
+                // a full room playing a streamed match, or a live match row: ENTER watches
+                let row = self
+                    .ui
+                    .focused()
+                    .and_then(|f| f.strip_prefix("lobby_list["))
+                    .and_then(|f| f.split(']').next())
+                    .and_then(|i| i.parse::<usize>().ok());
+                let watches = row.is_some_and(|i| match self.rooms.get(i) {
+                    Some(r) => r.live_match > 0 && r.players >= 2,
+                    None => i - self.rooms.len() < self.lives.len(),
+                });
+                push(enter, if watches { "WATCH" } else { "JOIN" });
                 push(key("watch"), "WATCH");
                 push(key("create"), "CREATE");
                 push(esc, "BACK");
+            }
+            State::Room if self.in_bracket() => {
+                let bk = self.bracket_json();
+                if bk["can_start"].as_bool() == Some(true) {
+                    push(enter, "START");
+                } else if bk["live"].as_bool() == Some(true) {
+                    push(enter, "WATCH");
+                }
+                if self.clipboard {
+                    push(key("copy"), "COPY CODE");
+                }
+                push(esc, "LEAVE");
             }
             State::Room => {
                 let r = self.room.as_ref();
@@ -2215,7 +2667,21 @@ impl OnlineScreen {
                 }
                 push(esc, "BACK");
             }
-            State::Board => push(esc, "BACK"),
+            State::Board => {
+                push(
+                    Some("TAB".into()),
+                    if self.board_fighters {
+                        "PLAYERS"
+                    } else {
+                        "FIGHTERS"
+                    },
+                );
+                if self.board_seasons.len() > 1 {
+                    push(Some("@left".into()), "");
+                    push(Some("@right".into()), "SEASON");
+                }
+                push(esc, "BACK");
+            }
             State::Queue => push(esc, "CANCEL"),
             State::Direct => {
                 push(Some("@left".into()), "");
@@ -2224,6 +2690,14 @@ impl OnlineScreen {
                 push(esc, "BACK");
             }
             State::Matchup => {}
+            State::Watch => push(esc, "BACK"),
+            State::Replays => {
+                push(enter, "WATCH");
+                if self.clipboard {
+                    push(Some("CTRL V".into()), "PASTE");
+                }
+                push(esc, "BACK");
+            }
         }
         if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) {
             push(key("retry"), "RETRY");
@@ -2434,8 +2908,13 @@ impl OnlineScreen {
         };
         let rating = profile
             .map(|p| {
+                let badge = p
+                    .last_season
+                    .as_ref()
+                    .map(|s| format!(" · S{} {}", s.season, s.tier))
+                    .unwrap_or_default();
                 format!(
-                    "{} {} · BEST {} · {}W {}L",
+                    "{} {} · BEST {} · {}W {}L{badge}",
                     p.rank, p.rating, p.best_rating, p.wins, p.losses
                 )
             })
@@ -2574,10 +3053,35 @@ impl OnlineScreen {
                     "on": !off,
                     "full": full && !off,
                     "open": !full && !off,
-                    "can_watch": !off && r.spectators < r.max_spectators,
-                    "action": if off || full { format!("lobby:watch:{}", r.code) } else { format!("lobby:join:{}", r.code) },
+                    // a streamed match has no seat limit
+                    "can_watch": !off && (r.live_match > 0 || r.spectators < r.max_spectators),
+                    "action": if !off && r.live_match > 0 && full {
+                        format!("lobby:live:{}", r.live_match)
+                    } else if off || full {
+                        format!("lobby:watch:{}", r.code)
+                    } else {
+                        format!("lobby:join:{}", r.code)
+                    },
                 })
             })
+            .chain(self.lives.iter().map(|m| {
+                json!({
+                    "name": if m.ranked { "RANKED MATCH" } else { "QUICK MATCH" },
+                    "tag": "LIVE",
+                    "has_tag": true,
+                    "host": fit(&format!("{} VS {}", m.players[0].to_uppercase(), m.players[1].to_uppercase()), 22),
+                    "rules": fit(&format!("{} VS {}", m.fighters[0].to_uppercase(), m.fighters[1].to_uppercase()), 40),
+                    "seats": "2/2",
+                    "watching": m.viewers.to_string(),
+                    "live": true,
+                    "off": false,
+                    "on": true,
+                    "full": true,
+                    "open": false,
+                    "can_watch": true,
+                    "action": format!("lobby:live:{}", m.match_id),
+                })
+            }))
             .collect();
         let loading = self.jobs.iter().any(|j| matches!(j, Job::Rooms(_)));
         json!({
@@ -2585,6 +3089,189 @@ impl OnlineScreen {
             "empty": self.rooms.is_empty() && !loading,
             "loading": self.rooms.is_empty() && loading,
             "count": plural(self.rooms.len(), "PUBLIC ROOM", "PUBLIC ROOMS"),
+        })
+    }
+
+    /// The room's bracket (tournament rooms), laid out for the BRACKET
+    /// view: one box per match at its place (columns by round, each box
+    /// centred between the two it comes from), the champion box, the
+    /// entrants before the draw.
+    fn bracket_json(&self) -> Value {
+        let Some((r, t)) = self
+            .room
+            .as_ref()
+            .and_then(|r| r.tournament.as_ref().map(|t| (r, t)))
+        else {
+            return json!({});
+        };
+        let me = self.my_id();
+        let name_of = |id: Option<u64>| -> Option<(String, u8, bool)> {
+            let id = id?;
+            let e = t.entrants.iter().find(|e| e.id == id);
+            Some((
+                e.map_or("?".to_string(), |e| e.name.to_uppercase()),
+                e.map_or(0, |e| e.seed),
+                id == me,
+            ))
+        };
+        let n = t.rounds.len();
+        let cols = n + 1;
+        let (x0, y0, w_all, h_all) = (48.0f32, 140.0f32, 1184.0f32, 500.0f32);
+        let gap = 20.0;
+        let colw = (w_all - gap * (cols as f32 - 1.0)) / cols as f32;
+        let bw = colw.min(260.0) - 4.0;
+        let short = |round: usize| match n.saturating_sub(round) {
+            1 => "F",
+            2 => "SF",
+            3 => "QF",
+            _ => "R16-",
+        };
+        let max_chars = ((bw - 50.0) / 10.0) as usize;
+        let mut boxes = Vec::new();
+        for (ri, round) in t.rounds.iter().enumerate() {
+            let slot = h_all / round.len() as f32;
+            for (i, m) in round.iter().enumerate() {
+                let line = match m.state.as_str() {
+                    "live" => "LIVE · ENTER TO WATCH",
+                    "called" => "CALLED · PICKING",
+                    "next" => "NEXT",
+                    _ => "",
+                };
+                let has_line = !line.is_empty() && slot >= 84.0;
+                let bh = if has_line { 78.0 } else { 58.0 };
+                let side = |k: usize| -> Value {
+                    let id = if k == 0 { m.p1 } else { m.p2 };
+                    let done = m.winner.is_some();
+                    match name_of(id) {
+                        Some((name, seed, you)) => {
+                            let win = done && m.winner == id;
+                            let score = if m.state == "done" && m.score != [0, 0] {
+                                m.score[k].to_string()
+                            } else if win && m.state != "bye" {
+                                "W".into()
+                            } else if m.state == "bye" {
+                                String::new()
+                            } else if done {
+                                "-".into()
+                            } else {
+                                String::new()
+                            };
+                            let you = if you { " ·YOU" } else { "" };
+                            json!({
+                                "text": format!("{seed} {}{you}", fit(&name, max_chars.saturating_sub(you.len() + 2))),
+                                "score": score,
+                                "win": win,
+                                "plain": !win,
+                                "tbd": false,
+                                "named": true,
+                            })
+                        }
+                        None => {
+                            let text = if m.state == "bye" {
+                                "BYE".to_string()
+                            } else if ri == 0 {
+                                "-".to_string()
+                            } else {
+                                format!("WINNER {}{}", short(ri - 1), 2 * i + k + 1)
+                            };
+                            json!({ "text": text, "score": "", "win": false, "plain": false, "tbd": true, "named": false })
+                        }
+                    }
+                };
+                let x = x0 + ri as f32 * (colw + gap);
+                let y = y0 + slot * (i as f32 + 0.5) - bh / 2.0;
+                let live = matches!(m.state.as_str(), "live" | "called");
+                boxes.push(json!({
+                    "x": x, "y": y, "w": bw, "h": bh,
+                    // the live box: a thick red frame and a hard shadow
+                    "ox": x - 2.0, "oy": y - 2.0, "ow": bw + 4.0, "oh": bh + 4.0,
+                    "sx": x + 6.0, "sy": y + 6.0,
+                    "a": side(0), "b": side(1),
+                    "line": line, "has_line": has_line,
+                    "live": live, "calm": !live && m.state != "wait",
+                    "wait": m.state == "wait",
+                    "match_id": m.match_id,
+                    "action": "bk:watch",
+                }));
+            }
+        }
+        let champ = name_of(t.champion);
+        let cx = x0 + n as f32 * (colw + gap);
+        let heads: Vec<Value> = (0..cols)
+            .map(|c| {
+                let label = if c == n {
+                    "CHAMPION"
+                } else {
+                    rugen_proto::TournamentView::round_name(n, c)
+                };
+                json!({ "label": label, "x": x0 + c as f32 * (colw + gap), "w": bw })
+            })
+            .collect();
+        let live_name = t.live.map(|[ri, _]| match n.saturating_sub(ri as usize) {
+            1 => "FINAL",
+            2 => "SEMI-FINAL",
+            3 => "QUARTER-FINAL",
+            _ => "ROUND OF 16",
+        });
+        let live_state = t
+            .live
+            .and_then(|[ri, i]| t.rounds.get(ri as usize)?.get(i as usize))
+            .map(|m| m.state.clone());
+        let status = match (t.state.as_str(), live_name, live_state.as_deref()) {
+            ("open", ..) => format!("OPEN · {} / {} PLAYERS", t.entrants.len(), t.size),
+            ("done", ..) => format!(
+                "CHAMPION · {}",
+                champ.as_ref().map_or("?".into(), |c| c.0.clone())
+            ),
+            (_, Some(name), Some("live")) => format!("● {name} LIVE"),
+            (_, Some(name), _) => format!("{name} · PICKING FIGHTERS"),
+            _ => "NEXT MATCH SOON".into(),
+        };
+        let host = r.members.iter().any(|m| m.role == 0 && m.profile.id == me);
+        let entrants: Vec<Value> = t
+            .entrants
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                json!({
+                    "n": i + 1,
+                    "name": fit(&e.name.to_uppercase(), 16),
+                    "verified": e.verified,
+                    "rating": format!("{} {}", rugen_proto::rank_name(e.rating), e.rating),
+                    "you": e.id == me,
+                })
+            })
+            .collect();
+        let open = t.state == "open";
+        json!({
+            "status": status,
+            "live": live_state.as_deref() == Some("live"),
+            "calm": live_state.as_deref() != Some("live"),
+            "open": open,
+            "drawn": !open,
+            "heads": heads,
+            "boxes": boxes,
+            "champ": {
+                "x": cx, "y": y0 + h_all / 2.0 - 80.0, "w": bw, "h": 160.0,
+                "has": champ.is_some(),
+                "none": champ.is_none(),
+                "name": champ.as_ref().map_or(String::new(), |c| fit(&c.0, max_chars)),
+            },
+            "entrants": entrants,
+            "count": format!("{} / {}", t.entrants.len(), t.size),
+            "can_start": host && t.state != "running" && t.entrants.len() >= 2,
+            "start_label": if t.state == "done" { "START AGAIN" } else { "START THE BRACKET" },
+            "wait_line": if host {
+                "EMPTY PLACES ARE BYES FOR THE TOP SEEDS. START WHEN EVERYONE IS IN."
+            } else {
+                "THE HOST STARTS THE BRACKET. WAIT HERE: YOUR MATCH OPENS WHEN THE SERVER CALLS IT."
+            },
+            "note": format!(
+                "CODE {} · SEEDED BY RATING · THE SERVER CALLS EACH MATCH · FIRST TO {} {}",
+                r.code,
+                r.rules.rounds,
+                if r.rules.rounds == 1 { "ROUND" } else { "ROUNDS" }
+            ),
         })
     }
 
@@ -2694,6 +3381,10 @@ impl OnlineScreen {
             }
             Some("cr_spect") => "SPECTATORS WATCH THE MATCH LIVE. THEY NEVER SLOW IT DOWN.",
             Some("cr_pass") => "OPTIONAL. PLAYERS TYPE IT TO JOIN, EVEN WITH THE CODE.",
+            Some("cr_format") if f.tournament > 0 => {
+                "BRACKET: UP TO 8 OR 16 PLAYERS, SINGLE ELIMINATION. YOU START IT; THE SERVER SEEDS BY RATING AND CALLS EACH MATCH."
+            }
+            Some("cr_format") => "1 VS 1: THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.",
             Some("cr_size") => {
                 "NORMAL: FIGHTERS ALREADY 58-82 PX TALL KEEP THEIR SIZE, OTHERS GET A ROUND STEP, x1.1 TO x3.0 OR /1.1 TO /3.0. NONE NEVER SCALES."
             }
@@ -2705,6 +3396,9 @@ impl OnlineScreen {
             }
         };
         let mut line = rules_tags(&f.rules);
+        if f.tournament > 0 {
+            line.insert(0, format!("BRACKET {}", f.tournament));
+        }
         if !f.public {
             line.push("CODE ONLY".into());
         }
@@ -2727,6 +3421,8 @@ impl OnlineScreen {
             "joins_sel": usize::from(!f.public),
             "spects": ["OFF", "2", "4", "6"],
             "spects_sel": spect.iter().position(|s| *s == f.spectators).unwrap_or(1),
+            "formats": ["1 VS 1", "BRACKET 8", "BRACKET 16"],
+            "formats_sel": match f.tournament { 8 => 1, 16 => 2, _ => 0 },
             "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.my_name()) } else { f.name.to_uppercase() },
             "preview_host": host,
             "preview_rules": line.join(" · "),
@@ -2759,11 +3455,109 @@ impl OnlineScreen {
         })
     }
 
+    /// Fetch the board of the season on display.
+    fn fetch_board(&mut self) {
+        let c = self.client.clone();
+        let season = self.board_season;
+        let fighter = self.board_fighters.then(|| self.board_fighter.clone());
+        self.board = None;
+        self.jobs.retain(|j| !matches!(j, Job::Board(_)));
+        self.jobs
+            .push(Job::Board(Pending::spawn(move || match fighter {
+                Some(fp) => c.fighter_board(season, fp.as_deref()),
+                None => c.leaderboard_of(season),
+            })));
+    }
+
+    /// LEADERBOARD: the PLAYERS or the FIGHTERS tab.
+    fn board_tab(&mut self, fighters: bool) {
+        if self.board_fighters != fighters {
+            self.board_fighters = fighters;
+            self.board_fighter = None;
+            self.fetch_board();
+        }
+    }
+
+    /// FIGHTERS tab ◀ / ▶: the previous / next fighter with a board.
+    fn step_fighter(&mut self, dir: i32) {
+        let Some(b) = self.board.as_ref() else { return };
+        let list: Vec<String> = b.fighters.iter().map(|f| f.fingerprint.clone()).collect();
+        if list.len() < 2 {
+            return;
+        }
+        let cur = b
+            .fighter
+            .as_ref()
+            .and_then(|f| list.iter().position(|x| *x == f.fingerprint))
+            .unwrap_or(0);
+        let next = (cur as i32 + dir).rem_euclid(list.len() as i32) as usize;
+        self.board_fighter = Some(list[next].clone());
+        self.fetch_board();
+    }
+
+    /// LEADERBOARD ◀ / ▶ on the season: `-1` an older season, `+1` a newer
+    /// one (the live season is the newest).
+    fn step_season(&mut self, dir: i32) {
+        let list = &self.board_seasons;
+        if list.len() < 2 {
+            return;
+        }
+        let cur = self
+            .board_season
+            .and_then(|n| list.iter().position(|&s| s == n))
+            .unwrap_or(0);
+        let next = (cur as i32 - dir).clamp(0, list.len() as i32 - 1) as usize;
+        if next == cur {
+            return;
+        }
+        self.board_season = (next > 0).then(|| list[next]);
+        self.fetch_board();
+    }
+
     fn board_json(&self) -> Value {
+        let season_chip = |b: Option<&Leaderboard>| -> Value {
+            let live = self.board_seasons.first().copied();
+            let shown = self.board_season.or(live);
+            let line = match (b, self.board_season) {
+                (Some(b), None) => b.season.ends_line(now_secs()),
+                (Some(_), Some(_)) => "FINAL STANDINGS".into(),
+                (None, _) => String::new(),
+            };
+            json!({
+                "name": shown.map_or(String::new(), |n| format!("SEASON {n}")),
+                "line": line,
+                "pick": match (shown, self.board_season) {
+                    (Some(n), None) => format!("{n} · NOW"),
+                    (Some(n), Some(_)) => format!("{n} · FINAL"),
+                    _ => "NOW".into(),
+                },
+                "can_step": self.board_seasons.len() > 1,
+            })
+        };
         let Some(b) = self.board.as_ref() else {
-            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false } });
+            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false }, "season": season_chip(None), "finished": self.board_season.is_some(), "tab_players": !self.board_fighters, "tab_fighters": self.board_fighters, "has_fighter": false });
         };
         let my = self.my_id();
+        // a finished season's board shows the tier each player ended it in
+        let badge = |p: &ProfileInfo| -> Value {
+            if b.finished {
+                return json!({
+                    "has": true,
+                    "tier": p.rank,
+                    "hi": p.rating >= 1400,
+                    "lo": p.rating < 1400,
+                });
+            }
+            match &p.last_season {
+                Some(s) => json!({
+                    "has": true,
+                    "tier": s.tier,
+                    "hi": s.rating >= 1400,
+                    "lo": s.rating < 1400,
+                }),
+                None => json!({ "has": false }),
+            }
+        };
         let rows: Vec<Value> = b
             .rows
             .iter()
@@ -2775,28 +3569,61 @@ impl OnlineScreen {
                     "name": fit(&p.name.to_uppercase(), 20),
                     "verified": p.verified,
                     "rating": p.rating,
-                    "record": format!("{} - {}", p.wins, p.losses),
+                    "record": format!("{}W {}L", p.wins, p.losses),
                     "tier": p.rank,
+                    "last": badge(p),
                     "you": p.id == my,
                 })
             })
             .collect();
-        let me = b.me.as_ref().map_or(json!({ "show": false }), |(pos, p)| {
-            json!({
-                "show": true,
-                "pos": format!("#{pos}"),
-                "name": format!("{} (YOU)", fit(&p.name.to_uppercase(), 16)),
-                "rating": p.rating,
-                "record": format!("{} - {}", p.wins, p.losses),
-                "tier": p.rank,
-            })
+        let me =
+            b.me.as_ref()
+                .filter(|_| !(self.board_fighters && b.fighter.is_none()))
+                .map_or(json!({ "show": false }), |(pos, p)| {
+                    json!({
+                        "show": true,
+                        "pos": format!("#{pos}"),
+                        "name": format!("{} · YOU", fit(&p.name.to_uppercase(), 16)),
+                        "rating": p.rating,
+                        "record": format!("{}W {}L", p.wins, p.losses),
+                        "tier": p.rank,
+                        "last": badge(p),
+                    })
+                });
+        // a server without fighter boards answers the players' board
+        let no_fighters = self.board_fighters && b.fighter.is_none() && !b.rows.is_empty();
+        let rows = if no_fighters { Vec::new() } else { rows };
+        let fighter = b.fighter.as_ref().map(|f| {
+            let name = if f.name.is_empty() {
+                crate::matchup::short(&f.fingerprint).to_uppercase()
+            } else {
+                f.name.to_uppercase()
+            };
+            fit(&name, 14)
         });
         json!({
             "loading": false,
+            "empty": rows.is_empty(),
             "rows": rows,
-            "empty": b.rows.is_empty(),
+            "tab_players": !self.board_fighters,
+            "tab_fighters": self.board_fighters,
+            "fighter": fighter.clone().unwrap_or_default(),
+            "has_fighter": self.board_fighters && fighter.is_some(),
+            "empty_line": match (self.board_fighters, no_fighters) {
+                (_, true) => "THIS SERVER HAS NO FIGHTER BOARDS YET.",
+                (true, _) => "NO RANKED MATCHES WITH A FIGHTER YET THIS SEASON.",
+                _ => "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD.",
+            },
             "me": me,
             "scope": self.scope(),
+            "season": season_chip(Some(b)),
+            "finished": b.finished,
+            "badge_col": if b.finished { "FINAL TIER" } else { "LAST SEASON" },
+            "note": match (b.finished, self.board_fighters) {
+                (_, true) => "EACH PLAYER'S RATING WITH THIS FIGHTER",
+                (true, _) => "FINAL STANDINGS · TIERS AS THE SEASON ENDED",
+                _ => "RATINGS SOFT-RESET TOWARD 1200 EACH SEASON",
+            },
         })
     }
 
@@ -2862,6 +3689,18 @@ impl OnlineScreen {
                 "JOIN BY CODE".into(),
                 fit(&self.server_name().to_uppercase(), 28),
             ),
+            State::Room if self.in_bracket() => {
+                let r = self.room.as_ref();
+                let t = r.and_then(|r| r.tournament.as_ref());
+                (
+                    "BRACKET".into(),
+                    format!(
+                        "{} · {} PLAYERS · SINGLE ELIMINATION",
+                        fit(&r.map_or(String::new(), |r| r.name.to_uppercase()), 18),
+                        t.map_or(0, |t| t.size)
+                    ),
+                )
+            }
             State::Room => (
                 "ROOM".into(),
                 match &self.room {
@@ -2877,17 +3716,10 @@ impl OnlineScreen {
                 if self.ranked { "RANKED" } else { "QUICK MATCH" }.into(),
                 server(),
             ),
-            State::Board => {
-                let season = self
-                    .board
-                    .as_ref()
-                    .map(|b| format!(" · {}", b.season.name.to_uppercase()))
-                    .unwrap_or_default();
-                (
-                    "LEADERBOARD".into(),
-                    format!("{}{season}", fit(&self.server_name().to_uppercase(), 22)),
-                )
-            }
+            State::Board => (
+                "LEADERBOARD".into(),
+                fit(&self.server_name().to_uppercase(), 28),
+            ),
             State::Direct => (
                 "LAN / DIRECT IP".into(),
                 "NO SERVER: TYPE EACH OTHER'S ADDRESS".into(),
@@ -2904,6 +3736,8 @@ impl OnlineScreen {
                 },
             ),
             State::Matchup => (String::new(), String::new()),
+            State::Watch => ("WATCH".into(), fit(&self.server_name().to_uppercase(), 28)),
+            State::Replays => ("REPLAYS".into(), "SHARE A MATCH WITH A SHORT CODE".into()),
         }
     }
 
@@ -2972,20 +3806,26 @@ impl OnlineScreen {
             "is_hub": hub,
             "is_lobby": self.state == State::Lobby,
             "is_create": self.state == State::Create,
-            "is_room": self.state == State::Room,
+            "is_room": self.state == State::Room && !self.in_bracket(),
+            "is_bracket": self.state == State::Room && self.in_bracket(),
             "is_join": self.state == State::Join,
             "is_queue": self.state == State::Queue,
             "is_board": self.state == State::Board,
             "is_direct": self.state == State::Direct,
             "is_profile": self.state == State::Profile,
             "is_matchup": self.state == State::Matchup,
+            "is_watch": self.state == State::Watch,
+            "is_replays": self.state == State::Replays,
+            "rp": if self.state == State::Replays { self.replays_json() } else { json!({}) },
+            "wt": if self.state == State::Watch { self.watch_json() } else { json!({}) },
             "not_matchup": self.state != State::Matchup,
             "servers": if hub { self.servers_json() } else { Vec::new() },
             "sel": if hub { self.sel_json() } else { json!({}) },
             "accts": if self.state == State::Profile { self.accts_json() } else { Vec::new() },
             "acct": if self.state == State::Profile { self.acct_json() } else { json!({}) },
             "lobby": if self.state == State::Lobby { self.lobby_json() } else { json!({}) },
-            "room": if self.state == State::Room { self.room_json() } else { json!({}) },
+            "room": if self.state == State::Room && !self.in_bracket() { self.room_json() } else { json!({}) },
+            "bk": if self.state == State::Room && self.in_bracket() { self.bracket_json() } else { json!({}) },
             "create": if self.state == State::Create { self.create_json() } else { json!({}) },
             "join": if self.state == State::Join { self.join_json() } else { json!({}) },
             "board": if self.state == State::Board { self.board_json() } else { json!({}) },
@@ -3008,6 +3848,11 @@ impl OnlineScreen {
         }
         self.rematch_focused = can_rematch;
         self.ui.set_data(data);
+    }
+
+    /// The room on screen runs a tournament bracket.
+    fn in_bracket(&self) -> bool {
+        self.room.as_ref().is_some_and(|r| r.tournament.is_some())
     }
 
     /// Text inputs take raw keys while they are being edited.
@@ -3048,7 +3893,7 @@ impl OnlineScreen {
             && (self.dialog.is_some()
                 || matches!(
                     self.state,
-                    State::Join | State::Direct | State::Create | State::Profile
+                    State::Join | State::Direct | State::Create | State::Profile | State::Replays
                 ))
         {
             self.ui.text_key(k);
@@ -3064,6 +3909,11 @@ impl OnlineScreen {
         use winit::keyboard::NamedKey;
         if self.ui.text_focused() {
             return false;
+        }
+        if self.state == State::Board && matches!(key, Key::Named(NamedKey::Tab)) {
+            self.action("board:tab");
+            self.refresh();
+            return true;
         }
         let action = match key {
             Key::Named(NamedKey::Delete) => "remove",
@@ -3088,9 +3938,11 @@ impl OnlineScreen {
             ("remove", State::Servers) if hub => "online:remove".into(),
             ("create", State::Lobby) => "online:create".into(),
             ("watch", State::Lobby) => {
-                let code = self.focused_room().map(|r| r.code.clone());
-                match code {
-                    Some(c) => format!("lobby:watch:{c}"),
+                // a running match the server streams: watch it from its log
+                let room = self.focused_room().map(|r| (r.code.clone(), r.live_match));
+                match room {
+                    Some((_, id)) if id > 0 => format!("lobby:live:{id}"),
+                    Some((c, _)) => format!("lobby:watch:{c}"),
                     None => return false,
                 }
             }
@@ -3108,6 +3960,14 @@ impl OnlineScreen {
 
     /// Ctrl+V: a room code from the clipboard (JOIN BY CODE).
     pub fn paste(&mut self) -> bool {
+        if self.state == State::Replays {
+            if let Some(text) = crate::clipboard::paste() {
+                self.action(&format!("rpcode:{}", text.trim()));
+                self.refresh();
+                return true;
+            }
+            return false;
+        }
         if self.state != State::Join || self.ui.focused() == Some("password") {
             return false;
         }
@@ -3432,6 +4292,16 @@ impl OnlineScreen {
                 self.probe_servers();
             }
             ("online", "lobby") => self.run_action("lobby"),
+            ("lobby", rest) if rest.starts_with("live:") => {
+                if let Ok(id) = rest["live:".len()..].parse::<u64>() {
+                    let room = self
+                        .rooms
+                        .iter()
+                        .find(|r| r.live_match == id)
+                        .map(|r| r.code.clone());
+                    self.start_live_watch(id, room);
+                }
+            }
             ("lobby", rest) => {
                 let (kind, code) = rest.split_once(':').unwrap_or(("join", rest));
                 // a host of another version: say so instead of trying
@@ -3532,6 +4402,7 @@ impl OnlineScreen {
                         f.rules.fighter_size = all[j].as_str().into();
                     }
                     "spect" => f.spectators = step(&[0, 2, 4, 6], f.spectators.into()) as u8,
+                    "format" => f.tournament = step(&[0, 8, 16], f.tournament.into()) as u8,
                     "go" => {
                         let opts = RoomOptions {
                             name: if f.name.trim().is_empty() {
@@ -3546,6 +4417,7 @@ impl OnlineScreen {
                                 ..f.rules.clone()
                             },
                             max_spectators: f.spectators,
+                            tournament: f.tournament,
                         };
                         let (c, ch) = (self.client.clone(), self.my_char());
                         self.room = None;
@@ -3611,6 +4483,87 @@ impl OnlineScreen {
                     }
                 }
             }
+            ("bk", "start") => {
+                if let Some(code) = self.room.as_ref().map(|r| r.code.clone()) {
+                    let c = self.client.clone();
+                    self.jobs
+                        .push(Job::Room(Pending::spawn(move || c.start_tournament(&code))));
+                }
+            }
+            ("bk", "watch") => {
+                // the bracket's live match, whichever box ENTER was on
+                let live = self.room.as_ref().and_then(|r| {
+                    let t = r.tournament.as_ref()?;
+                    let [ri, i] = t.live?;
+                    let m = t.rounds.get(ri as usize)?.get(i as usize)?;
+                    (m.state == "live" && m.match_id > 0).then(|| (m.match_id, r.code.clone()))
+                });
+                match live {
+                    Some((id, code)) => self.start_live_watch(id, Some(code)),
+                    None => self.notice("NOTHING LIVE", "THE NEXT MATCH IS NOT BEING FOUGHT YET."),
+                }
+            }
+            ("bk", _) => {}
+            ("rpcode", v) => {
+                let code: String = v
+                    .chars()
+                    .filter(|c| !matches!(c, '-' | ' '))
+                    .map(|c| c.to_ascii_uppercase())
+                    .filter(|c| rugen_proto::room_code::ALPHABET.contains(*c))
+                    .take(rugen_proto::stream::replay_code::LEN)
+                    .collect();
+                self.rp_typed = code;
+                self.ui.set_input("rp_code", &self.rp_typed);
+            }
+            ("rp", "share") => {
+                let played = last_played(&self.root);
+                match played {
+                    Some(p)
+                        if self
+                            .rp_shared
+                            .as_ref()
+                            .is_some_and(|r| r.match_id == p.match_id) =>
+                    {
+                        self.action("rp:copy");
+                    }
+                    Some(p) => {
+                        let c = self.client.clone();
+                        self.rp_note = "SHARING...".into();
+                        self.jobs.push(Job::Share(Pending::spawn(move || {
+                            c.share_replay(p.match_id)
+                        })));
+                    }
+                    None => self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into(),
+                }
+            }
+            ("rp", "copy") => {
+                if let Some(r) = &self.rp_shared {
+                    let shown = rugen_proto::stream::replay_code::display(&r.code);
+                    self.rp_note = if crate::clipboard::copy(&shown) {
+                        format!("{shown} COPIED")
+                    } else {
+                        format!("CODE {shown}")
+                    };
+                }
+            }
+            ("rp", "save") => self.save_last_replay(),
+            ("rp", "watch") => {
+                let code = self.rp_typed.clone();
+                self.fetch_replay(&code);
+            }
+            ("rp", rest) if rest.starts_with("recent:") => {
+                let i: usize = rest["recent:".len()..].parse().unwrap_or(usize::MAX);
+                if let Some(r) = self.profile.recent_replays.get(i).cloned() {
+                    self.fetch_replay(&r.code);
+                }
+            }
+            ("board", "older") => self.step_season(-1),
+            ("board", "tab:players") => self.board_tab(false),
+            ("board", "tab:fighters") => self.board_tab(true),
+            ("board", "tab") => self.board_tab(!self.board_fighters),
+            ("board", "fighter:-") => self.step_fighter(-1),
+            ("board", "fighter:+") => self.step_fighter(1),
+            ("board", "newer") => self.step_season(1),
             ("online", "quick") => self.run_action("quick"),
             ("online", "ranked") => self.run_action("ranked"),
             ("online", "board") => self.run_action("board"),
@@ -3770,6 +4723,17 @@ impl OnlineScreen {
             self.leave_matchup("YOU LEFT THE MATCHUP");
             return;
         }
+        if self.state == State::Watch {
+            // the feed's worker stops once nobody holds it
+            let room = self.watch.take().and_then(|w| w.room);
+            match room {
+                Some(code) if self.room.as_ref().is_some_and(|r| r.code == code) => {
+                    self.state = State::Room;
+                }
+                _ => self.run_action("lobby"),
+            }
+            return;
+        }
         match self.state {
             State::Queue => {
                 let c = self.client.clone();
@@ -3867,6 +4831,15 @@ impl OnlineScreen {
             .iter()
             .find(|m| m.role == 1)
             .map_or(0, |m| m.profile.id);
+        // a bracket: the called pair plays (P1 = the higher seed)
+        let (host, chal) = match r.tournament.as_ref().and_then(|t| {
+            let [round, i] = t.live?;
+            let m = t.rounds.get(round as usize)?.get(i as usize)?;
+            Some((m.p1?, m.p2?))
+        }) {
+            Some(p) => p,
+            None => (host, chal),
+        };
         // a new match in this room: its matchup phase (pick, verdict, sync)
         if r.side <= 2
             && let Some(mv) = &r.matchup
@@ -3902,7 +4875,9 @@ impl OnlineScreen {
                 println!("ROOM CODE: {}", r.code);
             }
         }
-        if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
+        if r.tournament.is_some() {
+            self.status.clear();
+        } else if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
             self.status = if r.opponent.is_none() && r.side <= 2 {
                 format!("ROOM {} - WAITING FOR A CHALLENGER", r.code)
             } else if r.side > 2 {
@@ -4123,7 +5098,9 @@ impl OnlineScreen {
                 },
                 Job::Rooms(p) => match p.take() {
                     None => keep.push(j),
-                    Some(Ok(r)) => {
+                    Some(Ok((r, lives))) => {
+                        // matches in public rooms show as their room
+                        self.lives = lives.into_iter().filter(|m| m.room.is_none()).collect();
                         self.status = if r.is_empty() {
                             "NO PUBLIC ROOMS - CREATE ONE!".into()
                         } else {
@@ -4170,10 +5147,49 @@ impl OnlineScreen {
                     }
                     Some(Err(e)) => self.fail("queue", e),
                 },
+                Job::Share(p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(r)) => {
+                        let shown = rugen_proto::stream::replay_code::display(&r.code);
+                        self.rp_note = if crate::clipboard::copy(&shown) {
+                            format!("SHARED AS {shown} · COPIED")
+                        } else {
+                            format!("SHARED AS {shown}")
+                        };
+                        self.profile.note_replay(crate::uiscreen::RecentReplay {
+                            server: self.client.server.clone(),
+                            code: r.code.clone(),
+                            title: r.title.clone(),
+                            at: now_secs(),
+                        });
+                        self.profile.save(&self.root);
+                        self.rp_shared = Some(r);
+                    }
+                    Some(Err(e)) => {
+                        self.rp_note = format!("NOT SHARED: {}", e.to_string().to_uppercase())
+                    }
+                },
+                Job::Fetch(code, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(c)) => {
+                        let code = code.clone();
+                        self.rp_note.clear();
+                        self.start_replay(&code, c);
+                    }
+                    Some(Err(e)) => {
+                        self.rp_note = format!("NO SUCH REPLAY: {}", e.to_string().to_uppercase())
+                    }
+                },
                 Job::Board(p) => match p.take() {
                     None => keep.push(j),
                     Some(Ok(b)) => {
                         self.status.clear();
+                        if !b.finished {
+                            // the live season first, then the finished ones
+                            self.board_seasons = std::iter::once(b.season.number)
+                                .chain(b.past.iter().copied())
+                                .collect();
+                        }
                         self.board = Some(b);
                     }
                     Some(Err(e)) => self.fail("leaderboard", e),
@@ -4380,8 +5396,9 @@ impl OnlineScreen {
             State::Servers if self.tick % 600 == 0 => self.poll_last_result(),
             State::Lobby if self.tick % 300 == 0 => {
                 let c = self.client.clone();
-                self.jobs
-                    .push(Job::Rooms(Pending::spawn(move || c.rooms())));
+                self.jobs.push(Job::Rooms(Pending::spawn(move || {
+                    Ok((c.rooms()?, c.live_matches().unwrap_or_default()))
+                })));
             }
             _ => {}
         }
@@ -4399,6 +5416,7 @@ impl OnlineScreen {
         self.poll_presence();
         self.poll_server();
         self.poll_matchup();
+        self.poll_watch();
         self.auto_join();
         if self.auto_quit_at.is_some_and(|t| self.tick >= t) {
             return Some(Transition::Quit);
@@ -5037,6 +6055,40 @@ mod tests {
         assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
         assert_eq!(fit("A VERY LONG SERVER NAME", 10), "A VERY...");
         assert_eq!(fit("SHORT", 10), "SHORT");
+    }
+
+    #[test]
+    fn replay_dates_read_as_words() {
+        let day = 86_400;
+        // 2026-10-14 12:00 UTC
+        let now = 1_791_936_000 + 12 * 3600;
+        assert_eq!(when_text(now - 60, now), "TODAY");
+        assert_eq!(when_text(now - day, now), "YESTERDAY");
+        assert_eq!(when_text(now - 3 * day, now), "11 OCT");
+        assert_eq!(when_text(0, now), "1 JAN");
+    }
+
+    #[test]
+    fn the_last_match_survives_a_restart() {
+        let root = std::env::temp_dir().join(format!("rugen-played-{}", std::process::id()));
+        let p = Played {
+            server: "http://s".into(),
+            match_id: 7,
+            title: "A VS B · 2-1".into(),
+            line: "RANKED · 1:42".into(),
+            p1: "chars/a.rgc/a.def".into(),
+            p2: "chars/b.rgc/b.def".into(),
+            stage: None,
+            seed: 9,
+            rules: Rules::default(),
+            inputs: vec![[1, 2]; 3],
+        };
+        note_played(&root, p);
+        // a new session reads it back from the cache
+        *LAST_PLAYED.lock().unwrap() = None;
+        let back = last_played(&root).unwrap();
+        assert_eq!((back.match_id, back.inputs.len(), back.seed), (7, 3, 9));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

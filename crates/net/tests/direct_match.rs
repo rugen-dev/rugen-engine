@@ -119,6 +119,7 @@ fn ticket(server: SocketAddr, session: u32, slot: usize, turn: bool) -> SessionT
         } else {
             Vec::new()
         },
+        live: false,
     }
 }
 

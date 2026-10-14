@@ -97,6 +97,7 @@ mod uiscreen;
 mod verify;
 mod versus;
 mod viewer;
+mod watch;
 
 /// The content library with the `[content]` settings of its `rugen.toml`.
 fn library(root: Option<&str>) -> rugen_content::Library {

@@ -43,6 +43,10 @@ pub enum NetMode {
     },
     /// Local two-player game that rolls back every frame to prove determinism.
     SyncTest,
+    /// Watching an online match from the server's input log (a live match,
+    /// even mid-match): simulated locally like the players did, with the
+    /// online rules (camera, bundled fight.def, the room's rounds).
+    Stream(crate::watch::Feed),
 }
 
 /// Rules the LAN host sends in the handshake (`HandshakeRules::Send`): the
@@ -175,7 +179,9 @@ pub(crate) fn lan_agreement(
 pub fn match_zoom(net: Option<&NetMode>, cam: &crate::config::CameraCfg) -> (f32, f32) {
     match net {
         None | Some(NetMode::SyncTest) => (cam.zoom_out, cam.zoom_in),
-        Some(NetMode::P2P { .. } | NetMode::Relay { .. }) => rugen_sim::headless::ONLINE_ZOOM,
+        Some(NetMode::P2P { .. } | NetMode::Relay { .. } | NetMode::Stream(_)) => {
+            rugen_sim::headless::ONLINE_ZOOM
+        }
     }
 }
 
@@ -581,6 +587,11 @@ pub struct Match {
     pub record: Option<crate::replay::Replay>,
     /// Inputs to replay instead of live input, with a cursor.
     pub playback: Option<(Vec<[u16; 2]>, usize)>,
+    /// Watching from the server's input log: the feed, the next frame, and
+    /// whether the picture started (after the start buffer).
+    stream: Option<(crate::watch::Feed, usize, bool)>,
+    /// Frames simulated without drawing this frame (catching up).
+    catching: bool,
     /// F3: state / frame data / input history overlay.
     overlay: bool,
     input_history: [Vec<Buttons>; 2],
@@ -636,7 +647,9 @@ impl Match {
         let mut seed = match &setup.net {
             None | Some(NetMode::SyncTest) => setup.seed.unwrap_or_else(fresh_seed),
             // set from the match id; a setup without one plays the legacy seed
-            Some(NetMode::Relay { .. }) => setup.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED),
+            Some(NetMode::Relay { .. } | NetMode::Stream(_)) => {
+                setup.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED)
+            }
             Some(NetMode::P2P { .. }) => setup.seed.unwrap_or_else(fresh_seed),
         };
         let net = match &setup.net {
@@ -694,12 +707,15 @@ impl Match {
                 websocket_only,
             }) => Some(relay_session(server, ticket, *websocket_only, cfg)?.0),
             Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
-            None => None,
+            Some(NetMode::Stream(_)) | None => None,
         };
         // round timings come from fight.def: a user theme's only offline
         let sim_motif = crate::themes::sim_motif(
             motif,
-            matches!(setup.net, Some(NetMode::P2P { .. } | NetMode::Relay { .. })),
+            matches!(
+                setup.net,
+                Some(NetMode::P2P { .. } | NetMode::Relay { .. } | NetMode::Stream(_))
+            ),
         );
         let spec = rugen_sim::headless::MatchSpec {
             p1: &setup.p1,
@@ -806,6 +822,11 @@ impl Match {
             leave: false,
             record: None,
             playback: None,
+            stream: match &setup.net {
+                Some(NetMode::Stream(f)) => Some((f.clone(), 0, false)),
+                _ => None,
+            },
+            catching: false,
             overlay: std::env::var_os("RUGEN_OVERLAY").is_some(),
             input_history: [Vec::new(), Vec::new()],
             watch: [(0usize, &setup.p1), (1, &setup.p2)]
@@ -974,6 +995,20 @@ impl Match {
         }
         self.check_reload();
         let mut inputs = inputs;
+        if let Some((feed, cursor, started)) = self.stream.as_mut() {
+            match feed.frame(*cursor) {
+                Some(f) => {
+                    inputs = [Buttons::from_bits(f[0]), Buttons::from_bits(f[1])];
+                    *cursor += 1;
+                    *started = true;
+                }
+                None if feed.status().1 => {
+                    self.leave = true;
+                    return false;
+                }
+                None => return false,
+            }
+        }
         if let Some((frames, cursor)) = self.playback.as_mut() {
             match frames.get(*cursor) {
                 Some(f) => {
@@ -1157,6 +1192,27 @@ impl Match {
         self.net.is_some()
     }
 
+    /// Watching a match from the server's input log.
+    pub fn is_watch(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    /// Watching: frames to simulate this drawn frame ([`crate::watch::steps`]);
+    /// 1 otherwise.
+    pub fn stream_steps(&mut self) -> usize {
+        let Some((feed, cursor, started)) = self.stream.as_ref() else {
+            return 1;
+        };
+        let (have, complete) = feed.status();
+        let n = crate::watch::steps(*cursor, have, complete, *started);
+        self.catching = n > 1;
+        // the stream is over and fully played: the end screen as usual
+        if complete && *cursor >= have {
+            return 1;
+        }
+        n
+    }
+
     /// We play one side of a netplay match against a remote player (not a
     /// spectator, not a local sync test).
     pub fn is_netplay_seat(&self) -> bool {
@@ -1239,6 +1295,7 @@ impl Match {
                 .filter(|s| s.tx_packets > 0)
                 .map(|s| (s.rx_wire, s.tx_wire)),
             ending: self.early.map(|(e, _)| e.ending()),
+            rounds: Some(self.world.round.wins),
         }
     }
 
@@ -1351,6 +1408,110 @@ impl Match {
             2,
             if menu.confirm { red } else { grey },
         );
+    }
+
+    /// Watching: a LIVE tag with both players over the fight, "CATCHING
+    /// UP" with the progress while fast-forwarding, a wait line while the
+    /// players are ahead of the stream.
+    fn draw_watch_overlay(
+        &self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        screen_w: f32,
+        screen_h: f32,
+        mut lifebar: Option<&mut crate::lifebar::Lifebar>,
+    ) {
+        let Some((feed, cursor, started)) = self.stream.as_ref() else {
+            return;
+        };
+        let (have, complete) = feed.status();
+        let cx = screen_w / 2.0;
+        let names = feed
+            .header()
+            .map(|h| {
+                format!(
+                    "{} VS {}",
+                    h.players[0].name.to_uppercase(),
+                    h.players[1].name.to_uppercase()
+                )
+            })
+            .unwrap_or_default();
+        // the tag under the HUD: LIVE (a running match) or REPLAY
+        let tag = if complete && !self.catching {
+            format!("REPLAY · {names}")
+        } else {
+            let behind = have.saturating_sub(*cursor) as f32 / 60.0;
+            format!("● LIVE · {names} · {:.0} S BEHIND", behind.max(0.0))
+        };
+        // a red strip under the clock, in the HUD's small font, kept narrow
+        let y = 46.0;
+        let raw = lifebar
+            .as_deref_mut()
+            .and_then(|lb| lb.text_size(1, &tag))
+            .map(|[w, _]| w);
+        let k = raw.map_or(1.0, |w| (130.0 / w.max(1.0)).min(1.0));
+        let tw = raw.map_or(tag.chars().count() as f32 * 4.0, |w| w * k) + 12.0;
+        r.rect(
+            hud(cx - tw / 2.0, y - 5.0),
+            hud(cx + tw / 2.0, y + 5.0),
+            [0.78, 0.06, 0.1, 0.92],
+        );
+        match lifebar.as_deref_mut() {
+            Some(lb) if raw.is_some() => {
+                let th = lb.text_size(1, &tag).map_or(8.0, |[_, h]| h) * k;
+                lb.text_at(r, 1, &tag, hud(cx, y + th / 2.0), 0, 0, u * k);
+            }
+            _ => draw_text(r, &tag, hud(cx, y - 2.5), u, [1.0, 1.0, 1.0, 1.0]),
+        }
+        let mut text = |r: &mut Renderer, line: &str, y: f32, kind: usize, col: [f32; 4]| {
+            let (index, bank, px) = [(4, 0, 2.0), (3, 1, 1.4), (1, 5, 1.0)][kind];
+            if let Some(lb) = lifebar.as_deref_mut()
+                && let Some([_, th]) = lb.text_size(index, line)
+            {
+                lb.text_at(r, index, line, hud(cx, y + th / 2.0), bank, 0, u);
+                return;
+            }
+            draw_text(r, line, hud(cx, y - 2.5 * px), px * u, col);
+        };
+        let waiting = !*started || (have <= *cursor && !complete);
+        if !self.catching && !waiting {
+            return;
+        }
+        let (w, h) = (210.0, 54.0);
+        let top = screen_h * 0.5 - h / 2.0;
+        r.rect(
+            hud(0.0, 0.0),
+            hud(screen_w, screen_h),
+            [0.0, 0.0, 0.0, 0.45],
+        );
+        r.rect(
+            hud(cx - w / 2.0 + 5.0, top + 5.0),
+            hud(cx + w / 2.0 + 5.0, top + h + 5.0),
+            [0.86, 0.12, 0.12, 1.0],
+        );
+        r.rect(
+            hud(cx - w / 2.0, top),
+            hud(cx + w / 2.0, top + h),
+            [0.04, 0.04, 0.05, 0.96],
+        );
+        let white = [1.0, 1.0, 1.0, 1.0];
+        if self.catching {
+            text(r, "CATCHING UP...", top + 18.0, 1, white);
+            let frac = (*cursor as f32 / have.max(1) as f32).clamp(0.0, 1.0);
+            r.rect(
+                hud(cx - 80.0, top + 34.0),
+                hud(cx + 80.0, top + 40.0),
+                [0.25, 0.25, 0.28, 1.0],
+            );
+            r.rect(
+                hud(cx - 80.0, top + 34.0),
+                hud(cx - 80.0 + 160.0 * frac, top + 40.0),
+                [0.86, 0.12, 0.12, 1.0],
+            );
+        } else {
+            text(r, "WAITING FOR THE PLAYERS...", top + 22.0, 1, white);
+        }
     }
 
     /// Tiny connection indicator for online matches: 1-4 bars from the
@@ -2204,6 +2365,7 @@ impl Match {
             }
         }
         self.draw_flee_overlay(r, &hud, u, screen_w, stage.height, lifebar.as_mut());
+        self.draw_watch_overlay(r, &hud, u, screen_w, stage.height, lifebar.as_mut());
         if brightness < 1.0 {
             r.rect(
                 [-4000.0, -4000.0],

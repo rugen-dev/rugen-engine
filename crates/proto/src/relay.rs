@@ -26,6 +26,14 @@ pub const PONG: u8 = 4;
 pub const PEERS: u8 = 5;
 /// Leaving the session.
 pub const BYE: u8 = 6;
+/// Player → server: confirmed inputs of the match for the server's input
+/// log ([`crate::stream::encode_upload`]: first frame, then 4 bytes per
+/// frame). Only sent when the ticket says the server keeps one
+/// ([`crate::SessionTicket::live`]); older servers drop unknown kinds.
+pub const STREAM: u8 = 7;
+/// Server → player: frames of this player's stream the server holds
+/// (u32 LE); the player resumes from there.
+pub const STREAM_ACK: u8 = 8;
 
 pub const MAGIC: [u8; 2] = *b"RG";
 pub const TOKEN_LEN: usize = 16;

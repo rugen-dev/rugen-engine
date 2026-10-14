@@ -2279,9 +2279,31 @@ impl Shell {
                         now = [Buttons::default(); 2];
                     }
                 }
-                advanced = m.tick(now, &mut self.audio);
-                if advanced {
-                    self.match_stats.observe(&m.world);
+                if m.is_watch() {
+                    // a viewer never plays: START / Esc / Select leave
+                    if pause_req.is_some() {
+                        m.leave = true;
+                    }
+                    // buffered, caught up (many frames, silent, not drawn) or followed
+                    advanced = false;
+                    let n = m.stream_steps();
+                    for i in 0..n {
+                        let mut silent = None;
+                        let audio = if i + 1 == n {
+                            &mut self.audio
+                        } else {
+                            &mut silent
+                        };
+                        if m.tick([Buttons::default(); 2], audio) {
+                            advanced = true;
+                            self.match_stats.observe(&m.world);
+                        }
+                    }
+                } else {
+                    advanced = m.tick(now, &mut self.audio);
+                    if advanced {
+                        self.match_stats.observe(&m.world);
+                    }
                 }
                 // a run: the strip over the fight (and Time Attack's clock)
                 if let Some(run) = self.run.as_mut() {
@@ -2300,6 +2322,42 @@ impl Shell {
                         // disconnect (`Match::winner` knows both)
                         let winner = m.winner();
                         let won = winner == Some(om.my_side);
+                        // REPLAYS can share it (players only)
+                        if !om.spectator {
+                            let w = m.world.round.wins;
+                            let secs = m.world.frame / 60;
+                            let names = [0, 1].map(|i| {
+                                m.world
+                                    .data
+                                    .get(i)
+                                    .map_or(String::new(), |d| d.name.to_uppercase())
+                            });
+                            let ev = m.evidence();
+                            let setup = m.setup();
+                            crate::online::note_played(
+                                &self.lib.root,
+                                crate::online::Played {
+                                    server: om.server.clone(),
+                                    match_id: om.match_id,
+                                    title: format!(
+                                        "{} VS {} · {}-{}",
+                                        names[0], names[1], w[0], w[1]
+                                    ),
+                                    line: format!(
+                                        "{} · {}:{:02}",
+                                        if om.ranked { "RANKED" } else { "CASUAL" },
+                                        secs / 60,
+                                        secs % 60
+                                    ),
+                                    p1: setup.p1.clone(),
+                                    p2: setup.p2.clone(),
+                                    stage: setup.stage.clone(),
+                                    seed: setup.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED),
+                                    rules: om.rules.clone(),
+                                    inputs: rugen_proto::stream::inputs_from_bytes(&ev.inputs),
+                                },
+                            );
+                        }
                         if let Some(p) = crate::online::report_result(
                             &self.lib.root,
                             &self.config,

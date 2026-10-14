@@ -16,14 +16,14 @@
 # room.* (has code cells[].c name tags[] host_card/chal_card (present name tag
 # you line ping has_ping high_ping) spect waiting can_rematch can_kick watching
 # copy note has_note wait_line), create.* (count rounds times modes chars joins
-# spects + *_sel, preview_name preview_host preview_rules note), join.* (cells[]
+# spects formats + *_sel, preview_name preview_host preview_rules note), join.* (cells[]
 # (c active empty filled) bad hint need_password), accts[] (name tag tag_red
 # tag_amber status side side_ok side_plain on off selected action), acct.*
 # (server on_server details form note has_note name rating devices hint enter
 # tab0/tab1 (show label action on off) has_user has_again has_new pass_label
 # user_rule rule guest has_guest masked show_label submit error has_error),
-# board.* (rows[] (pos top name verified rating record tier) empty loading me.*
-# scope), queue.* (time count found searching found_line rule), direct.* (sides
+# board.* (rows[] (pos top name verified rating record last.*) empty loading me.*
+# scope season.* finished note), queue.* (time count found searching found_line rule), direct.* (sides
 # side mine fighters netplay), toast.* (show title body retry error), dialog.*
 # (show kicker title body primary primary_action secondary secondary_action
 # has_secondary input), mx.* (matchup, below).
@@ -2078,10 +2078,48 @@ h = 160
 bank = 16
 font = 2
 line_gap = 8
-max_lines = 8
+max_lines = 6
 text = "{create.note}"
 deck = { line_gap = -4, max_lines = 6 }
 wrap = true
+
+[[node]]
+kind = "text"
+visible = "is_create"
+x = 900
+y = 466
+bank = 16
+font = 2
+text = "FORMAT"
+
+[[node]]
+kind = "choice"
+id = "cr_format"
+visible = "is_create"
+x = 900
+y = 486
+w = 332
+h = 40
+bank = 12
+bank_focus = 14
+border = 3
+border_color = [0.341, 0.2, 0.122, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.945, 0.871, 1.0]
+color2 = [0.227, 0.137, 0.094, 1.0]
+color_focus = [0.706, 0.188, 0.102, 1.0]
+focus = true
+font = 2
+on_left = "form:format:-"
+on_press = "form:go"
+on_right = "form:format:+"
+options = "create.formats"
+pad = 10
+text_color = [0.114, 0.09, 0.078, 1.0]
+text_color_focus = [0.976, 0.945, 0.871, 1.0]
+value = "create.formats_sel"
+shadow_focus = [6, 6]
 
 [[node]]
 kind = "button"
@@ -2515,6 +2553,973 @@ nine = [12, 12, 12, 12]
   border_color = [0.0, 0.0, 0.0, 0.0]
   border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
+# ---- BRACKET (tournament rooms): status chip, round headers, one box per
+# match where the bracket puts it (positions come from the engine), the
+# champion box; before the draw the entrants and START (host).
+# Data: is_bracket, bk.* (status live calm open drawn heads[] (label x w)
+# boxes[] (x y w h a/b (text score win plain tbd named) line has_line live
+# calm wait match_id action) champ (x y w h has none name) entrants[] (n name
+# verified rating you) count can_start start_label wait_line note)
+[[node]]
+kind = "text"
+visible = "bk.live"
+anchor = "tr"
+x = 48
+y = 30
+h = 40
+align = "center"
+bank = 14
+font = 2
+color = [0.706, 0.188, 0.102, 1.0]
+pad = 16
+text = "{bk.status}"
+
+[[node]]
+kind = "text"
+visible = "bk.calm"
+anchor = "tr"
+x = 48
+y = 30
+h = 40
+align = "center"
+bank = 14
+font = 2
+color = [0.133, 0.078, 0.059, 1.0]
+pad = 16
+text = "{bk.status}"
+
+[[node]]
+kind = "panel"
+visible = "bk.drawn"
+x = 0
+y = 0
+w = 1280
+h = 720
+items = "bk.heads"
+
+  [[node.children]]
+  kind = "text"
+  x = "{item.x}"
+  y = 104
+  w = "{item.w}"
+  align = "center"
+  bank = 16
+  font = 2
+  text = "{item.label}"
+
+[[node]]
+kind = "panel"
+visible = "bk.drawn"
+x = 0
+y = 0
+w = 1280
+h = 720
+items = "bk.boxes"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "item.live"
+  x = "{item.sx}"
+  y = "{item.sy}"
+  w = "{item.w}"
+  h = "{item.h}"
+  color = [0.133, 0.078, 0.059, 1.0]
+
+  [[node.children]]
+  kind = "button"
+  id = "bkbox"
+  x = "{item.x}"
+  y = "{item.y}"
+  w = "{item.w}"
+  h = "{item.h}"
+  border = 3
+  border_color = [0.89, 0.702, 0.298, 1.0]
+  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
+  color = [0.976, 0.949, 0.886, 1.0]
+  color_focus = [0.976, 0.949, 0.886, 1.0]
+  on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.wait"
+    x = 0
+    y = 0
+    w = "100%"
+    h = "100%"
+    border = 3
+    border_color = [0.62, 0.553, 0.471, 1.0]
+
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.a.win"
+    x = 0
+    y = 3
+    w = "100%"
+    h = 26
+    color = [0.133, 0.078, 0.059, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.a.win"
+    x = 10
+    y = 11
+    bank = 14
+    font = 2
+    text = "{item.a.text}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.a.win"
+    anchor = "tr"
+    x = 12
+    y = 11
+    bank = 14
+    font = 2
+    text = "{item.a.score}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.a.plain"
+    x = 10
+    y = 11
+    bank = 12
+    font = 2
+    text = "{item.a.text}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.a.plain"
+    anchor = "tr"
+    x = 12
+    y = 11
+    bank = 12
+    font = 2
+    text = "{item.a.score}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.a.tbd"
+    x = 10
+    y = 11
+    bank = 17
+    font = 2
+    text = "{item.a.text}"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.b.win"
+    x = 0
+    y = 29
+    w = "100%"
+    h = 26
+    color = [0.133, 0.078, 0.059, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.b.win"
+    x = 10
+    y = 37
+    bank = 14
+    font = 2
+    text = "{item.b.text}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.b.win"
+    anchor = "tr"
+    x = 12
+    y = 37
+    bank = 14
+    font = 2
+    text = "{item.b.score}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.b.plain"
+    x = 10
+    y = 37
+    bank = 12
+    font = 2
+    text = "{item.b.text}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.b.plain"
+    anchor = "tr"
+    x = 12
+    y = 37
+    bank = 12
+    font = 2
+    text = "{item.b.score}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.b.tbd"
+    x = 10
+    y = 37
+    bank = 17
+    font = 2
+    text = "{item.b.text}"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.has_line"
+    x = 0
+    y = 55
+    w = "100%"
+    h = 20
+    color = [0.957, 0.788, 0.62, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.has_line"
+    x = 10
+    y = 59
+    bank = 13
+    font = 2
+    text = "{item.line}"
+
+  [[node.children]]
+  kind = "panel"
+  visible = "item.live"
+  x = "{item.ox}"
+  y = "{item.oy}"
+  w = "{item.ow}"
+  h = "{item.oh}"
+  border = 5
+  border_color = [0.706, 0.188, 0.102, 1.0]
+
+# the champion
+[[node]]
+kind = "panel"
+visible = "bk.champ.has"
+x = "{bk.champ.x}"
+y = "{bk.champ.y}"
+w = "{bk.champ.w}"
+h = "{bk.champ.h}"
+color = [0.133, 0.078, 0.059, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 40
+  w = "100%"
+  align = "center"
+  bank = 4
+  font = 1
+  scale = 1
+  text = "CHAMPION"
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 74
+  w = "100%"
+  align = "center"
+  bank = 14
+  font = 6
+  text = "{bk.champ.name}"
+
+[[node]]
+kind = "panel"
+visible = "bk.drawn"
+x = "{bk.champ.x}"
+y = "{bk.champ.y}"
+w = "{bk.champ.w}"
+h = "{bk.champ.h}"
+border = 4
+border_color = [0.62, 0.553, 0.471, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "bk.champ.none"
+  x = 0
+  y = 44
+  w = "100%"
+  align = "center"
+  bank = 17
+  font = 3
+  scale = 2
+  text = "?"
+
+  [[node.children]]
+  kind = "text"
+  visible = "bk.champ.none"
+  x = 0
+  y = 116
+  w = "100%"
+  align = "center"
+  bank = 16
+  font = 2
+  text = "TBD"
+
+# before the draw: the entrants, START for the host
+[[node]]
+kind = "panel"
+visible = "bk.open"
+x = 48
+y = 100
+w = 780
+h = 540
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 22
+  bank = 17
+  font = 2
+  text = "PLAYERS {bk.count}"
+
+  [[node.children]]
+  kind = "grid"
+  id = "bk_entrants"
+  x = 24
+  y = 50
+  w = 732
+  h = 470
+  cell_h = 52
+  cell_w = 360
+  columns = 2
+  gap = 8
+  items = "bk.entrants"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 360
+    h = 52
+    border = 3
+    border_color = [0.133, 0.078, 0.059, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 14
+      y = 10
+      bank = 17
+      font = 2
+      text = "{item.n}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 50
+      y = 8
+      bank = 12
+      font = 2
+      text = "{item.name}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 50
+      y = 30
+      bank = 17
+      font = 2
+      text = "{item.rating}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.you"
+      anchor = "tr"
+      x = 12
+      y = 18
+      bank = 13
+      font = 2
+      text = "YOU"
+
+[[node]]
+kind = "text"
+visible = "bk.open"
+x = 860
+y = 120
+w = 372
+h = 200
+bank = 16
+font = 2
+line_gap = 8
+max_lines = 8
+text = "{bk.wait_line}"
+wrap = true
+
+[[node]]
+kind = "panel"
+visible = "bk.can_start"
+x = 865
+y = 581
+w = 372
+h = 64
+color = [0.133, 0.078, 0.059, 1.0]
+
+[[node]]
+kind = "button"
+id = "bk_start"
+visible = "bk.can_start"
+focus = true
+x = 860
+y = 576
+w = 372
+h = 64
+border = 4
+border_color = [0.706, 0.188, 0.102, 1.0]
+border_color_focus = [0.133, 0.078, 0.059, 1.0]
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.706, 0.188, 0.102, 1.0]
+on_press = "bk:start"
+shadow_focus = [6, 6]
+
+  [[node.children]]
+  kind = "text"
+  when = "blur"
+  x = 0
+  y = 22
+  w = 372
+  align = "center"
+  bank = 13
+  font = 2
+  text = "{bk.start_label}"
+
+  [[node.children]]
+  kind = "text"
+  when = "focus"
+  x = 0
+  y = 22
+  w = 372
+  align = "center"
+  bank = 14
+  font = 2
+  text = "{bk.start_label}"
+
+[[node]]
+kind = "text"
+visible = "is_bracket"
+x = 48
+y = 678
+w = 860
+bank = 16
+font = 2
+ellipsis = true
+text = "{bk.note}"
+
+# ---- END BRACKET
+# ---- WATCH: opening a match to watch (its stream, its files)
+# Data: is_watch, wt.* (title players frames line error ok rows[] (label pct w done))
+[[node]]
+kind = "panel"
+visible = "is_watch"
+x = 290
+y = 150
+w = 680
+h = 400
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 36
+  bank = 17
+  font = 2
+  text = "● LIVE"
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 60
+  w = 600
+  ellipsis = true
+  bank = 12
+  font = 6
+  text = "{wt.title}"
+
+  [[node.children]]
+  kind = "text"
+  x = 40
+  y = 96
+  w = 600
+  ellipsis = true
+  bank = 17
+  font = 2
+  text = "{wt.players} · {wt.frames}"
+
+  [[node.children]]
+  kind = "vbox"
+  x = 40
+  y = 140
+  w = 600
+  h = 150
+  gap = 14
+  items = "wt.rows"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 4
+    bank = 12
+    font = 2
+    text = "{item.label}"
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 180
+    y = 0
+    w = 360
+    h = 22
+    color = [0.839, 0.769, 0.627, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 180
+    y = 0
+    w = "{item.w}"
+    h = 22
+    color = [0.706, 0.188, 0.102, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 552
+    y = 4
+    bank = 12
+    font = 2
+    text = "{item.pct}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "wt.ok"
+  x = 40
+  y = 310
+  w = 600
+  h = 60
+  line_gap = 6
+  max_lines = 3
+  bank = 17
+  font = 2
+  text = "{wt.line}"
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "wt.error"
+  x = 40
+  y = 310
+  w = 600
+  h = 60
+  line_gap = 6
+  max_lines = 3
+  bank = 13
+  font = 2
+  text = "{wt.line}"
+  wrap = true
+
+# ---- END WATCH
+# ---- REPLAYS: share the last match by code (left), watch one by code (right)
+# Data: is_replays, rp.* (has_last no_last title line shared unshared code[]
+# (dash cell c active idle) share_label can_save typed[] recent[] (title when
+# action) has_recent no_recent note keep copy)
+[[node]]
+kind = "panel"
+visible = "is_replays"
+x = 48
+y = 100
+w = 568
+h = 530
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 26
+  bank = 17
+  font = 2
+  text = "AFTER A MATCH · SHARE"
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.has_last"
+  x = 28
+  y = 56
+  w = 512
+  ellipsis = true
+  bank = 12
+  font = 6
+  text = "{rp.title}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.has_last"
+  x = 28
+  y = 90
+  bank = 17
+  font = 2
+  text = "{rp.line}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.no_last"
+  x = 28
+  y = 60
+  w = 512
+  h = 80
+  line_gap = 8
+  max_lines = 3
+  bank = 12
+  font = 2
+  text = "PLAY AN ONLINE MATCH ON THIS SERVER, THEN SHARE IT HERE."
+  wrap = true
+
+  [[node.children]]
+  kind = "panel"
+  visible = "rp.shared"
+  x = 0
+  y = 0
+  w = 1
+  h = 1
+
+  [[node.children]]
+  kind = "hbox"
+  visible = "rp.shared"
+  x = 28
+  y = 126
+  h = 66
+  gap = 8
+  items = "rp.code"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.dash"
+    w = 24
+    h = 66
+    align = "center"
+    bank = 12
+    font = 6
+    text = "-"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.idle"
+    w = 52
+    h = 66
+    border = 3
+    border_color = [0.133, 0.078, 0.059, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.active"
+    w = 52
+    h = 66
+    border = 4
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.cell"
+    w = 52
+    h = 66
+    align = "center"
+    bank = 13
+    font = 5
+    text = "{item.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "button"
+  id = "rp_share"
+  visible = "rp.has_last"
+  x = 28
+  y = 214
+  w = 240
+  h = 52
+  border = 4
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.133, 0.078, 0.059, 1.0]
+  color = [0.706, 0.188, 0.102, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  on_press = "rp:share"
+  shadow_focus = [5, 5]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 17
+    w = 240
+    align = "center"
+    bank = 14
+    font = 6
+    text = "{rp.share_label}"
+
+  [[node.children]]
+  kind = "button"
+  id = "rp_save"
+  visible = "rp.can_save"
+  x = 284
+  y = 214
+  w = 220
+  h = 52
+  border = 3
+  border_color = [0.133, 0.078, 0.059, 1.0]
+  border_color_focus = [0.706, 0.188, 0.102, 1.0]
+  border_focus = 4
+  color = [0.976, 0.949, 0.886, 1.0]
+  color_focus = [0.957, 0.788, 0.62, 1.0]
+  on_press = "rp:save"
+  shadow_focus = [5, 5]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 17
+    w = 220
+    align = "center"
+    bank = 12
+    font = 6
+    text = "SAVE FILE"
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 296
+  w = 512
+  h = 60
+  line_gap = 8
+  max_lines = 3
+  bank = 12
+  font = 2
+  text = "{rp.note}"
+  wrap = true
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 460
+  w = 512
+  h = 50
+  line_gap = 8
+  max_lines = 2
+  bank = 17
+  font = 2
+  text = "{rp.keep}"
+  wrap = true
+
+[[node]]
+kind = "panel"
+visible = "is_replays"
+x = 664
+y = 100
+w = 568
+h = 530
+image = "ui/sheet9.webp"
+nine = [12, 12, 12, 12]
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 26
+  bank = 17
+  font = 2
+  text = "WATCH → BY CODE"
+
+  [[node.children]]
+  kind = "hbox"
+  x = 28
+  y = 50
+  h = 66
+  gap = 8
+  items = "rp.typed"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.dash"
+    w = 24
+    h = 66
+    align = "center"
+    bank = 12
+    font = 6
+    text = "-"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.idle"
+    w = 52
+    h = 66
+    border = 3
+    border_color = [0.133, 0.078, 0.059, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "item.active"
+    w = 52
+    h = 66
+    border = 4
+    border_color = [0.706, 0.188, 0.102, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "item.cell"
+    w = 52
+    h = 66
+    align = "center"
+    bank = 12
+    font = 5
+    text = "{item.c}"
+    text_dy = 2
+
+  [[node.children]]
+  kind = "input"
+  id = "rp_code"
+  x = 28
+  y = 50
+  w = 500
+  h = 66
+  alpha = 0.0
+  max_len = 12
+  on_change = "rpcode:{value}"
+  on_press = "rp:watch"
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 130
+  bank = 17
+  font = 2
+  text = "CTRL+V PASTES · MISSING FIGHTERS DOWNLOAD FIRST"
+
+  [[node.children]]
+  kind = "button"
+  id = "rp_watch"
+  visible = "is_replays"
+  x = 28
+  y = 158
+  w = 200
+  h = 48
+  border = 4
+  border_color = [0.706, 0.188, 0.102, 1.0]
+  border_color_focus = [0.133, 0.078, 0.059, 1.0]
+  color = [0.706, 0.188, 0.102, 1.0]
+  color_focus = [0.706, 0.188, 0.102, 1.0]
+  on_press = "rp:watch"
+  shadow_focus = [5, 5]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 0
+    y = 15
+    w = 200
+    align = "center"
+    bank = 14
+    font = 6
+    text = "WATCH"
+
+  [[node.children]]
+  kind = "text"
+  x = 28
+  y = 232
+  bank = 12
+  font = 2
+  text = "RECENT"
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.no_recent"
+  x = 28
+  y = 262
+  bank = 17
+  font = 2
+  text = "CODES YOU SHARE OR WATCH SHOW HERE."
+
+  [[node.children]]
+  kind = "list"
+  id = "rp_recent"
+  visible = "rp.has_recent"
+  x = 28
+  y = 256
+  w = 512
+  h = 200
+  items = "rp.recent"
+
+    [[node.children.children]]
+    kind = "button"
+    id = "row"
+    w = 512
+    h = 46
+    border = 3
+    border_color = [0.839, 0.769, 0.627, 1.0]
+    border_color_focus = [0.706, 0.188, 0.102, 1.0]
+    color = [0.976, 0.949, 0.886, 1.0]
+    color_focus = [0.957, 0.788, 0.62, 1.0]
+    on_press = "{item.action}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 14
+      y = 16
+      bank = 12
+      font = 2
+      text = "{item.title}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 300
+      y = 16
+      bank = 17
+      font = 2
+      text = "{item.when}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      anchor = "tr"
+      x = 14
+      y = 16
+      bank = 12
+      font = 2
+      text = "▶ WATCH"
+
+# ---- END REPLAYS
+# ---- HUB REPLAYS button
+[[node]]
+kind = "button"
+id = "replays_btn"
+visible = "is_hub"
+x = 300
+y = 670
+w = 150
+h = 30
+border = 3
+border_color = [0.635, 0.4, 0.227, 1.0]
+border_color_focus = [0.89, 0.702, 0.298, 1.0]
+color = [0.0, 0.0, 0.0, 0.0]
+color_focus = [0.706, 0.188, 0.102, 1.0]
+on_press = "hub:replays"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  when = "blur"
+  x = 0
+  y = 9
+  w = 150
+  align = "center"
+  bank = 14
+  font = 2
+  text = "REPLAYS"
+
+  [[node.children]]
+  kind = "text"
+  when = "focus"
+  x = 0
+  y = 9
+  w = 150
+  align = "center"
+  bank = 14
+  font = 2
+  text = "REPLAYS"
+
+# ---- END HUB REPLAYS
 # ---- PROFILE: one card per server (left), its account (right)
 [[node]]
 kind = "list"
@@ -3334,53 +4339,252 @@ nine = [12, 12, 12, 12]
     border_color = [0.706, 0.188, 0.102, 1.0]
     border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
+# ---- LEADERBOARD: season plaque (top right), season stepper, the table, the
+# player's own line pinned under it, the season rule in the footer.
+# Data: board.* (rows[] (pos top name verified rating record last {has tier hi lo})
+# me.* season {name line pick can_step} finished badge_col note empty empty_line loading scope
+# tab_players tab_fighters fighter has_fighter)
 [[node]]
-kind = "text"
+kind = "hbox"
 visible = "is_board"
 anchor = "tr"
 x = 48
-y = 32
-h = 40
+y = 28
+h = 44
 align = "center"
-bank = 14
 color = [0.133, 0.078, 0.059, 1.0]
+gap = 12
+hug = true
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
+
+  [[node.children]]
+  kind = "text"
+  bank = 4
+  font = 6
+  text = "{board.season.name}"
+
+  [[node.children]]
+  kind = "text"
+  bank = 14
+  font = 2
+  text = "{board.season.line}"
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
+
+[[node]]
+kind = "button"
+id = "board_players"
+visible = "is_board"
+x = 48
+y = 96
+w = 136
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_press = "board:tab:players"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "board.tab_players"
+  x = 0
+  y = 0
+  w = 136
+  h = 38
+  color = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.tab_players"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 14
+  font = 2
+  text = "PLAYERS"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!board.tab_players"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 12
+  font = 2
+  text = "PLAYERS"
+
+[[node]]
+kind = "button"
+id = "board_fighters"
+visible = "is_board"
+x = 196
+y = 96
+w = 136
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_press = "board:tab:fighters"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "panel"
+  visible = "board.tab_fighters"
+  x = 0
+  y = 0
+  w = 136
+  h = 38
+  color = [0.706, 0.188, 0.102, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  visible = "board.tab_fighters"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 14
+  font = 2
+  text = "FIGHTERS"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!board.tab_fighters"
+  x = 0
+  y = 12
+  w = 136
+  align = "center"
+  bank = 12
+  font = 2
+  text = "FIGHTERS"
+
+[[node]]
+kind = "text"
+visible = "board.has_fighter"
+x = 368
+y = 108
+bank = 16
 font = 2
-pad = 18
-text = "PLAYERS"
+text = "FIGHTER"
+
+[[node]]
+kind = "button"
+id = "board_fighter"
+visible = "board.has_fighter"
+x = 452
+y = 96
+w = 260
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_left = "board:fighter:-"
+on_press = "board:fighter:+"
+on_right = "board:fighter:+"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 12
+  w = 260
+  align = "center"
+  bank = 12
+  font = 2
+  text = "◀ {board.fighter} ▶"
 
 [[node]]
 kind = "text"
 visible = "is_board"
 anchor = "tr"
-x = 170
-y = 46
+x = 340
+y = 108
 bank = 16
 font = 2
 text = "{board.scope}"
 deck = { x = 190 }
 
 [[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 250
+y = 108
+bank = 16
+font = 2
+text = "SEASON"
+
+[[node]]
+kind = "button"
+id = "board_season"
+visible = "is_board"
+anchor = "tr"
+x = 48
+y = 96
+w = 190
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_left = "board:older"
+on_press = "board:older"
+on_right = "board:newer"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 12
+  w = 190
+  align = "center"
+  bank = 12
+  font = 2
+  text = "◀ {board.season.pick} ▶"
+
+[[node]]
 kind = "panel"
 visible = "is_board"
 x = 48
-y = 98
+y = 150
 w = 1184
-h = 542
+h = 490
 image = "ui/sheet9.webp"
 nine = [12, 12, 12, 12]
 
   [[node.children]]
   kind = "text"
   x = 24
-  y = 16
+  y = 14
   bank = 17
   font = 2
-  text = "RANK"
+  text = "#"
 
   [[node.children]]
   kind = "text"
   x = 130
-  y = 16
+  y = 14
   bank = 17
   font = 2
   text = "PLAYER"
@@ -3388,31 +4592,31 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "text"
   x = 620
-  y = 16
+  y = 14
   bank = 17
   font = 2
   text = "RATING"
 
   [[node.children]]
   kind = "text"
-  x = 800
-  y = 16
+  x = 790
+  y = 14
   bank = 17
   font = 2
-  text = "W - L"
+  text = "RECORD"
 
   [[node.children]]
   kind = "text"
   x = 980
-  y = 16
+  y = 14
   bank = 17
   font = 2
-  text = "TIER"
+  text = "{board.badge_col}"
 
   [[node.children]]
   kind = "panel"
   x = 10
-  y = 38
+  y = 36
   w = 1164
   h = 3
   color = [0.133, 0.078, 0.059, 1.0]
@@ -3421,9 +4625,9 @@ nine = [12, 12, 12, 12]
   kind = "list"
   id = "board_list"
   x = 4
-  y = 41
+  y = 39
   w = 1176
-  h = 432
+  h = 384
   items = "board.rows"
 
     [[node.children.children]]
@@ -3436,7 +4640,9 @@ nine = [12, 12, 12, 12]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
     color_focus = [0.957, 0.788, 0.62, 1.0]
+    on_left = "board:older"
     on_press = "board:row"
+    on_right = "board:newer"
 
       [[node.children.children.children]]
       kind = "panel"
@@ -3483,6 +4689,14 @@ nine = [12, 12, 12, 12]
 
         [[node.children.children.children.children]]
         kind = "text"
+        visible = "item.top"
+        bank = 13
+        font = 6
+        text = "{item.name}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "!item.top"
         bank = 12
         font = 6
         text = "{item.name}"
@@ -3509,7 +4723,7 @@ nine = [12, 12, 12, 12]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 796
+      x = 786
       y = 15
       bank = 12
       font = 6
@@ -3517,28 +4731,55 @@ nine = [12, 12, 12, 12]
 
       [[node.children.children.children]]
       kind = "text"
+      visible = "item.last.hi"
       x = 976
-      y = 19
+      y = 14
+      h = 20
+      align = "center"
+      bank = 12
+      color = [0.89, 0.702, 0.298, 1.0]
+      font = 2
+      pad = 6
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.last.lo"
+      x = 976
+      y = 14
+      h = 20
+      align = "center"
+      bank = 12
+      color = [0.839, 0.769, 0.627, 1.0]
+      font = 2
+      pad = 6
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "!item.last.has"
+      x = 976
+      y = 17
       bank = 17
       font = 2
-      text = "{item.tier}"
+      text = "-"
 
   [[node.children]]
   kind = "text"
   visible = "board.empty"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   bank = 12
   font = 6
-  text = "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD."
+  text = "{board.empty_line}"
 
   [[node.children]]
   kind = "text"
   visible = "board.loading"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   bank = 17
@@ -3548,11 +4789,19 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "panel"
   visible = "board.me.show"
-  x = 0
-  y = 474
+  x = 4
+  y = 422
   w = 1176
   h = 60
   color = [0.133, 0.078, 0.059, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 0
+    y = 0
+    w = 8
+    h = 60
+    color = [0.706, 0.188, 0.102, 1.0]
 
     [[node.children.children]]
     kind = "text"
@@ -3580,7 +4829,7 @@ nine = [12, 12, 12, 12]
 
     [[node.children.children]]
     kind = "text"
-    x = 796
+    x = 786
     y = 19
     bank = 14
     font = 6
@@ -3588,11 +4837,38 @@ nine = [12, 12, 12, 12]
 
     [[node.children.children]]
     kind = "text"
+    visible = "board.me.last.hi"
     x = 976
-    y = 23
-    bank = 14
+    y = 20
+    h = 20
+    align = "center"
+    bank = 12
+    color = [0.89, 0.702, 0.298, 1.0]
     font = 2
-    text = "{board.me.tier}"
+    pad = 6
+    text = "{board.me.last.tier}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "board.me.last.lo"
+    x = 976
+    y = 20
+    h = 20
+    align = "center"
+    bank = 12
+    color = [0.839, 0.769, 0.627, 1.0]
+    font = 2
+    pad = 6
+    text = "{board.me.last.tier}"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+x = 48
+y = 678
+bank = 16
+font = 2
+text = "{board.note}"
 
 [[node]]
 kind = "panel"

@@ -85,13 +85,14 @@ rugen play kfm        # a quick match against the computer
 - [x] **User themes folder**: your own themes with live reload, no rebuild.
 - [x] **Fighter debugger**: step through frames, states and variables.
 - [x] **Steam Deck layout**: a handheld-friendly screen and controls, with bigger text.
+- [x] **Ranked seasons**: ratings that soft-reset every 90 days; past seasons and tier badges stay.
+- [x] **Per-fighter leaderboards**: the best players of each character, every season.
+- [x] **Tournament brackets**: eight or sixteen players inside a room, seeded by rating.
+- [x] **Live watching**: watch any online match from the lobby or a bracket, even mid-match.
+- [x] **Shareable replays**: send a match to someone by code, kept 30 days.
 
 ### Planned
 
-- [ ] **Ranked seasons**: ratings that reset on a schedule.
-- [ ] **Per-fighter leaderboards**: the best players of each character.
-- [ ] **Tournament brackets**: eight or sixteen players inside a room.
-- [ ] **Shareable replays**: send a match to someone by code.
 - [ ] **Translations (i18n)**: the menus in 10+ languages: Brazilian Portuguese, Spanish, French, Italian, German, Polish, Turkish, Indonesian, Filipino and Japanese.
 
 ### Not planned for now
