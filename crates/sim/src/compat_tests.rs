@@ -585,3 +585,35 @@ fn helper_without_an_animation_draws_nothing() {
     assert!(!w.players[ok].anim_none, "a valid ChangeAnim gives one");
     assert_eq!(w.players[ok].anim.action, 200);
 }
+
+/// Owner report 8 (Kaioken's red screen): the aura helper (PalFX red,
+/// `ownpal`) makes a full-screen flash explod with `ownpal = 1`. MUGEN:
+/// such an explod is "not affected by subsequent" PalFX, so it keeps the
+/// creator's effect as it was when made (red); it was drawn white.
+#[test]
+fn ownpal_explod_keeps_its_creators_palfx() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    with_state(
+        &mut w,
+        7800,
+        "[State 7800, red]\ntype = PalFX\ntrigger1 = time = 0\ntime = -1\nadd = 7,-200,-200\ncolor = 0\n\n\
+         [State 7800, flash]\ntype = Explod\ntrigger1 = time = 0\nanim = 0\nid = 1\nownpal = 1\n\
+         postype = left\nscale = 999,999\nremovetime = -1\n\n\
+         [State 7800, later]\ntype = PalFX\ntrigger1 = time = 2\ntime = -1\nadd = 0,0,0\n",
+    );
+    run(&mut w, 5);
+    let e = explod_by_id(&w, 1);
+    assert!(e.palfx.active());
+    assert_eq!(
+        e.palfx.add,
+        [7, -200, -200],
+        "the creator's effect at creation"
+    );
+    assert_eq!(
+        w.players[0].palfx.add,
+        [0, 0, 0],
+        "the player's own moved on"
+    );
+}

@@ -1647,6 +1647,12 @@ impl World {
             .as_ref()
             .map_or(0, |c| self.eval(i, c).to_i().max(0));
         self.apply_explod_spec(i, &mut e, spec, true);
+        // ownpal without its own palfx.*: the creator's palette effect as it
+        // is now, unaffected by later PalFX (MUGEN docs; Goku's Kaioken
+        // aura helper, tinted red, flashes the screen red with one)
+        if e.ownpal && spec.palfx.is_none() && e.src != AnimSrc::Fx {
+            e.palfx = self.drawn_palfx(i).clone();
+        }
         self.explod_set_pos(&mut e, i);
         self.explods.push(e);
         Some(self.explods.len() - 1)
