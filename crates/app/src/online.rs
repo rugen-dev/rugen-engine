@@ -135,11 +135,10 @@ pub struct Played {
 /// commit stays in the files and `rugen replay --info`).
 fn machine_words(m: &rugen_proto::MachineSummary) -> String {
     // `Windows 11 10.0.22631` → `Windows 11`: build numbers stay in the file
-    let os: Vec<&str> = m
-        .os
-        .split_whitespace()
-        .filter(|w| w.matches('.').count() < 2)
-        .collect();
+    let os: Vec<&str> =
+        m.os.split_whitespace()
+            .filter(|w| w.matches('.').count() < 2)
+            .collect();
     rugen_proto::MachineSummary {
         commit: String::new(),
         os: os.join(" "),
@@ -176,52 +175,52 @@ pub fn server_label(server: &str) -> String {
 
 /// The local replay file of an online match we played.
 fn played_replay(p: &Played) -> crate::replay::Replay {
-        let setup = FightSetup {
-            life: None,
-            p1: p.p1.clone(),
-            p2: p.p2.clone(),
-            stage: p.stage.clone(),
-            ai: [0, 0],
-            net: None,
-            tutorial: false,
-            ids: [String::new(), String::new()],
-            mode: None,
-            fighter_size: None,
-            arena_ai: None,
-            round_time: None,
-            teams: None,
-            run: None,
-            seed: Some(p.seed),
-        };
-        let mut r = crate::replay::Replay::new(
-            &setup,
-            room_size(&p.rules),
-            false,
-            if p.rules.round_time == 0 {
-                -1
-            } else {
-                i32::from(p.rules.round_time)
-            },
-            p.seed,
-            room_life(&p.rules),
-        );
-        r.ai = [0, 0];
-        r.run = Some(crate::play::RunRules {
-            match_wins: p.rules.rounds.clamp(1, 9),
-            p1_life: None,
-        });
-        r.inputs = p.inputs.clone();
-        r.mode = Some("online".into());
-        if p.recorded_at.is_some() {
-            r.recorded_at = p.recorded_at.clone();
-        }
-        r.online = Some(crate::replay::OnlineMeta {
-            server: server_label(&p.server),
-            match_id: p.match_id,
-            side: p.side,
-            peer: p.peer.clone(),
-        });
-        r
+    let setup = FightSetup {
+        life: None,
+        p1: p.p1.clone(),
+        p2: p.p2.clone(),
+        stage: p.stage.clone(),
+        ai: [0, 0],
+        net: None,
+        tutorial: false,
+        ids: [String::new(), String::new()],
+        mode: None,
+        fighter_size: None,
+        arena_ai: None,
+        round_time: None,
+        teams: None,
+        run: None,
+        seed: Some(p.seed),
+    };
+    let mut r = crate::replay::Replay::new(
+        &setup,
+        room_size(&p.rules),
+        false,
+        if p.rules.round_time == 0 {
+            -1
+        } else {
+            i32::from(p.rules.round_time)
+        },
+        p.seed,
+        room_life(&p.rules),
+    );
+    r.ai = [0, 0];
+    r.run = Some(crate::play::RunRules {
+        match_wins: p.rules.rounds.clamp(1, 9),
+        p1_life: None,
+    });
+    r.inputs = p.inputs.clone();
+    r.mode = Some("online".into());
+    if p.recorded_at.is_some() {
+        r.recorded_at = p.recorded_at.clone();
+    }
+    r.online = Some(crate::replay::OnlineMeta {
+        server: server_label(&p.server),
+        match_id: p.match_id,
+        side: p.side,
+        peer: p.peer.clone(),
+    });
+    r
 }
 
 static LAST_PLAYED: Mutex<Option<Played>> = Mutex::new(None);

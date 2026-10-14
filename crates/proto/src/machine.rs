@@ -70,11 +70,16 @@ impl MachineSummary {
         if !self.commit.is_empty() && self.commit != "unknown" {
             engine = format!("{engine} ({})", self.commit);
         }
-        [engine, self.os.clone(), self.arch.clone(), self.backend.clone()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ")
+        [
+            engine,
+            self.os.clone(),
+            self.arch.clone(),
+            self.backend.clone(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
     }
 
     /// Compact JSON for a datagram (LAN hello, relay message).

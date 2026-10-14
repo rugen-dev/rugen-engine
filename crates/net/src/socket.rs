@@ -354,8 +354,14 @@ mod tests {
             )
             .unwrap();
         let rb = t.join().unwrap();
-        assert_eq!(ra.peer_hello.as_deref(), Some(r#"{"engine":"rugen 0.7.0","os":"B"}"#));
-        assert_eq!(rb.peer_hello.as_deref(), Some(r#"{"engine":"rugen 0.7.0","os":"A"}"#));
+        assert_eq!(
+            ra.peer_hello.as_deref(),
+            Some(r#"{"engine":"rugen 0.7.0","os":"B"}"#)
+        );
+        assert_eq!(
+            rb.peer_hello.as_deref(),
+            Some(r#"{"engine":"rugen 0.7.0","os":"A"}"#)
+        );
         assert_eq!(rb.rules.as_deref(), Some("fighter_size=chibi"));
         // an older peer: no hello, nothing else changes
         let mut a = Socket::bind(0).unwrap();

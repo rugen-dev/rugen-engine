@@ -1257,8 +1257,7 @@ mod tests {
                 .unwrap();
             b.set_machine("B");
             pump(&mut b);
-            let got = b.peer_machine().lock().unwrap().clone();
-            got
+            b.peer_machine().lock().unwrap().clone()
         });
         let mut a =
             RelaySocket::connect_udp(&ticket(0), &server.to_string(), Duration::from_secs(2))

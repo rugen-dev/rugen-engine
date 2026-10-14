@@ -749,7 +749,11 @@ fn main() -> anyhow::Result<()> {
                 // replays from before 0.6.5 stored absolute paths
                 let text = std::fs::read_to_string(path).unwrap_or_default();
                 if let Some(w) = machine::Personal::current().leaks(&text) {
-                    let w = if w.contains(['/', '\\']) { "a home folder" } else { "a personal name" };
+                    let w = if w.contains(['/', '\\']) {
+                        "a home folder"
+                    } else {
+                        "a personal name"
+                    };
                     println!(
                         "privacy   this file names {w} (an older replay with absolute paths); \
                          newer replays store ids only"

@@ -96,10 +96,13 @@ pub fn ids_of(def: &Path) -> Vec<String> {
     // a replay written on Windows names its paths with backslashes
     let text = def.to_string_lossy();
     let comps: Vec<&str> = text.split(['/', '\\']).filter(|c| !c.is_empty()).collect();
-    let ext = |c: &str, e: &str| {
-        c.len() > e.len() && c[c.len() - e.len()..].eq_ignore_ascii_case(e)
-    };
-    if let Some(c) = comps.iter().rev().find(|c| ext(c, ".rgc") || ext(c, ".rgs")) {
+    let ext =
+        |c: &str, e: &str| c.len() > e.len() && c[c.len() - e.len()..].eq_ignore_ascii_case(e);
+    if let Some(c) = comps
+        .iter()
+        .rev()
+        .find(|c| ext(c, ".rgc") || ext(c, ".rgs"))
+    {
         push(&c[..c.len() - 4]);
     }
     let Some(last) = comps.last() else {
@@ -188,8 +191,7 @@ pub fn resolve_def(
 
 /// A main def (not a folder that happens to share the name).
 fn path_is_def(p: &Path) -> bool {
-    p.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("def"))
+    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("def"))
 }
 
 /// Longest part of a replay file name (a fighter, a team, the stage).
@@ -260,7 +262,10 @@ pub fn list_saved(dir: &Path) -> Vec<Saved> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("json"))
+        })
         .filter_map(|path| {
             let replay = Replay::load(&path).ok()?;
             let mtime = || {
@@ -532,9 +537,9 @@ impl Replay {
         }
         let refs = self.content.as_ref();
         let content = |p: &Path, r: Option<&ContentRef>| {
-            let id = r.map(|r| r.id.clone()).unwrap_or_else(|| {
-                ids_of(p).into_iter().next().unwrap_or_default()
-            });
+            let id = r
+                .map(|r| r.id.clone())
+                .unwrap_or_else(|| ids_of(p).into_iter().next().unwrap_or_default());
             let fp = r
                 .and_then(|r| r.fingerprint.as_deref())
                 .map(|f| format!(" (fingerprint {})", &f[..f.len().min(12)]))
@@ -555,9 +560,7 @@ impl Replay {
                         .map(|(i, p)| {
                             refs.and_then(|r| r.partners[side].get(i))
                                 .map(|r| r.id.clone())
-                                .unwrap_or_else(|| {
-                                    ids_of(p).into_iter().next().unwrap_or_default()
-                                })
+                                .unwrap_or_else(|| ids_of(p).into_iter().next().unwrap_or_default())
                         })
                         .collect();
                     rows.push((
@@ -573,7 +576,10 @@ impl Replay {
             format!("{} ({}:{:02})", self.inputs.len(), secs / 60, secs % 60),
         ));
         let mut rules = vec![
-            format!("seed {}", self.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED)),
+            format!(
+                "seed {}",
+                self.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED)
+            ),
             format!("fighter size {}", self.fighter_size.as_str()),
         ];
         if let Some(t) = self.round_time {
@@ -612,7 +618,11 @@ impl Replay {
         r.p1 = private_path(&self.p1, root, &refs.p1.id);
         r.p2 = private_path(&self.p2, root, &refs.p2.id);
         r.stage = self.stage.as_ref().map(|s| {
-            let id = refs.stage.as_ref().map(|r| r.id.clone()).unwrap_or_default();
+            let id = refs
+                .stage
+                .as_ref()
+                .map(|r| r.id.clone())
+                .unwrap_or_default();
             private_path(s, root, &id)
         });
         if let Some(t) = r.teams.as_mut() {
@@ -871,9 +881,18 @@ mod tests {
     #[test]
     fn paths_name_their_fighter() {
         let first = |p: &str| ids_of(Path::new(p)).into_iter().next().unwrap_or_default();
-        assert_eq!(first("/home/u/RUGEN/chars/G6_Madara.rgc/G6_Madara.def"), "G6_Madara");
-        assert_eq!(first(r"C:\Users\u\RUGEN\chars\G6_Obito.rgc\obito.def"), "G6_Obito");
-        assert_eq!(first("/home/u/RUGEN/cache/chars/kfm-0123456789abcdef/kfm.def"), "kfm");
+        assert_eq!(
+            first("/home/u/RUGEN/chars/G6_Madara.rgc/G6_Madara.def"),
+            "G6_Madara"
+        );
+        assert_eq!(
+            first(r"C:\Users\u\RUGEN\chars\G6_Obito.rgc\obito.def"),
+            "G6_Obito"
+        );
+        assert_eq!(
+            first("/home/u/RUGEN/cache/chars/kfm-0123456789abcdef/kfm.def"),
+            "kfm"
+        );
         assert_eq!(first("/old/chars/kfm/kfm.def"), "kfm");
         assert_eq!(first("G6_Madara"), "G6_Madara");
         assert_eq!(first("chars/Forest.rgs/stage.def"), "Forest");
@@ -922,7 +941,10 @@ mod tests {
         }
         .setup();
         setup.teams = Some(crate::play::TeamSetup {
-            mode: [rugen_sim::team::TeamMode::Turns, rugen_sim::team::TeamMode::Single],
+            mode: [
+                rugen_sim::team::TeamMode::Turns,
+                rugen_sim::team::TeamMode::Single,
+            ],
             partners: [vec![root.join("chars/Kakashi.rgc/Kakashi.def")], vec![]],
             ids: Default::default(),
         });
@@ -938,10 +960,20 @@ mod tests {
         assert_eq!(personal.leaks(&text), None, "{text}");
         let back: Replay = serde_json::from_str(&text).unwrap();
         assert_eq!(back.p1, PathBuf::from("chars/G6_Madara.rgc/G6_Madara.def"));
-        assert_eq!(back.p2, PathBuf::from("Sakura"), "outside the root: the id only");
-        assert_eq!(back.stage, Some(PathBuf::from("stages/Forest.rgs/Forest.def")));
+        assert_eq!(
+            back.p2,
+            PathBuf::from("Sakura"),
+            "outside the root: the id only"
+        );
+        assert_eq!(
+            back.stage,
+            Some(PathBuf::from("stages/Forest.rgs/Forest.def"))
+        );
         let refs = back.content.unwrap();
-        assert_eq!((refs.p1.id.as_str(), refs.p2.id.as_str()), ("G6_Madara", "Sakura"));
+        assert_eq!(
+            (refs.p1.id.as_str(), refs.p2.id.as_str()),
+            ("G6_Madara", "Sakura")
+        );
         assert_eq!(refs.partners[0][0].id, "Kakashi");
         assert_eq!(
             back.teams.unwrap().partners[0][0],
@@ -1077,7 +1109,10 @@ mod tests {
         assert_eq!(name_part(&"x".repeat(80)).len(), NAME_PART_MAX);
         assert_eq!(side_part("Goku", &["KFM".into()]), "Goku_and_KFM");
         assert_eq!(
-            side_part("G6_Obito_Rikudou", &["G6_Kakashi".into(), "G6_Sakura".into()]),
+            side_part(
+                "G6_Obito_Rikudou",
+                &["G6_Kakashi".into(), "G6_Sakura".into()]
+            ),
             "G6_Obito_Rikudou_team"
         );
         let mut r: Replay = serde_json::from_str(
@@ -1092,7 +1127,10 @@ mod tests {
             stem.starts_with("G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-"),
             "{stem}"
         );
-        assert_eq!(stem.len(), "G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-".len() + 6);
+        assert_eq!(
+            stem.len(),
+            "G6_Obito_Rikudou-vs-G6_Sakura-Forest_of_Dead_Trees-".len() + 6
+        );
         assert!(stem.len() + 5 < 120);
         // stable for the same match, another match another name
         assert_eq!(r.file_stem(), stem);
@@ -1125,7 +1163,11 @@ mod tests {
         r.save(&first, &root).unwrap();
         let second = free_path(&dir, &r.file_stem());
         assert_ne!(first, second);
-        assert!(second.to_string_lossy().ends_with("-2.json"), "{}", second.display());
+        assert!(
+            second.to_string_lossy().ends_with("-2.json"),
+            "{}",
+            second.display()
+        );
         r.recorded_at = Some("2026-10-14T09:40:00Z".into());
         r.save(&second, &root).unwrap();
         // a replay from before readable names: no header, a timestamp name
@@ -1157,10 +1199,19 @@ mod tests {
         .unwrap();
         let text = old.info();
         assert!(text.contains("not recorded (an older rugen)"), "{text}");
-        assert!(text.contains("p1        kfm · /home/u/RUGEN/chars/kfm/kfm.def"), "{text}");
+        assert!(
+            text.contains("p1        kfm · /home/u/RUGEN/chars/kfm/kfm.def"),
+            "{text}"
+        );
         let r = Replay::new(&old.setup(), FighterSize::None, false, 99, 4, None);
         let text = r.info();
-        assert!(text.contains(&format!("rugen {}", env!("CARGO_PKG_VERSION"))), "{text}");
-        assert!(text.contains("machine") && text.contains(std::env::consts::ARCH), "{text}");
+        assert!(
+            text.contains(&format!("rugen {}", env!("CARGO_PKG_VERSION"))),
+            "{text}"
+        );
+        assert!(
+            text.contains("machine") && text.contains(std::env::consts::ARCH),
+            "{text}"
+        );
     }
 }

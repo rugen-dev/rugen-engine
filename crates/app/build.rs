@@ -43,8 +43,14 @@ fn git_commit() -> Option<String> {
         && let Ok(common) = String::from_utf8(o.stdout)
     {
         let common = std::path::Path::new(common.trim());
-        println!("cargo:rerun-if-changed={}", common.join("packed-refs").display());
-        println!("cargo:rerun-if-changed={}", common.join("refs/heads").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            common.join("packed-refs").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
+            common.join("refs/heads").display()
+        );
     }
     let o = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
