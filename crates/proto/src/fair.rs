@@ -173,6 +173,22 @@ pub struct PackageStatus {
     pub offset: u64,
 }
 
+/// `GET /pkg/{fp}/url`: where to download a package from. A server that
+/// serves packages from a bucket (Cloudflare R2) answers with a presigned
+/// URL, valid `expires_secs`, and the file's sha256 and size (the client
+/// checks both before installing it); `url` is empty when the package is
+/// only on the server: download it from `/pkg/{fp}/data` as before.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PackageUrl {
+    pub fingerprint: String,
+    pub url: String,
+    /// sha256 (hex) of the file.
+    pub sha256: String,
+    pub size: u64,
+    pub expires_secs: u64,
+}
+
 /// What a client reports once it holds every file of the match.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct ReadyReport {

@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+sha2 = "0.11"
 rugen-sim.workspace = true
 ggrs.workspace = true
 log.workspace = true

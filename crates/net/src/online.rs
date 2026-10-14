@@ -146,6 +146,25 @@ impl OnlineClient {
     }
 
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> OnlineResult<Value> {
+        let (status, v) = self.call_status(method, path, body)?;
+        if status != 200 {
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("http {status}"));
+            return Err(OnlineError::Server(msg));
+        }
+        Ok(v)
+    }
+
+    /// [`Self::call`] returning the HTTP status with the JSON body.
+    fn call_status(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> OnlineResult<(u16, Value)> {
         let url = format!("{}{path}", self.base()?);
         let agent = self.agent();
         let res = match (method, body) {
@@ -161,15 +180,7 @@ impl OnlineClient {
             .read_to_string()
             .map_err(|e| OnlineError::Http(e.to_string()))?;
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        if status != 200 {
-            let msg = v
-                .get("error")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("http {status}"));
-            return Err(OnlineError::Server(msg));
-        }
-        Ok(v)
+        Ok((status, v))
     }
 
     fn decode<T: serde::de::DeserializeOwned>(v: Value) -> OnlineResult<T> {
@@ -581,6 +592,21 @@ impl OnlineClient {
             std::fs::remove_file(dest)?;
             have = 0;
         }
+        // a server serving packages from a bucket hands out a presigned
+        // URL; anything wrong with it falls back to the direct download
+        if have == 0 {
+            match self.download_presigned(fp, dest, progress) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(e) => {
+                    log::info!("download {fp}: bucket download failed ({e}), from the server");
+                    let _ = std::fs::remove_file(dest);
+                }
+            }
+            if progress.cancel.load(Ordering::Relaxed) {
+                return Err(OnlineError::Server("cancelled".into()));
+            }
+        }
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -635,6 +661,82 @@ impl OnlineClient {
         f.flush()?;
         progress.done.store(size, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Where to download package `fp` from ([`rugen_proto::PackageUrl`]).
+    /// `Ok(None)`: an older server (no such route) or the package is only
+    /// on the server: use `/pkg/{fp}/data`.
+    pub fn package_url(&self, fp: &str) -> OnlineResult<Option<rugen_proto::PackageUrl>> {
+        let k = self.key()?;
+        let (status, v) = self.call_status("GET", &format!("/pkg/{fp}/url?key={k}"), None)?;
+        if status != 200 {
+            return Ok(None);
+        }
+        let u: rugen_proto::PackageUrl = Self::decode(v)?;
+        Ok((!u.url.is_empty()).then_some(u))
+    }
+
+    /// Download `fp` through its presigned bucket URL into `dest`, checking
+    /// its size and sha256. `Ok(false)`: the server offers none.
+    fn download_presigned(
+        &self,
+        fp: &str,
+        dest: &std::path::Path,
+        progress: &Transfer,
+    ) -> OnlineResult<bool> {
+        use sha2::Digest;
+        use std::io::{Read, Write};
+        let Some(u) = self.package_url(fp)? else {
+            return Ok(false);
+        };
+        if !(u.url.starts_with("https://") || u.url.starts_with("http://")) {
+            return Err(OnlineError::Decode("bad package url".into()));
+        }
+        progress.total.store(u.size, Ordering::Relaxed);
+        // no API header, no key: the URL carries its own signature
+        let mut resp = self
+            .agent_with(Duration::from_secs(120))
+            .get(&u.url)
+            .call()
+            .map_err(|e| OnlineError::Http(format!("bucket: {e}")))?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(OnlineError::Server(format!("bucket: http {status}")));
+        }
+        let mut r = resp.body_mut().with_config().limit(u.size + 1).reader();
+        let mut f = std::fs::File::create(dest)?;
+        let mut h = sha2::Sha256::new();
+        let mut buf = vec![0u8; 256 << 10];
+        let mut got = 0u64;
+        loop {
+            if progress.cancel.load(Ordering::Relaxed) {
+                return Err(OnlineError::Server("cancelled".into()));
+            }
+            let n = r
+                .read(&mut buf)
+                .map_err(|e| OnlineError::Http(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            got += n as u64;
+            if got > u.size {
+                return Err(OnlineError::Server(
+                    "bucket: package longer than announced".into(),
+                ));
+            }
+            h.update(&buf[..n]);
+            f.write_all(&buf[..n])?;
+            progress.done.store(got, Ordering::Relaxed);
+        }
+        f.flush()?;
+        let sha = rugen_proto::to_hex(&h.finalize());
+        if got != u.size || !sha.eq_ignore_ascii_case(&u.sha256) {
+            return Err(OnlineError::Server(
+                "bucket: the file is not the one announced".into(),
+            ));
+        }
+        log::info!("download {fp}: {} KB from the bucket", got >> 10);
+        Ok(true)
     }
 
     /// A binary GET (stream chunks); JSON errors become [`OnlineError::Server`].
