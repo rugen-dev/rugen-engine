@@ -269,8 +269,11 @@ box) and screenshots.
   `data/select.def`) in the game root only for the flags, matched to
   `chars/` by folder, archive or def name. The fallback line fights the
   weakest of the five first; no continues.
-- [ ] **Time Attack.** The arcade ladder with a run timer; best times saved
-  per fighter in the profile.
+- [x] **Time Attack.** (3b1a538) The arcade ladder with a run timer; best times saved
+  per fighter in the profile. The clock counts fight frames (intros and
+  KOs too, not the pause menu or the screens between fights); a loss ends
+  the run without a time. Screens: ink / dojo challenge, survival, boss
+  rush and time attack shots in `~/.cache/rugen-work/modes/`.
 
 ### Storyboards
 - [ ] **Intros and endings.** Play MUGEN `.def` storyboards: the screenpack
