@@ -10,6 +10,11 @@ Files missing here fall back to the flat `motif/`.
 Font banks used on paper: 9 = ink, 10 = red, 11 = paper (for text on slabs),
 8 = soft grey.
 
+Steam Deck profile: `font1.deck` / `font2.deck` (`rugen-deck`, Pixelify Sans
+at 2x, 14 px capitals) replace fonts 1 and 2 wherever a screen draws them at
+scale 1; layouts keep the rows of the font they name. A node's `deck = { ... }`
+table overrides its keys under that profile only (room for the bigger text).
+
 ## Options and controls
 
 `options.toml` binds to `tabs[]` (`id label active ext press`), `tab`

@@ -653,7 +653,8 @@ impl OnlineScreen {
         let path = crate::uiscreen::motif_file(motif, "ui/online.toml")
             .unwrap_or_else(|| motif.join("ui/online.toml"));
         let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
-        let def = ScreenDef::parse(&text).with_context(|| path.display().to_string())?;
+        let def = ScreenDef::parse_for(&text, crate::deck::screen_profile())
+            .with_context(|| path.display().to_string())?;
         let profile = Profile::load(root);
         let mut s = Self {
             ui: Ui::new(def, Value::Null),
@@ -4558,7 +4559,10 @@ impl OnlineScreen {
         let parsed = crate::uiscreen::motif_file(&self.motif, rel)
             .ok_or_else(|| format!("{rel}: missing"))
             .and_then(|p| std::fs::read_to_string(&p).map_err(|e| format!("{rel}: {e}")))
-            .and_then(|t| ScreenDef::parse(&t).map_err(|e| format!("{rel}: {e}")));
+            .and_then(|t| {
+                ScreenDef::parse_for(&t, crate::deck::screen_profile())
+                    .map_err(|e| format!("{rel}: {e}"))
+            });
         match parsed {
             Ok(def) => {
                 if let Some(r) = r {

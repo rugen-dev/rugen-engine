@@ -372,6 +372,7 @@ x = 360
 y = 110
 w = 892
 h = 482
+deck = { h = 508 }
 enter = "up"
 enter_time = 14
 
@@ -494,6 +495,7 @@ enter_time = 14
         kind = "choice"
         h = 30
         pad = 14
+        deck = { pad = 8 }
         font = 2
         bank = 9
         bank_focus = 11
@@ -566,6 +568,7 @@ enter_time = 14
   columns = 4
   cell_w = 198
   cell_h = 144
+  deck = { h = 340, cell_h = 162 }
   gap = 16
   bleed = 12
   items = "themes"
@@ -577,6 +580,7 @@ enter_time = 14
     id = "card"
     w = 198
     h = 144
+    deck = { h = 162 }
     on_press = "{item.press}"
 
       [[node.children.children.children]]
@@ -585,6 +589,7 @@ enter_time = 14
       nine = [12, 12, 24, 24]
       w = 198
       h = 114
+      deck = { h = 100 }
       visible = "item.active"
 
       [[node.children.children.children]]
@@ -593,6 +598,7 @@ enter_time = 14
       nine = [12, 12, 24, 24]
       w = 198
       h = 114
+      deck = { h = 100 }
       visible = "item.plain"
 
       [[node.children.children.children]]
@@ -603,6 +609,7 @@ enter_time = 14
       y = 4
       w = 178
       h = 98
+      deck = { h = 84 }
       visible = "item.has_preview"
 
       [[node.children.children.children]]
@@ -612,6 +619,7 @@ enter_time = 14
       y = 4
       w = 178
       h = 98
+      deck = { h = 84 }
       align = "center"
       font = 1
       bank = 10
@@ -626,6 +634,7 @@ enter_time = 14
       color = [0.953, 0.937, 0.894, 1.0]
       outline = [0.55, 0.52, 0.47, 1.0]
       outline_w = 3
+      deck = { h = 84 }
       visible = "item.is_add"
 
       [[node.children.children.children]]
@@ -635,6 +644,7 @@ enter_time = 14
       y = 0
       w = 182
       h = 98
+      deck = { h = 84 }
       align = "center"
       font = 1
       bank = 9
@@ -647,6 +657,7 @@ enter_time = 14
       y = 10
       w = 78
       h = 22
+      deck = { x = 76, w = 114 }
       color = [0.878, 0.125, 0.125, 1.0]
       border = 2
       visible = "item.active"
@@ -675,6 +686,7 @@ enter_time = 14
       y = 114
       w = 184
       h = 30
+      deck = { y = 100, h = 60 }
       when = "focus"
 
       [[node.children.children.children]]
@@ -684,6 +696,7 @@ enter_time = 14
       y = 118
       w = 10
       h = 10
+      deck = { y = 110 }
       when = "focus"
 
       [[node.children.children.children]]
@@ -691,6 +704,7 @@ enter_time = 14
       text = "{item.label}"
       x = 16
       y = 116
+      deck = { y = 100 }
       w = 168
       font = 2
       bank = 9
@@ -702,6 +716,7 @@ enter_time = 14
       y = 133
       w = 7
       h = 7
+      deck = { y = 141 }
       color = [0.102, 0.498, 0.216, 1.0]
       visible = "item.user"
 
@@ -710,6 +725,7 @@ enter_time = 14
       text = "{item.sub}"
       x = 16
       y = 130
+      deck = { y = 128 }
       w = 168
       font = 2
       bank = 9
@@ -721,6 +737,7 @@ enter_time = 14
       text = "{item.sub}"
       x = 28
       y = 130
+      deck = { y = 128 }
       w = 156
       font = 2
       bank = 9
@@ -732,6 +749,7 @@ enter_time = 14
   text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
   x = 28
   y = 404
+  deck = { y = 432, w = 836, h = 62, wrap = true, line_gap = 1 }
   font = 2
   bank = 9
   visible = "show_themes"
@@ -746,6 +764,7 @@ x = 360
 y = 604
 w = 892
 h = 78
+deck = { y = 628, h = 110 }
 enter = "up"
 enter_time = 18
 
@@ -776,6 +795,7 @@ enter_time = 18
   h = 58
   wrap = true
   line_gap = 8
+  deck = { h = 92, line_gap = 1 }
   font = 2
   scale = 1
   bank = 11
@@ -1090,6 +1110,7 @@ enter_time = 14
   kind = "text"
   text = "TOP ROW X Y Z - LOW ROW A B C"
   x = 296
+  deck = { x = 262 }
   y = 352
   font = 2
   bank = 9
@@ -1464,6 +1485,7 @@ dock = "left"
 x = 680
 y = 656
 w = 580
+deck = { x = 600, w = 660, gap = 6 }
 h = 34
 gap = 8
 align = "center"
@@ -1768,9 +1790,28 @@ on_press = "{press}"
     )
 }
 
+/// `deck = { ... }` overrides for the Steam Deck profile (empty: none).
+fn deck_line(table: &str) -> String {
+    if table.is_empty() {
+        String::new()
+    } else {
+        format!("deck = {{ {table} }}\n")
+    }
+}
+
 /// SAVE button (F2) of the options / controls pages: accent-filled while
-/// there are unsaved changes.
-fn save_button(p: &SavePalette, x: i32, y: i32, w: i32, h: i32, dock: &str, group: &str) -> String {
+/// there are unsaved changes. `deck`: Steam Deck overrides of the button.
+#[allow(clippy::too_many_arguments)]
+fn save_button(
+    p: &SavePalette,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    dock: &str,
+    group: &str,
+    deck: &str,
+) -> String {
     let mut b = save_style_button(
         p,
         "save",
@@ -1780,7 +1821,10 @@ fn save_button(p: &SavePalette, x: i32, y: i32, w: i32, h: i32, dock: &str, grou
         y,
         w,
         h,
-        &format!("dock = \"{dock}\"\ngroup = \"{group}\"\n"),
+        &format!(
+            "dock = \"{dock}\"\ngroup = \"{group}\"\n{}",
+            deck_line(deck)
+        ),
         "save.unsaved",
     );
     b.push_str(&format!(
@@ -1802,7 +1846,13 @@ fn save_button(p: &SavePalette, x: i32, y: i32, w: i32, h: i32, dock: &str, grou
 }
 
 /// Header status: an accent badge "UNSAVED CHANGES", else "ALL SAVED".
-fn save_status(p: &SavePalette, place: &str, x: i32, y: i32, short: bool) -> String {
+/// `deck_x`: its x under the Steam Deck profile (0: unchanged).
+fn save_status(p: &SavePalette, place: &str, x: i32, y: i32, short: bool, deck_x: i32) -> String {
+    let deck = if deck_x == 0 {
+        String::new()
+    } else {
+        deck_line(&format!("x = {deck_x}"))
+    };
     format!(
         r#"
 [[node]]
@@ -1810,7 +1860,7 @@ kind = "text"
 {place}
 x = {x}
 y = {ty}
-text = "ALL SAVED"
+{deck}text = "ALL SAVED"
 font = {sf}
 bank = {sl}
 visible = "save.clean"
@@ -1820,7 +1870,7 @@ kind = "panel"
 {place}
 x = {x}
 y = {y}
-w = {w}
+{deck}w = {w}
 h = 32
 color = {accent}
 border = 3
@@ -2030,11 +2080,11 @@ pub fn screens() -> [(&'static str, String, String); 2] {
     let options = |text: &str, p: &SavePalette, tabs_y: i32| {
         text.replace(
             "@SAVE_STATUS@",
-            &save_status(p, "dock = \"right top\"\nanchor = \"tr\"", 40, 28, false),
+            &save_status(p, "dock = \"right top\"\nanchor = \"tr\"", 40, 28, false, 0),
         )
         .replace(
             "@SAVE_BUTTON@",
-            &save_button(p, 30, tabs_y, 290, 50, "left", "tabs"),
+            &save_button(p, 30, tabs_y, 290, 50, "left", "tabs", ""),
         )
         .replace("@SAVE_OVERLAYS@", &save_overlays(p, 20))
     };
@@ -2042,11 +2092,13 @@ pub fn screens() -> [(&'static str, String, String); 2] {
         text.replace("@BUTTONS@", buttons)
             .replace(
                 "@SAVE_BUTTON@",
-                &save_button(p, 640, 22, 210, 40, "top", "header"),
+                // the Deck's bigger header text: SAVE narrower, the status
+                // clear of the DEVICE picker
+                &save_button(p, 640, 22, 210, 40, "top", "header", "w = 190"),
             )
             .replace(
                 "@SAVE_STATUS@",
-                &save_status(p, "dock = \"top\"", 866, 26, true),
+                &save_status(p, "dock = \"top\"", 866, 26, true, 842),
             )
             .replace("@SAVE_OVERLAYS@", &save_overlays(p, 88))
     };

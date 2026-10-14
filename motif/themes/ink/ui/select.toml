@@ -348,6 +348,7 @@ enter_time = 16
   x = 196
   y = 26
   w = 180
+  deck = { x = 190, w = 198, ellipsis = true }
   font = 2
   bank = 9
   visible = "card1.facts"
@@ -358,6 +359,7 @@ enter_time = 16
   x = 196
   y = 26
   w = 180
+  deck = { x = 190, w = 198, ellipsis = true }
   font = 2
   bank = 9
   visible = "card1.facts_blank"
@@ -368,6 +370,7 @@ enter_time = 16
   x = 196
   y = 54
   w = 180
+  deck = { x = 190, w = 198, ellipsis = true }
   font = 2
   bank = 9
   visible = "card1.facts"
@@ -378,6 +381,7 @@ enter_time = 16
   x = 196
   y = 82
   w = 175
+  deck = { x = 190, w = 198, ellipsis = true }
   font = 2
   bank = 10
   visible = "card1.facts_bad"
@@ -388,6 +392,7 @@ enter_time = 16
   x = 196
   y = 82
   w = 175
+  deck = { x = 190, w = 198, ellipsis = true }
   font = 2
   bank = 9
   visible = "card1.facts_ok"
@@ -645,6 +650,7 @@ enter_time = 16
   x = 24
   y = 26
   w = 180
+  deck = { x = 8, w = 198, ellipsis = true }
   align = "right"
   font = 2
   bank = 9
@@ -656,6 +662,7 @@ enter_time = 16
   x = 24
   y = 26
   w = 180
+  deck = { x = 8, w = 198, ellipsis = true }
   align = "right"
   font = 2
   bank = 9
@@ -667,6 +674,7 @@ enter_time = 16
   x = 24
   y = 54
   w = 180
+  deck = { x = 8, w = 198, ellipsis = true }
   align = "right"
   font = 2
   bank = 9
@@ -678,6 +686,7 @@ enter_time = 16
   x = 29
   y = 82
   w = 175
+  deck = { x = 8, w = 198, ellipsis = true }
   align = "right"
   font = 2
   bank = 10
@@ -689,6 +698,7 @@ enter_time = 16
   x = 29
   y = 82
   w = 175
+  deck = { x = 8, w = 198, ellipsis = true }
   align = "right"
   font = 2
   bank = 9

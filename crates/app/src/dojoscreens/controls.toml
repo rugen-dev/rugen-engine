@@ -242,6 +242,7 @@ enter_time = 14
   kind = "text"
   text = "TOP ROW X Y Z - LOW ROW A B C"
   x = 296
+  deck = { x = 262 }
   y = 352
   font = 2
   bank = 17
@@ -644,6 +645,7 @@ dock = "left"
 x = 680
 y = 656
 w = 580
+deck = { x = 600, w = 660, gap = 6 }
 h = 34
 gap = 8
 align = "center"

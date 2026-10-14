@@ -306,6 +306,7 @@ h = 60
   text = "{profile.name}"
   x = 82
   y = 4
+  deck = { y = 0 }
   font = 6
   bank = 14
 
@@ -314,6 +315,7 @@ h = 60
   text = "{profile.record}"
   x = 82
   y = 34
+  deck = { y = 26 }
   font = 2
   bank = 16
 

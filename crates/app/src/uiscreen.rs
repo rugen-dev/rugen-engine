@@ -699,7 +699,10 @@ impl UiScreen {
         let parsed = motif_file(&self.motif, &rel)
             .ok_or_else(|| format!("{rel}: missing"))
             .and_then(|p| std::fs::read_to_string(&p).map_err(|e| format!("{rel}: {e}")))
-            .and_then(|t| ScreenDef::parse(&t).map_err(|e| format!("{rel}: {e}")));
+            .and_then(|t| {
+                ScreenDef::parse_for(&t, crate::deck::screen_profile())
+                    .map_err(|e| format!("{rel}: {e}"))
+            });
         match parsed {
             Ok(def) => {
                 if let Some(r) = r {
@@ -986,7 +989,8 @@ impl UiScreen {
         let path = motif_file(motif, &format!("ui/{}", Self::file(kind)))
             .unwrap_or_else(|| motif.join("ui").join(Self::file(kind)));
         let text = std::fs::read_to_string(&path).with_context(|| path.display().to_string())?;
-        let def = ScreenDef::parse(&text).with_context(|| path.display().to_string())?;
+        let def = ScreenDef::parse_for(&text, crate::deck::screen_profile())
+            .with_context(|| path.display().to_string())?;
         let news = motif_file(motif, "news.json")
             .and_then(|p| std::fs::read(p).ok())
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
@@ -1185,6 +1189,8 @@ impl UiScreen {
                 let info = self.pause.as_ref();
                 let moves = info.map(|p| p.moves.as_slice()).unwrap_or(&[]);
                 let width = |font: i32, t: &str| {
+                    // as drawn: the Steam Deck's font where it replaces this one
+                    let font = crate::deck::font_slot(font, 1.0, |s| sys.fonts.contains_key(&s));
                     sys.fonts
                         .get(&font)
                         .map_or(t.chars().count() as f32 * 9.0, |f| f.width(t, 1.0))
@@ -1903,6 +1909,9 @@ impl UiScreen {
                 "restart" => Some(Transition::Restart),
                 "moves" | "page:1" | "page:-1" => {
                     let width = |font: i32, t: &str| {
+                        // as drawn: the Steam Deck's font where it replaces this one
+                        let font =
+                            crate::deck::font_slot(font, 1.0, |s| sys.fonts.contains_key(&s));
                         sys.fonts
                             .get(&font)
                             .map_or(t.chars().count() as f32 * 9.0, |f| f.width(t, 1.0))
@@ -2517,6 +2526,12 @@ pub(crate) struct Host<'a> {
 }
 
 impl Host<'_> {
+    /// The font slot `font` at `scale` draws with (the Steam Deck variant
+    /// of 1:1 text, see [`crate::deck::font_slot`]).
+    fn slot(&self, font: i32, scale: f32) -> i32 {
+        crate::deck::font_slot(font, scale, |s| self.fonts.contains_key(&s))
+    }
+
     fn texture(&mut self, key: &str) -> Cached {
         if let Some(c) = self.textures.get(key) {
             return *c;
@@ -2696,18 +2711,29 @@ impl Painter for Host<'_> {
     }
 
     fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32 {
+        let font = self.slot(font, scale);
         self.fonts
             .get(&font)
             .map_or(text.len() as f32 * 8.0 * scale, |f| f.width(text, scale))
     }
 
     fn text_height(&mut self, font: i32, scale: f32) -> f32 {
+        let font = self.slot(font, scale);
+        self.fonts
+            .get(&font)
+            .map_or(12.0 * scale, |f| f.font.size[1] as f32 * scale)
+    }
+
+    fn text_box_height(&mut self, font: i32, scale: f32) -> f32 {
+        // the font the screen names, never the Deck's substitute: layouts
+        // keep their rows and the bigger text is centred on them
         self.fonts
             .get(&font)
             .map_or(12.0 * scale, |f| f.font.size[1] as f32 * scale)
     }
 
     fn text_center_dy(&mut self, font: i32, scale: f32) -> f32 {
+        let font = self.slot(font, scale);
         self.fonts.get(&font).map_or(0.0, |f| f.center_dy(scale))
     }
 
@@ -2730,6 +2756,7 @@ impl Painter for Host<'_> {
         let win = self.r.size();
         let (vw, vh) = viewport(win);
         let k = [win.0 as f32 / vw, win.1 as f32 / vh];
+        let font = self.slot(font, scale);
         if let Some(f) = self.fonts.get_mut(&font) {
             f.snap = Some(k);
             f.draw_xf(

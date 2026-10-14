@@ -109,6 +109,7 @@ x = 360
 y = 96
 w = 892
 h = 492
+deck = { h = 512 }
 enter = "up"
 enter_time = 14
 
@@ -242,6 +243,7 @@ enter_time = 14
         kind = "choice"
         h = 32
         pad = 10
+        deck = { pad = 8 }
         border = 2
         border_color = [0.341, 0.2, 0.122, 1.0]
         color = [0.976, 0.945, 0.871, 1.0]
@@ -323,6 +325,7 @@ enter_time = 14
   columns = 4
   cell_w = 198
   cell_h = 146
+  deck = { h = 340, cell_h = 162 }
   gap = 16
   bleed = 12
   items = "themes"
@@ -334,6 +337,7 @@ enter_time = 14
     id = "card"
     w = 198
     h = 146
+    deck = { h = 162 }
     on_press = "{item.press}"
 
       [[node.children.children.children]]
@@ -342,6 +346,7 @@ enter_time = 14
       nine = [12, 12, 12, 12]
       w = 198
       h = 110
+      deck = { h = 96 }
       when = "focus"
 
       [[node.children.children.children]]
@@ -350,6 +355,7 @@ enter_time = 14
       nine = [12, 12, 12, 12]
       w = 198
       h = 110
+      deck = { h = 96 }
       when = "idle"
 
       [[node.children.children.children]]
@@ -360,6 +366,7 @@ enter_time = 14
       y = 6
       w = 186
       h = 98
+      deck = { h = 84 }
       visible = "item.has_preview"
 
       [[node.children.children.children]]
@@ -369,6 +376,7 @@ enter_time = 14
       y = 6
       w = 186
       h = 98
+      deck = { h = 84 }
       align = "center"
       font = 6
       bank = 14
@@ -382,6 +390,7 @@ enter_time = 14
       y = 6
       w = 186
       h = 98
+      deck = { h = 84 }
       align = "center"
       font = 6
       bank = 12
@@ -398,6 +407,7 @@ enter_time = 14
       color = [0.925, 0.878, 0.776, 1.0]
       outline = [0.545, 0.427, 0.302, 1.0]
       outline_w = 3
+      deck = { h = 84 }
       visible = "item.is_add"
 
       [[node.children.children.children]]
@@ -407,6 +417,7 @@ enter_time = 14
       y = 6
       w = 186
       h = 98
+      deck = { h = 84 }
       align = "center"
       font = 6
       bank = 12
@@ -419,6 +430,7 @@ enter_time = 14
       y = 12
       w = 80
       h = 22
+      deck = { x = 78, w = 112 }
       color = [0.706, 0.188, 0.102, 1.0]
       visible = "item.active"
 
@@ -444,6 +456,7 @@ enter_time = 14
       y = 112
       w = 198
       h = 34
+      deck = { y = 98, h = 64 }
       color = [0.976, 0.945, 0.871, 1.0]
       when = "focus"
 
@@ -452,6 +465,7 @@ enter_time = 14
       y = 112
       w = 5
       h = 34
+      deck = { y = 98, h = 64 }
       color = [0.706, 0.188, 0.102, 1.0]
       when = "focus"
 
@@ -460,6 +474,7 @@ enter_time = 14
       text = "{item.label}"
       x = 12
       y = 113
+      deck = { y = 98 }
       w = 180
       font = 2
       bank = 12
@@ -471,6 +486,7 @@ enter_time = 14
       y = 134
       w = 7
       h = 7
+      deck = { y = 140 }
       color = [0.102, 0.498, 0.216, 1.0]
       visible = "item.user"
 
@@ -479,6 +495,7 @@ enter_time = 14
       text = "{item.sub}"
       x = 12
       y = 131
+      deck = { y = 127 }
       w = 180
       font = 2
       bank = 17
@@ -490,6 +507,7 @@ enter_time = 14
       text = "{item.sub}"
       x = 24
       y = 131
+      deck = { y = 127 }
       w = 168
       font = 2
       bank = 17
@@ -501,6 +519,7 @@ enter_time = 14
   text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
   x = 30
   y = 418
+  deck = { y = 444, w = 836, h = 62, wrap = true, line_gap = 1 }
   font = 2
   bank = 17
   visible = "show_themes"
@@ -515,6 +534,7 @@ x = 360
 y = 598
 w = 892
 h = 80
+deck = { y = 618, h = 110 }
 enter = "up"
 enter_time = 18
 
@@ -543,6 +563,7 @@ enter_time = 18
   h = 60
   wrap = true
   line_gap = 8
+  deck = { y = 9, h = 92, line_gap = 1 }
   font = 2
   bank = 14
 

@@ -1197,6 +1197,7 @@ anchor = "tr"
 x = 48
 y = 36
 w = 640
+deck = { y = 64, justify = "end" }
 h = 26
 gap = 8
 justify = "end"
@@ -2159,6 +2160,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   kind = "text"
   x = 32
   y = 500
+  deck = { y = 488 }
   alpha = 0.72
   bank = 9
   font = 1
@@ -2192,6 +2194,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   kind = "text"
   x = 32
   y = 516
+  deck = { y = 512 }
   alpha = 0.72
   bank = 9
   font = 1
@@ -2242,6 +2245,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   font = 1
   scale = 1
   text = "{create.preview_host}"
+  deck = { y = 50 }
 
   [[node.children]]
   kind = "text"
@@ -2256,6 +2260,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   max_lines = 2
   scale = 1
   text = "{create.preview_rules}"
+  deck = { y = 72, h = 56, line_gap = -4 }
   wrap = true
 
 [[node]]
@@ -2272,6 +2277,7 @@ line_gap = 8
 max_lines = 8
 scale = 1
 text = "{create.note}"
+deck = { line_gap = -4, max_lines = 6 }
 wrap = true
 
 [[node]]
@@ -2885,6 +2891,7 @@ items = "accts"
     kind = "text"
     visible = "item.side_ok"
     anchor = "right"
+    deck = { anchor = "br", y = 14 }
     x = 18
     h = 20
     align = "center"
@@ -2899,6 +2906,7 @@ items = "accts"
     kind = "text"
     visible = "item.side_plain"
     anchor = "right"
+    deck = { anchor = "br", y = 14 }
     x = 18
     bank = 9
     font = 1
@@ -3050,6 +3058,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     max_lines = 3
     scale = 1
     text = "{acct.hint}"
+    deck = { h = 92, line_gap = 1 }
     wrap = true
 
     [[node.children.children]]
@@ -3058,6 +3067,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     y = 206
     w = 592
     h = 44
+    deck = { y = 236 }
     gap = 10
 
       [[node.children.children.children]]
@@ -3076,6 +3086,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       on_press = "acct:password"
       scale = 1
       text = "CHANGE PASSWORD"
+      deck = { w = 222 }
       shadow_focus = [6, 6]
 
       [[node.children.children.children]]
@@ -3094,6 +3105,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       on_press = "acct:logout"
       scale = 1
       text = "LOG OUT"
+      deck = { w = 100 }
       shadow_focus = [6, 6]
 
       [[node.children.children.children]]
@@ -3112,6 +3124,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       on_press = "acct:logout_all"
       scale = 1
       text = "LOG OUT EVERYWHERE"
+      deck = { w = 250 }
       shadow_focus = [6, 6]
 
     [[node.children.children]]
@@ -3497,6 +3510,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       max_lines = 3
       scale = 1
       text = "{acct.rule}"
+      deck = { y = -3, h = 78, line_gap = -6 }
       wrap = true
 
     [[node.children.children]]
@@ -3512,6 +3526,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     max_lines = 2
     scale = 1
     text = "{acct.guest}"
+    deck = { max_lines = 1 }
     wrap = true
 
     [[node.children.children]]
@@ -3693,6 +3708,7 @@ bank = 9
 font = 1
 scale = 1
 text = "{board.scope}"
+deck = { x = 190 }
 
 [[node]]
 kind = "panel"
@@ -6515,6 +6531,7 @@ top = true
   visible = "!dialog.input"
   x = 32
   y = 118
+  deck = { h = 112, line_gap = -4, max_lines = 4 }
   w = 576
   h = 110
   alpha = 0.72
@@ -6531,6 +6548,7 @@ top = true
   visible = "dialog.input"
   x = 32
   y = 118
+  deck = { y = 114, h = 58, line_gap = -2 }
   w = 576
   h = 40
   alpha = 0.72

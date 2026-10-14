@@ -17,6 +17,10 @@ font3 = font/rugen-title.def
 font4 = font/rugen-num.def
 font5 = font/rugen-code.def
 font6 = font/dojo-body.def
+; Steam Deck profile: text drawn 1:1 in fonts 1 and 2 uses Pixelify Sans
+; at 2x (14 px capitals), readable on the Deck's 7" 1280x800 screen
+font1.deck = font/rugen-deck.def
+font2.deck = font/rugen-deck.def
 
 [Music]
 title.bgm =

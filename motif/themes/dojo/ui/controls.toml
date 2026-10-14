@@ -102,6 +102,7 @@ h = 40
 on_press = "save"
 dock = "top"
 group = "header"
+deck = { w = 190 }
 
   [[node.children]]
   kind = "panel"
@@ -181,6 +182,7 @@ kind = "text"
 dock = "top"
 x = 866
 y = 36
+deck = { x = 842 }
 text = "ALL SAVED"
 font = 2
 bank = 14
@@ -191,6 +193,7 @@ kind = "panel"
 dock = "top"
 x = 866
 y = 26
+deck = { x = 842 }
 w = 132
 h = 32
 color = [0.706, 0.188, 0.102, 1.0]
@@ -617,6 +620,7 @@ enter_time = 14
   kind = "text"
   text = "TOP ROW X Y Z - LOW ROW A B C"
   x = 296
+  deck = { x = 262 }
   y = 352
   font = 2
   bank = 17
@@ -1019,6 +1023,7 @@ dock = "left"
 x = 680
 y = 656
 w = 580
+deck = { x = 600, w = 660, gap = 6 }
 h = 34
 gap = 8
 align = "center"

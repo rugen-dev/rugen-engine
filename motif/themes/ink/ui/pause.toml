@@ -60,6 +60,7 @@ enter_time = 10
   y = 56
   font = 2
   bank = 6
+  deck = { w = 372, ellipsis = true }
 
   [[node.children]]
   kind = "vbox"
@@ -143,6 +144,7 @@ visible = "show_moves"
   scale = 3
   bank = 9
   visible = "title_big"
+  deck = { visible = "never" }
 
   [[node.children]]
   kind = "text"
@@ -153,6 +155,7 @@ visible = "show_moves"
   scale = 2
   bank = 9
   visible = "!title_big"
+  deck = { visible = "title" }
 
   [[node.children]]
   kind = "text"
@@ -160,6 +163,7 @@ visible = "show_moves"
   anchor = "tr"
   x = 32
   y = 32
+  deck = { y = 54 }
   font = 2
   bank = 8
 
@@ -224,6 +228,7 @@ visible = "show_moves"
         kind = "text"
         text = "{item.cost}"
         h = 16
+        deck = { h = 22 }
         pad = 5
         color = [0.784, 0.063, 0.102, 1.0]
         font = 1
@@ -283,6 +288,7 @@ visible = "show_moves"
         [[node.children.children.children.children]]
         kind = "text"
         text = "{item.name}"
+        deck = { w = 358, ellipsis = true }
         font = 2
         bank = 9
 
@@ -290,12 +296,26 @@ visible = "show_moves"
         kind = "text"
         text = "{item.cost}"
         h = 16
+        deck = { h = 22, visible = "never" }
         pad = 5
         color = [0.784, 0.063, 0.102, 1.0]
         font = 1
         bank = 11
         visible = "item.cost"
 
+
+      # the Steam Deck's bigger text: the cost goes to the notation line
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.cost}"
+      y = 33
+      h = 22
+      pad = 5
+      color = [0.784, 0.063, 0.102, 1.0]
+      font = 1
+      bank = 11
+      visible = "never"
+      deck = { visible = "item.cost" }
 
       [[node.children.children.children]]
       kind = "hbox"
@@ -374,6 +394,7 @@ visible = "show_moves"
         kind = "text"
         text = "{item.cost}"
         h = 16
+        deck = { h = 22 }
         pad = 5
         color = [0.784, 0.063, 0.102, 1.0]
         font = 1
@@ -433,6 +454,7 @@ visible = "show_moves"
         [[node.children.children.children.children]]
         kind = "text"
         text = "{item.name}"
+        deck = { w = 358, ellipsis = true }
         font = 2
         bank = 9
 
@@ -440,12 +462,26 @@ visible = "show_moves"
         kind = "text"
         text = "{item.cost}"
         h = 16
+        deck = { h = 22, visible = "never" }
         pad = 5
         color = [0.784, 0.063, 0.102, 1.0]
         font = 1
         bank = 11
         visible = "item.cost"
 
+
+      # the Steam Deck's bigger text: the cost goes to the notation line
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.cost}"
+      y = 33
+      h = 22
+      pad = 5
+      color = [0.784, 0.063, 0.102, 1.0]
+      font = 1
+      bank = 11
+      visible = "never"
+      deck = { visible = "item.cost" }
 
       [[node.children.children.children]]
       kind = "hbox"
@@ -724,6 +760,7 @@ visible = "show_dummy"
   text = "REVERSAL SLOT PLAYS IT WHEN THE DUMMY RECOVERS FROM A BLOCK OR A HIT."
   x = 24
   y = 514
+  deck = { y = 506, w = 740, h = 58, wrap = true, line_gap = -2 }
   font = 2
   bank = 8
 

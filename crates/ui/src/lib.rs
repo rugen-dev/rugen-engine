@@ -53,6 +53,12 @@
 //! its own), and `stretch-x` / `stretch-y` / `stretch` keep the node at the
 //! start but grow its pixel size by the extra room. A filled or stretched
 //! node's children may dock inside it the same way.
+//!
+//! Device profiles: a node may carry a table named after a profile, `deck =
+//! { h = 60, scale = 1 }`; [`ScreenDef::parse_for`] with that profile lays
+//! its keys over the node's own (the Steam Deck's bigger text gets room
+//! there), any other parse ignores it. `visible = "never"` with `deck = {
+//! visible = "!never" }` keeps a node to the Deck.
 
 #![forbid(unsafe_code)]
 
@@ -404,6 +410,37 @@ impl ScreenDef {
     pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(text)
     }
+
+    /// [`parse`](Self::parse) for a device profile: every node's `<profile>`
+    /// table (`deck = { ... }`) overrides the node's keys. `None` parses
+    /// plainly.
+    pub fn parse_for(text: &str, profile: Option<&str>) -> Result<Self, toml::de::Error> {
+        let Some(profile) = profile else {
+            return Self::parse(text);
+        };
+        let mut table: toml::Table = toml::from_str(text)?;
+        if let Some(toml::Value::Array(nodes)) = table.get_mut("node") {
+            for n in nodes {
+                apply_profile(n, profile);
+            }
+        }
+        Self::deserialize(toml::Value::Table(table))
+    }
+}
+
+/// Lay `node[profile]` over `node`, then do the same for its children.
+fn apply_profile(node: &mut toml::Value, profile: &str) {
+    let toml::Value::Table(t) = node else {
+        return;
+    };
+    if let Some(toml::Value::Table(over)) = t.remove(profile) {
+        t.extend(over);
+    }
+    if let Some(toml::Value::Array(children)) = t.get_mut("children") {
+        for c in children {
+            apply_profile(c, profile);
+        }
+    }
 }
 
 /// Resolved rectangle in virtual pixels.
@@ -586,6 +623,9 @@ impl Painter for CutPainter<'_> {
     fn text_height(&mut self, font: i32, scale: f32) -> f32 {
         self.inner.text_height(font, scale)
     }
+    fn text_box_height(&mut self, font: i32, scale: f32) -> f32 {
+        self.inner.text_box_height(font, scale)
+    }
     fn text_center_dy(&mut self, font: i32, scale: f32) -> f32 {
         self.inner.text_center_dy(font, scale)
     }
@@ -644,6 +684,13 @@ pub trait Painter {
     fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32;
     /// Height of one text line for the font.
     fn text_height(&mut self, font: i32, scale: f32) -> f32;
+    /// Height a one-line text box (and a button, input or choice sized by
+    /// its text) takes in the layout. A host drawing a bigger substitute
+    /// font (the Steam Deck's) returns the height of the font the screen
+    /// names: the layout stays put and the text is centred on it.
+    fn text_box_height(&mut self, font: i32, scale: f32) -> f32 {
+        self.text_height(font, scale)
+    }
     /// How far below the centre the visible glyphs land when a line is
     /// centred on [`text_height`](Self::text_height); centred labels move up by it.
     fn text_center_dy(&mut self, _font: i32, _scale: f32) -> f32 {
@@ -1571,14 +1618,21 @@ impl Ui {
                 w = Some(p.text_width(font, &text, scale) + 2.0 * pad);
             }
             if h.is_none() {
-                let lh = n.line_h.unwrap_or_else(|| p.text_height(font, scale));
                 let lines = match (n.wrap, w) {
                     (true, Some(ww)) => wrap_text(p, font, scale, &text, ww - 2.0 * pad)
                         .len()
                         .min(n.max_lines.unwrap_or(usize::MAX)),
                     _ => 1,
-                };
-                h = Some(lh * lines.max(1) as f32);
+                }
+                .max(1);
+                let lh = n.line_h.unwrap_or_else(|| {
+                    if lines == 1 {
+                        p.text_box_height(font, scale)
+                    } else {
+                        p.text_height(font, scale)
+                    }
+                });
+                h = Some(lh * lines as f32);
             }
         } else if matches!(
             n.kind,
@@ -1586,7 +1640,7 @@ impl Ui {
         ) && h.is_none()
         {
             let font = n.font.unwrap_or(1);
-            h = Some(p.text_height(font, n.scale.unwrap_or(1.0)) * 2.0);
+            h = Some(p.text_box_height(font, n.scale.unwrap_or(1.0)) * 2.0);
         }
         if n.kind == Kind::Image
             && (w.is_none() || h.is_none())
@@ -1606,7 +1660,7 @@ impl Ui {
         }
         if matches!(n.kind, Kind::Pips | Kind::Choice | Kind::Keycap) {
             let hh = *h.get_or_insert_with(|| {
-                p.text_height(n.font.unwrap_or(1), n.scale.unwrap_or(1.0)) * 2.0
+                p.text_box_height(n.font.unwrap_or(1), n.scale.unwrap_or(1.0)) * 2.0
             });
             if let Some(nat) = widgets::natural_w(n, ctx, hh, p) {
                 // a keycap's `w` is its minimum width
@@ -2962,7 +3016,15 @@ impl Ui {
             let ink = p.text_center_dy(font, scale);
             let y = rect.y + (rect.h + th) / 2.0 - ink + n.text_dy.unwrap_or(0.0);
             let text_clip = if (n.w.is_some() && n.kind == Kind::Text) || n.kind == Kind::Input {
-                Some(clip.map_or(rect, |c| c.intersect(&rect)))
+                // a substitute font taller than the one the layout used
+                // (the Steam Deck's) keeps its full height
+                let grow = (th - p.text_box_height(font, scale)).max(0.0) / 2.0;
+                let r = Rect {
+                    y: rect.y - grow,
+                    h: rect.h + 2.0 * grow,
+                    ..rect
+                };
+                Some(clip.map_or(r, |c| c.intersect(&r)))
             } else {
                 clip
             };
@@ -4625,5 +4687,47 @@ fit_y = 1
                 .all(|r| r.is_some_and(|r| r.deg == -3.0 && r.cx == 200.0))
         );
         assert_eq!(p.rot, None, "transform reset after drawing");
+    }
+
+    #[test]
+    fn profile_tables_override_only_their_profile() {
+        let text = r#"
+[[node]]
+kind = "vbox"
+y = 10
+h = 40
+deck = { h = 60 }
+
+  [[node.children]]
+  kind = "text"
+  text = "HI"
+  scale = 2
+  deck = { scale = 1, y = 4 }
+
+  [[node.children]]
+  kind = "text"
+  text = "DECK ONLY"
+  visible = "never"
+  deck = { visible = "!never" }
+"#;
+        let plain = ScreenDef::parse(text).unwrap();
+        let none = ScreenDef::parse_for(text, None).unwrap();
+        let deck = ScreenDef::parse_for(text, Some("deck")).unwrap();
+        let n = |d: &ScreenDef| format!("{:?}", d.node);
+        assert_eq!(n(&plain), n(&none));
+        assert_eq!(
+            n(&plain),
+            n(&ScreenDef::parse_for(text, Some("tv")).unwrap())
+        );
+        assert!(matches!(plain.node[0].h, Some(Dim::Px(v)) if v == 40.0));
+        assert!(matches!(deck.node[0].h, Some(Dim::Px(v)) if v == 60.0));
+        assert!(matches!(deck.node[0].y, Some(Dim::Px(v)) if v == 10.0));
+        let hi = &deck.node[0].children[0];
+        assert_eq!(
+            (hi.scale, plain.node[0].children[0].scale),
+            (Some(1.0), Some(2.0))
+        );
+        assert!(matches!(hi.y, Some(Dim::Px(v)) if v == 4.0));
+        assert_eq!(deck.node[0].children[1].visible.as_deref(), Some("!never"));
     }
 }

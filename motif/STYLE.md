@@ -26,10 +26,18 @@ screenpack (`system.def`) come with each theme.
   The output is reproducible: `generated_themes_match_the_committed_files`
   (`cargo test -p rugen`) fails when a generator change lands without its
   regenerated files (both themes and the flat `motif/font/`).
-- **Fonts.** `font/src/` holds the two OFL pixel fonts (Press Start 2P and
-  Jersey 10); `rugen fontgen` cuts them into role fonts (title, menu, small,
-  numbers, code) with one colour bank per ink of each theme. Banks are listed
-  in each theme's `README.md`.
+- **Fonts.** `font/src/` holds the three OFL pixel fonts (Press Start 2P,
+  Jersey 10 and Pixelify Sans, see `font/NOTICE`); `rugen fontgen` cuts them
+  into role fonts (title, menu, small, numbers, code, deck) with one colour
+  bank per ink of each theme, always at a whole multiple of the face's own
+  pixel grid. Every text font carries Latin-1 and Latin Extended-A for the
+  translations to come. Banks are listed in each theme's `README.md`.
+- **Steam Deck.** Under the `deck` profile, text drawn 1:1 in fonts 1 and 2
+  uses `rugen-deck` (Pixelify Sans at 2x: 14 px capitals, 10 px x-height) so
+  it reads on the Deck's 7" 1280x800 screen; scaled lettering keeps the
+  theme's fonts. Layouts keep the rows of the font they name; a node's
+  `deck = { ... }` table moves or resizes it for the Deck only, so desktop
+  layouts never change.
 - **One accent per screen.** A red stamp, a vermilion seal, the focused
   slab: one thing pulls the eye, everything else stays quiet.
 - **Focus is always visible.** The focused element changes colour *and*

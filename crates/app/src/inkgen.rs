@@ -571,6 +571,11 @@ Files missing here fall back to the flat `motif/`.
 
 Font banks used on paper: 9 = ink, 10 = red, 11 = paper (for text on slabs),
 8 = soft grey.
+
+Steam Deck profile: `font1.deck` / `font2.deck` (`rugen-deck`, Pixelify Sans
+at 2x, 14 px capitals) replace fonts 1 and 2 wherever a screen draws them at
+scale 1; layouts keep the rows of the font they name. A node's `deck = { ... }`
+table overrides its keys under that profile only (room for the bigger text).
 "#;
 
 /// Generate the ink theme into `out` (usually `motif/themes/ink`), taking
@@ -834,6 +839,10 @@ font2 = font/rugen-menu.def
 font3 = font/rugen-title.def
 font4 = font/rugen-num.def
 font5 = font/rugen-code.def
+; Steam Deck profile: text drawn 1:1 in fonts 1 and 2 uses Pixelify Sans
+; at 2x (14 px capitals), readable on the Deck's 7" 1280x800 screen
+font1.deck = font/rugen-deck.def
+font2.deck = font/rugen-deck.def
 
 [Music]
 title.bgm =
@@ -1348,8 +1357,16 @@ mod tests {
         type Gen = fn(&Path, &Path, Option<&[u8]>) -> anyhow::Result<()>;
         let gens: [(&str, PathBuf, Gen); 3] = [
             ("themes/ink", motif.join("themes/ink"), super::generate),
-            ("themes/dojo", motif.join("themes/dojo"), crate::dojogen::generate),
-            ("font", motif.join("font"), crate::fontgen::generate_roles_into),
+            (
+                "themes/dojo",
+                motif.join("themes/dojo"),
+                crate::dojogen::generate,
+            ),
+            (
+                "font",
+                motif.join("font"),
+                crate::fontgen::generate_roles_into,
+            ),
         ];
         let mut stale = Vec::new();
         for (name, committed, generate) in gens {

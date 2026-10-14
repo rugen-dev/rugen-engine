@@ -112,6 +112,7 @@ enter_time = 16
     y = 332
     w = 329
     h = 28
+    deck = { y = 304, h = 62, wrap = true, line_gap = 2 }
     font = 2
     bank = 13
 
@@ -121,6 +122,7 @@ enter_time = 16
     y = 372
     w = 329
     h = 40
+    deck = { h = 62 }
     color = [0.133, 0.078, 0.059, 1.0]
 
     [[node.children.children]]
@@ -129,6 +131,7 @@ enter_time = 16
     x = 36
     y = 372
     h = 40
+    deck = { h = 31 }
     font = 2
     bank = 14
 
@@ -139,6 +142,7 @@ enter_time = 16
     y = 372
     w = 305
     h = 40
+    deck = { y = 403, h = 31 }
     align = "right"
     font = 2
     bank = 14
@@ -148,6 +152,7 @@ enter_time = 16
     text = "YOUR BEST"
     x = 24
     y = 426
+    deck = { y = 442 }
     h = 28
     font = 2
     bank = 17
@@ -158,6 +163,7 @@ enter_time = 16
     x = 24
     y = 452
     w = 329
+    deck = { y = 466 }
     h = 32
     font = 6
     bank = 12

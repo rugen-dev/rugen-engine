@@ -1978,6 +1978,7 @@ nine = [12, 12, 12, 12]
   kind = "text"
   x = 32
   y = 500
+  deck = { y = 488 }
   bank = 17
   font = 2
   text = "PASSWORD"
@@ -2008,6 +2009,7 @@ nine = [12, 12, 12, 12]
   kind = "text"
   x = 32
   y = 516
+  deck = { y = 512 }
   bank = 17
   font = 2
   text = "OPTIONAL"
@@ -2050,6 +2052,7 @@ nine = [12, 12, 12, 12]
   ellipsis = true
   font = 2
   text = "{create.preview_host}"
+  deck = { y = 50 }
 
   [[node.children]]
   kind = "text"
@@ -2062,6 +2065,7 @@ nine = [12, 12, 12, 12]
   line_gap = 4
   max_lines = 2
   text = "{create.preview_rules}"
+  deck = { y = 72, line_gap = -2 }
   wrap = true
 
 [[node]]
@@ -2076,6 +2080,7 @@ font = 2
 line_gap = 8
 max_lines = 8
 text = "{create.note}"
+deck = { line_gap = -4, max_lines = 6 }
 wrap = true
 
 [[node]]
@@ -2607,6 +2612,7 @@ items = "accts"
     kind = "text"
     visible = "item.side_ok"
     anchor = "right"
+    deck = { anchor = "br", y = 14 }
     x = 18
     h = 20
     align = "center"
@@ -2621,6 +2627,7 @@ items = "accts"
     kind = "text"
     visible = "item.side_plain"
     anchor = "right"
+    deck = { anchor = "br", y = 14 }
     x = 18
     bank = 12
     font = 2
@@ -2751,6 +2758,7 @@ nine = [12, 12, 12, 12]
     line_gap = 8
     max_lines = 3
     text = "{acct.hint}"
+    deck = { h = 92, line_gap = 1 }
     wrap = true
 
     [[node.children.children]]
@@ -2759,6 +2767,7 @@ nine = [12, 12, 12, 12]
     y = 206
     w = 592
     h = 44
+    deck = { y = 236 }
     gap = 10
 
       [[node.children.children.children]]
@@ -2771,6 +2780,7 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:password"
       text = "CHANGE PASSWORD"
+      deck = { w = 222 }
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
@@ -2789,6 +2799,7 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:logout"
       text = "LOG OUT"
+      deck = { w = 100 }
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
@@ -2807,6 +2818,7 @@ nine = [12, 12, 12, 12]
       font = 2
       on_press = "acct:logout_all"
       text = "LOG OUT EVERYWHERE"
+      deck = { w = 250 }
       shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
@@ -3164,6 +3176,7 @@ nine = [12, 12, 12, 12]
       line_gap = 8
       max_lines = 3
       text = "{acct.rule}"
+      deck = { y = -3, h = 78, line_gap = -6 }
       wrap = true
 
     [[node.children.children]]
@@ -3177,6 +3190,7 @@ nine = [12, 12, 12, 12]
     font = 2
     max_lines = 2
     text = "{acct.guest}"
+    deck = { max_lines = 1 }
     wrap = true
 
     [[node.children.children]]
@@ -3343,6 +3357,7 @@ y = 46
 bank = 16
 font = 2
 text = "{board.scope}"
+deck = { x = 190 }
 
 [[node]]
 kind = "panel"
@@ -5978,6 +5993,7 @@ nine = [12, 12, 12, 12]
   visible = "!dialog.input"
   x = 32
   y = 118
+  deck = { h = 112, line_gap = -4, max_lines = 4 }
   w = 576
   h = 110
   bank = 17
@@ -5992,6 +6008,7 @@ nine = [12, 12, 12, 12]
   visible = "dialog.input"
   x = 32
   y = 118
+  deck = { y = 114, h = 58, line_gap = -2 }
   w = 576
   h = 40
   bank = 17

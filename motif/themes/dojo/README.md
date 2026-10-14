@@ -16,6 +16,11 @@ codes), 6 body (Jersey 30: text, buttons, names). Banks: 12 sumi, 13
 vermilion, 14 washi, 15 brass, 16 muted on lacquer, 17 soft sumi on washi.
 Focus is always brass + vermilion; P1 is vermilion, P2 brass.
 
+Steam Deck profile: `font1.deck` / `font2.deck` (`rugen-deck`, Pixelify Sans
+at 2x, 14 px capitals) replace fonts 1 and 2 wherever a screen draws them at
+scale 1; layouts keep the rows of the font they name. A node's `deck = { ... }`
+table overrides its keys under that profile only (room for the bigger text).
+
 ## Options and controls
 
 `options.toml` binds to `tabs[]` (`id label active ext press`), `tab`

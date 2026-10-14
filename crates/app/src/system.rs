@@ -124,8 +124,15 @@ impl SystemData {
             .and_then(|p| Snd::open(p).ok());
         let root = data_dir.parent().unwrap_or(data_dir);
         let mut fonts = HashMap::new();
-        for i in 1..=10 {
-            let Some(name) = files.raw(&format!("font{i}")) else {
+        // `fontN` and its Steam Deck variant `fontN.deck` (slot N + 100)
+        let keys = (1..=10).flat_map(|i| {
+            [
+                (i, format!("font{i}")),
+                (i + crate::deck::DECK_FONT_SLOT, format!("font{i}.deck")),
+            ]
+        });
+        for (i, key) in keys {
+            let Some(name) = files.raw(&key) else {
                 continue;
             };
             let name = name.trim();
@@ -137,7 +144,7 @@ impl SystemData {
             candidates.push(root.join("font").join(name));
             candidates.push(root.join(name));
             let Some(path) = candidates.iter().find(|p| p.exists()) else {
-                log::warn!("system.def: font{i} = {name} not found");
+                log::warn!("system.def: {key} = {name} not found");
                 continue;
             };
             match Font::open(path) {

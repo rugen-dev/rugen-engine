@@ -474,7 +474,9 @@ impl Shell {
         Self {
             input: {
                 let mut i = InputState::new(&config.input);
-                i.set_deck(crate::deck::active(&config.video.profile));
+                let deck = crate::deck::active(&config.video.profile);
+                i.set_deck(deck);
+                crate::deck::set_ui(deck);
                 i
             },
             saved: config.clone(),
@@ -826,7 +828,8 @@ impl Shell {
     }
 
     /// Make `config` the live one: bindings, volumes, window size and
-    /// fullscreen follow at once. True when the UI theme changed.
+    /// fullscreen follow at once. True when the UI theme or the Steam Deck
+    /// profile changed (the screens reload: fonts and layouts follow it).
     fn apply_config(&mut self, config: Config) -> bool {
         let theme_changed = !self
             .config
@@ -836,8 +839,10 @@ impl Shell {
             .eq_ignore_ascii_case(config.video.theme.trim());
         self.config = config;
         self.input.rebind(&self.config.input);
-        self.input
-            .set_deck(crate::deck::active(&self.config.video.profile));
+        let deck = crate::deck::active(&self.config.video.profile);
+        self.input.set_deck(deck);
+        let deck_changed = crate::deck::ui() != deck;
+        crate::deck::set_ui(deck);
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
             a.set_music_volume(self.config.audio.music);
@@ -869,7 +874,7 @@ impl Shell {
                 );
             }
         }
-        theme_changed
+        theme_changed || deck_changed
     }
 
     fn save_config(&self) {

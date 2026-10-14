@@ -332,6 +332,7 @@ color = [0.07, 0.07, 0.07, 1.0]
   text = "{profile.record}"
   x = 78
   y = 32
+  deck = { y = 28 }
   font = 2
   bank = 11
 
