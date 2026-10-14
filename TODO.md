@@ -132,6 +132,54 @@ later section while an earlier one has open boxes:
   engine tag bump); LAN hosts send it in the handshake (protocol 3), a
   protocol 2 peer plays seed 1 with both sides. Goldens pin seed 1.
 
+### Compatibility (owner report)
+
+Every fix is in the engine, checked against Ikemen GO and the MUGEN docs;
+regressions in `crates/sim/src/compat_tests.rs` (KFM synthetic, plus Goku /
+Sasuke with `RUGEN_GOLDEN_CHARS ... -- --ignored`). Shots in
+`~/.cache/rugen-work/compat/shots/`.
+
+- [x] **Sasuke's Kirin clouds in the middle of the screen** (6b645aa).
+  Screen-space explods (postype back / front / left / right, space =
+  screen) were kept in stage units from the ground line; they now hold
+  screen positions (x from the centre, y from the top), in the owner's
+  localcoord without FIGHTER SIZE, drawn unzoomed and unshaken, anchored to
+  the window's edges. GameWidth / ScreenWidth in the fighter's units.
+- [x] **Goku's super backgrounds not full-screen** (6b645aa): the same, plus
+  AssertSpecial nobg / nofg / nobardisplay / invisible honoured.
+- [x] **Susanoo's copy dark and misaligned** (8f7b758): a helper's omitted
+  size.* come from its parent (the shade was drawn at full size beside a
+  .6 body); helper ownpal (PalFX of non-ownpal helpers is the root's).
+- [x] **Goku's ki blasts dark** (e1d4c6a): equal sprpriority draws queued
+  later go behind (Ikemen), so the additive glow covers the subtractive
+  shade; Sub uses PalFX's negative multiply; PalFX applied invert, colour,
+  add, multiply; HitDef palfx.* applied; explod ownpal / palfx.*.
+- [x] **Goku doubled during attacks** (1229dd5, 07029de): a ChangeAnim to an
+  action the AIR lacks leaves no animation (nothing drawn, no boxes), as
+  MUGEN; Goku's FX helpers kept anim 0, his stance, drawn additive.
+- [x] **Goku's endless air B punches** (4392f92): the animation steps in the
+  tick a hit starts a hitpause (Ikemen acttmp), so `animelem = 2` does not
+  re-arm the HitDef after every pause. Goldens re-recorded (see commit).
+- [x] **Ki blast explosion dark** (e1d4c6a, 118713c): same draw order and
+  PalFX fixes; the target now takes the HitDef's burnt palfx.
+- [x] **Kaioken red screen** (a470455, 6b645aa): an ownpal explod keeps its
+  creator's PalFX from creation (the flash was white), full-screen on any
+  width / zoom.
+- [x] **Genki Dama** (b287f5d): not reproduced with the opponent idle; both
+  forms run to the hit by their real inputs (Super Genkidama: hold Y about
+  1000 ticks, then Y). Open: Training has no power refill (needs 500 /
+  2000 power).
+- [x] **Fighters facing away near the stage ends** (0eaffc6): auto-turn also
+  at the end of the landing (52) and once the round is decided (Ikemen).
+- [x] **Tag swap** (9314219, cee9d00): camera holds through a swap (follows
+  fighters in place only), cosmetic entrance (no control, unhittable, not
+  pushed, nobody's P2), leaving fighter fades 100/80/60/40/20/0 %, no swap
+  under a SuperPause; tests for hitstun, both sides, round end, hits,
+  rollback.
+- Cached `.rgc` files need no re-conversion: compiled logic is rebuilt on
+  any sim change (LOGIC_SCHEMA), sprites / AIR are stored pixel- and
+  byte-exact.
+
 ## Gameplay
 
 - [x] **Hit sparks and fighter size.** (88f615c) fightfx hit sparks are not zoomed with
