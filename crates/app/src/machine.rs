@@ -657,4 +657,33 @@ mod tests {
         let line = m.line();
         assert!(line.contains(std::env::consts::ARCH), "{line}");
     }
+
+    /// What leaves the machine (ready reports, LAN / relay hellos, shared
+    /// replays) is the summary: no CPU, GPU, RAM or driver; a shared
+    /// replay drops the backend too.
+    #[test]
+    fn summaries_strip_the_hardware() {
+        let m = Machine {
+            os: "Fedora Linux 44 (Workstation Edition)".into(),
+            os_version: "7.2.9-201.fc44.x86_64".into(),
+            arch: "x86_64".into(),
+            cpu: "AMD Ryzen 5 5500U".into(),
+            cores: 12,
+            ram_gb: 16,
+            gpu: "AMD Radeon Graphics (RADV RENOIR)".into(),
+            backend: "Vulkan".into(),
+            driver: "radv Mesa 25.1.4".into(),
+            display: Some([1280, 720]),
+            profile: "desktop".into(),
+        };
+        let s = m.summary(&Engine::current());
+        let text = s.encode();
+        for detail in ["Ryzen", "Radeon", "RADV", "Mesa", "16", "1280", "7.2.9"] {
+            assert!(!text.contains(detail), "{detail} in {text}");
+        }
+        assert_eq!(s.os, "Fedora Linux 44");
+        let shared = serde_json::to_string(&s.shared()).unwrap();
+        assert!(!shared.contains("Vulkan"), "{shared}");
+        assert!(shared.contains("x86_64") && shared.contains("Fedora Linux 44"));
+    }
 }

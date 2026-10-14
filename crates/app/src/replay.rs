@@ -35,6 +35,163 @@ fn is_zero(v: &u64) -> bool {
     *v == 0
 }
 
+/// A fighter or stage of a replay: the id it goes by (the file stem of its
+/// content file or folder, as in `chars/`) and its content fingerprint.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContentRef {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+}
+
+impl ContentRef {
+    /// The ref of the fighter / stage whose main def is `def`.
+    pub fn of(def: &Path) -> Self {
+        let m = rugen_content::manifest_for(def).map(|(_, m)| m);
+        // the manifest's id: a downloaded fighter's file is named by its
+        // fingerprint, its id is the def's stem
+        let id = m
+            .as_ref()
+            .map(|m| m.id.clone())
+            .filter(|id| !id.is_empty())
+            .or_else(|| ids_of(def).into_iter().next())
+            .unwrap_or_default();
+        Self {
+            id,
+            fingerprint: m
+                .and_then(|m| m.fingerprint)
+                .filter(|f| rugen_proto::is_fingerprint(f)),
+        }
+    }
+}
+
+/// The fighters and stage of a replay by id and fingerprint (replays from
+/// before them stored absolute paths only).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContentRefs {
+    pub p1: ContentRef,
+    pub p2: ContentRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<ContentRef>,
+    /// Team partners, in the order of `teams.partners`.
+    #[serde(default, skip_serializing_if = "no_partners")]
+    pub partners: [Vec<ContentRef>; 2],
+}
+
+fn no_partners(p: &[Vec<ContentRef>; 2]) -> bool {
+    p.iter().all(Vec::is_empty)
+}
+
+/// The ids a def path may go by, best first: the content file's stem
+/// (`chars/x.rgc/x.def`), the folder's name (`chars/kfm/kfm.def`, a cache
+/// folder's `x-<hash>` without the hash), the def's stem. Read from the
+/// path alone, so a path that no longer exists still names its fighter.
+pub fn ids_of(def: &Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        if !s.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(s)) {
+            out.push(s.to_string());
+        }
+    };
+    // a replay written on Windows names its paths with backslashes
+    let text = def.to_string_lossy();
+    let comps: Vec<&str> = text.split(['/', '\\']).filter(|c| !c.is_empty()).collect();
+    let ext = |c: &str, e: &str| {
+        c.len() > e.len() && c[c.len() - e.len()..].eq_ignore_ascii_case(e)
+    };
+    if let Some(c) = comps.iter().rev().find(|c| ext(c, ".rgc") || ext(c, ".rgs")) {
+        push(&c[..c.len() - 4]);
+    }
+    let Some(last) = comps.last() else {
+        return out;
+    };
+    if ext(last, ".def") {
+        if comps.len() >= 2 {
+            let dir = comps[comps.len() - 2];
+            if let Some((a, hash)) = dir.rsplit_once('-')
+                && hash.len() >= 8
+                && hash.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                push(a);
+            }
+            if !ext(dir, ".rgc") && !ext(dir, ".rgs") {
+                push(dir);
+            }
+        }
+        push(&last[..last.len() - 4]);
+    } else {
+        push(last);
+    }
+    out
+}
+
+/// How a replay stores `def`: relative to the game root `root` when it is
+/// inside it, else only the id. Never an absolute path.
+pub fn private_path(def: &Path, root: &Path, id: &str) -> PathBuf {
+    if !def.is_absolute() && !def.as_os_str().is_empty() && !def.starts_with("..") {
+        // already relative (a test's `a`, a path under the root)
+        return def.to_path_buf();
+    }
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    match def.strip_prefix(&root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => rel.to_path_buf(),
+        _ => PathBuf::from(id),
+    }
+}
+
+/// The def a replay's `path` and `r` (absent from old replays) stand for
+/// in `lib`: the path as it is (an old replay's absolute path that still
+/// exists), the path under the game root, the fingerprint (wherever the
+/// content is now), then the id (a fighter moved to another folder, an old
+/// replay's path gone). `None`: not on this machine.
+pub fn resolve_def(
+    lib: &rugen_content::Library,
+    path: &Path,
+    r: Option<&ContentRef>,
+    stage: bool,
+) -> Option<PathBuf> {
+    use rugen_formats::vfs;
+    if !path.as_os_str().is_empty() && vfs::exists(path) && path_is_def(path) {
+        return Some(path.to_path_buf());
+    }
+    if path.is_relative() {
+        let p = lib.root.join(path);
+        if vfs::exists(&p) && path_is_def(&p) {
+            return Some(p);
+        }
+    }
+    if let Some(fp) = r.and_then(|r| r.fingerprint.as_deref())
+        && let Some(d) = lib.def_for_fingerprint(fp)
+    {
+        return Some(d);
+    }
+    let mut ids: Vec<String> = r.map(|r| r.id.clone()).into_iter().collect();
+    ids.extend(ids_of(path));
+    for id in ids.iter().filter(|i| !i.is_empty()) {
+        let found = if stage {
+            lib.stages()
+                .into_iter()
+                .find(|e| e.id.eq_ignore_ascii_case(id))
+                .and_then(|e| lib.prepare_stage(&e).ok())
+        } else {
+            lib.chars()
+                .into_iter()
+                .find(|e| e.id.eq_ignore_ascii_case(id))
+                .and_then(|e| lib.prepare_char(&e).ok())
+        };
+        if let Some((d, m)) = found {
+            return Some(m.def_path(&d));
+        }
+    }
+    None
+}
+
+/// A main def (not a folder that happens to share the name).
+fn path_is_def(p: &Path) -> bool {
+    p.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("def"))
+}
+
 /// The `mode` a replay records for a match started from `mode`.
 pub fn mode_name(mode: Option<crate::game::Mode>) -> &'static str {
     use crate::game::Mode;
@@ -110,6 +267,11 @@ pub struct Replay {
     /// from before the setting, or a match played that way).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life: Option<i32>,
+    /// The fighters and stage by id and content fingerprint (`p1`, `p2`,
+    /// `stage` then hold at most a path relative to the game root); absent
+    /// from replays that stored absolute paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentRefs>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
@@ -145,8 +307,74 @@ impl Replay {
             seed: Some(seed),
             edits: Vec::new(),
             life,
+            content: Some(ContentRefs {
+                p1: ContentRef::of(&setup.p1),
+                p2: ContentRef::of(&setup.p2),
+                stage: setup.stage.as_deref().map(ContentRef::of),
+                partners: setup.teams.as_ref().map_or_else(Default::default, |t| {
+                    [0, 1].map(|s| t.partners[s].iter().map(|p| ContentRef::of(p)).collect())
+                }),
+            }),
             inputs: Vec::new(),
         }
+    }
+
+    /// The match setup with every fighter and the stage found in `lib`
+    /// ([`resolve_def`]); what cannot be found keeps its recorded path
+    /// (loading it then says what is missing).
+    pub fn resolve(&self, lib: &rugen_content::Library) -> FightSetup {
+        let refs = self.content.as_ref();
+        let find = |p: &Path, r: Option<&ContentRef>, stage: bool| {
+            resolve_def(lib, p, r, stage).unwrap_or_else(|| {
+                log::warn!("replay: {} is not on this machine", p.display());
+                p.to_path_buf()
+            })
+        };
+        let mut setup = self.setup();
+        setup.p1 = find(&self.p1, refs.map(|r| &r.p1), false);
+        setup.p2 = find(&self.p2, refs.map(|r| &r.p2), false);
+        setup.stage = self
+            .stage
+            .as_ref()
+            .map(|s| find(s, refs.and_then(|r| r.stage.as_ref()), true));
+        if let Some(t) = setup.teams.as_mut() {
+            for side in 0..2 {
+                for (i, p) in t.partners[side].iter_mut().enumerate() {
+                    *p = find(p, refs.and_then(|r| r.partners[side].get(i)), false);
+                }
+            }
+        }
+        setup
+    }
+
+    /// The replay as it is written: fighters and the stage at most relative
+    /// to the game root `root` (else by id), never an absolute path.
+    pub fn private(&self, root: &Path) -> Self {
+        let mut r = self.clone();
+        let refs = r.content.get_or_insert_with(|| ContentRefs {
+            p1: ContentRef::of(&self.p1),
+            p2: ContentRef::of(&self.p2),
+            stage: self.stage.as_deref().map(ContentRef::of),
+            partners: Default::default(),
+        });
+        r.p1 = private_path(&self.p1, root, &refs.p1.id);
+        r.p2 = private_path(&self.p2, root, &refs.p2.id);
+        r.stage = self.stage.as_ref().map(|s| {
+            let id = refs.stage.as_ref().map(|r| r.id.clone()).unwrap_or_default();
+            private_path(s, root, &id)
+        });
+        if let Some(t) = r.teams.as_mut() {
+            for side in 0..2 {
+                for (i, p) in t.partners[side].iter_mut().enumerate() {
+                    let id = refs.partners[side]
+                        .get(i)
+                        .map(|r| r.id.clone())
+                        .unwrap_or_else(|| ids_of(p).into_iter().next().unwrap_or_default());
+                    *p = private_path(p, root, &id);
+                }
+            }
+        }
+        r
     }
 
     pub fn setup(&self) -> FightSetup {
@@ -169,13 +397,15 @@ impl Replay {
         }
     }
 
-    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+    /// Write the replay to `path` in its private form ([`Replay::private`],
+    /// `root` = the game root).
+    pub fn save(&self, path: &Path, root: &Path) -> anyhow::Result<()> {
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_vec(self)?)?;
+        std::fs::write(path, serde_json::to_vec(&self.private(root))?)?;
         Ok(())
     }
 
@@ -260,6 +490,7 @@ mod tests {
             seed: None,
             edits: Vec::new(),
             life: None,
+            content: None,
             inputs: Vec::new(),
         }
         .setup();
@@ -383,5 +614,205 @@ mod tests {
             (a.p1, a.p2, a.ai, a.fighter_size, a.life),
             (b.p1, b.p2, b.ai, b.fighter_size, b.life)
         );
+    }
+
+    #[test]
+    fn paths_name_their_fighter() {
+        let first = |p: &str| ids_of(Path::new(p)).into_iter().next().unwrap_or_default();
+        assert_eq!(first("/home/u/RUGEN/chars/G6_Madara.rgc/G6_Madara.def"), "G6_Madara");
+        assert_eq!(first(r"C:\Users\u\RUGEN\chars\G6_Obito.rgc\obito.def"), "G6_Obito");
+        assert_eq!(first("/home/u/RUGEN/cache/chars/kfm-0123456789abcdef/kfm.def"), "kfm");
+        assert_eq!(first("/old/chars/kfm/kfm.def"), "kfm");
+        assert_eq!(first("G6_Madara"), "G6_Madara");
+        assert_eq!(first("chars/Forest.rgs/stage.def"), "Forest");
+        let root = Path::new("/home/u/RUGEN");
+        assert_eq!(
+            private_path(Path::new("/home/u/RUGEN/chars/a.rgc/a.def"), root, "a"),
+            PathBuf::from("chars/a.rgc/a.def")
+        );
+        assert_eq!(
+            private_path(Path::new("/home/u/.cache/x/b.rgc/b.def"), root, "b"),
+            PathBuf::from("b")
+        );
+        assert_eq!(private_path(Path::new("a"), root, "a"), PathBuf::from("a"));
+    }
+
+    /// A written replay holds no home folder, user name or hostname: the
+    /// fighters and stage go by root-relative path or id.
+    #[test]
+    fn written_replays_hold_nothing_personal() {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "/home/tester".into());
+        let home = PathBuf::from(home);
+        let root = home.join("RUGEN");
+        let mut setup = Replay {
+            version: REPLAY_VERSION,
+            engine: None,
+            machine: None,
+            mode: None,
+            recorded_at: None,
+            online: None,
+            p1: root.join("chars/G6_Madara.rgc/G6_Madara.def"),
+            p2: home.join(".cache/elsewhere/Sakura.rgc/Sakura.def"),
+            stage: Some(root.join("stages/Forest.rgs/Forest.def")),
+            ai: [0, 4],
+            fighter_size: FighterSize::None,
+            arena_ai: false,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: None,
+            edits: Vec::new(),
+            life: None,
+            content: None,
+            inputs: Vec::new(),
+        }
+        .setup();
+        setup.teams = Some(crate::play::TeamSetup {
+            mode: [rugen_sim::team::TeamMode::Turns, rugen_sim::team::TeamMode::Single],
+            partners: [vec![root.join("chars/Kakashi.rgc/Kakashi.def")], vec![]],
+            ids: Default::default(),
+        });
+        let mut r = Replay::new(&setup, FighterSize::None, false, 60, 9, None);
+        r.inputs = vec![[1, 2]; 90];
+        let dir = std::env::temp_dir().join(format!("rugen-replay-privacy-{}", std::process::id()));
+        let file = dir.join("r.json");
+        r.save(&file, &root).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!text.contains(&*home.to_string_lossy()), "{text}");
+        let personal = crate::machine::Personal::current();
+        assert_eq!(personal.leaks(&text), None, "{text}");
+        let back: Replay = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.p1, PathBuf::from("chars/G6_Madara.rgc/G6_Madara.def"));
+        assert_eq!(back.p2, PathBuf::from("Sakura"), "outside the root: the id only");
+        assert_eq!(back.stage, Some(PathBuf::from("stages/Forest.rgs/Forest.def")));
+        let refs = back.content.unwrap();
+        assert_eq!((refs.p1.id.as_str(), refs.p2.id.as_str()), ("G6_Madara", "Sakura"));
+        assert_eq!(refs.partners[0][0].id, "Kakashi");
+        assert_eq!(
+            back.teams.unwrap().partners[0][0],
+            PathBuf::from("chars/Kakashi.rgc/Kakashi.def")
+        );
+        // engine and machine are written, still nothing personal in them
+        assert!(text.contains(r#""engine":{"#) && text.contains(r#""machine":{"#));
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                copy_dir(&p, &to.join(e.file_name()));
+            } else {
+                std::fs::copy(&p, to.join(e.file_name())).unwrap();
+            }
+        }
+    }
+
+    /// An old replay (absolute paths, no header) plays to the checksum it
+    /// was recorded with; so does one whose fighter moved (found by id),
+    /// and a new one stored by id outside the game root.
+    #[test]
+    fn old_and_moved_replays_play_the_same_match() {
+        use crate::config::Config;
+        use crate::play::{FightSetup, Match};
+        use rugen_sim::Buttons;
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let reference = base.join("reference/mugen-1.1b1");
+        let kfm = std::path::absolute(reference.join("chars/kfm/kfm.def")).unwrap();
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = reference.join("data");
+        let cfg = Config::default();
+        let setup = FightSetup {
+            life: None,
+            p1: kfm.clone(),
+            p2: kfm.clone(),
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: Some(crate::game::Mode::Versus),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(5),
+        };
+        let mut audio = None;
+        let mut m = Match::load(&setup, &motif, &data, &cfg).expect("KFM match");
+        m.record = Some(Replay::new(
+            &setup,
+            m.world.fighter_size,
+            m.world.arena_ai,
+            m.world.round.config.round_time,
+            m.world.seed(),
+            m.world.life,
+        ));
+        for f in 0..500 {
+            let b = Buttons {
+                r: f % 70 < 30,
+                x: f % 70 == 40,
+                ..Default::default()
+            };
+            let c = Buttons {
+                l: f % 50 < 20,
+                a: f % 50 == 30,
+                ..Default::default()
+            };
+            m.tick([b, c], &mut audio);
+        }
+        let want = m.world.checksum();
+        let rec = m.record.take().expect("recorded");
+        // what a replay written before the header and the ids looked like
+        let mut v = serde_json::to_value(&rec).unwrap();
+        for k in ["engine", "machine", "mode", "recorded_at", "content"] {
+            v.as_object_mut().unwrap().remove(k);
+        }
+        let old: Replay = serde_json::from_value(v).unwrap();
+        assert!(old.content.is_none() && old.p1.is_absolute());
+        let root = std::env::temp_dir().join(format!("rugen-replay-moved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        copy_dir(&reference.join("chars/kfm"), &root.join("chars/kfm"));
+        let lib = rugen_content::Library::discover(Some(&root));
+        let play = |r: &Replay| {
+            let setup = r.resolve(&lib);
+            let mut p = Match::load(&setup, &motif, &data, &cfg).expect("replay");
+            p.edit_plan = r.edits.clone();
+            let n = r.inputs.len();
+            p.playback = Some((r.inputs.clone(), 0));
+            let mut audio = None;
+            for _ in 0..n {
+                p.tick([Buttons::default(); 2], &mut audio);
+            }
+            (setup, p.world.checksum())
+        };
+        let (s, sum) = play(&old);
+        assert_eq!(s.p1, kfm, "the old path still exists: kept");
+        assert_eq!(sum, want, "an old replay plays the same match");
+        // the fighter moved: the old path is gone, its id finds it
+        let gone = PathBuf::from("/gone/home/someone/RUGEN/chars/kfm/kfm.def");
+        let moved = Replay {
+            p1: gone.clone(),
+            p2: gone.clone(),
+            ..old.clone()
+        };
+        let (s, sum) = play(&moved);
+        assert_ne!(s.p1, gone);
+        assert!(rugen_formats::vfs::exists(&s.p1), "{}", s.p1.display());
+        assert_eq!(sum, want, "a moved fighter plays the same match");
+        // a new replay outside the game root goes by id + fingerprint
+        let stored: Replay =
+            serde_json::from_slice(&serde_json::to_vec(&rec.private(&root)).unwrap()).unwrap();
+        assert_eq!(stored.p1, PathBuf::from("kfm"));
+        let (_, sum) = play(&stored);
+        assert_eq!(sum, want, "a replay stored by id plays the same match");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

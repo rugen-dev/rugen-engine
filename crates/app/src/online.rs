@@ -1705,7 +1705,7 @@ impl OnlineScreen {
             .as_ref()
             .map_or_else(|| format!("online-{}", p.match_id), |s| s.code.clone());
         let path = self.root.join("replays").join(format!("{name}.json"));
-        self.rp_note = match r.save(&path) {
+        self.rp_note = match r.save(&path, &self.root) {
             Ok(()) => format!("SAVED: REPLAYS/{}.JSON", name.to_uppercase()),
             Err(e) => format!("NOT SAVED: {}", e.to_string().to_uppercase()),
         };

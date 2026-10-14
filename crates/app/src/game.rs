@@ -1167,7 +1167,7 @@ impl Shell {
                 self.lib.root.join("replays").join(format!("{t}.json"))
             }
         };
-        match rec.save(&path) {
+        match rec.save(&path, &self.lib.root) {
             Ok(()) => log::info!("replay saved to {}", path.display()),
             Err(e) => log::warn!("replay not saved: {e}"),
         }
