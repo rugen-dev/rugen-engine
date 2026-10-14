@@ -697,6 +697,9 @@ pub struct Match {
     pub run_hud: Option<(String, String)>,
     /// The training lab's world edits in force (see [`crate::training::Edits`]).
     edits: crate::training::Edits,
+    /// The round clock when the LESSONS stopped it (round number, ticks
+    /// left), put back once they end.
+    clock_before: Option<(i32, i32)>,
     /// A training replay: the recorded edits and the frame each took effect on.
     pub edit_plan: Vec<(u32, crate::training::Edits)>,
     /// Ticks since the LESSONS were completed (free training follows).
@@ -936,6 +939,7 @@ impl Match {
             training: None,
             run_hud: None,
             edits: Default::default(),
+            clock_before: None,
             edit_plan: Vec::new(),
             lessons_over: 0,
         })
@@ -978,6 +982,29 @@ impl Match {
         log::info!("training: lessons started");
         self.tutorial = Some(lessons);
         self.lessons_over = 0;
+    }
+
+    /// The LESSONS' clock edit turning on or off (`stop`): note the round
+    /// clock before it stops; when it ends, Training's own clock again (the
+    /// time that was left, or a full clock if the round changed meanwhile;
+    /// infinite stays infinite). Runs on the edit's change, so a training
+    /// replay does the same.
+    fn lessons_clock(&mut self, stop: bool) {
+        let r = &mut self.world.round;
+        if stop && !self.edits.no_clock {
+            self.clock_before = Some((r.round_no, r.time_left));
+        } else if !stop
+            && self.edits.no_clock
+            && let Some((round, left)) = self.clock_before.take()
+            && r.time_left < 0
+        {
+            let full = if r.config.round_time > 0 {
+                r.config.round_time * r.config.frames_per_count
+            } else {
+                -1
+            };
+            r.time_left = if round == r.round_no { left } else { full };
+        }
     }
 
     /// Leave the LESSONS: free training again.
@@ -1179,6 +1206,7 @@ impl Match {
                 if let Some(rec) = self.record.as_mut() {
                     rec.edits.push((rec.inputs.len() as u32, want));
                 }
+                self.lessons_clock(want.no_clock);
                 self.edits = want;
             }
             self.edits.apply(&mut self.world);
@@ -3679,8 +3707,61 @@ mod tests {
         assert_eq!(p.world.checksum(), want, "the replay plays the same match");
     }
 
-    /// Training LESSONS stop the round clock through the training edits; a
-    /// training replay records them and plays the match back exactly.
+    /// LESSONS that outlast the round: the next round's full Training clock
+    /// once they are left, not the old round's leftover.
+    #[test]
+    fn lessons_left_in_a_new_round_give_a_full_clock() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = base.join("reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        if !kfm.exists() {
+            return;
+        }
+        let cfg = Config::default();
+        let setup = FightSetup {
+            life: None,
+            p1: kfm.clone(),
+            p2: kfm,
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: Some(crate::game::Mode::Training),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: Some(30),
+            teams: None,
+            run: None,
+            seed: Some(9),
+        };
+        let motif = base.join("motif/themes/ink");
+        let mut m = Match::load(&setup, &motif, &root.join("data"), &cfg).expect("KFM match");
+        m.training = Some(crate::training::Training::new(Default::default()));
+        let mut audio = None;
+        let idle = [Buttons::default(); 2];
+        for _ in 0..300 {
+            m.tick(idle, &mut audio);
+        }
+        let keys = crate::keylabel::Labels::new(&cfg.input, 0, crate::input::Device::Keyboard);
+        m.start_lessons(&keys);
+        m.tick(idle, &mut audio);
+        assert_eq!(m.world.round.time_left, -1);
+        // the round changes under the lessons
+        m.world.round.round_no += 1;
+        m.end_lessons();
+        m.tick(idle, &mut audio);
+        let full = 30 * m.world.round.config.frames_per_count;
+        assert!(
+            (full - 1..=full).contains(&m.world.round.time_left),
+            "a full clock: {}",
+            m.world.round.time_left
+        );
+    }
+
+    /// Training LESSONS stop the round clock through the training edits and
+    /// Training's clock comes back once they end (Esc); a training replay
+    /// records them and plays the match back exactly.
     #[test]
     fn training_replays_keep_the_lessons_clock() {
         let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -3724,6 +3805,7 @@ mod tests {
             ..Default::default()
         };
         let mut audio = None;
+        let mut before = 0;
         for f in 0..900 {
             if f == 100
                 && let Some(t) = m.training.as_mut()
@@ -3745,8 +3827,18 @@ mod tests {
                 Buttons::default()
             };
             m.tick([b, Buttons::default()], &mut audio);
+            match f {
+                199 => before = m.world.round.time_left,
+                699 => assert_eq!(m.world.round.time_left, -1, "the lessons stopped the clock"),
+                700 => assert_eq!(
+                    m.world.round.time_left,
+                    before - 1,
+                    "Training's clock again, from where it was"
+                ),
+                _ => {}
+            }
         }
-        assert_eq!(m.world.round.time_left, -1, "the lessons stopped the clock");
+        assert!(before > 0, "a round clock before the lessons");
         let want = m.world.checksum();
         let rec = m.record.take().expect("recorded");
         assert_eq!(

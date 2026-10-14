@@ -275,7 +275,8 @@ themes, deck profile checked at 1280x800.
   TRAINING, WATCH and DEBUGGER (NEW) cards (keyboard, pad, mouse).
 - [x] **LESSONS inside Training.** (083b616) The tutorial lessons run from the
   Training pause menu with the current fighter against the dummy, then
-  free training again; no separate Tutorial entry.
+  free training again; no separate Tutorial entry. Training's own round
+  clock comes back as soon as they end or are left with Esc.
 - [x] **In-game DEBUGGER.** (e51aabe) PRACTICE → DEBUGGER picks 1 or 2 fighters and a
   stage, then opens the fighter debugger; DEBUGGER in the Training pause
   menu and F12 in Training open it on the current match. Offline only.
