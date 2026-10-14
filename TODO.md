@@ -300,10 +300,19 @@ box) and screenshots.
   a throw released past the edge left the fighter standing on air.
   Self-KOs at level 4, 80 matches on Ink Arena: 19 before, 9 after.
   Shots: `~/.cache/rugen-work/arena/shot-ledge-{ink,dojo}.png`.
-- [ ] **Items.** `[Arena] items = 1` spawns pickups every 10–20 s on the deck
+- [x] **Items.** (36dc7a8) `[Arena] items = 1` spawns pickups every 10–20 s on the deck
   and platforms: a throwable (projectile on throw), a heal and a power
   boost. Grab with a button near an item; deterministic spawn from the round
   seed for netplay.
+  B picks up and throws (the press never reaches the character); heal
+  30 %, power 1000; at most three lying, 20 s each; `item_every = min, max`
+  seconds. The round seed is the match seed, the round number and the
+  round's first frame; quick play and menu matches build the world with
+  seed 1, so round 1 of a given matchup and stage always drops the same
+  items (a per-match seed shared over netplay is left for later). The
+  examples/arena golden checksum changed on purpose. Self-KOs at level 4
+  with items: 10 per 80 matches. Shots:
+  `~/.cache/rugen-work/arena/shot-items-{ink,dojo}.png`.
 - [ ] **Stage hazards.** Moving platforms (path and speed in `[Arena]`) and
   timed events (a platform that drops, a wind push), all deterministic.
 
