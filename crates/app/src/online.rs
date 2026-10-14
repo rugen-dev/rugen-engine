@@ -100,6 +100,59 @@ pub struct LastResult {
 
 static LAST_RESULT: Mutex<Option<LastResult>> = Mutex::new(None);
 
+/// The last online match we played, for REPLAYS (share it, save it);
+/// kept in `cache/last_online_match.json` so it survives a restart.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Played {
+    pub server: String,
+    pub match_id: u64,
+    /// "NARUTO VS SASUKE · 2-1"
+    pub title: String,
+    /// "RANKED · 1:42 · 13 OCT"
+    pub line: String,
+    /// What a local replay file needs (the fighters are on this machine).
+    pub p1: PathBuf,
+    pub p2: PathBuf,
+    pub stage: Option<PathBuf>,
+    pub seed: u64,
+    pub rules: Rules,
+    pub inputs: Vec<[u16; 2]>,
+}
+
+static LAST_PLAYED: Mutex<Option<Played>> = Mutex::new(None);
+
+fn played_path(root: &Path) -> PathBuf {
+    root.join("cache").join("last_online_match.json")
+}
+
+/// An online match we played is over: REPLAYS can share it.
+pub fn note_played(root: &Path, p: Played) {
+    if let Ok(text) = serde_json::to_vec(&p) {
+        let path = played_path(root);
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(path, text);
+    }
+    if let Ok(mut l) = LAST_PLAYED.lock() {
+        *l = Some(p);
+    }
+}
+
+/// The last match we played (this session, else the one kept on disk).
+fn last_played(root: &Path) -> Option<Played> {
+    let mut l = LAST_PLAYED.lock().ok()?;
+    if l.is_none() {
+        *l = std::fs::read(played_path(root))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
+    }
+    l.clone()
+}
+
+/// `RESUME` room value that reopens REPLAYS after watching a shared replay.
+const RESUME_REPLAYS: &str = "#replays";
+
 /// Match ids already played from this machine (a stale room view never restarts one).
 static STARTED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
@@ -163,6 +216,8 @@ enum State {
     Matchup,
     /// Opening a match to watch: its stream and its files.
     Watch,
+    /// REPLAYS: share the last match by code, watch one by code.
+    Replays,
     /// PROFILE: the account on every server (list) and the selected
     /// server's account or form (panel).
     Profile,
@@ -340,6 +395,10 @@ enum Job {
     Me(Pending<ProfileInfo>),
     /// The lobby: public rooms and the live matches outside rooms.
     Rooms(Pending<(Vec<RoomSummary>, Vec<rugen_proto::stream::LiveMatch>)>),
+    /// Sharing the last match (REPLAYS).
+    Share(Pending<rugen_proto::stream::SharedReplay>),
+    /// A shared replay by code.
+    Fetch(String, Pending<rugen_proto::stream::Chunk>),
     Room(Pending<RoomInfo>),
     Queue(Pending<QueueStatus>),
     Board(Pending<Leaderboard>),
@@ -461,6 +520,12 @@ pub struct OnlineScreen {
     lives: Vec<rugen_proto::stream::LiveMatch>,
     /// Watching a match from the server's input log: fetching it, then the fight.
     watch: Option<Watching>,
+    /// REPLAYS: the code typed under BY CODE.
+    rp_typed: String,
+    /// REPLAYS: the code the last match was shared under.
+    rp_shared: Option<rugen_proto::stream::SharedReplay>,
+    /// REPLAYS: the last thing that happened (saved, copied, an error).
+    rp_note: String,
     room: Option<RoomInfo>,
     /// Ticket already used for a fight (so a stale poll does not restart it).
     used_ticket: Option<u32>,
@@ -564,6 +629,30 @@ fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// "TODAY", "YESTERDAY", "11 OCT" (UTC).
+fn when_text(at: u64, now: u64) -> String {
+    let day = |t: u64| t / 86_400;
+    match day(now).saturating_sub(day(at)) {
+        0 => "TODAY".into(),
+        1 => "YESTERDAY".into(),
+        _ => {
+            // civil date from days since 1970 (Howard Hinnant's algorithm)
+            let z = day(at) as i64 + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            const MONTHS: [&str; 12] = [
+                "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+            ];
+            format!("{d} {}", MONTHS[(m - 1) as usize])
+        }
+    }
 }
 
 fn ping_text(ms: Option<u32>) -> String {
@@ -722,6 +811,9 @@ impl OnlineScreen {
             rooms: Vec::new(),
             lives: Vec::new(),
             watch: None,
+            rp_typed: String::new(),
+            rp_shared: None,
+            rp_note: String::new(),
             room: None,
             used_ticket: None,
             typed: String::new(),
@@ -781,7 +873,9 @@ impl OnlineScreen {
         // back from a match: straight into the same server (and room)
         if let Some((server, room)) = RESUME.lock().ok().and_then(|mut r| r.take()) {
             s.connect(&server);
-            if let Some(code) = room {
+            if room.as_deref() == Some(RESUME_REPLAYS) {
+                s.pending_action = Some("replays".into());
+            } else if let Some(code) = room {
                 s.state = State::Room;
                 s.status = format!("ROOM {code}");
                 let c = s.client.clone();
@@ -1436,6 +1530,158 @@ impl OnlineScreen {
         })
     }
 
+    /// Download shared replay `code`, then watch it like a live match.
+    fn fetch_replay(&mut self, code: &str) {
+        let Some(code) = rugen_proto::stream::replay_code::normalize(code) else {
+            self.rp_note = "TYPE THE 8 CHARACTERS OF THE CODE.".into();
+            return;
+        };
+        let c = self.client.clone();
+        let k = code.clone();
+        self.rp_note = "FETCHING THE REPLAY...".into();
+        self.jobs.push(Job::Fetch(
+            code,
+            Pending::spawn(move || c.shared_replay(&k)),
+        ));
+    }
+
+    /// A shared replay arrived: its files, then the fight.
+    fn start_replay(&mut self, code: &str, c: rugen_proto::stream::Chunk) {
+        let Some(h) = c.header.clone() else {
+            self.rp_note = "THIS REPLAY HAS NO HEADER.".into();
+            return;
+        };
+        self.profile.note_replay(crate::uiscreen::RecentReplay {
+            server: self.client.server.clone(),
+            code: code.to_string(),
+            title: h.title(),
+            at: now_secs(),
+        });
+        self.profile.save(&self.root);
+        log::info!("online: replay {code} ({} frames)", c.inputs.len());
+        self.watch = Some(Watching {
+            match_id: h.match_id,
+            feed: crate::watch::Feed::complete(h, c.inputs),
+            prep: None,
+            room: Some(RESUME_REPLAYS.into()),
+            error: None,
+        });
+        self.state = State::Watch;
+    }
+
+    /// SAVE FILE: the last match as a local replay (`replays/<code>.json`).
+    fn save_last_replay(&mut self) {
+        let Some(p) = last_played(&self.root) else {
+            self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into();
+            return;
+        };
+        // arena rooms move fighters with rules a local replay file cannot hold
+        if p.rules.mode == "arena" {
+            self.rp_note = "ARENA MATCHES CAN ONLY BE SHARED BY CODE.".into();
+            return;
+        }
+        let setup = FightSetup {
+            p1: p.p1.clone(),
+            p2: p.p2.clone(),
+            stage: p.stage.clone(),
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(p.seed),
+        };
+        let mut r = crate::replay::Replay::new(
+            &setup,
+            room_size(&p.rules),
+            false,
+            if p.rules.round_time == 0 {
+                -1
+            } else {
+                i32::from(p.rules.round_time)
+            },
+            p.seed,
+        );
+        r.ai = [0, 0];
+        r.run = Some(crate::play::RunRules {
+            match_wins: p.rules.rounds.clamp(1, 9),
+            p1_life: None,
+        });
+        r.inputs = p.inputs.clone();
+        let name = self
+            .rp_shared
+            .as_ref()
+            .map_or_else(|| format!("online-{}", p.match_id), |s| s.code.clone());
+        let path = self.root.join("replays").join(format!("{name}.json"));
+        self.rp_note = match r.save(&path) {
+            Ok(()) => format!("SAVED: REPLAYS/{}.JSON", name.to_uppercase()),
+            Err(e) => format!("NOT SAVED: {}", e.to_string().to_uppercase()),
+        };
+    }
+
+    fn replays_json(&self) -> Value {
+        let played = last_played(&self.root)
+            .filter(|p| official::same_server(&p.server, &self.client.server));
+        let shared = self
+            .rp_shared
+            .as_ref()
+            .filter(|r| played.as_ref().is_some_and(|p| p.match_id == r.match_id));
+        let code_cells = |code: &str, active: Option<usize>| -> Vec<Value> {
+            let chars: Vec<char> = code.chars().collect();
+            let mut v = Vec::new();
+            for i in 0..rugen_proto::stream::replay_code::LEN {
+                if i == 4 {
+                    v.push(json!({ "dash": true, "cell": false }));
+                }
+                let c = chars.get(i).map(|c| c.to_string()).unwrap_or_default();
+                v.push(json!({
+                    "dash": false, "cell": true, "c": c,
+                    "active": active == Some(i), "idle": active != Some(i),
+                }));
+            }
+            v
+        };
+        let typing = self.ui.text_focused() && self.ui.focused() == Some("rp_code");
+        let recent: Vec<Value> = self
+            .profile
+            .recent_replays
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| official::same_server(&r.server, &self.client.server))
+            .take(4)
+            .map(|(i, r)| {
+                json!({
+                    "title": fit(&r.title, 22),
+                    "when": when_text(r.at, now_secs()),
+                    "action": format!("rp:recent:{i}"),
+                })
+            })
+            .collect();
+        json!({
+            "has_last": played.is_some(),
+            "no_last": played.is_none(),
+            "title": played.as_ref().map_or(String::new(), |p| fit(&p.title, 30)),
+            "line": played.as_ref().map_or(String::new(), |p| p.line.clone()),
+            "shared": shared.is_some(),
+            "unshared": played.is_some() && shared.is_none(),
+            "code": code_cells(&shared.map_or(String::new(), |r| r.code.clone()), None),
+            "share_label": if shared.is_some() { "COPY CODE" } else { "SHARE" },
+            "can_save": played.as_ref().is_some_and(|p| p.rules.mode != "arena"),
+            "typed": code_cells(&self.rp_typed, typing.then_some(self.rp_typed.len())),
+            "recent": recent,
+            "has_recent": !recent.is_empty(),
+            "no_recent": recent.is_empty(),
+            "note": self.rp_note.clone(),
+            "keep": format!("ONLY THE INPUTS ARE UPLOADED (A FEW KB). KEPT {} DAYS ON THE SERVER.", 30),
+            "copy": self.clipboard,
+        })
+    }
+
     /// The shell's fighter pick (select screen in online mode) came back.
     pub fn picked(&mut self, char_id: &str, stage: Option<String>) {
         self.want_select = false;
@@ -2039,6 +2285,18 @@ impl OnlineScreen {
     /// QUICK MATCH / RANKED / ROOMS / LEADERBOARD on the connected server.
     fn run_action(&mut self, a: &str) {
         match a {
+            "replays" => {
+                self.state = State::Replays;
+                self.rp_note.clear();
+                // the last match we played on this server
+                let mine = last_played(&self.root)
+                    .filter(|p| official::same_server(&p.server, &self.client.server));
+                if self.rp_shared.as_ref().map(|r| r.match_id) != mine.map(|p| p.match_id) {
+                    self.rp_shared = None;
+                }
+                self.ui.set_input("rp_code", &self.rp_typed);
+                self.pending_focus_key = Some("rp_code".into());
+            }
             "quick" => self.enter_queue(false),
             "ranked" => {
                 // rankings belong to named accounts (servers that have them)
@@ -2432,6 +2690,13 @@ impl OnlineScreen {
             }
             State::Matchup => {}
             State::Watch => push(esc, "BACK"),
+            State::Replays => {
+                push(enter, "WATCH");
+                if self.clipboard {
+                    push(Some("CTRL V".into()), "PASTE");
+                }
+                push(esc, "BACK");
+            }
         }
         if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) {
             push(key("retry"), "RETRY");
@@ -3471,6 +3736,7 @@ impl OnlineScreen {
             ),
             State::Matchup => (String::new(), String::new()),
             State::Watch => ("WATCH".into(), fit(&self.server_name().to_uppercase(), 28)),
+            State::Replays => ("REPLAYS".into(), "SHARE A MATCH WITH A SHORT CODE".into()),
         }
     }
 
@@ -3548,6 +3814,8 @@ impl OnlineScreen {
             "is_profile": self.state == State::Profile,
             "is_matchup": self.state == State::Matchup,
             "is_watch": self.state == State::Watch,
+            "is_replays": self.state == State::Replays,
+            "rp": if self.state == State::Replays { self.replays_json() } else { json!({}) },
             "wt": if self.state == State::Watch { self.watch_json() } else { json!({}) },
             "not_matchup": self.state != State::Matchup,
             "servers": if hub { self.servers_json() } else { Vec::new() },
@@ -3624,7 +3892,7 @@ impl OnlineScreen {
             && (self.dialog.is_some()
                 || matches!(
                     self.state,
-                    State::Join | State::Direct | State::Create | State::Profile
+                    State::Join | State::Direct | State::Create | State::Profile | State::Replays
                 ))
         {
             self.ui.text_key(k);
@@ -3691,6 +3959,14 @@ impl OnlineScreen {
 
     /// Ctrl+V: a room code from the clipboard (JOIN BY CODE).
     pub fn paste(&mut self) -> bool {
+        if self.state == State::Replays {
+            if let Some(text) = crate::clipboard::paste() {
+                self.action(&format!("rpcode:{}", text.trim()));
+                self.refresh();
+                return true;
+            }
+            return false;
+        }
         if self.state != State::Join || self.ui.focused() == Some("password") {
             return false;
         }
@@ -4227,6 +4503,59 @@ impl OnlineScreen {
                 }
             }
             ("bk", _) => {}
+            ("rpcode", v) => {
+                let code: String = v
+                    .chars()
+                    .filter(|c| !matches!(c, '-' | ' '))
+                    .map(|c| c.to_ascii_uppercase())
+                    .filter(|c| rugen_proto::room_code::ALPHABET.contains(*c))
+                    .take(rugen_proto::stream::replay_code::LEN)
+                    .collect();
+                self.rp_typed = code;
+                self.ui.set_input("rp_code", &self.rp_typed);
+            }
+            ("rp", "share") => {
+                let played = last_played(&self.root);
+                match played {
+                    Some(p)
+                        if self
+                            .rp_shared
+                            .as_ref()
+                            .is_some_and(|r| r.match_id == p.match_id) =>
+                    {
+                        self.action("rp:copy");
+                    }
+                    Some(p) => {
+                        let c = self.client.clone();
+                        self.rp_note = "SHARING...".into();
+                        self.jobs.push(Job::Share(Pending::spawn(move || {
+                            c.share_replay(p.match_id)
+                        })));
+                    }
+                    None => self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into(),
+                }
+            }
+            ("rp", "copy") => {
+                if let Some(r) = &self.rp_shared {
+                    let shown = rugen_proto::stream::replay_code::display(&r.code);
+                    self.rp_note = if crate::clipboard::copy(&shown) {
+                        format!("{shown} COPIED")
+                    } else {
+                        format!("CODE {shown}")
+                    };
+                }
+            }
+            ("rp", "save") => self.save_last_replay(),
+            ("rp", "watch") => {
+                let code = self.rp_typed.clone();
+                self.fetch_replay(&code);
+            }
+            ("rp", rest) if rest.starts_with("recent:") => {
+                let i: usize = rest["recent:".len()..].parse().unwrap_or(usize::MAX);
+                if let Some(r) = self.profile.recent_replays.get(i).cloned() {
+                    self.fetch_replay(&r.code);
+                }
+            }
             ("board", "older") => self.step_season(-1),
             ("board", "tab:players") => self.board_tab(false),
             ("board", "tab:fighters") => self.board_tab(true),
@@ -4816,6 +5145,39 @@ impl OnlineScreen {
                         }
                     }
                     Some(Err(e)) => self.fail("queue", e),
+                },
+                Job::Share(p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(r)) => {
+                        let shown = rugen_proto::stream::replay_code::display(&r.code);
+                        self.rp_note = if crate::clipboard::copy(&shown) {
+                            format!("SHARED AS {shown} · COPIED")
+                        } else {
+                            format!("SHARED AS {shown}")
+                        };
+                        self.profile.note_replay(crate::uiscreen::RecentReplay {
+                            server: self.client.server.clone(),
+                            code: r.code.clone(),
+                            title: r.title.clone(),
+                            at: now_secs(),
+                        });
+                        self.profile.save(&self.root);
+                        self.rp_shared = Some(r);
+                    }
+                    Some(Err(e)) => {
+                        self.rp_note = format!("NOT SHARED: {}", e.to_string().to_uppercase())
+                    }
+                },
+                Job::Fetch(code, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(c)) => {
+                        let code = code.clone();
+                        self.rp_note.clear();
+                        self.start_replay(&code, c);
+                    }
+                    Some(Err(e)) => {
+                        self.rp_note = format!("NO SUCH REPLAY: {}", e.to_string().to_uppercase())
+                    }
                 },
                 Job::Board(p) => match p.take() {
                     None => keep.push(j),
@@ -5689,6 +6051,40 @@ mod tests {
         assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
         assert_eq!(fit("A VERY LONG SERVER NAME", 10), "A VERY...");
         assert_eq!(fit("SHORT", 10), "SHORT");
+    }
+
+    #[test]
+    fn replay_dates_read_as_words() {
+        let day = 86_400;
+        // 2026-10-14 12:00 UTC
+        let now = 1_791_936_000 + 12 * 3600;
+        assert_eq!(when_text(now - 60, now), "TODAY");
+        assert_eq!(when_text(now - day, now), "YESTERDAY");
+        assert_eq!(when_text(now - 3 * day, now), "11 OCT");
+        assert_eq!(when_text(0, now), "1 JAN");
+    }
+
+    #[test]
+    fn the_last_match_survives_a_restart() {
+        let root = std::env::temp_dir().join(format!("rugen-played-{}", std::process::id()));
+        let p = Played {
+            server: "http://s".into(),
+            match_id: 7,
+            title: "A VS B · 2-1".into(),
+            line: "RANKED · 1:42".into(),
+            p1: "chars/a.rgc/a.def".into(),
+            p2: "chars/b.rgc/b.def".into(),
+            stage: None,
+            seed: 9,
+            rules: Rules::default(),
+            inputs: vec![[1, 2]; 3],
+        };
+        note_played(&root, p);
+        // a new session reads it back from the cache
+        *LAST_PLAYED.lock().unwrap() = None;
+        let back = last_played(&root).unwrap();
+        assert_eq!((back.match_id, back.inputs.len(), back.seed), (7, 3, 9));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

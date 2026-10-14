@@ -116,6 +116,28 @@ pub struct Profile {
     /// before the modes have none.
     #[serde(default)]
     pub challenge: std::collections::BTreeMap<String, crate::challenge::ChallengeBest>,
+    /// Replays shared or watched by code, newest first (REPLAYS · RECENT).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_replays: Vec<RecentReplay>,
+}
+
+/// A shared replay the player shared or watched.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RecentReplay {
+    pub server: String,
+    pub code: String,
+    pub title: String,
+    /// Unix time it was shared or watched.
+    pub at: u64,
+}
+
+impl Profile {
+    /// Remember a replay code (newest first, ten kept).
+    pub fn note_replay(&mut self, r: RecentReplay) {
+        self.recent_replays.retain(|x| x.code != r.code);
+        self.recent_replays.insert(0, r);
+        self.recent_replays.truncate(10);
+    }
 }
 
 impl Default for Profile {
@@ -136,6 +158,7 @@ impl Default for Profile {
             online_names: Default::default(),
             online_ranks: Default::default(),
             challenge: Default::default(),
+            recent_replays: Vec::new(),
         }
     }
 }
