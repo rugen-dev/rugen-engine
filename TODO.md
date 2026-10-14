@@ -366,9 +366,17 @@ box) and screenshots.
   fetching missing fighters through the existing package sync. Kept 30 days.
 
 ### Creators
-- [ ] **User themes folder.** `themes/` next to `chars/`; any folder with a
+- [x] **User themes folder.** (7149d7c) `themes/` next to `chars/`; any folder with a
   `system.def` shows up in INTERFACE; the game watches its files and reloads
   the screen on save, no rebuild.
+  `theme.toml` (`name`, `base = "ink"`) lets a theme hold only what it
+  changes; `rugen theme new <name> [--from ink|dojo]` starts one. A save
+  reloads system.def and the screen on display in place (focus kept), a
+  broken TOML keeps the last good screen under a THEME ERROR strip; the
+  fight HUD follows at the next fight. Online matches simulate with the
+  bundled fight.def. Not built from the mockup: the LANGUAGE half of the
+  INTERFACE page (i18n comes last). Shots:
+  `~/.cache/rugen-work/creators/shots/themes-{ink,dojo,live-reload,error}.png`.
 - [ ] **Fighter debugger.** `rugen debug <fighter>`: pause, step one frame,
   show state number, anim, elem, vars, fvars, which controllers fired this
   frame and why; click a player to inspect.
