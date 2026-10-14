@@ -290,10 +290,16 @@ box) and screenshots.
   themes have no intro.
 
 ### Arena
-- [ ] **Ledge grab.** When a falling fighter's hand reaches the edge of the
+- [x] **Ledge grab.** (b0e4551) When a falling fighter's hand reaches the edge of the
   deck while facing it, hang for up to 2 s with brief invulnerability; then
   up = climb, forward = roll in, jump = jump. Limited regrabs per airtime.
   The arena AI uses it for recovery.
+  Facing the edge or drifting toward it (legacy fighters cannot turn in
+  the air); jump = the X button, down / back lets go; 40 ticks of
+  invulnerability (16 on a regrab), two grabs per airtime. Also fixed:
+  a throw released past the edge left the fighter standing on air.
+  Self-KOs at level 4, 80 matches on Ink Arena: 19 before, 9 after.
+  Shots: `~/.cache/rugen-work/arena/shot-ledge-{ink,dojo}.png`.
 - [ ] **Items.** `[Arena] items = 1` spawns pickups every 10–20 s on the deck
   and platforms: a throwable (projectile on throw), a heal and a power
   boost. Grab with a button near an item; deterministic spawn from the round
