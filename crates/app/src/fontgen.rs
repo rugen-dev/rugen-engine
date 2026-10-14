@@ -213,6 +213,10 @@ pub struct Generator<'a> {
     /// Red stamp ink (bank 10) without its dark outline: thin caption type
     /// stays sharp on paper instead of smudging into its own outline.
     plain_red: bool,
+    /// Pixel scale handed to the rasteriser (`style.size` unless snapped).
+    px: f32,
+    /// Whole multiple of the face's own pixel grid (snapped fonts), else 0.
+    mult: u32,
 }
 
 impl<'a> Generator<'a> {
@@ -228,7 +232,34 @@ impl<'a> Generator<'a> {
             cell_h,
             ascent,
             plain_red: false,
+            px: style.size as f32,
+            mult: 0,
         })
+    }
+
+    /// Lay the face on its own pixel grid of `unit` font units (a pixel
+    /// font whose outlines are not whole multiples of the em, like Pixelify
+    /// Sans): the scale becomes the whole multiple of the grid nearest to
+    /// `style.size`, the baseline and each glyph's left edge sit on screen
+    /// pixel edges, so every design pixel covers exactly `mult` x `mult`
+    /// pixels and weight overshoots under half a pixel drop out.
+    pub fn snapped(mut self, unit: f32) -> Self {
+        let height = self.font.height_unscaled();
+        let mult = libm::roundf(self.style.size as f32 * unit / height).max(1.0);
+        let ppu = mult / unit;
+        self.px = ppu * height;
+        self.mult = mult as u32;
+        let scaled = self.font.as_scaled(PxScale::from(self.px));
+        // the grid's origin: the bottom of `H` (on the baseline or a
+        // design overshoot below it) lands on a pixel edge
+        let bottom = self
+            .font
+            .outline(self.font.glyph_id('H'))
+            .map_or(0.0, |o| o.bounds.min.y);
+        let edge = scaled.ascent() - bottom * ppu;
+        self.ascent = libm::roundf(edge) + bottom * ppu;
+        self.cell_h = libm::ceilf(self.ascent - scaled.descent()) as u32;
+        self
     }
 
     /// Drop the dark outline of the red ink bank (caption fonts).
@@ -256,6 +287,9 @@ impl<'a> Generator<'a> {
 
     /// Window-free gap between two faces: one pixel of the font's own grid.
     fn gap(&self) -> i32 {
+        if self.mult > 0 {
+            return self.mult as i32;
+        }
         (self.style.size / 10).max(1) as i32
     }
 
@@ -266,7 +300,7 @@ impl<'a> Generator<'a> {
 
     /// Width used for spaces.
     pub fn space_width(&self) -> u32 {
-        let scaled = self.font.as_scaled(PxScale::from(self.style.size as f32));
+        let scaled = self.font.as_scaled(PxScale::from(self.px));
         (scaled.h_advance(self.font.glyph_id(' ')) * self.style.condense).max(2.0) as u32
     }
 
@@ -277,10 +311,18 @@ impl<'a> Generator<'a> {
         }
         let id = self.font.glyph_id(c);
         let scale = PxScale {
-            x: self.style.size as f32 * self.style.condense,
-            y: self.style.size as f32,
+            x: self.px * self.style.condense,
+            y: self.px,
         };
-        let glyph = id.with_scale_and_position(scale, ab_glyph::point(0.0, self.ascent));
+        // snapped faces: the glyph's left edge on a pixel edge
+        let x = match (self.mult, self.font.outline(id)) {
+            (0, _) | (_, None) => 0.0,
+            (_, Some(o)) => {
+                let left = o.bounds.min.x * self.font.as_scaled(scale).h_scale_factor();
+                libm::floorf(left) - left
+            }
+        };
+        let glyph = id.with_scale_and_position(scale, ab_glyph::point(x, self.ascent));
         let outline = self.font.outline_glyph(glyph)?;
         let b = outline.px_bounds();
         let bw = libm::ceilf(b.width()) as u32 + 1;
@@ -342,8 +384,21 @@ impl<'a> Generator<'a> {
             let top = (libm::roundf(self.ascent) as i32 - 7 * k as i32).max(0) as u32;
             (top, 7 * k)
         };
+        if self.mult > 0 {
+            // snapped: the inked rows of the thresholded `H` (the outline's
+            // bounds carry the weight overshoot)
+            if let Some((w, h, m)) = self.mask('H') {
+                let rows: Vec<u32> = (0..h)
+                    .filter(|&y| (0..w).any(|x| m[(y * w + x) as usize]))
+                    .collect();
+                if let (Some(&t), Some(&b)) = (rows.first(), rows.last()) {
+                    return (t, b - t + 1);
+                }
+            }
+            return fallback;
+        }
         let id = self.font.glyph_id('H');
-        let scale = PxScale::from(self.style.size as f32);
+        let scale = PxScale::from(self.px);
         let glyph = id.with_scale_and_position(scale, ab_glyph::point(0.0, self.ascent));
         let Some(outline) = self.font.outline_glyph(glyph) else {
             return fallback;
@@ -743,6 +798,30 @@ pub struct Role {
     /// Source TTF file name under `motif/font/src/`.
     pub file: &'static str,
     pub style: Style,
+    /// The face's own pixel in font units when its outlines are not whole
+    /// multiples of the em (see [`Generator::snapped`]).
+    pub grid: Option<f32>,
+}
+
+/// The Steam Deck's small text (`fontN.deck` in both themes): Pixelify
+/// Sans at twice its own pixel grid (11 px to the em, 1000 / 11 font
+/// units), 14 px capitals and a 10 px x-height, Latin, Latin Extended and
+/// Cyrillic.
+pub const DECK_FONT: &str = "rugen-deck";
+
+fn deck_role() -> Role {
+    Role {
+        name: DECK_FONT,
+        file: "PixelifySans-Regular.ttf",
+        style: Style {
+            size: 26,
+            italic: 0,
+            condense: 1.0,
+            rim: false,
+            highlight: false,
+        },
+        grid: Some(1000.0 / 11.0),
+    }
 }
 
 /// System font slot (`font5` in every theme's `system.def`) of
@@ -756,9 +835,10 @@ pub const CODE_FONT_SLOT: i32 = 5;
 pub const CODE_FONT: &str = "rugen-code";
 
 /// The motif fonts: chunky display, menu, small body, HUD numbers and the
-/// room-code font. All OFL pixel fonts rendered at a whole multiple of their
-/// native pixel size (crisp, no AA); every zero is slashed.
-pub fn roles() -> [Role; 5] {
+/// room-code font, and the Steam Deck's small text. All OFL pixel fonts
+/// rendered at a whole multiple of their native pixel size (crisp, no AA);
+/// every zero is slashed.
+pub fn roles() -> [Role; 6] {
     let st = |size, italic, rim, highlight| Style {
         size,
         italic,
@@ -771,6 +851,7 @@ pub fn roles() -> [Role; 5] {
             name: "rugen-title",
             file: "PressStart2P-Regular.ttf",
             style: st(16, 0, true, true),
+            grid: None,
         },
         // body / caption text: Jersey 10 at twice its 10 px grid, a bold,
         // condensed mixed-case pixel face that stays readable at 1x
@@ -778,30 +859,35 @@ pub fn roles() -> [Role; 5] {
             name: "rugen-menu",
             file: "Jersey10-Regular.ttf",
             style: st(20, 0, false, false),
+            grid: None,
         },
         Role {
             name: "rugen-small",
             file: "PressStart2P-Regular.ttf",
             style: st(8, 0, false, false),
+            grid: None,
         },
         Role {
             name: "rugen-num",
             file: "PressStart2P-Regular.ttf",
             style: st(16, 0, true, true),
+            grid: None,
         },
         Role {
             name: CODE_FONT,
             file: "PressStart2P-Regular.ttf",
             style: st(32, 0, false, false),
+            grid: None,
         },
+        deck_role(),
     ]
 }
 
 /// The dojo theme's fonts (`motif/themes/dojo/font/`): Jersey 10 at 2x,
 /// 3x and 4x its 10 px grid for captions, body and titles; Press Start for
 /// tags, HUD numbers and room codes. Slots: 1 small, 2 menu (captions),
-/// 3 title, 4 num, 5 code, 6 body.
-pub fn dojo_roles() -> [Role; 6] {
+/// 3 title, 4 num, 5 code, 6 body; Pixelify Sans for the Steam Deck.
+pub fn dojo_roles() -> [Role; 7] {
     let st = |size, rim, highlight| Style {
         size,
         italic: 0,
@@ -814,32 +900,39 @@ pub fn dojo_roles() -> [Role; 6] {
             name: "rugen-small",
             file: "PressStart2P-Regular.ttf",
             style: st(8, false, false),
+            grid: None,
         },
         Role {
             name: "rugen-menu",
             file: "Jersey10-Regular.ttf",
             style: st(20, false, false),
+            grid: None,
         },
         Role {
             name: "rugen-title",
             file: "Jersey10-Regular.ttf",
             style: st(40, false, false),
+            grid: None,
         },
         Role {
             name: "rugen-num",
             file: "PressStart2P-Regular.ttf",
             style: st(16, false, false),
+            grid: None,
         },
         Role {
             name: CODE_FONT,
             file: "PressStart2P-Regular.ttf",
             style: st(32, false, false),
+            grid: None,
         },
         Role {
             name: "dojo-body",
             file: "Jersey10-Regular.ttf",
             style: st(30, false, false),
+            grid: None,
         },
+        deck_role(),
     ]
 }
 
@@ -887,7 +980,11 @@ pub fn write_roles(
     for role in roles.iter().cloned() {
         let bytes = role_ttf(motif, &role, fallback)?;
         let mut g = Generator::new(&bytes, role.style)?;
-        if role.name == "rugen-menu" {
+        if let Some(unit) = role.grid {
+            g = g.snapped(unit);
+        }
+        // caption fonts: thin red type without the dark outline
+        if role.name == "rugen-menu" || role.name == DECK_FONT {
             g = g.plain_red();
         }
         write_font(&g, &out_dir.join(format!("{}.def", role.name)), role.name)?;
@@ -996,6 +1093,45 @@ mod tests {
                 runs >= 3 || r.chars().rev().collect::<String>() != r
             });
             assert!(marked, "{}: 0 has an empty counter: {zero:?}", role.name);
+        }
+    }
+
+    /// Pixelify Sans is not drawn on whole multiples of its em: snapped, its
+    /// pixels land on 2x2 screen pixels with nothing half-covered left over.
+    #[test]
+    fn deck_font_sits_on_its_own_pixel_grid() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif");
+        let role = deck_role();
+        let ttf = role_ttf(&motif, &role, None).expect("Pixelify Sans in motif/font/src");
+        let g = Generator::new(&ttf, role.style)
+            .unwrap()
+            .snapped(role.grid.unwrap());
+        assert_eq!(g.mult, 2);
+        assert_eq!(g.gap(), 2);
+        assert_eq!(g.cap_rows().1, 14, "capitals: 7 design pixels");
+        for c in "HBEMNSZaegkmsxyz258%".chars() {
+            let (w, h, m) = g.mask(c).unwrap();
+            assert_eq!(grid_unit(&m, w, h), 2, "{c:?} is off the 2 px grid");
+        }
+        let xh = rows(&g, 'x').len();
+        assert_eq!(xh, 10, "x-height: 5 design pixels");
+        // unsnapped, the same face loses whole strokes at that size
+        let raw = Generator::new(&ttf, role.style).unwrap();
+        let (w, h, m) = raw.mask('B').unwrap();
+        assert_ne!(grid_unit(&m, w, h), 2);
+    }
+
+    /// Snapping a face already drawn on its grid changes nothing.
+    #[test]
+    fn snapping_a_grid_aligned_face_is_a_no_op() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif");
+        let role = roles()[2].clone();
+        assert_eq!(role.file, "PressStart2P-Regular.ttf");
+        let ttf = role_ttf(&motif, &role, None).unwrap();
+        let plain = Generator::new(&ttf, role.style).unwrap();
+        let snapped = Generator::new(&ttf, role.style).unwrap().snapped(125.0);
+        for c in "ABC0xyz%".chars() {
+            assert_eq!(rows(&plain, c), rows(&snapped, c), "{c:?}");
         }
     }
 

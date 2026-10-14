@@ -1,0 +1,14 @@
+Fonts in motif/font/src/ (each under the SIL Open Font License 1.1, full
+text next to it). `rugen fontgen --roles` and `rugen ui-gen` cut them into
+the bitmap role fonts of motif/font/ and motif/themes/*/font/.
+
+- Press Start 2P (PressStart2P-Regular.ttf, OFL-PressStart2P.txt):
+  Copyright 2012 The Press Start 2P Project Authors (cody@zone38.net),
+  Reserved Font Name "Press Start 2P" (the cut fonts carry rugen's names).
+- Jersey 10 (Jersey10-Regular.ttf, OFL-Jersey10.txt): Copyright 2023
+  The Soft Type Project Authors (https://github.com/scfried/soft-type-jersey).
+- Pixelify Sans (PixelifySans-Regular.ttf, OFL-PixelifySans.txt): Copyright
+  2021 The Pixelify Sans Project Authors (https://github.com/eifetx/Pixelify-Sans).
+  Static Regular from upstream commit 39df74aba80df8157546034b878e8be1eb565ced
+  (the commit google/fonts ships), sha256
+  5436d485d1713afa376e1744911cbbcc0849eae1eb55ec9bc34c0753993ffef9.

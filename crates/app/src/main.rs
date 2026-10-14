@@ -671,7 +671,7 @@ fn main() -> anyhow::Result<()> {
                 .or_else(fontgen::default_ttf)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "usage: rugen fontgen [font.ttf] --size N [--italic rows] [--condense f] [--rim] --out font.def [--preview x.png]"
+                        "usage: rugen fontgen [font.ttf] --size N [--italic rows] [--condense f] [--rim] [--grid units] --out font.def [--preview x.png]"
                     )
                 })?;
             let bytes = std::fs::read(&ttf).with_context(|| ttf.display().to_string())?;
@@ -684,7 +684,11 @@ fn main() -> anyhow::Result<()> {
                 rim: args.iter().any(|a| a == "--rim"),
                 highlight: true,
             };
-            let generator = fontgen::Generator::new(&bytes, style)?;
+            let mut generator = fontgen::Generator::new(&bytes, style)?;
+            // `--grid units`: the face's own pixel in font units (snapped)
+            if let Some(unit) = opt("--grid").and_then(|v| v.parse::<f32>().ok()) {
+                generator = generator.snapped(unit);
+            }
             let out = opt("--out").unwrap_or_else(|| "font.def".into());
             let out = std::path::Path::new(&out);
             let name = out
