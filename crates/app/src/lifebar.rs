@@ -1572,6 +1572,49 @@ impl Lifebar {
         );
     }
 
+    /// A small tag (`CPU`) under a side's bars, near its screen edge
+    /// (`spread`: fight.def units each side's elements move out).
+    pub fn draw_side_tag(
+        &mut self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        spread: f32,
+        side: usize,
+        text: &str,
+    ) {
+        let st = self.arena.clone();
+        let lc = self.localcoord;
+        let k = lc[1] / 720.0;
+        let Some(f) = self.fonts.get_mut(&1) else {
+            return;
+        };
+        let (pad, bh) = (10.0, 28.0);
+        let bw = f.width(text, 1.5) + 2.0 * pad;
+        let by = 150.0;
+        let bx = if side == 0 {
+            40.0
+        } else {
+            lc[0] / k - 40.0 - bw
+        };
+        let shift = if side == 0 { -spread } else { spread };
+        let at = |x: f32, y: f32| hud(x * k + shift, y * k);
+        r.rect(
+            at(bx + 4.0, by + 4.0),
+            at(bx + bw + 4.0, by + bh + 4.0),
+            st.clock_shadow,
+        );
+        r.rect(at(bx, by), at(bx + bw, by + bh), st.clock);
+        f.draw(
+            r,
+            text,
+            at(bx + bw / 2.0, by + bh / 2.0 + 7.0),
+            st.clock_bank,
+            0,
+            1.5 * u * k,
+        );
+    }
+
     /// Draw everything. `hud(x, y)` maps fight.def coordinates to world
     /// space, `u` is world units per HUD pixel. `portraits[i]` is player i's
     /// 9000,0 sprite if the app uploaded it. `spread` (fight.def units) moves

@@ -111,7 +111,7 @@ pub enum Transition {
     Title,
     Select(Mode),
     /// The TEAM MODE step is done: the fighter select with these teams.
-    SelectTeams(Mode, [crate::roster::Team; 2]),
+    SelectTeams(Mode, [crate::roster::Team; 2], [bool; 2]),
     /// Back from the stage select: the fighter select with these picks
     /// (manifest ids) locked again.
     SelectAgain(Mode, Box<crate::roster::Picks>),
@@ -430,7 +430,7 @@ pub struct Shell {
     /// The screenpack's logo / intro storyboards were offered (first title).
     booted: bool,
     /// The TEAM MODE step's last choice per mode (VS MODE, WATCH).
-    last_teams: Vec<(Mode, [crate::roster::Team; 2])>,
+    last_teams: Vec<(Mode, ([crate::roster::Team; 2], [bool; 2]))>,
 }
 
 impl Shell {
@@ -1745,12 +1745,12 @@ impl Shell {
                     None => self.screen = Screen::Blank,
                 }
             }
-            Transition::SelectTeams(mode, teams) => {
+            Transition::SelectTeams(mode, teams, cpu) => {
                 self.last_teams.retain(|(m, _)| *m != mode);
-                self.last_teams.push((mode, teams));
+                self.last_teams.push((mode, (teams, cpu)));
                 self.open_select(mode);
                 if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
-                    u.set_teams(teams, sys);
+                    u.set_teams(teams, cpu, sys);
                 }
             }
             Transition::Select(mode) => self.open_select(mode),

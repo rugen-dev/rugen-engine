@@ -41,8 +41,9 @@ pub enum StepOut {
     Nothing,
     /// Something changed (sound: `true` = a confirm, `false` = a move).
     Changed(bool),
-    /// Both sides are ready: on to the fighter grid with these teams.
-    Done([Team; 2]),
+    /// Both sides are ready: on to the fighter grid with these teams and
+    /// these computer-controlled sides.
+    Done([Team; 2], [bool; 2]),
     /// Backed out of the step.
     Leave,
 }
@@ -50,9 +51,8 @@ pub enum StepOut {
 pub struct TeamStep {
     pub mode: Mode,
     sides: [Side; 2],
-    /// Both players choose at once (VS); otherwise one cursor does side 1P,
-    /// then 2P.
-    dual: bool,
+    /// Sides the computer plays (VS: HUMAN / CPU per side; WATCH: both).
+    cpu: [bool; 2],
     /// Both ready: ticks left before the grid.
     go_in: Option<u32>,
     /// What each side presses for TAG (the rules line).
@@ -111,9 +111,15 @@ fn pictogram(mode: TeamMode) -> &'static [(u8, u8, u8, u8, bool)] {
 }
 
 impl TeamStep {
-    /// The step for `mode`, starting from `last` (the teams picked the last
-    /// time) when there is one. `human`: the sides a player controls.
-    pub fn new(mode: Mode, last: Option<[Team; 2]>, tag_keys: [String; 2]) -> Self {
+    /// The step for `mode`, starting from `last` (the teams and CPU sides
+    /// picked the last time) when there is one.
+    pub fn new(mode: Mode, last: Option<([Team; 2], [bool; 2])>, tag_keys: [String; 2]) -> Self {
+        let cpu = match (mode, last) {
+            (Mode::Versus, Some((_, c))) => c,
+            (Mode::Versus, None) => [false, false],
+            _ => [true, true],
+        };
+        let last = last.map(|l| l.0);
         let side = |t: Option<Team>| {
             let (m, n) = t.unwrap_or((TeamMode::Single, 1));
             Side {
@@ -125,19 +131,51 @@ impl TeamStep {
         Self {
             mode,
             sides: [side(last.map(|l| l[0])), side(last.map(|l| l[1]))],
-            dual: mode == Mode::Versus,
+            cpu,
             go_in: None,
             tag_keys,
         }
     }
 
-    /// The side the single cursor works on (WATCH): 1P until it is ready.
+    /// Two players choose at once, each their own side (VS, both HUMAN);
+    /// otherwise one cursor does 1P, then 2P.
+    fn dual(&self) -> bool {
+        self.mode == Mode::Versus && !self.cpu[0] && !self.cpu[1]
+    }
+
+    /// The side the single cursor works on: 1P until it is ready.
     fn cursor_side(&self) -> usize {
         usize::from(self.sides[0].ready)
     }
 
     fn human(&self, side: usize) -> bool {
-        self.mode == Mode::Versus || (side == 0 && self.mode != Mode::Watch)
+        self.mode == Mode::Versus && !self.cpu[side]
+    }
+
+    /// VS: HUMAN / CPU sides step HUMAN VS HUMAN → HUMAN VS CPU → CPU VS
+    /// CPU → CPU VS HUMAN (a side of its own by a click). Choices start over.
+    fn toggle(&mut self, side: Option<usize>) -> bool {
+        if self.mode != Mode::Versus {
+            return false;
+        }
+        self.cpu = match side {
+            Some(s) => {
+                let mut c = self.cpu;
+                c[s] = !c[s];
+                c
+            }
+            None => match self.cpu {
+                [false, false] => [false, true],
+                [false, true] => [true, true],
+                [true, true] => [true, false],
+                [true, false] => [false, false],
+            },
+        };
+        for s in &mut self.sides {
+            s.ready = false;
+        }
+        self.go_in = None;
+        true
     }
 
     /// The teams chosen so far.
@@ -151,8 +189,13 @@ impl TeamStep {
 
     /// One side's buttons pressed this tick.
     fn press(&mut self, side: usize, b: Buttons) -> StepOut {
+        // X: HUMAN / CPU (VS)
+        if b.x && self.toggle(None) {
+            return StepOut::Changed(false);
+        }
+        let dual = self.dual();
         let s = &mut self.sides[side];
-        let accept = b.a || b.c || b.x || b.y || b.z || b.s;
+        let accept = b.a || b.c || b.y || b.z || b.s;
         if b.b {
             if s.ready {
                 s.ready = false;
@@ -160,13 +203,13 @@ impl TeamStep {
                 return StepOut::Changed(false);
             }
             // one cursor on 2P: back to 1P's choice
-            if !self.dual && side == 1 && self.sides[0].ready {
+            if !dual && side == 1 && self.sides[0].ready {
                 self.sides[0].ready = false;
                 self.arm();
                 return StepOut::Changed(false);
             }
             // P1 backs out of the screen (P2's back only un-readies)
-            return if side == 0 || !self.dual {
+            return if side == 0 || !dual {
                 StepOut::Leave
             } else {
                 StepOut::Nothing
@@ -220,7 +263,7 @@ impl TeamStep {
             }
             other => *out = other,
         };
-        if self.dual {
+        if self.dual() {
             for (side, b) in pressed.into_iter().enumerate() {
                 let o = self.press(side, b);
                 note(o, &mut out);
@@ -237,14 +280,15 @@ impl TeamStep {
             *left = left.saturating_sub(1);
             if *left == 0 {
                 self.go_in = None;
-                return StepOut::Done(self.teams());
+                return StepOut::Done(self.teams(), self.cpu);
             }
         }
         out
     }
 
     /// A click: `tm:<side>:<mode>` picks a card (again: READY),
-    /// `size:<side>:<n>` a team size. True when it changed something.
+    /// `size:<side>:<n>` a team size, `cpu:<side>:0` flips HUMAN / CPU.
+    /// True when it changed something.
     pub fn action(&mut self, a: &str) -> bool {
         let mut parts = a.split(':');
         let (Some(head), Some(side), Some(v)) = (parts.next(), parts.next(), parts.next()) else {
@@ -253,7 +297,10 @@ impl TeamStep {
         let (Ok(side), Ok(v)) = (side.parse::<usize>(), v.parse::<usize>()) else {
             return false;
         };
-        if side > 1 || (!self.dual && side != self.cursor_side()) {
+        if head == "cpu" && side < 2 {
+            return self.toggle(Some(side));
+        }
+        if side > 1 || (!self.dual() && side != self.cursor_side()) {
             return false;
         }
         let s = &mut self.sides[side];
@@ -298,7 +345,7 @@ impl TeamStep {
     fn side_json(&self, side: usize) -> Value {
         let s = self.sides[side];
         let (mode, size) = s.team();
-        let active = !s.ready && (self.dual || side == self.cursor_side());
+        let active = !s.ready && (self.dual() || side == self.cursor_side());
         let cards: Vec<Value> = TeamMode::ALL
             .iter()
             .enumerate()
@@ -357,13 +404,16 @@ impl TeamStep {
                 "SLOTS TO FILL ON THE GRID",
             )
         };
-        let tag = if self.human(side) {
-            format!("{}P", side + 1)
-        } else {
-            format!("{}P · CPU", side + 1)
-        };
+        let tag = format!("{}P", side + 1);
+        let cpu = self.cpu[side];
         json!({
             "tag": tag,
+            "toggle": self.mode == Mode::Versus,
+            "fixed": self.mode != Mode::Versus,
+            "control": if cpu { "CPU" } else { "HUMAN" },
+            "human": !cpu,
+            "cpu": cpu,
+            "flip": format!("cpu:{side}:0"),
             "status": if s.ready { "READY ✓" } else if active { "CHOOSING..." } else { "" },
             "ready": s.ready,
             "choosing": !s.ready,
@@ -387,7 +437,8 @@ impl TeamStep {
             "title": self.mode.label(),
             "p1": self.side_json(0),
             "p2": self.side_json(1),
-            "note": if self.dual { "EACH SIDE PICKS ITS OWN MODE" } else { "1P FIRST, THEN 2P" },
+            "note": if self.dual() { "EACH SIDE PICKS ITS OWN MODE" } else { "1P FIRST, THEN 2P" },
+            "toggle": self.mode == Mode::Versus,
         })
     }
 }
@@ -433,7 +484,7 @@ mod tests {
         }
         assert_eq!(
             out,
-            StepOut::Done([(TeamMode::Simul, 3), (TeamMode::Tag, 2)])
+            StepOut::Done([(TeamMode::Simul, 3), (TeamMode::Tag, 2)], [false, false])
         );
     }
 
@@ -459,12 +510,53 @@ mod tests {
         assert_eq!(t.tick([back, Buttons::default()]), StepOut::Leave);
     }
 
+    /// VS against the computer: X steps HUMAN / CPU; with a CPU side one
+    /// cursor does both sides (either player's keys), like WATCH.
+    #[test]
+    fn versus_sides_can_be_cpu() {
+        let mut t = TeamStep::new(Mode::Versus, None, Default::default());
+        let x = press(|b| b.x = true);
+        let ok = press(|b| b.a = true);
+        assert_eq!(t.cpu, [false, false], "two humans by default");
+        assert_eq!(t.tick([x, Buttons::default()]), StepOut::Changed(false));
+        assert_eq!(t.cpu, [false, true]);
+        assert_eq!(t.data()["p2"]["control"], "CPU");
+        // P1 readies its side, then picks the CPU's
+        t.tick([ok, Buttons::default()]);
+        t.tick([press(|b| b.r = true), Buttons::default()]);
+        assert_eq!(t.teams()[1], (TeamMode::Turns, 2));
+        t.tick([ok, Buttons::default()]);
+        let mut out = StepOut::Nothing;
+        for _ in 0..GO_TICKS {
+            out = t.tick([Buttons::default(); 2]);
+            if out != StepOut::Nothing {
+                break;
+            }
+        }
+        assert_eq!(
+            out,
+            StepOut::Done([(TeamMode::Single, 1), (TeamMode::Turns, 2)], [false, true])
+        );
+        // clicks flip one side; WATCH has no toggle
+        assert!(t.action("cpu:0:0"));
+        assert_eq!(t.cpu, [true, true]);
+        let mut w = TeamStep::new(Mode::Watch, None, Default::default());
+        assert!(!w.action("cpu:0:0"));
+        assert_eq!(w.tick([x, Buttons::default()]), StepOut::Nothing);
+        // the last choice comes back
+        let last = Some(([(TeamMode::Single, 1); 2], [false, true]));
+        assert_eq!(
+            TeamStep::new(Mode::Versus, last, Default::default()).cpu,
+            [false, true]
+        );
+    }
+
     /// Clicks: a card, the same card again for READY, a size square.
     #[test]
     fn clicks_pick_cards_and_sizes() {
         let mut t = TeamStep::new(
             Mode::Versus,
-            Some([(TeamMode::Tag, 4), (TeamMode::Single, 1)]),
+            Some(([(TeamMode::Tag, 4), (TeamMode::Single, 1)], [false, false])),
             Default::default(),
         );
         assert_eq!(t.teams()[0], (TeamMode::Tag, 4), "the last pick comes back");

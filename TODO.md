@@ -289,6 +289,10 @@ themes, deck profile checked at 1280x800.
 - [ ] **Training life / power refill.** LIFE refill (off / after combo) and
   POWER (normal / always full) for both fighters; recorded in Training
   replays, never online.
+- [ ] **VS against the CPU.** A HUMAN / CPU toggle per side on the team
+  mode step (X or a click); a CPU side's fighters are picked by the other
+  cursor and played at COMPUTER LEVEL, teams too; CPU on the VS screen
+  and under the bars; the last choice kept for the session.
 - [ ] **Global LIFE setting.** OPTIONS → GAMEPLAY LIFE 1000–10000 (step 500,
   default 5000) overrides every fighter's `[Data] life`; part of the match
   setup (replays, LAN handshake, room rule; quick match and ranked use

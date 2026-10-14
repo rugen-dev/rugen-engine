@@ -98,6 +98,81 @@ enter_time = 14
   font = 2
   bank = 14
 
+  # HUMAN / CPU (VS): X or a click flips it
+  [[node.children]]
+  kind = "panel"
+  w = 538
+  h = 50
+  visible = "p1.toggle"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 70
+    y = 14
+    w = 76
+    h = 28
+    deck = { w = 96 }
+    text = "HUMAN"
+    align = "center"
+    color = [0.204, 0.122, 0.078, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 14
+    on_press = "{p1.flip}"
+    visible = "p1.human"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 70
+    y = 14
+    w = 76
+    h = 28
+    deck = { w = 96 }
+    text = "HUMAN"
+    align = "center"
+    color = [0.925, 0.878, 0.776, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 17
+    on_press = "{p1.flip}"
+    visible = "p1.cpu"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 150
+    y = 14
+    w = 52
+    h = 28
+    deck = { x = 170, w = 62 }
+    text = "CPU"
+    align = "center"
+    color = [0.204, 0.122, 0.078, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 14
+    on_press = "{p1.flip}"
+    visible = "p1.cpu"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 150
+    y = 14
+    w = 52
+    h = 28
+    deck = { x = 170, w = 62 }
+    text = "CPU"
+    align = "center"
+    color = [0.925, 0.878, 0.776, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 17
+    on_press = "{p1.flip}"
+    visible = "p1.human"
+
   [[node.children]]
   kind = "text"
   text = "{p1.status}"
@@ -544,6 +619,81 @@ enter_time = 14
   font = 2
   bank = 14
 
+  # HUMAN / CPU (VS): X or a click flips it
+  [[node.children]]
+  kind = "panel"
+  w = 538
+  h = 50
+  visible = "p2.toggle"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 70
+    y = 14
+    w = 76
+    h = 28
+    deck = { w = 96 }
+    text = "HUMAN"
+    align = "center"
+    color = [0.204, 0.122, 0.078, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 14
+    on_press = "{p2.flip}"
+    visible = "p2.human"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 70
+    y = 14
+    w = 76
+    h = 28
+    deck = { w = 96 }
+    text = "HUMAN"
+    align = "center"
+    color = [0.925, 0.878, 0.776, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 17
+    on_press = "{p2.flip}"
+    visible = "p2.cpu"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 150
+    y = 14
+    w = 52
+    h = 28
+    deck = { x = 170, w = 62 }
+    text = "CPU"
+    align = "center"
+    color = [0.204, 0.122, 0.078, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 14
+    on_press = "{p2.flip}"
+    visible = "p2.cpu"
+
+    [[node.children.children]]
+    kind = "button"
+    x = 150
+    y = 14
+    w = 52
+    h = 28
+    deck = { x = 170, w = 62 }
+    text = "CPU"
+    align = "center"
+    color = [0.925, 0.878, 0.776, 1.0]
+    border = 3
+    border_color = [0.204, 0.122, 0.078, 1.0]
+    font = 2
+    bank = 17
+    on_press = "{p2.flip}"
+    visible = "p2.human"
+
   [[node.children]]
   kind = "text"
   text = "{p2.status}"
@@ -941,6 +1091,25 @@ h = 36
 gap = 8
 justify = "end"
 align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "{keys.x}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 12
+  visible = "toggle"
+
+  [[node.children]]
+  kind = "text"
+  text = "HUMAN / CPU  "
+  font = 2
+  bank = 16
+  visible = "toggle"
 
   [[node.children]]
   kind = "text"

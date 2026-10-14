@@ -743,7 +743,7 @@ impl UiScreen {
         config: &Config,
         lib: &rugen_content::Library,
         mode: Mode,
-        last: Option<[crate::roster::Team; 2]>,
+        last: Option<([crate::roster::Team; 2], [bool; 2])>,
         tag_keys: [String; 2],
     ) -> anyhow::Result<Self> {
         let mut s = Self::load(UiKind::Teams(mode), motif, root, sys, config, lib)?;
@@ -752,10 +752,13 @@ impl UiScreen {
         Ok(s)
     }
 
-    /// The fighter grid after the TEAM MODE step: its teams.
-    pub fn set_teams(&mut self, teams: [crate::roster::Team; 2], sys: &SystemData) {
+    /// The fighter grid after the TEAM MODE step: its teams and the sides
+    /// the computer plays (VS MODE).
+    pub fn set_teams(&mut self, teams: [crate::roster::Team; 2], cpu: [bool; 2], sys: &SystemData) {
         if let Some(r) = self.roster.as_mut() {
+            r.set_cpu(cpu);
             r.set_teams(teams);
+            self.ui.set_dual(r.dual());
         }
         self.refresh_data(sys);
     }
@@ -1246,12 +1249,20 @@ impl UiScreen {
                         .map(|(_, _, b)| String::from_utf8_lossy(b).to_string())
                         .unwrap_or_default()
                 };
-                // a team: the mode and the partners under the name
+                // a team: the mode and the partners under the name; VS MODE
+                // against the computer: CPU on that side
                 let team = |i: usize| {
-                    setup
+                    let line = setup
                         .and_then(|s| s.teams.as_ref())
                         .map(|t| t.line(i - 1))
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    let cpu =
+                        setup.is_some_and(|s| s.mode == Some(Mode::Versus) && s.ai[i - 1] > 0);
+                    match (cpu, line.is_empty()) {
+                        (true, true) => "CPU".to_string(),
+                        (true, false) => format!("CPU · {line}"),
+                        (false, _) => line,
+                    }
                 };
                 let side = |i: usize| {
                     let has = self.mem.contains_key(&format!("p{i}"));
@@ -2310,8 +2321,8 @@ impl UiScreen {
                     });
                     self.refresh_data(sys);
                 }
-                crate::teamstep::StepOut::Done(t) => {
-                    team_out = Some(Transition::SelectTeams(step.mode, t));
+                crate::teamstep::StepOut::Done(t, cpu) => {
+                    team_out = Some(Transition::SelectTeams(step.mode, t, cpu));
                 }
                 crate::teamstep::StepOut::Leave => {
                     sfx(sys.title.cancel_snd);

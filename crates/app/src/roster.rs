@@ -346,6 +346,16 @@ impl Roster {
         [0, 1].map(|s| self.chooses[s] && !self.done(s))
     }
 
+    /// VS MODE: the sides the computer plays (the TEAM MODE step's HUMAN /
+    /// CPU). A CPU side's fighters are picked by the other cursor, as the
+    /// opponent is in TRAINING; the computer plays it at COMPUTER LEVEL.
+    pub fn set_cpu(&mut self, cpu: [bool; 2]) {
+        if self.mode == Mode::Versus {
+            self.human = [!cpu[0], !cpu[1]];
+            self.picking = self.next_picking();
+        }
+    }
+
     /// The teams the TEAM MODE step chose (each side's mode and size);
     /// picks beyond a size are dropped. False when teams are not offered
     /// here (only VS MODE and WATCH have them).
@@ -1024,6 +1034,8 @@ impl Roster {
             match (self.mode, self.picking) {
                 (Mode::Watch, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
                 (Mode::Watch, _) => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
+                (Mode::Versus, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
+                (Mode::Versus, _) if !self.human[0] => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
                 (Mode::Training, _) => "P1 : CHOOSE YOUR SPARRING PARTNER".to_string(),
                 (Mode::Debugger, _) => "OPPONENT (OR THE SAME AGAIN)".to_string(),
                 _ => "P1 : CHOOSE YOUR OPPONENT".to_string(),

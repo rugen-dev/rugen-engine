@@ -2647,6 +2647,14 @@ impl Match {
             if let Some((left, right)) = self.run_hud.as_ref() {
                 lb.draw_run_strip(r, &lb_hud, u * ratio, left, right);
             }
+            // VS MODE against the computer: CPU under that side's bars
+            if self.setup.mode == Some(crate::game::Mode::Versus) && !arena {
+                for side in 0..2 {
+                    if self.setup.ai[side] > 0 {
+                        lb.draw_side_tag(r, &lb_hud, u * ratio, x_off / ratio, side, "CPU");
+                    }
+                }
+            }
             if arena {
                 let design = u * ratio * lc[1] / 720.0;
                 for (anchor, mut hint) in self.arena_hints(ground, cam_y) {
