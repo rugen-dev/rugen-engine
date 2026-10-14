@@ -408,7 +408,8 @@ box) and screenshots.
 
 ### Online safety
 Fighters players bring online are third-party files: send them only with
-the player's consent, keep them briefly, and keep live viewers cheap.
+the player's consent, keep them briefly, and keep downloads and live
+viewers cheap for the server.
 - [x] **Consent and 3-day expiry.** (efefb82; rugen-server 26a90b6) The first time a player goes online on
   a server, a dialog (both themes): "Online play sends your fighters to
   the server, your opponent and viewers. They're kept 3 days, then
@@ -421,11 +422,16 @@ the player's consent, keep them briefly, and keep live viewers cheap.
   carry `consent=1` (rugen 0.6.0-0.6.3 never send it and keep working);
   a pick says `uploads: false`, the view lists `offline` fingerprints, a
   client lacking one leaves with `reason: "missing"`.
-- [ ] **Watch packages for spectators.** Per fighter fingerprint, a cached
-  reduced package with the exact logic (hash-identical), half-resolution
-  indexed sprites (never lossy) and low-bitrate mono Opus sounds;
-  spectators download it, players the full one. Measure on Goku, Naruto,
-  Sasuke and KFM; same checksums as with the full package.
+- [x] **Packages from Cloudflare R2.** (764d3c7; rugen-server 4672d69)
+  Replaces the dropped "watch packages" idea (the owner rejected the half
+  resolution look): everyone downloads the full, unchanged package.
+  `RUGEN_PKG_S3` (the `RUGEN_BACKUP_S3` URL format) copies every verified
+  package once to `chars/<sha256>.<ext>`; `GET /pkg/{fp}/url` hands rugen
+  0.6.4+ clients a 15-minute SigV4 presigned URL, the client checks size
+  and sha256, then installs as before; older clients, a missing object or
+  any error use the direct download. Objects go with their packages and
+  after `RUGEN_PKG_DAYS`; above `RUGEN_PKG_S3_MAX_GB` (8) nothing new is
+  copied; `/health` / `/admin/stats` show `packages_r2`.
 - [ ] **Viewer cap and viewers in the self-benchmark.** `RUGEN_LIVE_VIEWERS`
   (500) per match ("this match is full"), batched live fan-out, a
   `viewers` field in the bench plan (2000 viewers measurable in
