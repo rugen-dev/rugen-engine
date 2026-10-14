@@ -15,7 +15,7 @@ use anyhow::Context;
 use rugen_audio::{Audio, BankId, SoundKey};
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
-use rugen_sim::explod::{AnimSrc, Trans};
+use rugen_sim::explod::{AnimSrc, PosType, Trans};
 use rugen_sim::fx::PalFxOut;
 use rugen_sim::world::Event;
 use rugen_sim::{Buttons, CharData, World};
@@ -348,6 +348,14 @@ struct Item {
     blend: Blend,
     angle: f32,
     tint: Tint,
+    /// Screen space: `pos` is a screen position (stage units at zoom 1, x
+    /// from the centre, y from the top), drawn unzoomed and unshaken; the
+    /// value moves it by that many half-widths of the window's extra width
+    /// over the stage's (-1 = left anchored, 1 = right, 0 = centred).
+    screen: Option<f32>,
+    /// What it is, for the `RUGEN_HARNESS_DRAWLOG` dump: kind (P player,
+    /// I afterimage, E explod, J projectile), player / explod index, action.
+    who: (char, usize, i32),
 }
 
 /// Final blend for a sprite: the `Trans` controller wins over the AIR frame.
@@ -1139,6 +1147,7 @@ impl Match {
         {
             self.world.players[p2].life = 1;
         }
+        harness_states(&mut self.world);
         if self.world.round.match_over {
             self.over_ticks += 1;
             // linger on the win pose, then hand over to the result screen
@@ -1895,6 +1904,8 @@ impl Match {
                 continue;
             };
             let sprite_data = p.data;
+            let invisible = p.asserted(rugen_sim::player::assert::INVISIBLE);
+            let p_action = p.anim.action;
             // rollback corrections ease in on screen (display only)
             let off = self.smooth.offset(crate::smooth::Key::Player(p.id));
             let (pos, facing, prio) = (
@@ -1946,8 +1957,14 @@ impl Match {
                         blend,
                         angle: img.angle * img.facing,
                         tint: tint(img_pfx.stacked(all_pfx)),
+                        screen: None,
+                        who: ('I', i, img.action),
                     });
                 }
+            }
+            // AssertSpecial invisible hides the body; its afterimages stay (Ikemen)
+            if invisible {
+                continue;
             }
             let spr = self.sprite_from(r, Some(sprite_data), frame.group, frame.number);
             items.push(Item {
@@ -1964,6 +1981,8 @@ impl Match {
                 blend,
                 angle,
                 tint: pfx,
+                screen: None,
+                who: ('P', i, p_action),
             });
         }
         let explods: Vec<rugen_sim::explod::Explod> = self
@@ -1974,9 +1993,22 @@ impl Match {
             .cloned()
             .collect();
         for e in explods {
-            let (src, scale) = match e.src {
-                AnimSrc::Player(d) => (Some(d), self.world.data_scale(d)),
-                AnimSrc::Fx => (None, self.world.fx_scale(e.owner)),
+            // screen-space explods: the owner's localcoord without its
+            // FIGHTER SIZE, like their positions (World::screen_scale)
+            let screen = e.on_screen().then_some(match e.postype {
+                PosType::Left | PosType::None => -1.0,
+                PosType::Right => 1.0,
+                _ => 0.0,
+            });
+            let (src, scale) = match (e.src, screen.is_some()) {
+                (AnimSrc::Player(d), false) => (Some(d), self.world.data_scale(d)),
+                (AnimSrc::Player(d), true) => (Some(d), self.world.screen_scale(d)),
+                (AnimSrc::Fx, false) => (None, self.world.fx_scale(e.owner)),
+                (AnimSrc::Fx, true) => (
+                    None,
+                    self.world.stage.width
+                        / self.world.fx.as_ref().map_or(320.0, |f| f.localcoord[0]),
+                ),
             };
             let Some(frame) = e
                 .air(&self.world)
@@ -2013,6 +2045,8 @@ impl Match {
                 blend,
                 angle: e.angle * e.facing,
                 tint: tint(owner_pfx.stacked(all_pfx)),
+                screen,
+                who: ('E', e.owner, e.anim.action),
             });
         }
         let keys = crate::smooth::proj_keys(&self.world);
@@ -2053,9 +2087,35 @@ impl Match {
                 blend,
                 angle: 0.0,
                 tint: tint(owner_pfx.stacked(all_pfx)),
+                screen: None,
+                who: ('J', pr.owner, pr.anim_no),
             });
         }
         items.sort_by_key(|it| (it.layer, it.prio, it.seq));
+        // harness: `RUGEN_HARNESS_DRAWLOG=120` dumps what frame 120 draws
+        if std::env::var("RUGEN_HARNESS_DRAWLOG")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            == Some(self.world.frame)
+        {
+            for it in &items {
+                log::info!(
+                    "draw {}{} action {} spr {},{} pos {:?} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
+                    it.who.0,
+                    it.who.1,
+                    it.who.2,
+                    it.frame.group,
+                    it.frame.number,
+                    it.pos,
+                    it.scale,
+                    it.screen,
+                    it.blend,
+                    it.tint,
+                    it.prio,
+                    it.layer
+                );
+            }
+        }
         items
     }
 
@@ -2223,7 +2283,20 @@ impl Match {
                     .collect(),
             );
         }
-        match stage_visual.as_mut() {
+        // AssertSpecial nobg / nofg / nobardisplay from any fighter (a super's
+        // cut-in hides the stage and the bars)
+        let asserted = |f: u32| {
+            self.world
+                .players
+                .iter()
+                .any(|p| !p.removed && p.asserted(f))
+        };
+        let (no_bg, no_fg, no_bars) = (
+            asserted(rugen_sim::player::assert::NOBG),
+            asserted(rugen_sim::player::assert::NOFG),
+            asserted(rugen_sim::player::assert::NOBARDISPLAY),
+        );
+        match stage_visual.as_mut().filter(|_| !no_bg) {
             Some(sv) => sv.draw(
                 r,
                 0,
@@ -2232,11 +2305,27 @@ impl Match {
                 screen_w * u,
                 bg_tint,
             ),
+            None if no_bg => r.rect([-8000.0, -8000.0], [8000.0, 8000.0], [0.0, 0.0, 0.0, 1.0]),
             None => r.rect(
                 [-4000.0, ground],
                 [4000.0, ground + 1.0],
                 [0.35, 0.35, 0.35, 1.0],
             ),
+        }
+        // screen space (Ikemen draws it with camera scale 1 and no shake):
+        // into world units around the unshaken view, `u` world units per
+        // screen unit
+        let mut items = items;
+        let screen_left = self.world.cam_x - screen_w * u / 2.0;
+        let extra_half = (screen_w - stage.width) / 2.0;
+        for it in items.iter_mut() {
+            if let Some(anchor) = it.screen {
+                it.pos = [
+                    screen_left + (screen_w / 2.0 + it.pos[0] + anchor * extra_half) * u,
+                    hud_top + it.pos[1] * u - ground + cam_y,
+                ];
+                it.scale = [it.scale[0] * u, it.scale[1] * u];
+            }
         }
         for it in &items {
             let frame = &it.frame;
@@ -2300,7 +2389,7 @@ impl Match {
         self.draw_debug_marker(r, u);
         self.draw_hazards(r, ground, cam_y, cam_x, screen_w * u);
         self.draw_arena_items(r, ground, cam_y);
-        if let Some(sv) = stage_visual.as_mut() {
+        if let Some(sv) = stage_visual.as_mut().filter(|_| !no_bg && !no_fg) {
             sv.draw(
                 r,
                 1,
@@ -2373,7 +2462,7 @@ impl Match {
                 [0.0, 0.0, 0.0, 1.0 - brightness],
             );
         }
-        if self.hud_hidden {
+        if self.hud_hidden || no_bars {
         } else if let Some(lb) = lifebar.as_mut() {
             // fight.def space (usually 320x240) scaled to the stage height and centred
             let lc = lb.localcoord;
@@ -2796,6 +2885,35 @@ fn glyph(c: char) -> [u8; 5] {
         '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
         ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
         _ => [0; 5],
+    }
+}
+
+/// Harness: `RUGEN_HARNESS_STATE=1:1300@120,2:200@150` puts player 1 into
+/// state 1300 at world frame 120 (and P2 into 200 at 150) with full power,
+/// so a super can be shot without its command; `RUGEN_HARNESS_POWER=1`
+/// keeps both root players' power full.
+fn harness_states(w: &mut World) {
+    if std::env::var_os("RUGEN_HARNESS_POWER").is_some() {
+        for p in w.players.iter_mut().filter(|p| p.helper_index == 0) {
+            p.power = p.power_max;
+        }
+    }
+    let Some(spec) = std::env::var("RUGEN_HARNESS_STATE").ok() else {
+        return;
+    };
+    for tok in spec.split(',') {
+        let parse = || -> Option<(usize, i32, u32)> {
+            let (who, rest) = tok.trim().split_once(':')?;
+            let (state, at) = rest.split_once('@')?;
+            Some((who.parse().ok()?, state.parse().ok()?, at.parse().ok()?))
+        };
+        if let Some((who, state, at)) = parse()
+            && at == w.frame
+            && let Some(i) = w.side_leader(who.saturating_sub(1).min(1))
+        {
+            w.players[i].power = w.players[i].power_max;
+            w.change_state(i, state, None, Some(false));
+        }
     }
 }
 

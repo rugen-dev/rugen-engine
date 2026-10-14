@@ -570,6 +570,13 @@ impl World {
         self.stage.width / self.data[d].localcoord[0] * zoom
     }
 
+    /// Stage units per local unit of data slot `d` for what it draws in
+    /// screen space: its localcoord alone. FIGHTER SIZE zooms the fighter in
+    /// the stage, never a screen overlay authored for a whole screen.
+    pub fn screen_scale(&self, d: usize) -> f32 {
+        self.stage.width / self.data[d].localcoord[0]
+    }
+
     /// Stage units per fightfx unit for an effect owned by player `owner`:
     /// fightfx's localcoord, zoomed by the owner's FIGHTER SIZE so hit
     /// sparks and dust match the fighter that made them. Drawing only.
@@ -1631,7 +1638,6 @@ impl World {
     }
 
     fn apply_explod_spec(&mut self, i: usize, e: &mut Explod, spec: &ExplodSpec, fresh: bool) {
-        let ls = self.local_scale(i);
         let two = |w: &mut World, v: &Option<Vec<Code>>| -> Option<[f32; 2]> {
             let v = v.as_ref()?;
             let a = v.first().map_or(0.0, |c| w.eval(i, c).to_f());
@@ -1644,6 +1650,13 @@ impl World {
         if let Some(sp) = spec.space {
             e.space = sp;
         }
+        // screen-space explods are laid out on the screen: the owner's
+        // localcoord, never its FIGHTER SIZE zoom
+        let ls = if e.on_screen() {
+            self.screen_scale(self.players[i].data)
+        } else {
+            self.local_scale(i)
+        };
         if let Some(v) = two(self, &spec.pos) {
             e.rel = [v[0] * ls, v[1] * ls];
         }
