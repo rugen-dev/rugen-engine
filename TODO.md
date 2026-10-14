@@ -286,7 +286,7 @@ themes, deck profile checked at 1280x800.
 - [x] **Online consent on PROFILE.** (b022098) A per-server ONLINE CONSENT row (AGREE
   / WITHDRAW) saved in the profile; withdrawing stops uploads. NOT NOW
   still lasts the session.
-- [ ] **Training life / power refill.** LIFE refill (off / after combo) and
+- [x] **Training life / power refill.** (89ab52e) LIFE refill (off / after combo) and
   POWER (normal / always full) for both fighters; recorded in Training
   replays, never online.
 - [x] **VS against the CPU.** (29d2bee) A HUMAN / CPU toggle per side on the team
