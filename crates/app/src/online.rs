@@ -117,6 +117,90 @@ pub struct Played {
     pub seed: u64,
     pub rules: Rules,
     pub inputs: Vec<[u16; 2]>,
+    /// Our side (0 = P1); 0 in files from before it was kept.
+    #[serde(default)]
+    pub side: u8,
+    /// The other player's machine summary, when its build sent one.
+    #[serde(default)]
+    pub peer: Option<rugen_proto::MachineSummary>,
+    /// When the match was played (UTC RFC 3339).
+    #[serde(default)]
+    pub recorded_at: Option<String>,
+}
+
+/// How a replay names the server a match was played on: its host name,
+/// never an address (`self-hosted` for a server reached by IP).
+pub fn server_label(server: &str) -> String {
+    let base = rugen_net::online::base_url(server);
+    let host = base
+        .split("://")
+        .nth(1)
+        .unwrap_or(&base)
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    // `[::1]:8080`, `1.2.3.4:8080`, `name:8080`
+    let name = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    if name.is_empty() || name.parse::<std::net::IpAddr>().is_ok() {
+        "self-hosted".into()
+    } else {
+        name.to_ascii_lowercase()
+    }
+}
+
+/// The local replay file of an online match we played.
+fn played_replay(p: &Played) -> crate::replay::Replay {
+        let setup = FightSetup {
+            life: None,
+            p1: p.p1.clone(),
+            p2: p.p2.clone(),
+            stage: p.stage.clone(),
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: None,
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(p.seed),
+        };
+        let mut r = crate::replay::Replay::new(
+            &setup,
+            room_size(&p.rules),
+            false,
+            if p.rules.round_time == 0 {
+                -1
+            } else {
+                i32::from(p.rules.round_time)
+            },
+            p.seed,
+            room_life(&p.rules),
+        );
+        r.ai = [0, 0];
+        r.run = Some(crate::play::RunRules {
+            match_wins: p.rules.rounds.clamp(1, 9),
+            p1_life: None,
+        });
+        r.inputs = p.inputs.clone();
+        r.mode = Some("online".into());
+        if p.recorded_at.is_some() {
+            r.recorded_at = p.recorded_at.clone();
+        }
+        r.online = Some(crate::replay::OnlineMeta {
+            server: server_label(&p.server),
+            match_id: p.match_id,
+            side: p.side,
+            peer: p.peer.clone(),
+        });
+        r
 }
 
 static LAST_PLAYED: Mutex<Option<Played>> = Mutex::new(None);
@@ -1615,41 +1699,7 @@ impl OnlineScreen {
             self.rp_note = "ARENA MATCHES CAN ONLY BE SHARED BY CODE.".into();
             return;
         }
-        let setup = FightSetup {
-            life: None,
-            p1: p.p1.clone(),
-            p2: p.p2.clone(),
-            stage: p.stage.clone(),
-            ai: [0, 0],
-            net: None,
-            tutorial: false,
-            ids: [String::new(), String::new()],
-            mode: None,
-            fighter_size: None,
-            arena_ai: None,
-            round_time: None,
-            teams: None,
-            run: None,
-            seed: Some(p.seed),
-        };
-        let mut r = crate::replay::Replay::new(
-            &setup,
-            room_size(&p.rules),
-            false,
-            if p.rules.round_time == 0 {
-                -1
-            } else {
-                i32::from(p.rules.round_time)
-            },
-            p.seed,
-            room_life(&p.rules),
-        );
-        r.ai = [0, 0];
-        r.run = Some(crate::play::RunRules {
-            match_wins: p.rules.rounds.clamp(1, 9),
-            p1_life: None,
-        });
-        r.inputs = p.inputs.clone();
+        let r = played_replay(&p);
         let name = self
             .rp_shared
             .as_ref()
@@ -6330,6 +6380,15 @@ mod tests {
     }
 
     #[test]
+    fn replays_name_servers_never_addresses() {
+        assert_eq!(server_label("https://play.rugen.dev/"), "play.rugen.dev");
+        assert_eq!(server_label("Play.Example.org:8080"), "play.example.org");
+        assert_eq!(server_label("http://192.168.1.20:8080"), "self-hosted");
+        assert_eq!(server_label("http://[::1]:8080"), "self-hosted");
+        assert_eq!(server_label("http://user@10.0.0.1"), "self-hosted");
+    }
+
+    #[test]
     fn the_last_match_survives_a_restart() {
         let root = std::env::temp_dir().join(format!("rugen-played-{}", std::process::id()));
         let p = Played {
@@ -6343,12 +6402,28 @@ mod tests {
             seed: 9,
             rules: Rules::default(),
             inputs: vec![[1, 2]; 3],
+            side: 1,
+            peer: None,
+            recorded_at: None,
         };
         note_played(&root, p);
         // a new session reads it back from the cache
         *LAST_PLAYED.lock().unwrap() = None;
         let back = last_played(&root).unwrap();
         assert_eq!((back.match_id, back.inputs.len(), back.seed), (7, 3, 9));
+        // SAVE FILE: an online replay saying where and against what
+        let mut back = back;
+        back.peer = Some(rugen_proto::MachineSummary {
+            engine: "rugen 0.7.0".into(),
+            os: "Windows 11 10.0.22631".into(),
+            arch: "x86_64".into(),
+            ..Default::default()
+        });
+        let r = played_replay(&back);
+        assert_eq!(r.mode.as_deref(), Some("online"));
+        let o = r.online.unwrap();
+        assert_eq!((o.server.as_str(), o.match_id, o.side), ("s", 7, 1));
+        assert_eq!(o.peer, back.peer);
         let _ = std::fs::remove_dir_all(&root);
     }
 

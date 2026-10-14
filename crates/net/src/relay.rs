@@ -40,6 +40,11 @@ const T_RPING: u8 = 9;
 const T_RPONG: u8 = 10;
 /// The sender forfeits the match ([`Exit`]): sent on every path at once.
 const T_FLEE: u8 = 11;
+/// The sender's machine summary (debug reports in replays); builds that do
+/// not know it ignore it.
+const T_MACHINE: u8 = 12;
+/// Times our machine summary is sent (once a second; datagrams get lost).
+const MACHINE_SENDS: u8 = 5;
 
 /// The address ggrs uses for relay slot `slot` (class E, never routed).
 pub fn slot_addr(slot: u8) -> SocketAddr {
@@ -94,6 +99,12 @@ pub struct RelaySocket {
     /// Confirmed inputs for the server's input log.
     uplink: std::sync::Arc<Uplink>,
     last_upload: Instant,
+    /// Our machine summary for the other player ([`RelaySocket::set_machine`]).
+    machine: Option<Vec<u8>>,
+    machine_left: u8,
+    last_machine: Instant,
+    /// The other player's machine summary, once it arrived.
+    peer_machine: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 /// The confirmed inputs of the match for the server's input log, shared
@@ -223,7 +234,41 @@ impl RelaySocket {
                 ..Default::default()
             }),
             last_upload: Instant::now(),
+            machine: None,
+            machine_left: 0,
+            last_machine: Instant::now(),
+            peer_machine: Default::default(),
         })
+    }
+
+    /// Send `summary` (a short line, our machine summary) to the other
+    /// player a few times, through the relay. Players only.
+    pub fn set_machine(&mut self, summary: &str) {
+        if self.slot >= 2 || summary.len() > 400 {
+            return;
+        }
+        let mut p = vec![T_MACHINE];
+        p.extend_from_slice(summary.as_bytes());
+        self.machine = Some(p);
+        self.machine_left = MACHINE_SENDS;
+        self.send_machine();
+    }
+
+    fn send_machine(&mut self) {
+        if self.machine_left == 0 {
+            return;
+        }
+        if let Some(p) = self.machine.clone() {
+            self.send_frame(wire::DATA, 1 - self.slot, &p);
+            self.machine_left -= 1;
+            self.last_machine = Instant::now();
+        }
+    }
+
+    /// The other player's machine summary once it arrives (stays readable
+    /// after the socket moved into a ggrs session).
+    pub fn peer_machine(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        self.peer_machine.clone()
     }
 
     /// Join the relay session of `ticket` with the server's transports in
@@ -684,6 +729,12 @@ impl RelaySocket {
                 self.exit.peer_fled.store(true, Ordering::Relaxed);
                 None
             }
+            T_MACHINE if h.from < 2 && h.from != self.slot && p.len() <= 401 => {
+                if let Ok(mut m) = self.peer_machine.lock() {
+                    *m = Some(String::from_utf8_lossy(&p[1..]).trim().to_string());
+                }
+                None
+            }
             T_RPING if p.len() == 9 => {
                 let mut pong = p.to_vec();
                 pong[0] = T_RPONG;
@@ -984,6 +1035,9 @@ impl NonBlockingSocket<SocketAddr> for RelaySocket {
             self.send_frame(wire::STREAM, 0xFF, &p);
             self.last_upload = Instant::now();
         }
+        if self.machine_left > 0 && self.last_machine.elapsed() >= Duration::from_secs(1) {
+            self.send_machine();
+        }
         if self.exit.flee.load(Ordering::Relaxed) && self.flee_left > 0 {
             self.flee_left -= 1;
             self.send_flee();
@@ -1171,6 +1225,50 @@ mod tests {
         assert!(rtt_a.is_some_and(|r| r < 200));
         assert!(a.server_rtt(3, Duration::from_secs(2)).is_some());
         assert!(t.join().unwrap().is_some());
+    }
+
+    /// Each player's machine summary reaches the other through the relay
+    /// (an older build simply never sends one).
+    #[test]
+    fn machine_summaries_cross_the_relay() {
+        let tokens = [[3u8; 16], [4u8; 16]];
+        let server = fake_relay(78, tokens);
+        let ticket = move |slot: u8| SessionTicket {
+            session: 78,
+            slot,
+            token: rugen_proto::to_hex(&tokens[slot as usize]),
+            spectators: 0,
+            udp: Some(server.to_string()),
+            transports: Vec::new(),
+            live: false,
+        };
+        let pump = |s: &mut RelaySocket| {
+            let end = Instant::now() + Duration::from_millis(1500);
+            while Instant::now() < end {
+                let _ = s.receive_all_messages();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let t = std::thread::spawn(move || {
+            let mut b =
+                RelaySocket::connect_udp(&ticket(1), &server.to_string(), Duration::from_secs(2))
+                    .unwrap();
+            b.wait_for(0b11, Duration::from_secs(5), &mut |_| {})
+                .unwrap();
+            b.set_machine("B");
+            pump(&mut b);
+            let got = b.peer_machine().lock().unwrap().clone();
+            got
+        });
+        let mut a =
+            RelaySocket::connect_udp(&ticket(0), &server.to_string(), Duration::from_secs(2))
+                .unwrap();
+        a.wait_for(0b11, Duration::from_secs(5), &mut |_| {})
+            .unwrap();
+        a.set_machine("A");
+        pump(&mut a);
+        assert_eq!(a.peer_machine().lock().unwrap().as_deref(), Some("B"));
+        assert_eq!(t.join().unwrap().as_deref(), Some("A"));
     }
 
     #[test]

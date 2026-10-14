@@ -2493,6 +2493,9 @@ impl Shell {
                                     seed: setup.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED),
                                     rules: om.rules.clone(),
                                     inputs: rugen_proto::stream::inputs_from_bytes(&ev.inputs),
+                                    side: om.my_side as u8,
+                                    peer: m.peer_machine(),
+                                    recorded_at: Some(crate::machine::now_rfc3339()),
                                 },
                             );
                         }
