@@ -216,9 +216,91 @@ pub struct LiveMatch {
     pub viewers: u32,
 }
 
+/// Shared replay codes: eight characters from the room-code alphabet (no
+/// lookalikes), shown as `R7KQ-DX4M`; about 2 × 10^11 codes.
+pub mod replay_code {
+    use crate::room_code::ALPHABET;
+
+    pub const LEN: usize = 8;
+
+    /// A fresh code (rejection sampling over `random` bytes).
+    pub fn generate(mut random: impl FnMut() -> u8) -> String {
+        let set = ALPHABET.as_bytes();
+        let limit = 256 - 256 % set.len();
+        let mut out = String::with_capacity(LEN);
+        while out.len() < LEN {
+            let b = random() as usize;
+            if b < limit {
+                out.push(set[b % set.len()] as char);
+            }
+        }
+        out
+    }
+
+    /// What a player typed or pasted, as servers store codes: upper-case,
+    /// without the dash and spaces; `None` when it cannot be a code.
+    pub fn normalize(typed: &str) -> Option<String> {
+        let c: String = typed
+            .chars()
+            .filter(|c| !matches!(c, '-' | ' ' | '\t'))
+            .map(|c| c.to_ascii_uppercase())
+            .collect();
+        (c.len() == LEN && c.chars().all(|ch| ALPHABET.contains(ch))).then_some(c)
+    }
+
+    /// `R7KQDX4M` → `R7KQ-DX4M`.
+    pub fn display(code: &str) -> String {
+        if code.len() == LEN {
+            format!("{}-{}", &code[..4], &code[4..])
+        } else {
+            code.to_string()
+        }
+    }
+}
+
+/// `POST /v1/replays`: the code a finished match is shared under.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct SharedReplay {
+    /// Eight characters ([`replay_code`]).
+    pub code: String,
+    /// Unix time it stops being kept.
+    pub expires: u64,
+    pub match_id: u64,
+    /// "NARUTO VS SASUKE"
+    pub title: String,
+    /// Frames of the match.
+    pub frames: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_codes_read_out_easily() {
+        let mut n = 0u8;
+        let c = replay_code::generate(|| {
+            n = n.wrapping_add(37);
+            n
+        });
+        assert_eq!(c.len(), replay_code::LEN);
+        assert_eq!(replay_code::normalize(&c), Some(c.clone()));
+        let shown = replay_code::display(&c);
+        assert_eq!(shown.len(), 9);
+        assert_eq!(
+            replay_code::normalize(&shown.to_lowercase()),
+            Some(c.clone())
+        );
+        assert_eq!(
+            replay_code::normalize(" r7kq dx4m "),
+            Some("R7KQDX4M".into())
+        );
+        assert!(replay_code::normalize("R7KQ-DX4").is_none(), "too short");
+        assert!(
+            replay_code::normalize("R7KQ-DX40").is_none(),
+            "0 is never in a code"
+        );
+    }
 
     fn header() -> MatchHeader {
         MatchHeader {

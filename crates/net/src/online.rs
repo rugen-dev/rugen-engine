@@ -658,6 +658,23 @@ impl OnlineClient {
             .ok_or_else(|| OnlineError::Decode("bad stream chunk".into()))
     }
 
+    /// Share a finished match we played: its short code (kept 30 days on
+    /// the official server; the same code if it was shared already).
+    pub fn share_replay(&self, match_id: u64) -> OnlineResult<rugen_proto::stream::SharedReplay> {
+        let b = self.with_key(json!({ "match_id": match_id }))?;
+        Self::decode(self.call("POST", "/v1/replays", Some(b))?)
+    }
+
+    /// A shared replay by code (any spelling: `r7kq-dx4m`): its header and
+    /// every frame. No account needed.
+    pub fn shared_replay(&self, code: &str) -> OnlineResult<rugen_proto::stream::Chunk> {
+        let code = rugen_proto::stream::replay_code::normalize(code)
+            .ok_or_else(|| OnlineError::Server("not a replay code".into()))?;
+        let b = self.get_bytes(&format!("/v1/replays/{code}"))?;
+        rugen_proto::stream::decode_chunk(&b)
+            .ok_or_else(|| OnlineError::Decode("bad replay".into()))
+    }
+
     /// Tell the server this match desynchronised (it will not resolve by agreement).
     pub fn report_desync(&self, match_id: u64, frame: u32) -> OnlineResult<()> {
         let b = self.with_key(json!({ "frame": frame }))?;
