@@ -59,6 +59,9 @@ pub struct Stage {
     pub platforms: Vec<Platform>,
     /// rugen extension: Smash-style arena rules (`[Arena]` section).
     pub arena: Arena,
+    /// rugen extension: platforms that move or drop (`[Platform] path`,
+    /// `speed`, `drop`; see [`crate::hazards`]).
+    pub motions: Vec<crate::hazards::Motion>,
 }
 
 /// `[Arena]` section of a stage .def (all optional):
@@ -85,6 +88,10 @@ pub struct Arena {
     /// `item_every = min, max` seconds (default 10, 20).
     pub items: bool,
     pub item_every: [i32; 2],
+    /// `wind = every, length, strength`: gusts every `every` s for
+    /// `length` s pushing `strength` units per tick (stored in ticks, ticks,
+    /// units; see [`crate::hazards`]).
+    pub wind: Option<[f32; 3]>,
 }
 
 impl Default for Arena {
@@ -101,6 +108,7 @@ impl Default for Arena {
             ledge: true,
             items: false,
             item_every: [10, 20],
+            wind: None,
         }
     }
 }
@@ -128,11 +136,13 @@ pub const DROP_IGNORE_TICKS: i32 = 12;
 /// A horizontal surface at height `y` (negative = above the floor) spanning `x1..=x2`
 /// in stage coordinates. Declared in a stage .def as
 /// `[Platform]` sections with `x = x1, x2` and `y = height`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Platform {
     pub x1: f32,
     pub x2: f32,
     pub y: f32,
+    /// Dropped away for now (a stage hazard): not there to land or stand on.
+    pub gone: bool,
 }
 
 impl Default for Stage {
@@ -164,6 +174,7 @@ impl Default for Stage {
             zoom_in: 1.0,
             platforms: Vec::new(),
             arena: Arena::default(),
+            motions: Vec::new(),
         }
     }
 }
@@ -254,6 +265,11 @@ impl Stage {
             if let Some(v) = a.i32("items") {
                 s.arena.items = v != 0;
             }
+            if let Some(v) = a.f32s("wind").filter(|v| v.len() >= 3) {
+                let every = (v[0] * 60.0).clamp(60.0, 36000.0);
+                let length = (v[1] * 60.0).clamp(1.0, every);
+                s.arena.wind = Some([every, length, v[2].clamp(-20.0, 20.0)]);
+            }
             if let Some(v) = a.i32s("item_every").filter(|v| v.len() >= 2) {
                 let lo = v[0].clamp(1, 600);
                 s.arena.item_every = [lo, v[1].clamp(lo, 600)];
@@ -264,10 +280,41 @@ impl Stage {
             let (Some(&x1), Some(&x2), Some(y)) = (x.first(), x.get(1), sec.f32("y")) else {
                 continue;
             };
+            let path: Vec<[f32; 2]> = sec
+                .f32s("path")
+                .unwrap_or_default()
+                .chunks_exact(2)
+                .map(|c| [c[0], c[1]])
+                .collect();
+            let drop = sec
+                .f32s("drop")
+                .filter(|v| v.len() >= 2 && v[0] > 0.0 && v[1] > 0.0)
+                .map(|v| {
+                    let every = (v[0] * 60.0) as i32;
+                    // warned, gone, and solid for a moment in between
+                    let gone = ((v[1] * 60.0) as i32)
+                        .clamp(1, (every - crate::hazards::WARN_TICKS - 60).max(1));
+                    [every.max(crate::hazards::WARN_TICKS + 120), gone]
+                });
+            if !path.is_empty() || drop.is_some() {
+                s.motions.push(crate::hazards::Motion {
+                    platform: s.platforms.len(),
+                    rest: Platform {
+                        x1: x1.min(x2),
+                        x2: x1.max(x2),
+                        y: y.min(0.0),
+                        ..Default::default()
+                    },
+                    path,
+                    speed: sec.f32("speed").unwrap_or(1.0).clamp(0.01, 50.0),
+                    drop,
+                });
+            }
             s.platforms.push(Platform {
                 x1: x1.min(x2),
                 x2: x1.max(x2),
                 y: y.min(0.0),
+                ..Default::default()
             });
         }
         if let Some(v) = g("playerinfo", "leftbound") {
@@ -404,6 +451,8 @@ pub struct World {
     pub teams: crate::team::Teams,
     /// Arena items (`[Arena] items`; empty otherwise).
     pub items: crate::items::Items,
+    /// Fight ticks this round, the clock of the stage hazards.
+    pub hazard_t: i32,
     pub round: RoundState,
     pub events: Vec<Event>,
     pub warnings: Vec<String>,
@@ -450,6 +499,7 @@ impl World {
             arena_ai: false,
             teams: Default::default(),
             items: crate::items::Items::new(seed),
+            hazard_t: 0,
             round: RoundState::new(RoundConfig::default()),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -1016,6 +1066,9 @@ impl World {
         if self.teams.active() {
             self.tag_step();
         }
+
+        // stage hazards: platforms move or drop, the wind blows
+        self.step_hazards();
 
         // 3. run states, physics, landing (helpers spawned mid-loop run this tick too)
         let mut i = 0;
@@ -3288,12 +3341,9 @@ impl World {
         }
         let (x, ground) = (p.pos[0], p.ground);
         let scale = self.local_scale(i);
-        let Some(k) = self
-            .stage
-            .platforms
-            .iter()
-            .position(|pl| pl.y / scale == ground && x >= pl.x1 / scale && x <= pl.x2 / scale)
-        else {
+        let Some(k) = self.stage.platforms.iter().position(|pl| {
+            !pl.gone && pl.y / scale == ground && x >= pl.x1 / scale && x <= pl.x2 / scale
+        }) else {
             return;
         };
         let p = &mut self.players[i];
@@ -3520,7 +3570,7 @@ impl World {
         let mut keep: Option<f32> = None;
         for (k, pl) in self.stage.platforms.iter().enumerate() {
             let (x1, x2, y) = (pl.x1 / scale, pl.x2 / scale, pl.y / scale);
-            if x < x1 || x > x2 || ignored == Some(k) {
+            if x < x1 || x > x2 || ignored == Some(k) || pl.gone {
                 continue;
             }
             if ground == y {
@@ -3789,6 +3839,9 @@ impl World {
         if let Some(v) = self.items_checksum() {
             mix(v);
         }
+        if crate::hazards::any(self) {
+            mix(self.hazard_t as u64);
+        }
         h
     }
 }
@@ -3938,6 +3991,7 @@ mod tests {
             x1: -120.0,
             x2: -20.0,
             y,
+            ..Default::default()
         });
         run(&mut w, 5, NONE);
         w.players[0].pos = [-70.0, y];
@@ -3963,6 +4017,7 @@ mod tests {
             x1: -120.0,
             x2: -20.0,
             y: -40.0,
+            ..Default::default()
         });
         run(&mut w, 5, NONE);
         run(&mut w, 1, Buttons { u: true, ..NONE });
@@ -3997,6 +4052,7 @@ mod tests {
             x1: -60.0,
             x2: 60.0,
             y: -40.0,
+            ..Default::default()
         });
         run(&mut w, 5, NONE);
         // airborne left of the span, feet 2 below the top, drifting right
@@ -4027,6 +4083,7 @@ mod tests {
             x1: -120.0,
             x2: -20.0,
             y: -100.0,
+            ..Default::default()
         });
         run(&mut w, 5, NONE);
         run(&mut w, 1, Buttons { u: true, ..NONE });
@@ -4160,6 +4217,7 @@ mod tests {
             x1: -120.0,
             x2: -20.0,
             y: -40.0,
+            ..Default::default()
         });
         run(&mut w, 5, Buttons::default());
         assert_eq!(w.players[0].pos[0], -70.0);
@@ -4225,6 +4283,7 @@ mod tests {
             x1: -200.0,
             x2: 0.0,
             y: -80.0,
+            ..Default::default()
         });
         let text = "[Statedef 777]\ntype = A\nmovetype = H\nphysics = N\nctrl = 0\n\n\
                     [State 777, g]\ntype = VelAdd\ntrigger1 = 1\ny = 0.44\n\n\
@@ -4528,6 +4587,7 @@ mod tests {
             x1: -200.0,
             x2: 200.0,
             y: -260.0,
+            ..Default::default()
         });
         run(&mut w, 5, Buttons::default());
         w.players[0].pos = [-70.0, -260.0];

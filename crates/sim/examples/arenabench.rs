@@ -109,9 +109,13 @@ fn main() {
         let mut prev_round = w.round.round_no;
         let mut prev_life = [w.players[0].life, w.players[1].life];
         let mut hist: [Vec<(i32, i32, i32, bool)>; 2] = [Vec::new(), Vec::new()];
+        let mut last_wind = 0u32;
         while !w.round.match_over && w.frame < max_frames {
             w.step(&[]);
             let f = w.frame;
+            if rugen_sim::hazards::wind(&w).0 != 0.0 {
+                last_wind = f;
+            }
             if let Some((dp, f0, f1, dm)) = dump
                 && m == dm
                 && f >= f0
@@ -176,10 +180,11 @@ fn main() {
                     if ringout && trace {
                         let sc = w.local_scale(k);
                         eprintln!(
-                            "  ringout {} f{} hit{} at ({:.0},{:.0}) states {:?} self={}",
+                            "  ringout {} f{} hit{} wind{} at ({:.0},{:.0}) states {:?} self={}",
                             names[k],
                             f,
                             f.saturating_sub(last_hit[k]),
+                            f.saturating_sub(last_wind),
                             p.pos[0] * sc,
                             p.pos[1] * sc,
                             hist[k],

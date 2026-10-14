@@ -1837,6 +1837,14 @@ impl Match {
         let hud_w = screen_w * u;
         let hud_top = center_y - stage.height * u / 2.0;
         let hud = |sx: f32, sy: f32| [hud_left + sx * u, hud_top + sy * u];
+        if let Some(sv) = stage_visual.as_mut() {
+            sv.set_platform_offsets(
+                rugen_sim::hazards::platform_views(&self.world)
+                    .iter()
+                    .map(|v| (v.platform, v.offset))
+                    .collect(),
+            );
+        }
         match stage_visual.as_mut() {
             Some(sv) => sv.draw(
                 r,
@@ -1881,7 +1889,7 @@ impl Match {
                 r.draw(d);
             }
             if show_boxes && it.boxes {
-                for pl in &stage.platforms {
+                for pl in stage.platforms.iter().filter(|p| !p.gone) {
                     r.rect(
                         [pl.x1, ground + pl.y - cam_y - 1.0],
                         [pl.x2, ground + pl.y - cam_y + 1.0],
@@ -1911,6 +1919,7 @@ impl Match {
                 }
             }
         }
+        self.draw_hazards(r, ground, cam_y, cam_x, screen_w * u);
         self.draw_arena_items(r, ground, cam_y);
         if let Some(sv) = stage_visual.as_mut() {
             sv.draw(
@@ -2013,7 +2022,19 @@ impl Match {
                 lb.draw_run_strip(r, &lb_hud, u * ratio, left, right);
             }
             if arena {
-                for (anchor, hint) in self.arena_hints(ground, cam_y) {
+                let design = u * ratio * lc[1] / 720.0;
+                for (anchor, mut hint) in self.arena_hints(ground, cam_y) {
+                    // no room over it (the top of the view): under it
+                    let mut anchor = anchor;
+                    if anchor[1] - hint.design_height() * design < hud_top {
+                        hint.below = true;
+                        anchor[1] += 12.0;
+                    }
+                    lb.draw_hint(r, anchor, u * ratio, &hint);
+                }
+                // a gust coming or blowing: a tag under the clock
+                if let Some(hint) = wind_hint(rugen_sim::hazards::wind(&self.world)) {
+                    let anchor = lb_hud(lc[0] / 2.0, 140.0 * lc[1] / 720.0);
                     lb.draw_hint(r, anchor, u * ratio, &hint);
                 }
             }
@@ -2144,8 +2165,99 @@ impl Match {
                 out.push((anchor, item_hint(&self.arena_caps[side][1])));
             }
         }
+        // platforms about to drop: a countdown over each
+        for v in rugen_sim::hazards::platform_views(w) {
+            if let rugen_sim::hazards::DropPhase::Warn(left) = v.phase
+                && let Some(pl) = w.stage.platforms.get(v.platform)
+            {
+                let anchor = [(pl.x1 + pl.x2) / 2.0, ground + pl.y - 6.0 - cam_y];
+                out.push((anchor, drop_hint(left)));
+            }
+        }
         out
     }
+
+    /// Hazard marks in the world: red stripes over a platform about to
+    /// drop (blinking in its last second), wind streaks during a gust.
+    fn draw_hazards(&self, r: &mut Renderer, ground: f32, cam_y: f32, cam_x: f32, view_w: f32) {
+        let w = &self.world;
+        for v in rugen_sim::hazards::platform_views(w) {
+            let rugen_sim::hazards::DropPhase::Warn(left) = v.phase else {
+                continue;
+            };
+            if left < 60 && (w.frame / 4) % 2 == 0 {
+                continue;
+            }
+            let Some(pl) = w.stage.platforms.get(v.platform) else {
+                continue;
+            };
+            let y = ground + pl.y - cam_y;
+            let mut x = pl.x1;
+            while x < pl.x2 {
+                r.rect(
+                    [x, y],
+                    [(x + 6.0).min(pl.x2), y + 5.0],
+                    [0.784, 0.063, 0.102, 0.85],
+                );
+                x += 12.0;
+            }
+        }
+        let (push, _) = rugen_sim::hazards::wind(w);
+        if push != 0.0 {
+            // streaks drifting downwind across the view
+            let t = w.frame as f32;
+            for k in 0..9 {
+                let y = ground - 20.0 - (k as f32 * 37.0) % 260.0 - cam_y;
+                let span = view_w + 200.0;
+                let x = cam_x - span / 2.0
+                    + ((k as f32 * 131.0 + t * 9.0 * push.signum()).rem_euclid(span));
+                let len = 30.0 + (k % 3) as f32 * 14.0;
+                r.rect(
+                    [x, y],
+                    [x + len, y + 1.5],
+                    [0.078, 0.071, 0.063, 0.35 * push.abs().min(1.0)],
+                );
+            }
+        }
+    }
+}
+
+/// The countdown over a platform about to drop.
+pub fn drop_hint(left: i32) -> crate::lifebar::Hint {
+    use crate::lifebar::{Hint, HintSeg};
+    Hint {
+        dark: false,
+        title: None,
+        rows: vec![vec![HintSeg::Text(format!(
+            "DROPS IN {} S",
+            (left + 59) / 60
+        ))]],
+        below: false,
+    }
+}
+
+/// The tag under the clock while a gust is coming or blowing.
+pub fn wind_hint((push, next): (f32, Option<(i32, f32)>)) -> Option<crate::lifebar::Hint> {
+    use crate::lifebar::{Hint, HintSeg};
+    let arrow = |d: f32| if d > 0.0 { "→" } else { "←" };
+    let row = if push != 0.0 {
+        vec![
+            HintSeg::Text("WIND".into()),
+            HintSeg::Cap(arrow(push).into()),
+        ]
+    } else {
+        let (left, dir) = next?;
+        vec![
+            HintSeg::Text(format!("WIND IN {} S", (left + 59) / 60)),
+            HintSeg::Cap(arrow(dir).into()),
+        ]
+    };
+    Some(Hint {
+        dark: true,
+        title: None,
+        rows: vec![row],
+        below: false,
+    })
 }
 
 /// The tag over a fighter that just picked up a throwable: B throws it.
@@ -2159,6 +2271,7 @@ pub fn item_hint(throw: &str) -> crate::lifebar::Hint {
             HintSeg::Cap(throw.into()),
             HintSeg::Text("THROW".into()),
         ]],
+        below: false,
     }
 }
 
@@ -2254,6 +2367,7 @@ pub fn ledge_hint(left: i32, side: f32, jump: &str) -> crate::lifebar::Hint {
             row(if side > 0.0 { "←" } else { "→" }, "ROLL IN"),
             row(jump, "JUMP"),
         ],
+        below: false,
     }
 }
 
@@ -2835,6 +2949,25 @@ mod tests {
             ledge_hint(0, -1.0, "X").title.as_deref(),
             Some("LEDGE · 0.0 S")
         );
+    }
+
+    #[test]
+    fn hazard_hints_count_down() {
+        use crate::lifebar::HintSeg;
+        assert_eq!(
+            drop_hint(180).rows[0][0],
+            HintSeg::Text("DROPS IN 3 S".into())
+        );
+        assert_eq!(
+            drop_hint(1).rows[0][0],
+            HintSeg::Text("DROPS IN 1 S".into())
+        );
+        assert!(wind_hint((0.0, None)).is_none());
+        let coming = wind_hint((0.0, Some((120, -1.0)))).unwrap();
+        assert_eq!(coming.rows[0][0], HintSeg::Text("WIND IN 2 S".into()));
+        assert_eq!(coming.rows[0][1], HintSeg::Cap("←".into()));
+        let blowing = wind_hint((0.7, None)).unwrap();
+        assert_eq!(blowing.rows[0][1], HintSeg::Cap("→".into()));
     }
 
     #[test]

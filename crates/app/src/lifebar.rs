@@ -339,6 +339,17 @@ pub struct Hint {
     pub dark: bool,
     pub title: Option<String>,
     pub rows: Vec<Vec<HintSeg>>,
+    /// Hang under the anchor instead of over it (no room above).
+    pub below: bool,
+}
+
+impl Hint {
+    /// Height of the panel plus its gap to the anchor, in 1280x720 design
+    /// pixels.
+    pub fn design_height(&self) -> f32 {
+        let rows = (self.rows.len() + usize::from(self.title.is_some())) as f32;
+        14.0 + rows * 20.0 + (rows - 1.0).max(0.0) * 6.0 + 16.0
+    }
 }
 
 impl Default for ArenaStyle {
@@ -1468,9 +1479,9 @@ impl Lifebar {
             w + 2.0 * pad,
             rows as f32 * row_h + rows.saturating_sub(1) as f32 * gap + 2.0 * pad - 4.0,
         );
-        // bottom centre 14 px over the anchor
+        // bottom centre 14 px over the anchor (top centre under it)
         let x0 = -bw / 2.0;
-        let y0 = -14.0 - bh;
+        let y0 = if hint.below { 14.0 } else { -14.0 - bh };
         let at = |x: f32, y: f32| [anchor[0] + x * s, anchor[1] + y * s];
         let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
             r.rect(at(x0, y0), at(x1, y1), c);

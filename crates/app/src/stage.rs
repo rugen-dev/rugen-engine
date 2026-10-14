@@ -52,6 +52,9 @@ struct Elem {
     blend: Blend,
     /// `window = x1,y1, x2,y2` in screen coordinates (top-left origin).
     window: Option<[f32; 4]>,
+    /// rugen: `platform = N` (1-based `[Platform]` section) makes the
+    /// element follow that platform when it moves or drops.
+    platform: Option<usize>,
 }
 
 /// Where a stage preview lands: stage coordinates `src` (top-left of the
@@ -106,6 +109,8 @@ pub struct StageVisual {
     shared: crate::sprites::Shared,
     palettes: Vec<PaletteId>,
     tick: i32,
+    /// Offsets (stage units) of the hazard platforms, by platform index.
+    platform_offsets: Vec<(usize, [f32; 2])>,
 }
 
 impl StageVisual {
@@ -252,6 +257,10 @@ impl StageVisual {
                     .f32s("window")
                     .filter(|v| v.len() >= 4)
                     .map(|v| [v[0], v[1], v[2], v[3]]),
+                platform: s
+                    .i32("platform")
+                    .filter(|n| *n >= 1)
+                    .map(|n| n as usize - 1),
             });
         }
         Ok(Self {
@@ -264,6 +273,7 @@ impl StageVisual {
             shared: Default::default(),
             palettes: Vec::new(),
             tick: 0,
+            platform_offsets: Vec::new(),
         })
     }
 
@@ -272,6 +282,12 @@ impl StageVisual {
         if self.palettes.is_empty() {
             self.palettes.push(r.add_palette(&[[0; 4]; 256]));
         }
+    }
+
+    /// Where the moving / dropping platforms are now (stage units from
+    /// their place in the def): elements with `platform = N` follow.
+    pub fn set_platform_offsets(&mut self, offsets: Vec<(usize, [f32; 2])>) {
+        self.platform_offsets = offsets;
     }
 
     /// Advance animations and velocities one tick.
@@ -404,6 +420,11 @@ impl StageVisual {
                 - cam[0] * e.delta[0];
             let base_y =
                 (e.start[1] + e.scroll[1] + sy + frame_off[1]) * scale - cam[1] * e.delta[1];
+            let follow = e
+                .platform
+                .and_then(|k| self.platform_offsets.iter().find(|o| o.0 == k))
+                .map_or([0.0, 0.0], |o| o.1);
+            let (base_x, base_y) = (base_x + follow[0], base_y + follow[1]);
             let (w, h) = (
                 size[0] * scale * xscale[0] * e.scale[0],
                 size[1] * scale * xscale[1] * e.scale[1],

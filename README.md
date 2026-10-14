@@ -81,10 +81,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Storyboards**: fighter intros and arcade endings.
 - [x] **Ledge grab**: catch the edge of an arena and climb back on.
 - [x] **Items**: pickups that spawn on arena stages, to grab and throw.
+- [x] **Stage hazards**: moving platforms and stage events.
 
 ### Planned
 
-- [ ] **Stage hazards**: moving platforms and stage events.
 - [ ] **Ranked seasons**: ratings that reset on a schedule.
 - [ ] **Per-fighter leaderboards**: the best players of each character.
 - [ ] **Tournament brackets**: eight or sixteen players inside a room.

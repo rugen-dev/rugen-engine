@@ -98,6 +98,9 @@ pub struct ArenaAiState {
     pub items: u32,
     /// Walking to an item this tick (a smaller edge margin).
     item_walk: bool,
+    /// Ticks spent dodging a hazard (leaving a dropping platform, leaning
+    /// into the wind).
+    pub hazards: u32,
 }
 
 impl ArenaAiState {
@@ -299,7 +302,7 @@ fn outward(span: [f32; 2], x: f32) -> f32 {
 pub fn surface_below(w: &World, x: f32, y: f32) -> Option<f32> {
     let span = floor_span(w);
     let mut best: Option<f32> = (x >= span[0] && x <= span[1] && y <= 0.5).then_some(0.0);
-    for pl in &w.stage.platforms {
+    for pl in w.stage.platforms.iter().filter(|p| !p.gone) {
         if x >= pl.x1 && x <= pl.x2 && pl.y >= y - 0.5 && best.is_none_or(|b| pl.y < b) {
             best = Some(pl.y);
         }
@@ -320,13 +323,15 @@ pub fn lands(
     ticks: u32,
 ) -> bool {
     let bottom = w.stage.arena.blastzone.map_or(400.0, |b| b[3]);
+    // a gust blowing now keeps blowing (half on the ground)
+    let wind = crate::hazards::wind(w).0;
     let mut on = surface_below(w, x, y).filter(|s| (s - y).abs() < 1.0 && vy >= 0.0);
     for t in 0..ticks {
         if let Some(sy) = on {
             if t >= slide {
                 return true;
             }
-            x += vx;
+            x += vx + wind * 0.5;
             if surface_below(w, x, sy - 0.5).is_some_and(|s| (s - sy).abs() < 1.0) {
                 continue;
             }
@@ -335,7 +340,7 @@ pub fn lands(
             continue;
         }
         vy += g;
-        let (nx, ny) = (x + vx, y + vy);
+        let (nx, ny) = (x + vx + wind, y + vy);
         if vy >= 0.0 && surface_below(w, nx, y).is_some_and(|s| s <= ny) {
             return true;
         }
@@ -363,9 +368,10 @@ pub fn grabs(
         return false;
     }
     let bottom = w.stage.arena.blastzone.map_or(400.0, |b| b[3]);
+    let wind = crate::hazards::wind(w).0;
     for t in 0..ticks {
         vy += g;
-        x += vx;
+        x += vx + wind;
         y += vy;
         if vy >= 0.0
             && t as i32 >= p.ledge_cool
@@ -471,7 +477,7 @@ fn recovery_target(w: &World, v: &View) -> [f32; 2] {
     }
     let mut best = [tx, 0.0];
     let mut bd = (tx - v.x).abs() + (0.0 - v.y).max(0.0) * 0.5;
-    for pl in &w.stage.platforms {
+    for pl in w.stage.platforms.iter().filter(|p| !p.gone) {
         if pl.y < v.y - 60.0 {
             continue; // too high to reach
         }
@@ -840,6 +846,30 @@ fn ground(w: &mut World, i: usize, v: &View, b: Buttons) -> Buttons {
     if !p.ctrl || !matches!(p.state_no, 0 | 20) || p.arena.scripted() {
         return out;
     }
+    // a platform about to drop: off it, down through it onto what is below
+    if let Some(k) = platform_at(w, v.x, v.y)
+        && platform_unsafe(w, k)
+        && surface_below(w, v.x, v.y + 1.0).is_some()
+    {
+        let down = Buttons {
+            d: true,
+            ..Default::default()
+        };
+        w.players[i].arena.hazards += 1;
+        w.players[i]
+            .arena
+            .play(&[Buttons::default(), down, Buttons::default(), down]);
+        return Buttons::default();
+    }
+    // a gust toward a nearby drop: lean into it
+    let (push, _) = crate::hazards::wind(w);
+    if push != 0.0 && v.on_deck {
+        let edge = if push > 0.0 { v.span[1] } else { v.span[0] };
+        if (edge - v.x).abs() < 260.0 {
+            w.players[i].arena.hazards += 1;
+            return with_dirs(out, dir_buttons(-push.signum()));
+        }
+    }
     let Some(([ox, oy], opp_grounded)) = v.opp else {
         return out;
     };
@@ -855,7 +885,9 @@ fn ground(w: &mut World, i: usize, v: &View, b: Buttons) -> Buttons {
     let toward = if dx.abs() < 25.0 { 0.0 } else { dx.signum() };
     // platform navigation: follow the opponent to its tier
     if v.level >= 3 && opp_grounded && roll(w, i, 3) < (v.level as u32 - 1) {
-        let jump_up = oy < v.y - 40.0 && dx.abs() < 260.0 && oy > v.y - 170.0;
+        // never onto a platform about to drop
+        let target_ok = platform_at(w, ox, oy).is_none_or(|k| !platform_unsafe(w, k));
+        let jump_up = oy < v.y - 40.0 && dx.abs() < 260.0 && oy > v.y - 170.0 && target_ok;
         let drop = oy > v.y + 40.0 && !v.on_deck;
         if jump_up {
             let mut up = dir_buttons(toward);
@@ -945,6 +977,24 @@ fn item_moves(w: &World, i: usize, v: &View, out: Buttons, [ox, oy]: [f32; 2]) -
         .min_by(|a, b| (a.pos[0] - v.x).abs().total_cmp(&(b.pos[0] - v.x).abs()))?;
     let dir = (target.pos[0] - v.x).signum();
     Some(with_dirs(out, dir_buttons(dir)))
+}
+
+/// The platform a body at `(x, y)` stands on (stage units), if any.
+fn platform_at(w: &World, x: f32, y: f32) -> Option<usize> {
+    w.stage
+        .platforms
+        .iter()
+        .position(|pl| !pl.gone && (pl.y - y).abs() < 1.0 && x >= pl.x1 && x <= pl.x2)
+}
+
+/// Platform `k` drops soon (or is gone).
+fn platform_unsafe(w: &World, k: usize) -> bool {
+    use crate::hazards::DropPhase;
+    w.stage
+        .motions
+        .iter()
+        .filter(|m| m.platform == k)
+        .any(|m| !matches!(m.drop_phase(w.hazard_t), DropPhase::Solid))
 }
 
 /// Cancel the running move into `state` with control, killing outward drift.
@@ -1362,6 +1412,7 @@ mod tests {
             x1: -60.0,
             x2: 60.0,
             y: -80.0,
+            ..Default::default()
         });
         place(&mut w, 0, -140.0, 0.0, 1.0);
         w.players[0].ai_level = 0;
@@ -1405,6 +1456,7 @@ mod tests {
             x1: 100.0,
             x2: 200.0,
             y: -80.0,
+            ..Default::default()
         });
         let g = 0.44;
         assert!(lands(&w, [0.0, 0.0], [0.0, 0.0], g, 10, 100), "standing");

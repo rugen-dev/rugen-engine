@@ -69,6 +69,8 @@ fast_fall = 1
 ledge = 1
 ; pickups (a throwable, a heal, a power boost) every 10-20 s
 items = 1
+; a gust every 40 s for 4 s, 0.4 units a tick, right then left
+wind = 40, 4, 0.4
 
 [Platform]
 x = -540, -400
@@ -101,10 +103,15 @@ y = -160
 [Platform]
 x = -230, -90
 y = -240
+; slides 120 units left and back
+path = -120, 0
+speed = 0.8
 
 [Platform]
 x = 90, 230
 y = -240
+; drops for 5 s every 20 s (3 s of warning)
+drop = 20, 5
 
 [Music]
 bgmusic =
@@ -184,6 +191,8 @@ type = normal
 spriteno = 0, 1
 start = -230, -50
 delta = 1, 1
+; follows the moving platform (8th [Platform])
+platform = 8
 tile = 4, 0
 
 [BG platform top 160]
@@ -191,4 +200,6 @@ type = normal
 spriteno = 0, 1
 start = 90, -50
 delta = 1, 1
+; falls with the dropping platform (9th [Platform])
+platform = 9
 tile = 4, 0

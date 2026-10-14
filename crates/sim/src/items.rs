@@ -140,7 +140,7 @@ fn surfaces(w: &World) -> Vec<(i32, f32, f32, f32)> {
         out.push((-1, l + 60.0, r - 60.0, 0.0));
     }
     for (k, pl) in w.stage.platforms.iter().enumerate() {
-        if pl.x2 - pl.x1 > 40.0 {
+        if pl.x2 - pl.x1 > 40.0 && !pl.gone {
             out.push((k as i32, pl.x1 + 15.0, pl.x2 - 15.0, pl.y));
         }
     }
@@ -152,7 +152,11 @@ fn surface_y(w: &World, surface: i32) -> Option<f32> {
     if surface < 0 {
         Some(0.0)
     } else {
-        w.stage.platforms.get(surface as usize).map(|p| p.y)
+        w.stage
+            .platforms
+            .get(surface as usize)
+            .filter(|p| !p.gone)
+            .map(|p| p.y)
     }
 }
 
@@ -434,7 +438,13 @@ impl World {
         } else if y <= 0.5 {
             best = Some((-1, 0.0));
         }
-        for (k, pl) in self.stage.platforms.iter().enumerate() {
+        for (k, pl) in self
+            .stage
+            .platforms
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.gone)
+        {
             if x >= pl.x1 && x <= pl.x2 && pl.y >= y - 0.5 && best.is_none_or(|b| pl.y < b.1) {
                 best = Some((k as i32, pl.y));
             }
@@ -538,6 +548,7 @@ mod tests {
                 x1: -80.0,
                 x2: 80.0,
                 y: -80.0,
+                ..Default::default()
             }],
             left_bound: -2000.0,
             right_bound: 2000.0,

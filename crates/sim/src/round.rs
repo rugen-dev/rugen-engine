@@ -205,6 +205,7 @@ impl World {
         self.explods.clear();
         self.projs.clear();
         self.reset_items();
+        self.reset_hazards();
         self.pausetime = 0;
         self.supertime = 0;
         self.pausetime_buffer = 0;
