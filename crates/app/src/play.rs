@@ -3580,6 +3580,105 @@ mod tests {
         assert_eq!(w.players[0].life, 1);
     }
 
+    /// Training LIFE REFILL: the hit that would KO leaves 1 life, the round
+    /// goes on and the life comes back once the combo ends; the replay plays
+    /// it back the same. Without it the same hit KOs.
+    #[test]
+    fn training_life_refill_prevents_the_ko() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = base.join("reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = root.join("data");
+        let cfg = Config::default();
+        let setup = FightSetup {
+            life: None,
+            p1: kfm.clone(),
+            p2: kfm,
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: Some(crate::game::Mode::Training),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: None,
+            teams: None,
+            run: None,
+            seed: Some(9),
+        };
+        let mut audio = None;
+        // P1 walks in and jabs; the first time P2 is hit, its life drops to
+        // 1 and the next hit's damage is pending (the rest of a combo)
+        let fight = |refill: bool, audio: &mut Option<Audio>| {
+            let mut m = Match::load(&setup, &motif, &data, &cfg).expect("KFM match");
+            let mut t = crate::training::Training::new(Default::default());
+            t.cfg.life_refill = refill;
+            m.training = Some(t);
+            m.record = Some(crate::replay::Replay::new(
+                &setup,
+                m.world.fighter_size,
+                m.world.arena_ai,
+                m.world.round.config.round_time,
+                m.world.seed(),
+                m.world.life,
+            ));
+            let mut hit = false;
+            let mut ko = false;
+            for f in 0..700 {
+                // one combo: P1 stops once it landed
+                let b = Buttons {
+                    r: !hit && f % 30 < 20,
+                    x: !hit && f % 30 == 25,
+                    ..Default::default()
+                };
+                m.tick([b, Buttons::default()], audio);
+                let p = &mut m.world.players[1];
+                if !hit && p.move_type == rugen_cns::state::MoveType::H {
+                    hit = true;
+                    p.life = 1;
+                    p.ghv.damage = 50;
+                }
+                ko |= m.world.players[1].ko;
+            }
+            assert!(hit, "P1's jab reached P2");
+            (m, ko)
+        };
+        let (off, ko) = fight(false, &mut audio);
+        assert!(ko, "no refill: the hit KOs");
+        assert!(!off.world.players[1].no_ko);
+        let (mut m, ko) = fight(true, &mut audio);
+        assert!(!ko, "LIFE REFILL: never KO'd");
+        let p2 = &m.world.players[1];
+        assert!(p2.no_ko);
+        assert_eq!(p2.life, p2.life_max, "refilled once the combo ended");
+        assert_eq!(m.world.round.round_no, 1);
+        assert_eq!(m.world.round.finish, rugen_sim::round::Finish::NotYet);
+        let want = m.world.checksum();
+        let rec = m.record.take().expect("recorded");
+        let mut p = Match::load(&rec.setup(), &motif, &data, &cfg).expect("replay");
+        p.edit_plan = rec.edits.clone();
+        let n = rec.inputs.len();
+        p.playback = Some((rec.inputs, 0));
+        let mut hit = false;
+        for _ in 0..n {
+            p.tick([Buttons::default(); 2], &mut audio);
+            // the replay holds the inputs and edits, not the test's poke
+            let q = &mut p.world.players[1];
+            if !hit && q.move_type == rugen_cns::state::MoveType::H {
+                hit = true;
+                q.life = 1;
+                q.ghv.damage = 50;
+            }
+        }
+        assert!(p.world.players[1].no_ko);
+        assert_eq!(p.world.checksum(), want, "the replay plays the same match");
+    }
+
     /// Training LESSONS stop the round clock through the training edits; a
     /// training replay records them and plays the match back exactly.
     #[test]

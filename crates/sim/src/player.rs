@@ -202,6 +202,10 @@ pub struct Player {
     pub p1facing: f32,
     pub counter_hit: bool,
     pub ko: bool,
+    /// Training's LIFE REFILL: life never goes below 1, so this fighter
+    /// cannot be KO'd. Set only by the app's training edits between steps
+    /// (never in other modes or online); off by default.
+    pub no_ko: bool,
     pub bind: Option<Bind>,
     pub pause_move_time: i32,
     pub super_move_time: i32,
@@ -482,6 +486,7 @@ impl Player {
             tag_press: false,
             broken: false,
             loop_warned: false,
+            no_ko: false,
             pctype: ProjContact::None,
             pctime: -1,
             pcid: 0,
@@ -505,6 +510,11 @@ impl Player {
 
     pub fn alive(&self) -> bool {
         !self.ko
+    }
+    /// The lowest life damage can leave: 0 when the blow may kill, else 1;
+    /// always 1 under Training's [`Player::no_ko`].
+    pub fn life_floor(&self, kill: bool) -> i32 {
+        if kill && !self.no_ko { 0 } else { 1 }
     }
     pub fn is_helper(&self) -> bool {
         self.helper_index > 0

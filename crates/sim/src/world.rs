@@ -2186,7 +2186,7 @@ impl World {
         if p.ghv.damage != 0 {
             if p.move_type == MoveType::H {
                 let d = p.ghv.damage;
-                p.life = (p.life - d).max(0);
+                p.life = (p.life - d).max(p.life_floor(true));
             }
             p.ghv.damage = 0;
         }
@@ -2458,7 +2458,7 @@ impl World {
                     let d = p.ghv.fall_damage;
                     p.ghv.fall_damage = 0;
                     let kill = p.ghv.fall_kill;
-                    p.life = (p.life - d).max(if kill { 0 } else { 1 });
+                    p.life = (p.life - d).max(p.life_floor(kill));
                 }
             }
             Sctrl::HitAdd { value } => {
@@ -2516,7 +2516,7 @@ impl World {
                         .life
                         .saturating_add(d)
                         .min(p.life_max)
-                        .max(if kill { 0 } else { 1 });
+                        .max(p.life_floor(kill));
                 }
             }
             Sctrl::TargetPowerAdd { value, id } => {
@@ -3311,12 +3311,12 @@ impl World {
                     .life
                     .saturating_add(v)
                     .min(p.life_max)
-                    .max(if kill { 0 } else { 1 });
+                    .max(p.life_floor(kill));
             }
             Sctrl::LifeSet { value } => {
                 let v = self.eval(i, value).to_i();
                 let p = &mut self.players[i];
-                p.life = v.clamp(0, p.life_max);
+                p.life = v.min(p.life_max).max(p.life_floor(true));
             }
             Sctrl::Gravity => {
                 let y = self.data[self.players[i].data]
@@ -5729,6 +5729,38 @@ mod tests {
         assert!(w.round.match_over, "two wins end the match");
         assert_eq!(w.round.wins, [2, 0]);
         assert!(w.events.iter().any(|e| matches!(e, Event::MatchOver(0))) || w.round.match_over);
+    }
+
+    /// Training's LIFE REFILL `no_ko`: the blow that would KO leaves 1
+    /// life and the round goes on; LifeSet / LifeAdd cannot reach 0 either.
+    #[test]
+    fn no_ko_keeps_one_life() {
+        let Some(mut w) = world() else { return };
+        let mut waited = 0;
+        while w.round.round_state() != 2 && waited < 1200 {
+            run(&mut w, 1, Buttons::default());
+            waited += 1;
+        }
+        w.players[1].no_ko = true;
+        w.players[1].life = 1;
+        walk_until_close(&mut w);
+        run(
+            &mut w,
+            1,
+            Buttons {
+                x: true,
+                ..Default::default()
+            },
+        );
+        run(&mut w, 30, Buttons::default());
+        assert_eq!(w.players[1].life, 1, "the punch left 1 life");
+        assert!(!w.players[1].ko);
+        assert_eq!(w.round.finish, Finish::NotYet);
+        assert_eq!(w.round.round_state(), 2, "still fighting");
+        assert_eq!(w.players[1].life_floor(true), 1);
+        w.players[1].no_ko = false;
+        assert_eq!(w.players[1].life_floor(true), 0);
+        assert_eq!(w.players[1].life_floor(false), 1);
     }
 
     #[test]

@@ -288,7 +288,8 @@ themes, deck profile checked at 1280x800.
   still lasts the session.
 - [x] **Training life / power refill.** (89ab52e) LIFE refill (off / after combo) and
   POWER (normal / always full) for both fighters; recorded in Training
-  replays, never online.
+  replays, never online. LIFE REFILL also prevents the KO (sim
+  `Player::no_ko`: life stays at least 1 during the combo).
 - [x] **VS against the CPU.** (29d2bee) A HUMAN / CPU toggle per side on the team
   mode step (X or a click); a CPU side's fighters are picked by the other
   cursor and played at COMPUTER LEVEL, teams too; CPU on the VS screen

@@ -214,7 +214,8 @@ pub struct Edits {
     /// No round clock (the LESSONS run).
     pub no_clock: bool,
     /// Both fighters get their life back once they are out of a hit or
-    /// guard state (a combo ended).
+    /// guard state (a combo ended), and cannot be KO'd meanwhile (the sim's
+    /// `Player::no_ko`: life stays at least 1).
     pub life: bool,
     /// Both fighters' power stays full.
     pub power: bool,
@@ -226,15 +227,15 @@ impl Edits {
         if self.no_clock && world.round.time_left >= 0 {
             world.round.time_left = -1;
         }
-        if !self.life && !self.power {
-            return;
-        }
         let fighting = world.round.round_state() == 2;
         for p in world
             .players
             .iter_mut()
             .filter(|p| p.helper_index == 0 && !p.removed)
         {
+            // LIFE REFILL also keeps the fighter from being KO'd: the sim
+            // leaves it at least 1 life during the combo
+            p.no_ko = self.life;
             if self.power {
                 p.power = p.power_max;
             }
