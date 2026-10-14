@@ -255,8 +255,13 @@ pub struct UiScreen {
     pub dirty: bool,
     profile: Profile,
     news: Value,
-    /// Installed UI themes for the options row.
-    themes: Vec<String>,
+    /// Installed UI themes for the INTERFACE cards.
+    themes: Vec<crate::themes::Card>,
+    /// The player's `themes/` (OPEN THEMES FOLDER).
+    themes_dir: PathBuf,
+    /// A user theme's screen that failed to load on a live reload: the
+    /// last good one stays, this strip says why.
+    theme_error: Option<String>,
     window: (u32, u32),
     mouse_px: Option<(f32, f32)>,
     pending: Option<Transition>,
@@ -517,7 +522,6 @@ struct SettingsPage {
     /// Focus key seen last tick (help line and tab follow it).
     last_focus: Option<String>,
     controls: Option<crate::settings::Controls>,
-    root: PathBuf,
     ticks: u64,
     /// The edits differ from rugen.toml (the host compares every tick).
     unsaved: bool,
@@ -539,6 +543,9 @@ pub enum SaveRequest {
     Save,
     Discard,
 }
+
+/// Theme cards per row on the INTERFACE tab (`themes` grid `columns`).
+const THEME_COLUMNS: usize = 4;
 
 /// Ticks the SAVED toast stays up.
 const SAVED_TOAST: u32 = 120;
@@ -646,6 +653,41 @@ impl UiScreen {
     /// Buttons held this tick (before [`tick`](Self::tick)).
     pub fn set_held(&mut self, held: [Buttons; 2]) {
         self.held = held;
+    }
+
+    /// A user theme's files changed: read this screen's TOML again and drop
+    /// the cached images, keeping the focus and the screen's state. A TOML
+    /// that does not parse keeps the screen as it was and shows the error.
+    pub fn reload_theme(
+        &mut self,
+        r: Option<&mut Renderer>,
+        sys: &SystemData,
+        lib: &rugen_content::Library,
+    ) {
+        let rel = format!("ui/{}", Self::file(self.kind));
+        let parsed = motif_file(&self.motif, &rel)
+            .ok_or_else(|| format!("{rel}: missing"))
+            .and_then(|p| std::fs::read_to_string(&p).map_err(|e| format!("{rel}: {e}")))
+            .and_then(|t| ScreenDef::parse(&t).map_err(|e| format!("{rel}: {e}")));
+        match parsed {
+            Ok(def) => {
+                if let Some(r) = r {
+                    self.release_gpu(r);
+                }
+                self.ui.replace_def(def);
+                if self.roster.as_ref().is_some_and(Roster::dual) {
+                    self.ui.set_dual(true);
+                }
+                self.themes = crate::themes::cards(lib);
+                self.theme_error = None;
+                self.refresh_data(sys);
+                log::info!("theme: {rel} reloaded");
+            }
+            Err(e) => {
+                log::warn!("theme: {e}");
+                self.theme_error = Some(e);
+            }
+        }
     }
 
     /// Free the GPU textures this screen uploaded (it is being replaced);
@@ -926,7 +968,9 @@ impl UiScreen {
             config: config.clone(),
             dirty: false,
             profile: Profile::load(root),
-            themes: lib.themes(),
+            themes: crate::themes::cards(lib),
+            themes_dir: lib.themes_dir(),
+            theme_error: None,
             news,
             window: (1280, 720),
             mouse_px: None,
@@ -948,7 +992,6 @@ impl UiScreen {
             result: None,
             mem: HashMap::new(),
             settings: SettingsPage {
-                root: lib.assets.clone(),
                 controls: (kind == UiKind::Controls).then(|| crate::settings::Controls::new(0)),
                 ..Default::default()
             },
@@ -1319,7 +1362,6 @@ impl UiScreen {
                         self.settings.tab,
                         &self.config,
                         &self.themes,
-                        &self.settings.root,
                         self.ui.focused(),
                     ),
                 };
@@ -1913,6 +1955,12 @@ impl UiScreen {
                 self.ui.set_focus(Some(first));
                 None
             }
+            "themes" => {
+                if arg == "open" {
+                    crate::themes::open_folder(&self.themes_dir);
+                }
+                None
+            }
             "theme" => {
                 if !arg.is_empty() && !self.config.video.theme.eq_ignore_ascii_case(arg) {
                     self.config.video.theme = arg.to_string();
@@ -2038,7 +2086,13 @@ impl UiScreen {
         }
         if self.kind == UiKind::Options && (nav.up || nav.right) {
             let f = self.ui.focused().unwrap_or("").to_string();
-            if nav.up && (f == "rows[0].row" || f.starts_with("themes[")) {
+            // the theme cards sit in rows of four
+            let top_card = f
+                .strip_prefix("themes[")
+                .and_then(|r| r.split(']').next())
+                .and_then(|i| i.parse::<usize>().ok())
+                .is_some_and(|i| i < THEME_COLUMNS);
+            if nav.up && (f == "rows[0].row" || top_card) {
                 // up from the top of a tab goes back to the tab column
                 self.ui
                     .set_focus(Some(&format!("tabs[{}].tab", self.settings.tab)));
@@ -2282,6 +2336,9 @@ impl UiScreen {
                 stages: self.stages.as_mut(),
             };
             self.ui.draw(&mut host);
+            if let Some(e) = &self.theme_error {
+                theme_error_strip(&mut host, e, vw);
+            }
         }
         let bg = self.ui.background();
         (
@@ -2293,6 +2350,21 @@ impl UiScreen {
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],
         )
     }
+}
+
+/// A user theme's broken file, in a strip over the top of the screen.
+pub(crate) fn theme_error_strip(p: &mut dyn rugen_ui::Painter, error: &str, width: f32) {
+    let first = error.lines().next().unwrap_or(error);
+    let line = format!("THEME ERROR · {first}");
+    let rect = rugen_ui::Rect {
+        x: 0.0,
+        y: 0.0,
+        w: width,
+        h: 34.0,
+    };
+    p.draw_rect(rect, [0.62, 0.05, 0.08, 0.94], 0.0, None);
+    let h = p.text_height(2, 1.0);
+    p.draw_text(2, &line, 16.0, 17.0 + h / 2.0, 0, 1, 1.0, 1.0, Some(rect));
 }
 
 /// Buttons under the result screen.
@@ -2319,18 +2391,17 @@ fn result_menu(r: &ResultInfo) -> Vec<Value> {
     menu
 }
 
-/// Decode a WebP or PNG file to straight RGBA.
-/// Resolve a relative screenpack file through the theme → flat `motif/` chain.
+/// Resolve a relative screenpack file through the theme's chain
+/// ([`crate::themes::chain`]: a bundled theme, then the flat `motif/`; a
+/// user theme, its base, then the bundled `motif/`).
 pub fn motif_file(motif: &Path, rel: &str) -> Option<std::path::PathBuf> {
-    let mut dirs = vec![motif.to_path_buf()];
-    if let Some(parent) = motif.parent()
-        && parent.file_name().is_some_and(|n| n == "themes")
-        && let Some(flat) = parent.parent()
-    {
-        dirs.push(flat.to_path_buf());
-    }
-    dirs.into_iter().map(|d| d.join(rel)).find(|p| p.exists())
+    crate::themes::chain(motif)
+        .into_iter()
+        .map(|d| d.join(rel))
+        .find(|p| p.exists())
 }
+
+/// Decode a WebP or PNG file to straight RGBA.
 
 pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let ext = path

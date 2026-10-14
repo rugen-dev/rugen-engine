@@ -269,7 +269,7 @@ impl Library {
             .and_then(|exe| Some(exe.parent()?.parent()?.join("share/rugen")))
             .filter(|s| s.join("motif").is_dir());
         if let (Some(assets), Some(root)) = (share, user_data_dir()) {
-            for d in ["chars", "stages"] {
+            for d in ["chars", "stages", "themes"] {
                 let _ = fs::create_dir_all(root.join(d));
             }
             return Self {
@@ -326,9 +326,10 @@ impl Library {
         self.data_dir()
     }
 
-    /// Motif directory for a UI theme: `<root>/motif/themes/<theme>` when it
-    /// exists (files missing there fall back to the flat `motif/`, then
-    /// `data/`), else [`Library::motif_dir`].
+    /// Motif directory for a UI theme: a bundled `motif/themes/<theme>`
+    /// when it exists (files missing there fall back to the flat `motif/`,
+    /// then `data/`), else the player's own `themes/<theme>`, else
+    /// [`Library::motif_dir`].
     pub fn motif_dir_for(&self, theme: &str) -> PathBuf {
         let theme = theme.trim();
         if !theme.is_empty() {
@@ -336,13 +337,41 @@ impl Library {
             if d.join("system.def").exists() || d.join("ui").is_dir() {
                 return d;
             }
+            if let Some(d) = self.user_theme_dir(theme) {
+                return d;
+            }
         }
         self.motif_dir()
     }
 
-    /// Installed UI themes: folders under `motif/themes/` (sorted) plus
-    /// `classic` for the flat `motif/` when it has its own screens.
-    pub fn themes(&self) -> Vec<String> {
+    /// The player's own themes: `themes/` next to `chars/`.
+    pub fn themes_dir(&self) -> PathBuf {
+        self.root.join("themes")
+    }
+
+    /// `themes/<id>` when it is a user theme: a plain folder name (no path
+    /// separators, not hidden) holding a `system.def`, and not the name of
+    /// a bundled theme (those always win).
+    pub fn user_theme_dir(&self, id: &str) -> Option<PathBuf> {
+        let id = id.trim();
+        let plain = !id.is_empty()
+            && !id.starts_with('.')
+            && !id.contains(['/', '\\', ':'])
+            && !id.eq_ignore_ascii_case("classic");
+        if !plain
+            || self
+                .bundled_themes()
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(id))
+        {
+            return None;
+        }
+        let d = self.themes_dir().join(id);
+        d.join("system.def").is_file().then_some(d)
+    }
+
+    /// Bundled themes: folders under `motif/themes/` (sorted).
+    fn bundled_themes(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Ok(rd) = fs::read_dir(self.assets.join("motif").join("themes")) {
             for e in rd.flatten() {
@@ -353,9 +382,37 @@ impl Library {
             }
         }
         out.sort();
+        out
+    }
+
+    /// The player's themes: folders of `themes/` with a `system.def`
+    /// (sorted, case-insensitively); a folder named like a bundled theme is
+    /// skipped.
+    pub fn user_themes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Ok(rd) = fs::read_dir(self.themes_dir()) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if self.user_theme_dir(&name).is_some() {
+                    out.push(name);
+                } else if e.path().join("system.def").is_file() {
+                    log::warn!("themes/{name}: named like a bundled theme, skipped");
+                }
+            }
+        }
+        out.sort_by_key(|n| n.to_lowercase());
+        out
+    }
+
+    /// Installed UI themes: the bundled folders under `motif/themes/`
+    /// (sorted), `classic` for the flat `motif/` when it has its own
+    /// screens, then the player's own [`user_themes`](Self::user_themes).
+    pub fn themes(&self) -> Vec<String> {
+        let mut out = self.bundled_themes();
         if self.assets.join("motif").join("ui").is_dir() {
             out.push("classic".into());
         }
+        out.extend(self.user_themes());
         out
     }
     pub fn cache_dir(&self) -> PathBuf {

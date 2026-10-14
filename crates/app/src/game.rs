@@ -320,6 +320,8 @@ pub struct Shell {
         bool,
     )>,
     motif_dir: PathBuf,
+    /// The active user theme's files, watched for live reload.
+    theme_watch: Option<crate::themes::Watch>,
     gpu: Option<Gpu>,
     input: InputState,
     prev: [Buttons; 2],
@@ -408,6 +410,7 @@ impl Shell {
     ) -> Self {
         let mut lib = lib;
         lib.keep_originals = config.content.keep_originals;
+        crate::themes::init(&lib);
         // convert what is new in chars/ and stages/ while the title shows
         // (menus that need an entry first convert it themselves)
         if !quick {
@@ -449,6 +452,8 @@ impl Shell {
             config,
             lib,
             data_dir,
+            theme_watch: crate::themes::is_user(&motif_dir)
+                .then(|| crate::themes::Watch::new(&motif_dir)),
             motif_dir,
             gpu: None,
             prev: [Buttons::default(); 2],
@@ -822,7 +827,32 @@ impl Shell {
             Ok(s) => self.system = Some(s),
             Err(e) => log::warn!("system.def not loaded: {e:#}"),
         }
+        self.theme_watch = crate::themes::is_user(&self.motif_dir)
+            .then(|| crate::themes::Watch::new(&self.motif_dir));
         log::info!("ui theme: {}", self.motif_dir.display());
+    }
+
+    /// A file of the active user theme was saved: reload `system.def` (fonts,
+    /// sprites) and the screens on display in place.
+    fn live_reload_theme(&mut self) {
+        log::info!("theme: {} changed, reloading", self.motif_dir.display());
+        match SystemData::load(&self.motif_dir, &self.data_dir) {
+            Ok(s) => self.system = Some(s),
+            Err(e) => log::warn!("theme: system.def not loaded: {e:#}"),
+        }
+        let Some(sys) = self.system.as_ref() else {
+            return;
+        };
+        let mut r = self.gpu.as_mut().map(|g| &mut g.renderer);
+        if let Screen::Ui(u) = &mut self.screen {
+            u.reload_theme(r.as_deref_mut(), sys, &self.lib);
+        }
+        if let Some(p) = self.pause.as_mut() {
+            p.reload_theme(r.as_deref_mut(), sys, &self.lib);
+        }
+        if let Screen::Online(o) = &mut self.screen {
+            o.reload_theme(r);
+        }
     }
 
     /// system.def `[Music]`: `<screen>.bgm`, `<screen>.bgm.volume`, `<screen>.bgm.loop`.
@@ -1797,6 +1827,13 @@ impl Shell {
     fn tick_inner(&mut self) {
         if self.fade > 0.0 {
             self.fade -= 1.0 / 12.0;
+        }
+        if self
+            .theme_watch
+            .as_mut()
+            .is_some_and(crate::themes::Watch::poll)
+        {
+            self.live_reload_theme();
         }
         self.input.poll();
         self.key_ticks += 1;

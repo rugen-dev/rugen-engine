@@ -14,7 +14,9 @@ Font banks used on paper: 9 = ink, 10 = red, 11 = paper (for text on slabs),
 
 `options.toml` binds to `tabs[]` (`id label active ext press`), `tab`
 (`id title subtitle index`), `rows[]`, `show_rows`, `themes[]` (`id label
-preview has_preview active press`), `show_themes`, `help` (sentence for the
+name sub user is_add plain show_name preview has_preview active press`: the
+bundled themes, the player's own from `themes/` (`user`), then the OPEN
+THEMES FOLDER card, `is_add`, pressing `themes:open`), `show_themes`, `help` (sentence for the
 focused row) and `keys` (`left right left_glyph right_glyph`: P1's change
 keys). A row has `id label help widget` plus, per widget: `is_pips max on`,
 `is_choice options sel`, `is_slider frac`, `is_text`, `is_link`, and `text`

@@ -365,3 +365,36 @@ fn old_caches_are_removed_once_converted() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// User themes: any folder of `themes/` with a `system.def` is a theme,
+/// listed after the bundled ones; bundled names and odd ids are refused.
+#[test]
+fn user_themes_are_listed_after_the_bundled_ones() {
+    let root = tmp("themes");
+    let lib = Library::portable(root.clone());
+    let bundled = root.join("motif/themes/ink");
+    fs::create_dir_all(bundled.join("ui")).unwrap();
+    fs::write(bundled.join("system.def"), "[Files]\n").unwrap();
+    for (name, def) in [
+        ("neon", true),
+        ("Amber", true),
+        ("notes", false),
+        ("ink", true),
+    ] {
+        let d = root.join("themes").join(name);
+        fs::create_dir_all(&d).unwrap();
+        if def {
+            fs::write(d.join("system.def"), "[Files]\n").unwrap();
+        }
+    }
+    assert_eq!(lib.user_themes(), ["Amber", "neon"]);
+    assert_eq!(lib.themes(), ["ink", "Amber", "neon"]);
+    assert_eq!(lib.motif_dir_for("neon"), root.join("themes/neon"));
+    // a bundled theme always wins over a folder of the same name
+    assert_eq!(lib.motif_dir_for("ink"), bundled);
+    assert_eq!(lib.user_theme_dir("ink"), None);
+    for bad in ["notes", "../neon", "neon/..", ".", "", "classic"] {
+        assert_eq!(lib.user_theme_dir(bad), None, "{bad:?}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}

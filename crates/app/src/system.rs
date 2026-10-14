@@ -110,7 +110,7 @@ pub struct SystemData {
 impl SystemData {
     /// `motif` holds the screenpack; files missing there come from `data_dir`.
     pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
-        let chain = rugen_sim::chardata::motif_chain(motif, data_dir);
+        let chain = crate::themes::screenpack_chain(motif, data_dir);
         let dirs: Vec<&Path> = chain.iter().map(std::path::PathBuf::as_path).collect();
         let def_path = rugen_sim::chardata::resolve_in(&dirs, "system.def")?;
         let def = Def::open(&def_path).with_context(|| def_path.display().to_string())?;

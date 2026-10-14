@@ -418,7 +418,7 @@ enter_time = 14
         when = "focus"
         visible = "item.adjustable"
 
-  # INTERFACE: theme picker
+  # INTERFACE: theme picker (bundled, the player's own, OPEN THEMES FOLDER)
   [[node.children]]
   kind = "text"
   text = "UI THEME"
@@ -429,13 +429,27 @@ enter_time = 14
   visible = "show_themes"
 
   [[node.children]]
-  kind = "hbox"
+  kind = "text"
+  text = "ADD YOUR OWN IN THEMES/ NEXT TO CHARS/"
+  anchor = "tr"
+  x = 26
+  y = 74
+  font = 2
+  bank = 17
+  visible = "show_themes"
+
+  [[node.children]]
+  kind = "grid"
   id = "themes"
   x = 30
   y = 100
   w = 840
-  h = 300
-  gap = 40
+  h = 308
+  columns = 4
+  cell_w = 198
+  cell_h = 146
+  gap = 16
+  bleed = 12
   items = "themes"
   group = "themes"
   visible = "show_themes"
@@ -443,65 +457,93 @@ enter_time = 14
     [[node.children.children]]
     kind = "button"
     id = "card"
-    w = 392
-    h = 286
+    w = 198
+    h = 146
     on_press = "{item.press}"
 
       [[node.children.children.children]]
       kind = "panel"
       image = "ui/sheet9_lit.webp"
       nine = [12, 12, 12, 12]
-      w = 392
-      h = 230
+      w = 198
+      h = 110
       when = "focus"
 
       [[node.children.children.children]]
       kind = "panel"
       image = "ui/lacq9.webp"
       nine = [12, 12, 12, 12]
-      w = 392
-      h = 230
+      w = 198
+      h = 110
       when = "idle"
 
       [[node.children.children.children]]
       kind = "image"
       image = "{item.preview}"
-      x = 10
-      y = 12
-      w = 372
-      h = 206
+      fit = "contain"
+      x = 6
+      y = 6
+      w = 186
+      h = 98
       visible = "item.has_preview"
 
       [[node.children.children.children]]
-      kind = "panel"
-      y = 238
-      w = 392
-      h = 44
-      color = [0.976, 0.945, 0.871, 1.0]
-      when = "focus"
-
-      [[node.children.children.children]]
-      kind = "panel"
-      y = 238
-      w = 8
-      h = 44
-      color = [0.706, 0.188, 0.102, 1.0]
-      when = "focus"
+      kind = "text"
+      text = "{item.name}"
+      x = 6
+      y = 6
+      w = 186
+      h = 98
+      align = "center"
+      font = 6
+      bank = 14
+      visible = "item.show_name"
+      when = "idle"
 
       [[node.children.children.children]]
       kind = "text"
-      text = "{item.label}"
-      x = 22
-      y = 244
+      text = "{item.name}"
+      x = 6
+      y = 6
+      w = 186
+      h = 98
+      align = "center"
       font = 6
       bank = 12
+      visible = "item.show_name"
+      when = "focus"
+
+      # OPEN THEMES FOLDER: an empty frame with a plus
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 6
+      y = 6
+      w = 186
+      h = 98
+      color = [0.925, 0.878, 0.776, 1.0]
+      outline = [0.545, 0.427, 0.302, 1.0]
+      outline_w = 3
+      visible = "item.is_add"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "+"
+      x = 6
+      y = 6
+      w = 186
+      h = 98
+      align = "center"
+      font = 6
+      bank = 12
+      scale = 3
+      visible = "item.is_add"
 
       [[node.children.children.children]]
       kind = "panel"
-      x = 260
-      y = 244
-      w = 120
-      h = 32
+      x = 106
+      y = 12
+      w = 80
+      h = 22
       color = [0.706, 0.188, 0.102, 1.0]
       visible = "item.active"
 
@@ -509,34 +551,81 @@ enter_time = 14
         kind = "icon"
         glyph = "check"
         anchor = "left"
-        x = 12
-        w = 14
-        h = 14
+        x = 7
+        w = 10
+        h = 10
         color = [0.976, 0.945, 0.871, 1.0]
 
         [[node.children.children.children.children]]
         kind = "text"
         text = "ACTIVE"
         anchor = "left"
-        x = 36
+        x = 22
         font = 2
         bank = 14
 
       [[node.children.children.children]]
+      kind = "panel"
+      y = 112
+      w = 198
+      h = 34
+      color = [0.976, 0.945, 0.871, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      y = 112
+      w = 5
+      h = 34
+      color = [0.706, 0.188, 0.102, 1.0]
+      when = "focus"
+
+      [[node.children.children.children]]
       kind = "text"
-      text = "ENTER TO USE"
-      anchor = "tr"
+      text = "{item.label}"
       x = 12
-      y = 252
+      y = 113
+      w = 180
+      font = 2
+      bank = 12
+      ellipsis = true
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 12
+      y = 134
+      w = 7
+      h = 7
+      color = [0.102, 0.498, 0.216, 1.0]
+      visible = "item.user"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.sub}"
+      x = 12
+      y = 131
+      w = 180
       font = 2
       bank = 17
-      visible = "!item.active"
+      ellipsis = true
+      visible = "!item.user"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.sub}"
+      x = 24
+      y = 131
+      w = 168
+      font = 2
+      bank = 17
+      ellipsis = true
+      visible = "item.user"
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE - SAVE TO KEEP IT"
+  text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
   x = 30
-  y = 410
+  y = 418
   font = 2
   bank = 17
   visible = "show_themes"

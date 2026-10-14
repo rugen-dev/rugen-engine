@@ -694,12 +694,17 @@ impl Match {
             Some(NetMode::SyncTest) => Some(Netplay::synctest(7, &NetOptions::default())?),
             None => None,
         };
+        // round timings come from fight.def: a user theme's only offline
+        let sim_motif = crate::themes::sim_motif(
+            motif,
+            matches!(setup.net, Some(NetMode::P2P { .. } | NetMode::Relay { .. })),
+        );
         let spec = rugen_sim::headless::MatchSpec {
             p1: &setup.p1,
             p2: &setup.p2,
             stage: setup.stage.as_deref(),
             data_dir,
-            motif,
+            motif: &sim_motif,
             zoom: match_zoom(setup.net.as_ref(), &cfg.camera),
             movement,
             // a replay's recorded clock; offline: the options' round time;

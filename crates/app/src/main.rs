@@ -32,6 +32,7 @@
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
 //!   (play refuses `broken` characters unless --force)
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
+//! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
 //! rugen replay <file.json>                                      play back a recorded match
 //!   (quick play records to --record file.json, menu matches to replays/)
 //!
@@ -84,6 +85,7 @@ mod stagegen;
 mod stagesel;
 mod storyboard;
 mod system;
+mod themes;
 mod title;
 mod training;
 mod tutorial;
@@ -159,6 +161,7 @@ rugen check <char> [--root dir]                               report unsupported
 rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
   (play refuses `broken` characters unless --force)
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
+rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
 rugen replay <file.json>                                      play back a recorded match
   (quick play records to --record file.json, menu matches to replays/)
 
@@ -702,6 +705,29 @@ fn main() -> anyhow::Result<()> {
                 Some(r),
             )
             .run()
+        }
+        Some("theme") => {
+            let usage = "usage: rugen theme new <name> [--from ink|dojo] [--root dir]";
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            anyhow::ensure!(args.get(1).map(String::as_str) == Some("new"), "{usage}");
+            let name = args
+                .get(2)
+                .filter(|n| !n.starts_with("--"))
+                .ok_or_else(|| anyhow::anyhow!("{usage}"))?;
+            let lib = rugen_content::Library::discover(
+                opt("--root").as_deref().map(std::path::Path::new),
+            );
+            let from = opt("--from").unwrap_or_else(|| "ink".into());
+            let dir = themes::create(&lib, name, &from)?;
+            println!(
+                "{} (based on {from}): pick it in OPTIONS > INTERFACE, edit its files and save; the screen updates at once",
+                dir.display()
+            );
+            Ok(())
         }
         Some("storyboard") => {
             let path = args.get(1).ok_or_else(|| {

@@ -4,7 +4,6 @@
 //! the live test pad. The TOML only lays these out.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use rugen_sim::scale::FighterSize;
 use serde_json::{Value, json};
@@ -320,12 +319,66 @@ pub fn theme_label(id: &str) -> String {
     }
 }
 
+/// The INTERFACE theme cards: bundled themes first (in house order), then
+/// the player's own, then the card that opens the themes folder.
+fn theme_cards(themes: &[crate::themes::Card], c: &Config) -> Vec<Value> {
+    let rank = |t: &crate::themes::Card| match t.id.as_str() {
+        _ if t.user => 2,
+        "ink" => 0,
+        "dojo" => 1,
+        _ => 1,
+    };
+    let mut sorted: Vec<&crate::themes::Card> = themes.iter().collect();
+    sorted.sort_by_key(|t| rank(t));
+    let mut out: Vec<Value> = sorted
+        .into_iter()
+        .map(|t| {
+            let active = t.id.eq_ignore_ascii_case(c.video.theme.trim());
+            let preview = t
+                .preview
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            json!({
+                "id": t.id,
+                "label": if t.user { format!("{} (YOURS)", t.label) } else { t.label.clone() },
+                "name": t.label,
+                "sub": if t.user { "LIVE RELOAD ON" } else { "BUNDLED" },
+                "user": t.user,
+                "is_add": false,
+                "has_preview": !preview.is_empty(),
+                // a frame of its own (not active, not the folder card) /
+                // its name in the frame when it ships no preview
+                "plain": !active,
+                "show_name": preview.is_empty(),
+                "preview": preview,
+                "active": active,
+                "press": format!("theme:{}", t.id),
+            })
+        })
+        .collect();
+    out.push(json!({
+        "id": "",
+        "label": "OPEN THEMES FOLDER",
+        "name": "",
+        "sub": "ADD YOUR OWN",
+        "user": false,
+        "is_add": true,
+        "has_preview": false,
+        "plain": false,
+        "show_name": false,
+        "preview": "",
+        "active": false,
+        "press": "themes:open",
+    }));
+    out
+}
+
 /// Everything `options.toml` binds to.
 pub fn options_data(
     tab: usize,
     c: &Config,
-    themes: &[String],
-    root: &Path,
+    themes: &[crate::themes::Card],
     focused: Option<&str>,
 ) -> Value {
     let tab = tab.min(TABS.len() - 1);
@@ -344,34 +397,7 @@ pub fn options_data(
         .collect();
     let rows = rows(tab, c);
     let theme_cards: Vec<Value> = if tab == INTERFACE_TAB {
-        // bundled themes first, in house order
-        let rank = |t: &str| match t {
-            "ink" => 0,
-            "dojo" => 1,
-            _ => 2,
-        };
-        let mut sorted: Vec<&String> = themes.iter().filter(|t| t.as_str() != "classic").collect();
-        sorted.sort_by_key(|t| rank(t));
-        sorted
-            .into_iter()
-            .map(|t| {
-                let preview = root
-                    .join("motif")
-                    .join("themes")
-                    .join(t)
-                    .join("ui")
-                    .join("preview.webp");
-                let has = preview.exists();
-                json!({
-                    "id": t,
-                    "label": theme_label(t),
-                    "preview": if has { preview.display().to_string() } else { String::new() },
-                    "has_preview": has,
-                    "active": t.eq_ignore_ascii_case(c.video.theme.trim()),
-                    "press": format!("theme:{t}"),
-                })
-            })
-            .collect()
+        theme_cards(themes, c)
     } else {
         Vec::new()
     };
@@ -383,8 +409,20 @@ pub fn options_data(
     };
     let help = if let Some(i) = index("rows[") {
         rows.get(i).map_or("", |r| r.help).to_string()
-    } else if index("themes[").is_some() {
-        "Press enter to use this theme. It switches at once.".to_string()
+    } else if let Some(i) = index("themes[") {
+        match theme_cards.get(i) {
+            Some(t) if t["is_add"] == json!(true) => {
+                "Opens themes/ next to chars/. Any folder there \
+                with a system.def is a theme; rugen theme new <name> starts one."
+                    .to_string()
+            }
+            Some(t) if t["user"] == json!(true) => format!(
+                "Your theme in themes/{}. Press enter to use it; save one of its files and the \
+                 screen updates at once.",
+                t["id"].as_str().unwrap_or_default()
+            ),
+            _ => "Press enter to use this theme. It switches at once.".to_string(),
+        }
     } else if tab == CONTROLS_TAB {
         "Press enter to open the controls page: one row per action, presets and a live test pad."
             .to_string()
@@ -395,7 +433,7 @@ pub fn options_data(
             "video" => "Fullscreen, window size and the mouse.",
             "audio" => "Master and music volume.",
             "online" => "Input delay, direct connections and the server.",
-            "interface" => "Pick a theme for every screen.",
+            "interface" => "Pick a theme for every screen, or add your own.",
             _ => "",
         };
         format!("{inside} Up and down pick a category, right or enter goes into it.")
@@ -862,6 +900,42 @@ impl Controls {
 mod tests {
     use super::*;
 
+    /// INTERFACE: bundled themes first, the player's own after them (with
+    /// a live reload tag), then the OPEN THEMES FOLDER card.
+    #[test]
+    fn user_themes_get_cards_after_the_bundled_ones() {
+        use crate::themes::Card;
+        let card = |id: &str, user: bool| Card {
+            id: id.into(),
+            label: id.to_uppercase(),
+            user,
+            preview: None,
+        };
+        let mut c = Config::default();
+        c.video.theme = "neon".into();
+        let d = options_data(
+            INTERFACE_TAB,
+            &c,
+            &[card("neon", true), card("dojo", false), card("ink", false)],
+            Some("themes[2].card"),
+        );
+        let ids: Vec<&str> = d["themes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["ink", "dojo", "neon", ""]);
+        let neon = &d["themes"][2];
+        assert_eq!(neon["label"], "NEON (YOURS)");
+        assert_eq!(neon["sub"], "LIVE RELOAD ON");
+        assert_eq!(neon["active"], true);
+        assert_eq!(neon["show_name"], true, "no preview: its name in the frame");
+        assert_eq!(d["themes"][3]["is_add"], true);
+        assert_eq!(d["themes"][3]["press"], "themes:open");
+        assert!(d["help"].as_str().unwrap().contains("themes/neon"));
+    }
+
     #[test]
     fn conflicts_within_and_across_players() {
         let mut c = Config::default();
@@ -912,7 +986,7 @@ mod tests {
     fn tab_help_does_not_repeat_the_subtitle() {
         let c = Config::default();
         for (i, (_, _, subtitle)) in TABS.iter().enumerate() {
-            let d = options_data(i, &c, &[], Path::new("."), Some(&format!("tabs[{i}]")));
+            let d = options_data(i, &c, &[], Some(&format!("tabs[{i}]")));
             let help = d["help"].as_str().unwrap_or_default().to_string();
             assert!(!help.is_empty(), "tab {i}");
             assert!(!help.contains(subtitle), "tab {i}: {help}");
@@ -967,14 +1041,14 @@ mod tests {
         assert_eq!(c.game.round_time, 0, "clamped at the end");
         adjust(&mut c, "round_time", 1, true);
         assert_eq!(c.game.round_time, 30, "enter wraps");
-        let d = options_data(0, &c, &[], Path::new("."), Some("rows[6].row"));
+        let d = options_data(0, &c, &[], Some("rows[6].row"));
         assert!(
             d["help"]
                 .as_str()
                 .unwrap()
                 .starts_with("Normal: fighters already")
         );
-        let d = options_data(0, &c, &[], Path::new("."), Some("rows[7].row"));
+        let d = options_data(0, &c, &[], Some("rows[7].row"));
         assert_eq!(d["rows"][1]["sel"], 0);
         assert!(
             d["help"]

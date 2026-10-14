@@ -405,7 +405,7 @@ enter_time = 14
         when = "focus"
         visible = "item.adjustable"
 
-  # INTERFACE: theme picker
+  # INTERFACE: theme picker (bundled, the player's own, OPEN THEMES FOLDER)
   [[node.children]]
   kind = "text"
   text = "UI THEME"
@@ -416,13 +416,27 @@ enter_time = 14
   visible = "show_themes"
 
   [[node.children]]
-  kind = "hbox"
+  kind = "text"
+  text = "ADD YOUR OWN IN THEMES/ NEXT TO CHARS/"
+  anchor = "tr"
+  x = 24
+  y = 62
+  font = 2
+  bank = 9
+  visible = "show_themes"
+
+  [[node.children]]
+  kind = "grid"
   id = "themes"
   x = 28
-  y = 90
+  y = 88
   w = 840
-  h = 300
-  gap = 40
+  h = 304
+  columns = 4
+  cell_w = 198
+  cell_h = 144
+  gap = 16
+  bleed = 12
   items = "themes"
   group = "themes"
   visible = "show_themes"
@@ -430,104 +444,163 @@ enter_time = 14
     [[node.children.children]]
     kind = "button"
     id = "card"
-    w = 392
-    h = 272
+    w = 198
+    h = 144
     on_press = "{item.press}"
 
       [[node.children.children.children]]
       kind = "panel"
       image = "ui/panel9_red.webp"
       nine = [12, 12, 24, 24]
-      w = 392
-      h = 226
+      w = 198
+      h = 114
       visible = "item.active"
 
       [[node.children.children.children]]
       kind = "panel"
       image = "ui/panel9.webp"
       nine = [12, 12, 24, 24]
-      w = 392
-      h = 226
-      visible = "!item.active"
+      w = 198
+      h = 114
+      visible = "item.plain"
 
       [[node.children.children.children]]
       kind = "image"
       image = "{item.preview}"
+      fit = "contain"
       x = 4
       y = 4
-      w = 372
-      h = 206
+      w = 178
+      h = 98
       visible = "item.has_preview"
 
       [[node.children.children.children]]
-      kind = "image"
-      image = "ui/hatch_red.webp"
-      tile = true
-      y = 228
-      w = 380
-      h = 40
-      when = "focus"
-
-      [[node.children.children.children]]
-      kind = "icon"
-      glyph = "tri_right"
+      kind = "text"
+      text = "{item.name}"
       x = 4
-      y = 241
-      w = 14
-      h = 14
-      when = "focus"
+      y = 4
+      w = 178
+      h = 98
+      align = "center"
+      font = 1
+      bank = 10
+      scale = 2
+      visible = "item.show_name"
+
+      # OPEN THEMES FOLDER: an empty frame with a plus
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 182
+      h = 98
+      color = [0.953, 0.937, 0.894, 1.0]
+      outline = [0.55, 0.52, 0.47, 1.0]
+      outline_w = 3
+      visible = "item.is_add"
 
       [[node.children.children.children]]
       kind = "text"
-      text = "{item.label}"
-      x = 26
-      y = 240
+      text = "+"
+      x = 0
+      y = 0
+      w = 182
+      h = 98
+      align = "center"
       font = 1
       bank = 9
-      scale = 2
+      scale = 3
+      visible = "item.is_add"
 
       [[node.children.children.children]]
       kind = "panel"
-      x = 256
-      y = 232
-      w = 124
-      h = 32
+      x = 98
+      y = 10
+      w = 78
+      h = 22
       color = [0.878, 0.125, 0.125, 1.0]
-      border = 3
+      border = 2
       visible = "item.active"
 
         [[node.children.children.children.children]]
         kind = "icon"
         glyph = "check"
         anchor = "left"
-        x = 14
-        w = 14
-        h = 14
+        x = 7
+        w = 10
+        h = 10
         color = [1.0, 1.0, 1.0, 1.0]
 
         [[node.children.children.children.children]]
         kind = "text"
         text = "ACTIVE"
         anchor = "left"
-        x = 38
+        x = 22
         font = 2
         bank = 11
 
       [[node.children.children.children]]
+      kind = "image"
+      image = "ui/hatch_red.webp"
+      tile = true
+      y = 114
+      w = 184
+      h = 30
+      when = "focus"
+
+      [[node.children.children.children]]
+      kind = "icon"
+      glyph = "tri_right"
+      x = 2
+      y = 118
+      w = 10
+      h = 10
+      when = "focus"
+
+      [[node.children.children.children]]
       kind = "text"
-      text = "ENTER TO USE"
-      anchor = "tr"
-      x = 12
-      y = 242
+      text = "{item.label}"
+      x = 16
+      y = 116
+      w = 168
       font = 2
       bank = 9
-      visible = "!item.active"
+      ellipsis = true
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 16
+      y = 133
+      w = 7
+      h = 7
+      color = [0.102, 0.498, 0.216, 1.0]
+      visible = "item.user"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.sub}"
+      x = 16
+      y = 130
+      w = 168
+      font = 2
+      bank = 9
+      ellipsis = true
+      visible = "!item.user"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.sub}"
+      x = 28
+      y = 130
+      w = 156
+      font = 2
+      bank = 9
+      ellipsis = true
+      visible = "item.user"
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE - SAVE TO KEEP IT"
+  text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
   x = 28
-  y = 400
+  y = 404
   font = 2
   bank = 9
   visible = "show_themes"

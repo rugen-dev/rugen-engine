@@ -425,6 +425,8 @@ pub struct OnlineScreen {
     ui: Ui,
     motif: PathBuf,
     textures: HashMap<String, Cached>,
+    /// A user theme's `ui/online.toml` that failed to reload (see `themes`).
+    theme_error: Option<String>,
     window: (u32, u32),
     mouse_px: Option<(f32, f32)>,
     client: OnlineClient,
@@ -657,6 +659,7 @@ impl OnlineScreen {
             ui: Ui::new(def, Value::Null),
             motif: motif.to_path_buf(),
             textures: HashMap::new(),
+            theme_error: None,
             window: (1280, 720),
             mouse_px: None,
             client: OnlineClient::new("", None),
@@ -4533,6 +4536,9 @@ impl OnlineScreen {
                 stages: None,
             };
             self.ui.draw(&mut host);
+            if let Some(e) = &self.theme_error {
+                crate::uiscreen::theme_error_strip(&mut host, e, vw);
+            }
         }
         let bg = self.ui.background();
         (
@@ -4543,6 +4549,36 @@ impl OnlineScreen {
             },
             [bg[0] as f64, bg[1] as f64, bg[2] as f64, 1.0],
         )
+    }
+
+    /// A user theme's files changed: read `ui/online.toml` again and drop
+    /// the cached images (see `UiScreen::reload_theme`).
+    pub fn reload_theme(&mut self, r: Option<&mut Renderer>) {
+        let rel = "ui/online.toml";
+        let parsed = crate::uiscreen::motif_file(&self.motif, rel)
+            .ok_or_else(|| format!("{rel}: missing"))
+            .and_then(|p| std::fs::read_to_string(&p).map_err(|e| format!("{rel}: {e}")))
+            .and_then(|t| ScreenDef::parse(&t).map_err(|e| format!("{rel}: {e}")));
+        match parsed {
+            Ok(def) => {
+                if let Some(r) = r {
+                    for (key, c) in self.textures.drain() {
+                        if let Some((tex, ..)) = c
+                            && !key.starts_with("sff:")
+                        {
+                            r.free_texture(tex);
+                        }
+                    }
+                }
+                self.ui.replace_def(def);
+                self.theme_error = None;
+                self.refresh();
+            }
+            Err(e) => {
+                log::warn!("theme: {e}");
+                self.theme_error = Some(e);
+            }
+        }
     }
 }
 

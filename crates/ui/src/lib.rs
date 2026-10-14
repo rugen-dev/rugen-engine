@@ -1113,6 +1113,23 @@ impl Ui {
         }
     }
 
+    /// Swap in a new screen definition (a theme file saved on disk),
+    /// keeping the data, the focus, scroll positions, typed text and the
+    /// clock (no enter animation plays again).
+    pub fn replace_def(&mut self, def: ScreenDef) {
+        let mut fresh = Ui::new(def, Value::Null);
+        fresh.data = self.data.clone();
+        fresh.focus = self.focus.take();
+        fresh.focus2 = self.focus2.take();
+        fresh.dual = self.dual;
+        fresh.scroll = std::mem::take(&mut self.scroll);
+        fresh.inputs = std::mem::take(&mut self.inputs);
+        fresh.time = self.time;
+        fresh.size = self.size;
+        fresh.pages = std::mem::take(&mut self.pages);
+        *self = fresh;
+    }
+
     /// Layout root size in virtual units (default 1280x720); see [`viewport`].
     pub fn set_size(&mut self, w: f32, h: f32) {
         self.size = (w.max(1.0), h.max(1.0));
@@ -3524,6 +3541,30 @@ gap = 20
         assert!(visible(&c, "list") && !visible(&c, "!item.name"));
         let inner = c.with_item(Value::from("x"), 0);
         assert_eq!(interpolate("{item}{index}", &inner), "x0");
+    }
+
+    /// A theme file saved on disk swaps the definition in place: the data
+    /// and the focus stay, the new layout shows.
+    #[test]
+    fn replace_def_keeps_data_and_focus() {
+        let mut ui = Ui::new(ScreenDef::parse(MENU).unwrap(), data());
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.tick(nav_down(), &mut p);
+        let focus = ui.focused().map(str::to_string);
+        assert!(focus.is_some());
+        let edited = MENU.replace("Hello {profile.name}", "Howdy {profile.name}");
+        ui.replace_def(ScreenDef::parse(&edited).unwrap());
+        assert_eq!(ui.focused().map(str::to_string), focus);
+        let mut p = TestPainter::new();
+        ui.tick(Nav::default(), &mut p);
+        ui.draw(&mut p);
+        assert!(
+            p.drawn.contains(&"text:Howdy Axel".to_string()),
+            "{:?}",
+            p.drawn
+        );
+        assert!(p.drawn.contains(&"text:VS MODE".to_string()));
     }
 
     #[test]
