@@ -662,3 +662,40 @@ fn goku_genki_dama_runs() {
     }
     assert!(super_started, "the charged Genkidama started (3001)");
 }
+
+/// Owner report 10 (fighters near the stage ends facing different ways):
+/// rugen auto-turned only a root with ctrl in states 0 / 11 / 20. Ikemen
+/// (MUGEN) also turns at the end of the landing (52) and, once the round
+/// is decided, without ctrl, so a fighter left with its back to the other
+/// after a crossover or a corner KO turns around.
+#[test]
+fn fighters_turn_after_the_round_is_decided() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    // P1 has crossed over P2 near the right edge and faces the wall
+    w.players[0].pos[0] = 140.0;
+    w.players[1].pos[0] = 100.0;
+    w.players[0].set_facing(1.0);
+    w.players[1].set_facing(1.0);
+    w.players[1].life = 1;
+    // a hit with no ctrl afterwards ends the round
+    let text = "[Statedef 7900]\ntype = S\nmovetype = I\nphysics = S\nanim = 0\nctrl = 0\n\n\
+        [State 7900, stand]\ntype = ChangeState\ntrigger1 = time = 5\nvalue = 0\nctrl = 0\n";
+    let d = w.data[0].with_states("compat", text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7900, None, Some(false));
+    w.players[1].life = 0;
+    for _ in 0..240 {
+        run(&mut w, 1);
+    }
+    assert!(w.round.round_state() > 2, "round decided");
+    let (a, b) = (&w.players[0], &w.players[1]);
+    assert!(
+        (a.facing > 0.0) == (b.pos[0] > a.pos[0]),
+        "P1 faces P2: facing {} at {} vs {}",
+        a.facing,
+        a.pos[0],
+        b.pos[0]
+    );
+}

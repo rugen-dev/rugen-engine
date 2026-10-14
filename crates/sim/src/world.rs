@@ -1068,8 +1068,20 @@ impl World {
                 i += 1;
                 continue;
             }
+            // auto-turn (Ikemen): with ctrl (or after the round is decided) in
+            // stand / crouch / walk, and at the end of the landing (52), so a
+            // jump that crossed over near a wall turns before what follows
             let p = &self.players[i];
-            if p.helper_index == 0 && p.ctrl && !p.pause_bool && matches!(p.state_no, 0 | 11 | 20) {
+            let landed = p.state_no == 52
+                && self.data[p.anim_owner]
+                    .air
+                    .get(p.anim.action)
+                    .is_none_or(|a| p.anim.anim_time(a) == 0);
+            if p.helper_index == 0
+                && !p.pause_bool
+                && (p.ctrl || self.round.round_state() > 2)
+                && (matches!(p.state_no, 0 | 11 | 20) || landed)
+            {
                 self.auto_turn(i);
             }
             let p = &self.players[i];
