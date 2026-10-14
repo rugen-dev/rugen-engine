@@ -454,6 +454,7 @@ pub enum Sctrl {
         player_type: bool,
         supermovetime: Option<Code>,
         pausemovetime: Option<Code>,
+        ownpal: Option<Code>,
         /// `size.*` parameters given, as (key without `size.`, values).
         size: Vec<(String, Vec<Code>)>,
     },
@@ -854,6 +855,7 @@ impl Sctrl {
                     .is_some_and(|t| t.trim().eq_ignore_ascii_case("player")),
                 supermovetime: one(c, "supermovetime")?,
                 pausemovetime: one(c, "pausemovetime")?,
+                ownpal: one(c, "ownpal")?,
                 size: {
                     let mut v = Vec::new();
                     // lenient: a bad size parameter is dropped, the helper still spawns

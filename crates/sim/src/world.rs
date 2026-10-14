@@ -570,6 +570,14 @@ impl World {
         self.stage.width / self.data[d].localcoord[0] * zoom
     }
 
+    /// The PalFX player `i` is drawn with: its own with `ownpal`, else its
+    /// root's (Ikemen `getPalfx`). Drawing only.
+    pub fn drawn_palfx(&self, i: usize) -> &crate::fx::PalFx {
+        let p = &self.players[i];
+        let k = if p.ownpal { i } else { p.root };
+        &self.players.get(k).unwrap_or(p).palfx
+    }
+
     /// Stage units per local unit of data slot `d` for what it draws in
     /// screen space: its localcoord alone. FIGHTER SIZE zooms the fighter in
     /// the stage, never a screen overlay authored for a whole screen.
@@ -1476,7 +1484,8 @@ impl World {
         h.pos[1] = p0[1];
         h.old_pos = h.pos;
         h.helper_index = helpers as i32 + 1;
-        h.size = crate::player::Size::from_data(&self.data[parent.data]);
+        h.size = parent.size;
+        h.ownpal = false;
         h.helper_id = helper_id.max(0);
         h.parent_id = parent.id;
         h.root = parent.root;
@@ -2772,8 +2781,12 @@ impl World {
                 self.players[i].angle *= v;
             }
             Sctrl::PalFx(spec) => {
-                let pf = self.eval_palfx(i, spec);
-                self.players[i].palfx = pf;
+                // a helper without ownpal shares its root's palette: Ikemen
+                // ignores its PalFX
+                if self.players[i].ownpal {
+                    let pf = self.eval_palfx(i, spec);
+                    self.players[i].palfx = pf;
+                }
             }
             Sctrl::AllPalFx(spec) => {
                 self.allpalfx = self.eval_palfx(i, spec);
@@ -2881,10 +2894,13 @@ impl World {
                 player_type,
                 supermovetime,
                 pausemovetime,
+                ownpal,
                 size,
             } => {
-                // size.* in the parent's context; omitted ones are the root's constants
-                let mut sz = crate::player::Size::from_data(&self.data[self.players[i].data]);
+                // size.* in the parent's context; omitted ones are inherited
+                // from the parent (MUGEN docs, Ikemen `newHelper`: h.size =
+                // c.size), so a helper of a scaled helper keeps its scale
+                let mut sz = self.players[i].size;
                 for (key, codes) in size {
                     let v: Vec<f32> = codes.iter().map(|c| self.eval(i, c).to_f()).collect();
                     let v0 = v[0];
@@ -2919,11 +2935,13 @@ impl World {
                 let kc = keyctrl.as_ref().is_some_and(|c| self.eval(i, c).to_b());
                 let smt = supermovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
                 let pmt = pausemovetime.as_ref().map_or(0, |c| self.eval(i, c).to_i());
+                let own = ownpal.as_ref().is_some_and(|c| self.eval(i, c).to_b());
                 let pt = postype.unwrap_or(PosType::P1);
                 if let Some(h) = self.spawn_helper(i, st, hid, [px, py], pt, f, kc, *player_type) {
                     self.players[h].super_move_time = smt;
                     self.players[h].pause_move_time = pmt;
                     self.players[h].size = sz;
+                    self.players[h].ownpal = own;
                 }
             }
             Sctrl::DestroySelf {
