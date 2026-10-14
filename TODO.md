@@ -123,6 +123,14 @@ later section while an earlier one has open boxes:
   protocol number (2), and a peer without it (0.6.1 and earlier, which
   would use its own settings) is refused with "the other player runs an
   older rugen".
+- [x] **Per-match seed.** (ae8eee5) Quick play and menu matches built the
+  world with seed 1, so arena item drops (and CNS `Random`) repeated every
+  match. Offline matches draw a fresh seed, replays record it (older ones
+  play seed 1); online matches derive `online_seed(match_id)` on both
+  peers, spectators and the server's re-simulation (server patch:
+  `~/.cache/rugen-work/creators/server-seed.patch`, to apply with the
+  engine tag bump); LAN hosts send it in the handshake (protocol 3), a
+  protocol 2 peer plays seed 1 with both sides. Goldens pin seed 1.
 
 ## Gameplay
 
@@ -307,9 +315,8 @@ box) and screenshots.
   B picks up and throws (the press never reaches the character); heal
   30 %, power 1000; at most three lying, 20 s each; `item_every = min, max`
   seconds. The round seed is the match seed, the round number and the
-  round's first frame; quick play and menu matches build the world with
-  seed 1, so round 1 of a given matchup and stage always drops the same
-  items (a per-match seed shared over netplay is left for later). The
+  round's first frame (every match its own seed since ae8eee5, see
+  *Bugs*). The
   examples/arena golden checksum changed on purpose. Self-KOs at level 4
   with items: 10 per 80 matches. Shots:
   `~/.cache/rugen-work/arena/shot-items-{ink,dojo}.png`.
