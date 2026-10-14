@@ -29,6 +29,8 @@ pub struct ChallengeBest {
     /// Boss Rush: most bosses beaten in one run, out of `boss_total`.
     pub boss_rush: u32,
     pub boss_total: u32,
+    /// Time Attack: fastest clear of the ladder, in frames (60 a second).
+    pub time_attack: Option<u32>,
 }
 
 impl ChallengeBest {
@@ -43,6 +45,12 @@ impl ChallengeBest {
             format!("{} / {}", self.boss_rush, self.boss_total)
         }
     }
+}
+
+/// `04:12.36`: a run time in minutes, seconds and hundredths.
+pub fn run_time(frames: u32) -> String {
+    let cs = u64::from(frames) * 100 / 60;
+    format!("{:02}:{:02}.{:02}", cs / 6000, (cs / 100) % 60, cs % 100)
 }
 
 fn wins_text(n: u32) -> String {
@@ -63,6 +71,9 @@ pub struct Run {
     pub bosses: Vec<String>,
     /// Survival: P1's life for the next fight (`None` = full).
     pub life: Option<i32>,
+    /// Time Attack: frames of fighting so far (every round, intros and
+    /// KOs included; the pause menu and the screens between fights not).
+    pub frames: u32,
     /// The run ended: `Some(true)` cleared, `Some(false)` lost.
     pub over: Option<bool>,
     /// The ended run beat the fighter's best.
@@ -83,6 +94,7 @@ impl Run {
             wins: 0,
             bosses: Vec::new(),
             life: None,
+            frames: 0,
             over: None,
             new_best: false,
             seed: seed | 1,
@@ -150,6 +162,13 @@ impl Run {
         self.wins.saturating_sub(1) as usize % n.max(1)
     }
 
+    /// One frame of fighting (Time Attack's clock).
+    pub fn tick(&mut self) {
+        if self.mode == Mode::TimeAttack && self.over.is_none() {
+            self.frames = self.frames.saturating_add(1);
+        }
+    }
+
     /// A fight ended: P1 `won` with `life` of `life_max` left. Survival
     /// heals a little; the run ends on a loss or after its last fight.
     /// True while the run goes on.
@@ -188,6 +207,9 @@ impl Run {
                 let was = (best.boss_cleared(), best.boss_rush, best.boss_total);
                 total > 0 && now > was
             }
+            Mode::TimeAttack => {
+                self.over == Some(true) && best.time_attack.is_none_or(|t| self.frames < t)
+            }
             _ => false,
         };
         if better {
@@ -198,6 +220,9 @@ impl Run {
             if self.mode == Mode::BossRush {
                 best.boss_rush = self.wins;
                 best.boss_total = self.bosses.len() as u32;
+            }
+            if self.mode == Mode::TimeAttack {
+                best.time_attack = Some(self.frames);
             }
         }
         self.new_best = better;
@@ -215,6 +240,10 @@ impl Run {
             Mode::BossRush => (
                 format!("BOSS {} / {n}", (self.wins + 1).min(n)),
                 "NO CONTINUES".into(),
+            ),
+            Mode::TimeAttack => (
+                format!("RUN {}", run_time(self.frames)),
+                format!("STAGE {} / {n}", (self.wins + 1).min(n)),
             ),
             _ => return None,
         })
@@ -254,6 +283,24 @@ impl Run {
                     },
                 ),
                 ("BEST".into(), tag(best.boss_text())),
+            ],
+            (Mode::TimeAttack, None) => vec![
+                ("RUN".into(), run_time(self.frames)),
+                ("STAGE".into(), format!("{} / {n}", self.wins)),
+            ],
+            (Mode::TimeAttack, Some(cleared)) => vec![
+                (
+                    "RUN".into(),
+                    if cleared {
+                        run_time(self.frames)
+                    } else {
+                        format!("OUT AT {} / {n}", self.wins + 1)
+                    },
+                ),
+                (
+                    "BEST".into(),
+                    tag(best.time_attack.map_or("NONE YET".into(), run_time)),
+                ),
             ],
             _ => Vec::new(),
         }
@@ -443,6 +490,10 @@ pub fn cards(
             (key, b.boss_text())
         })
     });
+    let time = pick(&|b| {
+        b.time_attack
+            .map(|t| (u64::MAX - u64::from(t), run_time(t)))
+    });
     let none = || "NO RECORD YET".to_string();
     let boss_rule = if bosses_flagged {
         "BOSSES FROM SELECT.DEF"
@@ -470,6 +521,16 @@ pub fn cards(
             "best": boss.unwrap_or_else(none),
             "action": "mode:bossrush",
         },
+        {
+            "id": "timeattack",
+            "title": "TIME ATTACK",
+            "desc": "CLEAR THE ARCADE LADDER AS FAST AS YOU CAN. THE RUN TIMER NEVER STOPS, EVEN BETWEEN ROUNDS.",
+            "hud_l": format!("{LADDER} STAGES"),
+            "hud_r": "RUN TIMER",
+            "note": "A LOSS ENDS THE RUN WITHOUT A TIME",
+            "best": time.unwrap_or_else(none),
+            "action": "mode:timeattack",
+        },
     ])
 }
 
@@ -479,6 +540,14 @@ mod tests {
 
     fn run(mode: Mode) -> Run {
         Run::new(mode, "p1.def".into(), "naruto".into(), "Naruto".into(), 7)
+    }
+
+    #[test]
+    fn run_time_reads_minutes_seconds_hundredths() {
+        assert_eq!(run_time(0), "00:00.00");
+        assert_eq!(run_time(60), "00:01.00");
+        assert_eq!(run_time(90), "00:01.50");
+        assert_eq!(run_time(60 * 252 + 22), "04:12.36");
     }
 
     /// Survival: one round a fight, life carried over plus 15 %, endless
@@ -519,6 +588,40 @@ mod tests {
             last = k;
         }
         assert_eq!(r.next_foe(1), 0, "a single fighter fights itself");
+    }
+
+    /// Time Attack: the arcade ladder's six fights, a clock that only runs
+    /// while the run does, a record only for a clear.
+    #[test]
+    fn time_attack_clears_the_ladder_against_the_clock() {
+        let mut r = run(Mode::TimeAttack);
+        assert_eq!(r.rules(), None, "normal rounds");
+        for _ in 0..5 {
+            for _ in 0..600 {
+                r.tick();
+            }
+            assert!(r.finish(true, 10, 1000));
+        }
+        assert_eq!(r.hud().unwrap().1, "STAGE 6 / 6");
+        r.tick();
+        assert!(!r.finish(true, 10, 1000));
+        assert_eq!(r.over, Some(true));
+        r.tick();
+        assert_eq!(r.frames, 3001, "the clock stops with the run");
+        let mut best = ChallengeBest::default();
+        assert!(r.record(&mut best));
+        assert_eq!(best.time_attack, Some(3001));
+        assert_eq!(best.name, "Naruto");
+        let mut slower = run(Mode::TimeAttack);
+        slower.frames = 4000;
+        slower.over = Some(true);
+        assert!(!slower.record(&mut best));
+        assert_eq!(best.time_attack, Some(3001));
+        let mut lost = run(Mode::TimeAttack);
+        lost.frames = 10;
+        lost.finish(false, 0, 1000);
+        assert!(!lost.record(&mut best), "a lost run sets no time");
+        assert_eq!(lost.rows(&best)[0].1, "OUT AT 1 / 6");
     }
 
     /// The arcade ladder walks the roster as it always did.
@@ -631,6 +734,7 @@ mod tests {
         let v = cards(&recs, 5, true);
         assert_eq!(v[0]["best"], "23 WINS · NARUTO");
         assert_eq!(v[1]["best"], "CLEARED · SASUKE");
+        assert_eq!(v[2]["best"], "06:40.00 · NARUTO");
         assert_eq!(v[1]["note"], "BOSSES FROM SELECT.DEF");
     }
 }

@@ -77,10 +77,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Tag**: switch partners in the middle of a fight.
 - [x] **Survival**: one life bar against an endless line of opponents.
 - [x] **Boss Rush**: the toughest fighters back to back.
+- [x] **Time Attack**: clear the ladder as fast as possible.
 
 ### Planned
 
-- [ ] **Time Attack**: clear the ladder as fast as possible.
 - [ ] **Storyboards**: fighter intros and arcade endings.
 - [ ] **Ledge grab**: catch the edge of an arena and climb back on.
 - [ ] **Items**: pickups that spawn on arena stages, to grab and throw.

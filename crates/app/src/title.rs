@@ -47,6 +47,7 @@ impl TitleScreen {
                     // MUGEN / Ikemen screenpack entries for the CHALLENGE modes
                     "survival" => Mode::Survival,
                     "bossrush" => Mode::BossRush,
+                    "timeattack" => Mode::TimeAttack,
                     "options" => Mode::Options,
                     "exit" => Mode::Exit,
                     _ => return None,

@@ -58,6 +58,8 @@ pub enum Mode {
     /// CHALLENGE: the bosses (`boss = 1` in select.def, else the five
     /// strongest fighters by the balance verdict) back to back.
     BossRush,
+    /// CHALLENGE: the arcade ladder against a run timer.
+    TimeAttack,
 }
 
 impl Mode {
@@ -73,6 +75,7 @@ impl Mode {
             Mode::Online => "ONLINE",
             Mode::Survival => "SURVIVAL",
             Mode::BossRush => "BOSS RUSH",
+            Mode::TimeAttack => "TIME ATTACK",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         }
     }
@@ -80,12 +83,15 @@ impl Mode {
     /// A ladder of CPU opponents the shell lines up one after another
     /// (P1 picks alone, no stage select, CONTINUE after a win).
     pub fn is_ladder(self) -> bool {
-        matches!(self, Mode::Arcade | Mode::Survival | Mode::BossRush)
+        matches!(
+            self,
+            Mode::Arcade | Mode::Survival | Mode::BossRush | Mode::TimeAttack
+        )
     }
 
     /// One of the CHALLENGE modes (records in the profile).
     pub fn is_challenge(self) -> bool {
-        matches!(self, Mode::Survival | Mode::BossRush)
+        matches!(self, Mode::Survival | Mode::BossRush | Mode::TimeAttack)
     }
 }
 
@@ -2008,6 +2014,9 @@ impl Shell {
                 }
                 // a run: the strip over the fight (and Time Attack's clock)
                 if let Some(run) = self.run.as_mut() {
+                    if advanced && !m.world.round.match_over {
+                        run.tick();
+                    }
                     m.run_hud = run.hud();
                 }
                 // F1 toggles a training tool in the match: the next one keeps it

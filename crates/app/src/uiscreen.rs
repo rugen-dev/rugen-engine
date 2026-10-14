@@ -489,6 +489,7 @@ fn menu_desc(id: &str) -> &'static str {
         "challenge" => "Runs against the CPU, best scores kept",
         "survival" => "One life bar, endless opponents",
         "bossrush" => "The toughest fighters back to back",
+        "timeattack" => "Clear the ladder against the clock",
         "versus" => "Two players, one keyboard",
         "arena" => "Platforms and stocks: knock them off the stage",
         "training" => "Free practice, no clock",
@@ -1222,7 +1223,7 @@ impl UiScreen {
                     .filter_map(|(k, label)| {
                         let action = match k.as_str() {
                             "arcade" | "versus" | "training" | "watch" | "options" | "survival"
-                            | "bossrush" => format!("mode:{k}"),
+                            | "bossrush" | "timeattack" => format!("mode:{k}"),
                             "exit" => "quit".to_string(),
                             _ => return None,
                         };
@@ -1869,6 +1870,7 @@ impl UiScreen {
                 "watch" => Transition::Select(Mode::Watch),
                 "survival" => Transition::Select(Mode::Survival),
                 "bossrush" => Transition::Select(Mode::BossRush),
+                "timeattack" => Transition::Select(Mode::TimeAttack),
                 "options" => Transition::Options,
                 _ => return None,
             }),

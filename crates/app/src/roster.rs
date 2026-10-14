@@ -167,15 +167,19 @@ impl Roster {
             | Mode::Arena
             | Mode::Online
             | Mode::Survival
-            | Mode::BossRush => [true, false],
+            | Mode::BossRush
+            | Mode::TimeAttack => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         // training, arena and watch: the cursor also picks the other side
         let chooses = match mode {
             Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
-            Mode::Arcade | Mode::Tutorial | Mode::Online | Mode::Survival | Mode::BossRush => {
-                [true, false]
-            }
+            Mode::Arcade
+            | Mode::Tutorial
+            | Mode::Online
+            | Mode::Survival
+            | Mode::BossRush
+            | Mode::TimeAttack => [true, false],
             Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let mut r = Self {
