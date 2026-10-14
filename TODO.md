@@ -238,9 +238,14 @@ box) and screenshots.
   side needs the other's Turns size in wins). Sim change for team matches
   only: `golden_tests` pins 1v1 checksums (KFM, plus Naruto / Sasuke /
   Goku with `--ignored`).
-- [ ] **Simul.** Two fighters per side on screen at once (P1 + partner CPU or
+- [x] **Simul.** (4736078) Two fighters per side on screen at once (P1 + partner CPU or
   P3). Needs 4-player support in the sim (targets, pushing, camera) and the
   `teammode` / `numpartner` triggers characters already check.
+  2-4 per side; partners of a human side are CPU (no P3 / P4 humans: two
+  local players). Ikemen rules: `Simul.LoseOnKO` for the human fighter,
+  time over by life share, `Partner` / `EnemyNear(n)` / `NumEnemy` see the
+  teams; Naruto / Sasuke's own simul tag system runs (partner waits off
+  screen).
 - [ ] **Tag.** Like Simul but one active fighter per side; a tag button
   swaps, the partner jumps in from the edge. Start with the Ikemen GO tag
   rules so tag-ready characters (Naruto and Sasuke carry tag code) behave.
