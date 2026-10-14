@@ -430,7 +430,7 @@ pub struct Shell {
     /// The screenpack's logo / intro storyboards were offered (first title).
     booted: bool,
     /// The TEAM MODE step's last choice per mode (VS MODE, WATCH).
-    last_teams: Vec<(Mode, ([crate::roster::Team; 2], [bool; 2]))>,
+    last_teams: Vec<(Mode, crate::teamstep::Choice)>,
 }
 
 impl Shell {

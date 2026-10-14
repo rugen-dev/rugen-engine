@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 use crate::game::Mode;
 use crate::roster::Team;
 
+/// What the step chose: each side's team and whether the computer plays it.
+pub type Choice = ([Team; 2], [bool; 2]);
+
 /// Ticks between both sides being ready and the fighter grid.
 const GO_TICKS: u32 = 20;
 
@@ -113,7 +116,7 @@ fn pictogram(mode: TeamMode) -> &'static [(u8, u8, u8, u8, bool)] {
 impl TeamStep {
     /// The step for `mode`, starting from `last` (the teams and CPU sides
     /// picked the last time) when there is one.
-    pub fn new(mode: Mode, last: Option<([Team; 2], [bool; 2])>, tag_keys: [String; 2]) -> Self {
+    pub fn new(mode: Mode, last: Option<Choice>, tag_keys: [String; 2]) -> Self {
         let cpu = match (mode, last) {
             (Mode::Versus, Some((_, c))) => c,
             (Mode::Versus, None) => [false, false],

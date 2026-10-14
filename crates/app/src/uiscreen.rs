@@ -743,7 +743,7 @@ impl UiScreen {
         config: &Config,
         lib: &rugen_content::Library,
         mode: Mode,
-        last: Option<([crate::roster::Team; 2], [bool; 2])>,
+        last: Option<crate::teamstep::Choice>,
         tag_keys: [String; 2],
     ) -> anyhow::Result<Self> {
         let mut s = Self::load(UiKind::Teams(mode), motif, root, sys, config, lib)?;
