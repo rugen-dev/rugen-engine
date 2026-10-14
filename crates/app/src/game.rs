@@ -2013,7 +2013,9 @@ impl Shell {
             self.tick();
             len = self.tick_len();
             // a harness screenshot shows exactly frame N, even after a slow frame
-            if self.quit || (self.shot_armed && self.harness.shot.is_some()) || self.extra_shot.is_some()
+            if self.quit
+                || (self.shot_armed && self.harness.shot.is_some())
+                || self.extra_shot.is_some()
             {
                 break;
             }

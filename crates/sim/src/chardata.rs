@@ -366,7 +366,12 @@ impl CharData {
         if let Ok(d) = Self::load_opts(def_path, data_dir, LoadOptions::default()) {
             let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
             p.retain(|e| e.3.elapsed() < PRELOAD_KEEP && e.0 != def_path);
-            p.push((def_path.to_path_buf(), data_dir.to_path_buf(), d, std::time::Instant::now()));
+            p.push((
+                def_path.to_path_buf(),
+                data_dir.to_path_buf(),
+                d,
+                std::time::Instant::now(),
+            ));
             while p.len() > 4 {
                 p.remove(0);
             }
@@ -814,6 +819,25 @@ pub fn load_consts(def: &Def, localcoord_w: f32) -> IndexMap<String, f32> {
     m
 }
 
+/// Characters loaded ahead of a fight ([`CharData::preload`]): def, data
+/// dir, data, when.
+type Preloaded = (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Arc<CharData>,
+    std::time::Instant,
+);
+static PRELOADED: std::sync::Mutex<Vec<Preloaded>> = std::sync::Mutex::new(Vec::new());
+const PRELOAD_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Take a fresh preloaded copy of `def_path` (identical to loading it now).
+fn take_preloaded(def_path: &Path, data_dir: &Path) -> Option<Arc<CharData>> {
+    let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+    p.retain(|e| e.3.elapsed() < PRELOAD_KEEP);
+    let i = p.iter().position(|e| e.0 == def_path && e.1 == data_dir)?;
+    Some(p.remove(i).2)
+}
+
 #[cfg(test)]
 mod const_tests {
     use super::*;
@@ -837,18 +861,4 @@ mod const_tests {
         assert_eq!(m["velocity.airjump.neu.x"], 1.0);
         assert_eq!(m["velocity.airjump.y"], -6.0);
     }
-}
-
-/// Characters loaded ahead of a fight ([`CharData::preload`]): def, data
-/// dir, data, when.
-type Preloaded = (std::path::PathBuf, std::path::PathBuf, Arc<CharData>, std::time::Instant);
-static PRELOADED: std::sync::Mutex<Vec<Preloaded>> = std::sync::Mutex::new(Vec::new());
-const PRELOAD_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Take a fresh preloaded copy of `def_path` (identical to loading it now).
-fn take_preloaded(def_path: &Path, data_dir: &Path) -> Option<Arc<CharData>> {
-    let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
-    p.retain(|e| e.3.elapsed() < PRELOAD_KEEP);
-    let i = p.iter().position(|e| e.0 == def_path && e.1 == data_dir)?;
-    Some(p.remove(i).2)
 }

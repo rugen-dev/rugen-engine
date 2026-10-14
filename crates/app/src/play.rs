@@ -2763,7 +2763,10 @@ impl Match {
             // the image's own scale, its vertical part flipped and squashed
             let sx = frame.xscale * it.scale[0] * fx.xscale;
             let sy = frame.yscale * it.scale[1] * fx.yscale;
-            let anchor = [it.pos[0] + fx.offset[0], floor - y * fx.yscale + fx.offset[1]];
+            let anchor = [
+                it.pos[0] + fx.offset[0],
+                floor - y * fx.yscale + fx.offset[1],
+            ];
             let pos = [
                 anchor[0] + frame.x as f32 * it.scale[0] * it.facing,
                 anchor[1] - frame.y as f32 * sy * it.vfacing,

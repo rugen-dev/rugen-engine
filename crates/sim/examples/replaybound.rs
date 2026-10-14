@@ -11,8 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
-use rugen_sim::headless::{MatchSpec, build_world};
 use rugen_cns::state::MoveType;
+use rugen_sim::headless::{MatchSpec, build_world};
 use rugen_sim::world::Movement;
 
 fn main() {
@@ -102,11 +102,9 @@ fn main() {
             let p = &w.players[i];
             let s = w.local_scale(i);
             let x = p.pos[0] * s;
-            let near_l = (x - xmin).abs() < 30.0 * s && p.vel[0] * p.facing.signum() * -1.0 < 0.0;
             let at_edge = x <= xmin + 25.0 || x >= xmax - 25.0;
             let outward = (x <= xmin + 25.0 && p.vel[0] * p.facing < 0.0)
                 || (x >= xmax - 25.0 && p.vel[0] * p.facing > 0.0);
-            let _ = near_l;
             let hit = p.move_type == MoveType::H;
             if all || (hit && at_edge && outward) {
                 if hit && at_edge && outward {

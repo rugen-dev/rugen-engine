@@ -25,6 +25,8 @@ use rugen_sim::anim::AnimState;
 
 /// Uploaded stage texture plus optional palette slot index.
 type Tex = (TextureId, Option<usize>);
+/// Resolved sprite: texture, palette, axis, size.
+type Placed = (TextureId, Option<PaletteId>, [f32; 2], [f32; 2]);
 
 #[derive(Clone, Debug, PartialEq)]
 enum Kind {
@@ -486,8 +488,8 @@ impl StageVisual {
         // `mask = 1` or a `trans`
         let mut mask = !is_stage;
         if !dummy {
-            let has_anim =
-                (kind != Kind::Normal || s.raw("spriteno").is_none()) && s.i32("actionno").is_some();
+            let has_anim = (kind != Kind::Normal || s.raw("spriteno").is_none())
+                && s.i32("actionno").is_some();
             if has_anim {
                 action = s.i32("actionno").unwrap_or(-1);
                 if air.get(action).is_none() {
@@ -625,11 +627,7 @@ impl StageVisual {
                 }
             }
         }
-        if !positionlink {
-            startv = pair(s, "velocity", startv);
-        } else if s.raw("velocity").is_some() {
-            startv = pair(s, "velocity", startv);
-        }
+        startv = pair(s, "velocity", startv);
         Some(Elem {
             kind,
             sprite,
@@ -983,7 +981,7 @@ impl StageVisual {
         group: i32,
         number: i32,
         opaque: bool,
-    ) -> Option<(TextureId, Option<PaletteId>, [f32; 2], [f32; 2])> {
+    ) -> Option<Placed> {
         if self.palettes.is_empty() {
             self.init_gpu(r);
         }
@@ -1133,7 +1131,12 @@ impl StageVisual {
                             view.origin[0] + w[2] * view.k,
                             view.origin[1] + w[3] * view.k,
                         ];
-                        Some([w[0].max(c[0]), w[1].max(c[1]), w[2].min(c[2]), w[3].min(c[3])])
+                        Some([
+                            w[0].max(c[0]),
+                            w[1].max(c[1]),
+                            w[2].min(c[2]),
+                            w[3].min(c[3]),
+                        ])
                     }
                     (Some(w), None) => Some([
                         view.origin[0] + w[0] * view.k,
@@ -1147,10 +1150,13 @@ impl StageVisual {
                     continue;
                 }
                 // a trapezoid maps its texture row by row
-                let (top, bottom) = (q.corners[1][0] - q.corners[0][0], q.corners[2][0] - q.corners[3][0]);
+                let (top, bottom) = (
+                    q.corners[1][0] - q.corners[0][0],
+                    q.corners[2][0] - q.corners[3][0],
+                );
                 let strips = if (top - bottom).abs() > 0.5 {
                     let h = ((q.corners[3][1] - q.corners[0][1]) * view.k).abs();
-                    (h / 3.0).ceil().clamp(1.0, 128.0) as u32
+                    libm::ceilf(h / 3.0).clamp(1.0, 128.0) as u32
                 } else {
                     1
                 };
@@ -1190,8 +1196,8 @@ fn combine_tint(base: Tint, fx: &BgPalFx, time: i32) -> Tint {
         }
     }
     let mut t = base;
-    for k in 0..3 {
-        t.add[k] += add[k] / 255.0;
+    for (k, a) in add.iter().enumerate() {
+        t.add[k] += a / 255.0;
         t.mul[k] *= fx.mul[k] as f32 / 256.0;
     }
     t.color *= fx.color.clamp(0.0, 1.0);
@@ -1342,9 +1348,9 @@ fn layout(
         ),
         None => (1.0, 1.0),
     };
-    let x_shear = xras * x / ((ys * ys3).abs() * lscl[1] * h * e.scalestart[1]) * x_recip
-        * e.scalestart[1]
-        - e.xshear;
+    let x_shear =
+        xras * x / ((ys * ys3).abs() * lscl[1] * h * e.scalestart[1]) * x_recip * e.scalestart[1]
+            - e.xshear;
     let x_shear = if x_shear.is_finite() { x_shear } else { 0.0 };
     let xsoffset = -e.xshear * e.scalestart[1].signum() * (off[1] * scly);
     let draw_x = x - xsoffset;
@@ -1397,11 +1403,25 @@ fn layout(
     let x4 = rx;
     let mut out = Vec::new();
     let screen_h = view.screen[1];
-    let emit_row = |x1: f32, y1: f32, x2: f32, x3: f32, y3: f32, x4: f32, out: &mut Vec<ScreenQuad>| {
-        emit_h_tiles(
-            x1, y1, x2, x3, y3, x4, w, spacing[0], hf, rcx, e.tile[0], view.screen[0], window, out,
-        );
-    };
+    let emit_row =
+        |x1: f32, y1: f32, x2: f32, x3: f32, y3: f32, x4: f32, out: &mut Vec<ScreenQuad>| {
+            emit_h_tiles(
+                x1,
+                y1,
+                x2,
+                x3,
+                y3,
+                x4,
+                w,
+                spacing[0],
+                hf,
+                rcx,
+                e.tile[0],
+                view.screen[0],
+                window,
+                out,
+            );
+        };
     let tiled = e.tile[0] != 0 || e.tile[1] != 0;
     if !tiled {
         let (mut x1, mut x2) = (x1, x2);
@@ -1585,7 +1605,8 @@ mod tests {
         };
         let d = Def::parse(text);
         for s in d.sections_named("bg") {
-            let mut e = StageVisual::read_elem(s, &sv.sff, &sv.air, &sv.elems, false, true).unwrap();
+            let mut e =
+                StageVisual::read_elem(s, &sv.sff, &sv.air, &sv.elems, false, true).unwrap();
             e.link = sv.elems.len();
             sv.elems.push(e);
         }
@@ -1594,7 +1615,13 @@ mod tests {
         sv
     }
 
-    fn quads(sv: &StageVisual, i: usize, v: &BgView, size: [f32; 2], off: [f32; 2]) -> Vec<ScreenQuad> {
+    fn quads(
+        sv: &StageVisual,
+        i: usize,
+        v: &BgView,
+        size: [f32; 2],
+        off: [f32; 2],
+    ) -> Vec<ScreenQuad> {
         layout(&sv.elems[i], None, off, size, v, sv, [0.0, 0.0])
     }
 
@@ -1606,7 +1633,10 @@ mod tests {
         let q = quads(&sv, 0, &view([0.0, 0.0], 1.0), [100.0, 50.0], [5.0, 2.0]);
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].corners[0], [160.0 + 10.0 - 5.0, 20.0 - 2.0]);
-        assert_eq!(q[0].corners[2], [160.0 + 10.0 - 5.0 + 100.0, 20.0 - 2.0 + 50.0]);
+        assert_eq!(
+            q[0].corners[2],
+            [160.0 + 10.0 - 5.0 + 100.0, 20.0 - 2.0 + 50.0]
+        );
         // the camera 100 to the right: the element moves 50 left
         let q2 = quads(&sv, 0, &view([100.0, 0.0], 1.0), [100.0, 50.0], [5.0, 2.0]);
         assert_eq!(q2[0].corners[0][0], q[0].corners[0][0] - 50.0);
@@ -1628,25 +1658,36 @@ mod tests {
         assert!((width(&far[0]) - 100.0).abs() < 1e-3);
         assert!((width(&near[0]) - 50.0).abs() < 1e-3);
         // y = 0 (the top at zoom 1) lands half way to the ground (210)
-        assert!((near[0].corners[0][1] - 105.0).abs() < 1e-3, "{:?}", near[0]);
+        assert!(
+            (near[0].corners[0][1] - 105.0).abs() < 1e-3,
+            "{:?}",
+            near[0]
+        );
     }
 
     /// Tiling covers the screen with `tilespacing` gaps between copies.
     #[test]
     fn tiles_cover_the_screen_with_spacing() {
-        let mut sv = visual("[BG t]\ntype = normal\nspriteno = 0,0\ntile = 1,0\ntilespacing = 10\n");
+        let mut sv =
+            visual("[BG t]\ntype = normal\nspriteno = 0,0\ntile = 1,0\ntilespacing = 10\n");
         // no SFF here: add the sprite's width as loading does
         sv.elems[0].spacing[0] += 40;
         let q = quads(&sv, 0, &view([37.0, 0.0], 1.0), [40.0, 20.0], [0.0, 0.0]);
         let mut xs: Vec<f32> = q.iter().map(|q| q.corners[0][0]).collect();
         xs.sort_by(f32::total_cmp);
-        assert!(xs[0] <= 0.0 && *xs.last().unwrap() + 50.0 >= 320.0, "{xs:?}");
+        assert!(
+            xs[0] <= 0.0 && *xs.last().unwrap() + 50.0 >= 320.0,
+            "{xs:?}"
+        );
         for p in xs.windows(2) {
             assert!((p[1] - p[0] - 50.0).abs() < 1e-3);
         }
         // a finite count draws that many, to the right
         let sv = visual("[BG t]\ntype = normal\nspriteno = 0,0\ntile = 3,0\n");
-        assert_eq!(quads(&sv, 0, &view([0.0, 0.0], 1.0), [40.0, 20.0], [0.0, 0.0]).len(), 3);
+        assert_eq!(
+            quads(&sv, 0, &view([0.0, 0.0], 1.0), [40.0, 20.0], [0.0, 0.0]).len(),
+            3
+        );
     }
 
     /// A parallax floor (`xscale = top, bottom`): the bottom edge scrolls
@@ -1662,8 +1703,14 @@ mod tests {
             let mut q = q.clone();
             q.sort_by(|a, b| a.corners[0][0].total_cmp(&b.corners[0][0]));
             for p in q.windows(2) {
-                assert!((p[0].corners[1][0] - p[1].corners[0][0]).abs() < 1e-2, "top seam");
-                assert!((p[0].corners[2][0] - p[1].corners[3][0]).abs() < 1e-2, "bottom seam");
+                assert!(
+                    (p[0].corners[1][0] - p[1].corners[0][0]).abs() < 1e-2,
+                    "top seam"
+                );
+                assert!(
+                    (p[0].corners[2][0] - p[1].corners[3][0]).abs() < 1e-2,
+                    "bottom seam"
+                );
             }
             // the tile under the screen's centre: bottom shift = xras * scroll
             let shear = |q: &ScreenQuad| q.corners[3][0] - q.corners[0][0];

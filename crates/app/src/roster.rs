@@ -153,7 +153,10 @@ fn verdict_of(m: &Manifest) -> (&'static str, String) {
 /// The letter a fighter still being prepared shows: the first letter of
 /// its first word without digits ("G6 Boruto" → B, "Rock Lee" → R).
 fn initial(name: &str) -> String {
-    let words: Vec<&str> = name.split([' ', '_', '-']).filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> = name
+        .split([' ', '_', '-'])
+        .filter(|w| !w.is_empty())
+        .collect();
     words
         .iter()
         .find(|w| !w.chars().any(|c| c.is_ascii_digit()))
@@ -204,7 +207,10 @@ impl Roster {
                 }
             }
         }
-        crate::timing::took(&format!("the roster ({} fighters)", cells.len()), t0.elapsed());
+        crate::timing::took(
+            &format!("the roster ({} fighters)", cells.len()),
+            t0.elapsed(),
+        );
         let human = match mode {
             Mode::Versus => [true, true],
             Mode::Arcade

@@ -420,13 +420,18 @@ pub fn preload(setup: &crate::play::FightSetup, data_dir: &Path) {
             {
                 let _ = rugen_formats::vfs::read(&def);
                 if let Some(spr) = d.section("bgdef").and_then(|b| b.raw("spr"))
-                    && let Ok(p) =
-                        rugen_sim::chardata::resolve(def.parent().unwrap_or(Path::new(".")), spr.trim())
+                    && let Ok(p) = rugen_sim::chardata::resolve(
+                        def.parent().unwrap_or(Path::new(".")),
+                        spr.trim(),
+                    )
                 {
                     let _ = rugen_formats::vfs::read(&p);
                 }
             }
-            log::info!("timing: preloading the fight took {} ms", t.elapsed().as_millis());
+            log::info!(
+                "timing: preloading the fight took {} ms",
+                t.elapsed().as_millis()
+            );
         });
 }
 
@@ -465,7 +470,10 @@ mod tests {
     fn pending_paths_round_trip() {
         let p = pending_path(false, "G6_Naruto");
         assert_eq!(pending_of(&p), Some((false, "G6_Naruto".to_string())));
-        assert_eq!(pending_of(&pending_path(true, "a:b")), Some((true, "a:b".into())));
+        assert_eq!(
+            pending_of(&pending_path(true, "a:b")),
+            Some((true, "a:b".into()))
+        );
         assert_eq!(pending_of(Path::new("chars/x.rgc/x.def")), None);
     }
 

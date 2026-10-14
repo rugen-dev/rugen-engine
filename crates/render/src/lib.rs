@@ -262,7 +262,12 @@ pub struct Quad {
 fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [f32; 2])> {
     let mut out = pts;
     // (axis, bound, keep below the bound)
-    for (axis, bound, below) in [(0, r[0], false), (0, r[2], true), (1, r[1], false), (1, r[3], true)] {
+    for (axis, bound, below) in [
+        (0, r[0], false),
+        (0, r[2], true),
+        (1, r[1], false),
+        (1, r[3], true),
+    ] {
         if out.is_empty() {
             break;
         }
@@ -926,7 +931,8 @@ impl Renderer {
     pub fn draw_quad(&mut self, q: &Quad) {
         let [tl, tr, br, bl] = q.corners;
         let n = q.strips.clamp(1, 256);
-        let lerp = |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        let lerp =
+            |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
         let mut color = q.color;
         color[3] *= q.blend.src_scale();
         for k in 0..n {

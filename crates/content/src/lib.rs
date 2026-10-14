@@ -236,7 +236,11 @@ impl KeyLock {
 
     /// The conversion of `id` (case-insensitive) into `dir`.
     fn convert(dir: &Path, id: &str) -> Self {
-        Self::take(format!("convert:{}:{}", dir.display(), id.to_ascii_lowercase()))
+        Self::take(format!(
+            "convert:{}:{}",
+            dir.display(),
+            id.to_ascii_lowercase()
+        ))
     }
 }
 
