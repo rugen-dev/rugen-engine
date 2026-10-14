@@ -229,6 +229,22 @@ no Xvfb on this machine).
   preloads both fighters (21 ms load, first fight frame 42 ms after the VS
   screen on a cold copy, 79 palettes, first 300 frames max 27 ms).
   Shots: `compat2/shots/prep-*.png`.
+- [x] **Round 3: no wall at the ends of HD community stages** (98f0123).
+  Since 3c4ef48 the screen's edges could reach Ikemen's maxRight (bounds +
+  zoom room + half a zoomed-out screen), so on the owner's 1280x720 stages
+  (bounds -860..760, rightbound 1800) fighters walked to 1800 / -2000 far
+  past the art laid out for the camera's range, while the 320x240 bundled
+  stages stopped them at leftbound / rightbound. MUGEN's boundleft /
+  boundright bound the camera's centre: it now stays inside them at any
+  zoom and players stay inside that screen. Walking to an end stops at the
+  screen's edge (Forest, rooftop and the Hidden stages: ±1453 / -1553 zoomed
+  in; training and Ink Dojo: ±773); a knockback still pulls the camera back
+  and flies to the visible edge, with 0 frames held inside the view across
+  the owner's replays (replaybound `invisible`). Tests
+  `sd_stage_ends_hold_the_fighters`, `hd_stage_ends_hold_the_fighters`.
+  Goldens re-recorded. Rooftop layers checked against its def: fixed by
+  9bbaab9 (floor art no longer ends above the bottom of the screen). Shots:
+  `compat2/shots/walls/{before,after}-<stage>-{L,R}.png`.
 - [ ] **Left for 0.7.0** (on-demand sprite streaming): sprites of a fighter
   are still decoded and uploaded on first draw during the fight (no hitch
   over 20 ms measured, but a fighter with big supers can still stall a
