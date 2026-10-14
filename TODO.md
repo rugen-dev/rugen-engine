@@ -313,8 +313,19 @@ box) and screenshots.
   examples/arena golden checksum changed on purpose. Self-KOs at level 4
   with items: 10 per 80 matches. Shots:
   `~/.cache/rugen-work/arena/shot-items-{ink,dojo}.png`.
-- [ ] **Stage hazards.** Moving platforms (path and speed in `[Arena]`) and
+- [x] **Stage hazards.** (289c0e7) Moving platforms (path and speed in `[Arena]`) and
   timed events (a platform that drops, a wind push), all deterministic.
+  Path, speed and drop are keys of the platform's own `[Platform]`
+  section (several platforms can move), wind is `[Arena] wind = every,
+  length, strength`; everything runs off the round's fight clock.
+  `[BG] platform = N` moves the art. Ink Arena: the top-left platform
+  slides, the top-right one drops 5 s every 20 s, a 4 s gust every 40 s.
+  Self-KOs at level 4 on the final Ink Arena (ledges, items, hazards),
+  80 matches: 15 and 12 for seeds 1 and 101 (19 and 12 before the Arena
+  work); the gap to ledge-only (9, 8) is no hazard ring-out in the
+  traces (none within 2 s of a gust), mostly long dash moves.
+  Shots: `~/.cache/rugen-work/arena/shot-hazards-{ink,dojo}.png`,
+  `shot-wind-ink.png`.
 
 ### Online
 - [ ] **Ranked seasons.** A season id and dates on the server; ratings soft
