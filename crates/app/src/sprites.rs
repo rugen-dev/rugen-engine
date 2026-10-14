@@ -112,6 +112,22 @@ impl SpriteSheet {
         })
     }
 
+    /// Give back the uploaded textures and palettes (the sheet goes away).
+    pub fn free_gpu(&mut self, r: &mut Renderer) {
+        let white = r.white();
+        let mut ids: std::collections::HashSet<TextureId> =
+            self.textures.values().flatten().map(|t| t.0).collect();
+        ids.extend(self.shared.values().copied());
+        for id in ids.into_iter().filter(|id| *id != white) {
+            r.free_texture(id);
+        }
+        for p in self.palettes.drain(..) {
+            r.free_palette(p);
+        }
+        self.textures.clear();
+        self.shared.clear();
+    }
+
     /// Draw one AIR frame (sprite + frame offset/flip/blend/scale).
     pub fn draw_frame(
         &mut self,
@@ -237,6 +253,16 @@ impl FontGpu {
 
     pub fn width(&self, text: &str, scale: f32) -> f32 {
         self.font.text_width(text) as f32 * scale
+    }
+
+    /// Give back the glyph textures and bank palettes (the font goes away).
+    pub fn free_gpu(&mut self, r: &mut Renderer) {
+        for (_, t) in self.glyphs.drain() {
+            r.free_texture(t);
+        }
+        for p in self.banks.drain(..) {
+            r.free_palette(p);
+        }
     }
 
     /// Draw `text` with its bottom line at `pos.y` (MUGEN convention). `align`: 1 left, 0 centred, -1 right.

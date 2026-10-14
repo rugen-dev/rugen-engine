@@ -30,6 +30,7 @@
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
 //!   (play refuses `broken` characters unless --force)
+//! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
 //! rugen replay <file.json>                                      play back a recorded match
 //!   (quick play records to --record file.json, menu matches to replays/)
 //!
@@ -80,6 +81,7 @@ mod sprites;
 mod stage;
 mod stagegen;
 mod stagesel;
+mod storyboard;
 mod system;
 mod title;
 mod training;
@@ -154,6 +156,7 @@ rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN fo
 rugen check <char> [--root dir]                               report unsupported controllers
 rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
   (play refuses `broken` characters unless --force)
+rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
 rugen replay <file.json>                                      play back a recorded match
   (quick play records to --record file.json, menu matches to replays/)
 
@@ -690,6 +693,47 @@ fn main() -> anyhow::Result<()> {
                 true,
                 harness,
                 Some(r),
+            )
+            .run()
+        }
+        Some("storyboard") => {
+            let path = args.get(1).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "usage: rugen storyboard <file.def> [--root dir] [--shot out.png] [--frames n]"
+                )
+            })?;
+            let opt = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1).cloned())
+            };
+            let lib = rugen_content::Library::discover(
+                opt("--root").as_deref().map(std::path::Path::new),
+            );
+            let config = config::Config::load(&lib.root);
+            let harness = game::Harness {
+                shot: opt("--shot").map(std::path::PathBuf::from),
+                frames: opt("--frames")
+                    .map(|f| f.parse::<u32>().context("--frames expects a number"))
+                    .transpose()?,
+                keys: opt("--keys")
+                    .as_deref()
+                    .map(game::parse_keys)
+                    .unwrap_or_default(),
+                ..Default::default()
+            };
+            // a path, or a name under data/ like MUGEN's -storyboard
+            let mut file = std::path::PathBuf::from(path);
+            if !file.exists() {
+                file = lib.data_dir().join(path);
+            }
+            game::Shell::new(
+                config,
+                lib,
+                game::Transition::Story(file, Box::new(game::Transition::Quit)),
+                true,
+                harness,
+                None,
             )
             .run()
         }

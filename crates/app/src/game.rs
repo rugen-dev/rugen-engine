@@ -129,6 +129,8 @@ pub enum Transition {
     Continue,
     /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
     Challenge,
+    /// Play a storyboard (cutscene), then go on with the transition.
+    Story(PathBuf, Box<Transition>),
     /// Pause menu: back to the match.
     Resume,
     /// Pause menu: restart the current round.
@@ -217,6 +219,8 @@ enum Screen {
     Select(Box<SelectScreen>),
     Versus(Box<VersusScreen>),
     Match(Box<Match>),
+    /// A storyboard, and where to go once it ends.
+    Story(Box<crate::storyboard::StoryScreen>, Box<Transition>),
 }
 
 /// Automated-run options.
@@ -376,6 +380,8 @@ pub struct Shell {
     last_redraw: Instant,
     /// `RUGEN_FRAMESTATS=1`: per-phase frame timings.
     frame_stats: crate::framestats::Reporter,
+    /// The screenpack's logo / intro storyboards were offered (first title).
+    booted: bool,
 }
 
 impl Shell {
@@ -479,6 +485,7 @@ impl Shell {
             vsync_paced: false,
             last_redraw: Instant::now(),
             frame_stats: crate::framestats::Reporter::default(),
+            booted: false,
         }
     }
 
@@ -882,6 +889,12 @@ impl Shell {
         }
         setup.mode = Some(mode);
         setup.run = self.run.as_ref().and_then(|r| r.rules());
+        // ARCADE: the fighter's intro before the first fight
+        if mode == Mode::Arcade
+            && let Some(p) = crate::storyboard::char_storyboard(&setup.p1, "intro.storyboard")
+        {
+            return Transition::Story(p, Box::new(Transition::Versus(setup, sides)));
+        }
         // a screenpack select may have drawn an arena stage: not for a run
         if mode.is_challenge() {
             let stages = crate::challenge::fight_stages(&self.lib);
@@ -890,6 +903,15 @@ impl Shell {
             }
         }
         Transition::Versus(setup, sides)
+    }
+
+    /// A cleared arcade ladder: P1's ending storyboard, if it has one.
+    fn arcade_ending(&self) -> Option<PathBuf> {
+        let r = self
+            .run
+            .as_ref()
+            .filter(|r| r.mode == Mode::Arcade && r.over == Some(true))?;
+        crate::storyboard::char_storyboard(&r.p1, "ending.storyboard")
     }
 
     /// After a win in a run: the next opponent (None once the run is over).
@@ -1086,6 +1108,9 @@ impl Shell {
         {
             u.release_gpu(&mut g.renderer);
         }
+        if let (Screen::Story(st, _), Some(g)) = (&mut self.screen, self.gpu.as_mut()) {
+            st.release_gpu(&mut g.renderer);
+        }
         // BUTTON CONFIG opened from the pause menu: leaving it goes straight
         // back to the paused match, not through the options
         let t = match t {
@@ -1181,6 +1206,12 @@ impl Shell {
             }
             Transition::Continue => match self.run_next() {
                 Some(t) => self.transition(t),
+                // a cleared arcade ladder: the fighter's ending
+                None if self.arcade_ending().is_some() => {
+                    if let Some(p) = self.arcade_ending() {
+                        self.transition(Transition::Story(p, Box::new(Transition::Title)));
+                    }
+                }
                 // an ended CHALLENGE run goes back to its menu (the new best on it)
                 None if self.run.as_ref().is_some_and(|r| r.mode.is_challenge())
                     && UiScreen::available(&self.motif_dir, UiKind::Challenge) =>
@@ -1189,6 +1220,18 @@ impl Shell {
                 }
                 None => self.transition(Transition::Title),
             },
+            Transition::Story(path, then) => {
+                match crate::storyboard::StoryScreen::load(&path, &self.data_dir) {
+                    Ok(st) => {
+                        log::info!("storyboard {}", path.display());
+                        self.screen = Screen::Story(Box::new(st), then);
+                    }
+                    Err(e) => {
+                        log::warn!("storyboard not played: {e:#}");
+                        self.transition(*then);
+                    }
+                }
+            }
             Transition::Challenge => {
                 self.run = None;
                 self.screen = match self.system.as_ref() {
@@ -1360,6 +1403,22 @@ impl Shell {
                     self.screen = Screen::Match(m);
                     self.open_pause(0);
                 }
+            }
+            Transition::Title if !self.booted && !self.quick => {
+                // the screenpack's logo and intro once, before the first title
+                self.booted = true;
+                let stories = self
+                    .system
+                    .as_ref()
+                    .map(|sys| crate::storyboard::system_storyboards(&sys.def_path, &self.data_dir))
+                    .unwrap_or_default();
+                let t = stories
+                    .into_iter()
+                    .rev()
+                    .fold(Transition::Title, |then, p| {
+                        Transition::Story(p, Box::new(then))
+                    });
+                self.transition(t);
             }
             Transition::Title => {
                 // leaving the online flow drops a parked matchup (the worker leaves it)
@@ -1940,6 +1999,21 @@ impl Shell {
                 }
             }
             Screen::Versus(v) => next = v.tick(pressed),
+            Screen::Story(st, then) => {
+                // START skips the storyboard, a fight button the scene
+                if start_side.is_some() {
+                    st.skip();
+                } else if pressed
+                    .iter()
+                    .any(|b| b.a || b.b || b.c || b.x || b.y || b.z)
+                {
+                    st.next_scene();
+                }
+                st.tick(&mut self.audio);
+                if st.done() {
+                    next = Some(std::mem::replace(then.as_mut(), Transition::Title));
+                }
+            }
             Screen::Match(_) if self.pause.is_some() => {
                 // the pause menu runs instead of the simulation
                 let mut resume = None;
@@ -2162,6 +2236,7 @@ impl Shell {
             (Screen::Ui(u), Some(sys)) => u.render(r, sys),
             (Screen::Online(o), Some(sys)) => o.render(r, sys),
             (Screen::Versus(v), Some(sys)) => v.render(r, sys),
+            (Screen::Story(st, _), _) => st.render(r),
             (Screen::Match(m), _) => m.render(r),
             _ => (
                 rugen_render::Camera {
@@ -2213,6 +2288,7 @@ impl Shell {
                 Screen::Select(_) => "select(legacy)".into(),
                 Screen::Versus(_) => "versus(legacy)".into(),
                 Screen::Match(_) => "match".into(),
+                Screen::Story(..) => "storyboard".into(),
             };
             self.frame_stats.frame(&name, r);
         }
@@ -2440,6 +2516,7 @@ impl Shell {
             {
                 self.open_pause(0);
             }
+            Screen::Story(ref mut st, _) => st.skip(),
             Screen::Versus(_) | Screen::Match(_) => {
                 if self.quick {
                     self.quit = true;
