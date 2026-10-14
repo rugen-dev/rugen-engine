@@ -1,7 +1,8 @@
 //! Training lab: tools for the TRAINING mode only. They draw over the fight
-//! or (the dummy) choose the inputs P2 is fed; they never touch the
-//! simulation's state, so a training replay plays back exactly and nothing
-//! here can reach an online match.
+//! or (the dummy) choose the inputs P2 is fed; the few that change the world
+//! itself (the LESSONS' clock, LIFE REFILL, POWER ALWAYS FULL, see [`Edits`])
+//! do it between steps and a recording keeps them, so a training replay
+//! plays back exactly. Nothing here reaches an online match.
 //!
 //! The pause menu edits a [`TrainingCfg`]; the shell keeps it between
 //! matches of a session.
@@ -26,6 +27,10 @@ pub struct TrainingCfg {
     pub reversal: bool,
     /// Recording slot RECORD / PLAY / LOOP and the reversal use (0..SLOTS).
     pub slot: usize,
+    /// LIFE REFILL: both fighters get their life back once a combo ends.
+    pub life_refill: bool,
+    /// POWER ALWAYS FULL: both fighters' power stays at the maximum.
+    pub power_full: bool,
 }
 
 /// The dummy's stance.
@@ -104,6 +109,18 @@ impl TrainingCfg {
                 ON_OFF.to_vec(),
                 usize::from(self.inputs),
             ),
+            (
+                "life_refill",
+                "LIFE REFILL",
+                vec!["OFF", "AFTER COMBO"],
+                usize::from(self.life_refill),
+            ),
+            (
+                "power_full",
+                "POWER",
+                vec!["NORMAL", "ALWAYS FULL"],
+                usize::from(self.power_full),
+            ),
         ]
     }
 
@@ -113,6 +130,8 @@ impl TrainingCfg {
             "hitboxes" => self.hitboxes = index % 2 == 1,
             "frame_data" => self.frame_data = index % 2 == 1,
             "inputs" => self.inputs = index % 2 == 1,
+            "life_refill" => self.life_refill = index % 2 == 1,
+            "power_full" => self.power_full = index % 2 == 1,
             "stance" => self.stance = [Stance::Stand, Stance::Crouch, Stance::Jump][index.min(2)],
             "block" => {
                 self.block =
@@ -185,7 +204,8 @@ fn row_json((id, label, options, sel): Row) -> Value {
 }
 
 /// What the training lab changes in the world itself (the clock while the
-/// LESSONS run; more to come), applied by the match right before each step.
+/// LESSONS run, LIFE REFILL, POWER ALWAYS FULL), applied by the match right
+/// before each step.
 /// Offline Training only. A recording keeps every change with the frame it
 /// took effect on, so a training replay plays back the same.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -193,6 +213,11 @@ fn row_json((id, label, options, sel): Row) -> Value {
 pub struct Edits {
     /// No round clock (the LESSONS run).
     pub no_clock: bool,
+    /// Both fighters get their life back once they are out of a hit or
+    /// guard state (a combo ended).
+    pub life: bool,
+    /// Both fighters' power stays full.
+    pub power: bool,
 }
 
 impl Edits {
@@ -200,6 +225,23 @@ impl Edits {
     pub fn apply(&self, world: &mut rugen_sim::World) {
         if self.no_clock && world.round.time_left >= 0 {
             world.round.time_left = -1;
+        }
+        if !self.life && !self.power {
+            return;
+        }
+        let fighting = world.round.round_state() == 2;
+        for p in world
+            .players
+            .iter_mut()
+            .filter(|p| p.helper_index == 0 && !p.removed)
+        {
+            if self.power {
+                p.power = p.power_max;
+            }
+            let hurt = p.move_type == rugen_cns::state::MoveType::H;
+            if self.life && fighting && p.alive() && !p.ko && !hurt && p.life < p.life_max {
+                p.life = p.life_max;
+            }
         }
     }
 
@@ -1010,13 +1052,64 @@ mod edit_tests {
 
     #[test]
     fn edits_follow_the_recorded_frames() {
-        let on = Edits { no_clock: true };
+        let on = Edits {
+            no_clock: true,
+            ..Default::default()
+        };
         let plan = [(10, on), (25, Edits::default())];
         assert_eq!(Edits::at(&plan, 0), Edits::default());
         assert_eq!(Edits::at(&plan, 10), on);
         assert_eq!(Edits::at(&plan, 24), on);
         assert_eq!(Edits::at(&plan, 25), Edits::default());
         assert_eq!(Edits::at(&[], 99), Edits::default());
+    }
+
+    /// LIFE REFILL waits for the combo to end; POWER fills every step.
+    #[test]
+    fn refills_wait_for_the_combo() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        if !kfm.exists() {
+            return;
+        }
+        let spec = rugen_sim::headless::MatchSpec {
+            p1: &kfm,
+            p2: &kfm,
+            stage: None,
+            data_dir: &root.join("data"),
+            motif: &root.join("data/system.def"),
+            zoom: (1.0, 1.0),
+            movement: Default::default(),
+            round_time: None,
+            ai: [0, 0],
+            fighter_size: Default::default(),
+            seed: rugen_sim::headless::LEGACY_SEED,
+        };
+        let mut w = rugen_sim::headless::build_world(&spec).expect("KFM world");
+        while w.round.round_state() != 2 {
+            w.step(&[rugen_sim::Buttons::default(); 2]);
+        }
+        let both = Edits {
+            life: true,
+            power: true,
+            ..Default::default()
+        };
+        w.players[1].life = 100;
+        w.players[1].move_type = rugen_cns::state::MoveType::H;
+        both.apply(&mut w);
+        assert_eq!(w.players[1].life, 100, "still in the combo");
+        assert_eq!(w.players[0].power, w.players[0].power_max);
+        w.players[1].move_type = rugen_cns::state::MoveType::I;
+        both.apply(&mut w);
+        assert_eq!(
+            w.players[1].life, w.players[1].life_max,
+            "combo over: refilled"
+        );
+        // off: nothing changes
+        w.players[0].power = 0;
+        Edits::default().apply(&mut w);
+        assert_eq!(w.players[0].power, 0);
     }
 }
 

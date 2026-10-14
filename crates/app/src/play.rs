@@ -1129,8 +1129,10 @@ impl Match {
                 (Some((_, cursor)), _) => {
                     crate::training::Edits::at(&self.edit_plan, cursor.saturating_sub(1) as u32)
                 }
-                (None, Some(_)) => crate::training::Edits {
+                (None, Some(t)) => crate::training::Edits {
                     no_clock: self.tutorial.is_some(),
+                    life: t.cfg.life_refill,
+                    power: t.cfg.power_full,
                 },
                 (None, None) => crate::training::Edits::default(),
             };
@@ -3581,6 +3583,12 @@ mod tests {
         };
         let mut audio = None;
         for f in 0..900 {
+            if f == 100
+                && let Some(t) = m.training.as_mut()
+            {
+                t.cfg.power_full = true;
+                t.cfg.life_refill = true;
+            }
             if f == 200 {
                 let keys =
                     crate::keylabel::Labels::new(&cfg.input, 0, crate::input::Device::Keyboard);
@@ -3599,7 +3607,13 @@ mod tests {
         assert_eq!(m.world.round.time_left, -1, "the lessons stopped the clock");
         let want = m.world.checksum();
         let rec = m.record.take().expect("recorded");
-        assert_eq!(rec.edits.len(), 2, "lessons on, then off: {:?}", rec.edits);
+        assert_eq!(
+            rec.edits.len(),
+            3,
+            "refills on, lessons on, then off: {:?}",
+            rec.edits
+        );
+        assert_eq!(m.world.players[0].power, m.world.players[0].power_max);
         let rec: crate::replay::Replay =
             serde_json::from_slice(&serde_json::to_vec(&rec).unwrap()).unwrap();
         let mut p = Match::load(&rec.setup(), &motif, &data, &cfg).expect("replay");

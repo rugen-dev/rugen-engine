@@ -806,7 +806,7 @@ visible = "show_display"
 
   [[node.children]]
   kind = "text"
-  text = "WHAT THE SCREEN SHOWS"
+  text = "SCREEN TOOLS, LIFE AND POWER"
   anchor = "tr"
   x = 24
   y = 34
