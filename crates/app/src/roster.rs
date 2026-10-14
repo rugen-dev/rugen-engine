@@ -166,13 +166,16 @@ impl Roster {
             | Mode::Tutorial
             | Mode::Arena
             | Mode::Online
-            | Mode::Survival => [true, false],
+            | Mode::Survival
+            | Mode::BossRush => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         // training, arena and watch: the cursor also picks the other side
         let chooses = match mode {
             Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
-            Mode::Arcade | Mode::Tutorial | Mode::Online | Mode::Survival => [true, false],
+            Mode::Arcade | Mode::Tutorial | Mode::Online | Mode::Survival | Mode::BossRush => {
+                [true, false]
+            }
             Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let mut r = Self {
@@ -206,6 +209,13 @@ impl Roster {
             if !r.chooses[side] && mode != Mode::Online {
                 r.picks[side] = r.random_ok().into_iter().collect();
             }
+        }
+        // Boss Rush: the first boss is the opponent
+        if mode == Mode::BossRush
+            && let Some(first) = crate::challenge::bosses(lib).0.first()
+            && let Some(i) = r.cells.iter().position(|c| &c.manifest.id == first)
+        {
+            r.picks[1] = vec![i];
         }
         r.picking = r.next_picking();
         r.hover = r.order.first().copied();

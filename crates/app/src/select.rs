@@ -87,7 +87,8 @@ impl SelectScreen {
             | Mode::Tutorial
             | Mode::Arena
             | Mode::Online
-            | Mode::Survival => [true, false],
+            | Mode::Survival
+            | Mode::BossRush => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let s = &sys.select;
@@ -361,6 +362,7 @@ impl SelectScreen {
             Mode::Tutorial => "Tutorial",
             Mode::Online => "Online",
             Mode::Survival => "Survival",
+            Mode::BossRush => "Boss Rush",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
         sys.text(r, s.title_font, title, s.title_offset);

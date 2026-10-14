@@ -55,6 +55,9 @@ pub enum Mode {
     /// CHALLENGE: one life bar against an endless line of random CPU
     /// opponents, one round each, a little life back between fights.
     Survival,
+    /// CHALLENGE: the bosses (`boss = 1` in select.def, else the five
+    /// strongest fighters by the balance verdict) back to back.
+    BossRush,
 }
 
 impl Mode {
@@ -69,6 +72,7 @@ impl Mode {
             Mode::Arena => "ARENA",
             Mode::Online => "ONLINE",
             Mode::Survival => "SURVIVAL",
+            Mode::BossRush => "BOSS RUSH",
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         }
     }
@@ -76,12 +80,12 @@ impl Mode {
     /// A ladder of CPU opponents the shell lines up one after another
     /// (P1 picks alone, no stage select, CONTINUE after a win).
     pub fn is_ladder(self) -> bool {
-        matches!(self, Mode::Arcade | Mode::Survival)
+        matches!(self, Mode::Arcade | Mode::Survival | Mode::BossRush)
     }
 
     /// One of the CHALLENGE modes (records in the profile).
     pub fn is_challenge(self) -> bool {
-        matches!(self, Mode::Survival)
+        matches!(self, Mode::Survival | Mode::BossRush)
     }
 }
 
@@ -835,7 +839,8 @@ impl Shell {
     }
 
     /// A ladder mode's fighter select is done: the run starts with P1's
-    /// pick, and the select's opponent is the first one.
+    /// pick. The select's opponent is the first one, except in Boss Rush,
+    /// where the first boss is.
     /// Returns the transition to take instead of the select's own (its
     /// fight with the run's rules).
     fn start_run(&mut self, mode: Mode, next: Transition) -> Transition {
@@ -856,7 +861,19 @@ impl Shell {
                 .iter()
                 .position(|e| e.id.eq_ignore_ascii_case(&setup.ids[1])),
         );
-        self.run = Some(run);
+        if mode == Mode::BossRush {
+            run.bosses = crate::challenge::bosses(&self.lib).0;
+            let first_is_boss = run.next_boss() == Some(setup.ids[1].as_str());
+            self.run = Some(run);
+            if !first_is_boss {
+                // the classic select's random opponent: the first boss instead
+                return self
+                    .run_fight(setup.stage.clone())
+                    .unwrap_or(Transition::Title);
+            }
+        } else {
+            self.run = Some(run);
+        }
         setup.mode = Some(mode);
         setup.run = self.run.as_ref().and_then(|r| r.rules());
         // a screenpack select may have drawn an arena stage: not for a run
@@ -885,7 +902,15 @@ impl Shell {
         if chars.is_empty() {
             return None;
         }
-        let pick = chars[run.next_foe(chars.len())].clone();
+        let pick = if run.mode == Mode::BossRush {
+            let id = run.next_boss()?;
+            chars
+                .iter()
+                .find(|e| e.id.eq_ignore_ascii_case(id))?
+                .clone()
+        } else {
+            chars[run.next_foe(chars.len())].clone()
+        };
         let p1 = run.p1.clone();
         let mode = run.mode;
         let rules = run.rules();

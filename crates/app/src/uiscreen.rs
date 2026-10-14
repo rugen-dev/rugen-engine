@@ -488,6 +488,7 @@ fn menu_desc(id: &str) -> &'static str {
         "arcade" => "Climb the ladder vs the CPU",
         "challenge" => "Runs against the CPU, best scores kept",
         "survival" => "One life bar, endless opponents",
+        "bossrush" => "The toughest fighters back to back",
         "versus" => "Two players, one keyboard",
         "arena" => "Platforms and stocks: knock them off the stage",
         "training" => "Free practice, no clock",
@@ -967,7 +968,8 @@ impl UiScreen {
             s.load_title_facts(lib);
         }
         if kind == UiKind::Challenge {
-            s.challenge = crate::challenge::cards(&s.profile.challenge);
+            let (bosses, flagged) = crate::challenge::bosses(lib);
+            s.challenge = crate::challenge::cards(&s.profile.challenge, bosses.len(), flagged);
         }
         if let Some(r) = &s.roster
             && r.dual()
@@ -1213,20 +1215,20 @@ impl UiScreen {
                 })
             }
             UiKind::Title => {
-                let mut menu: Vec<Value> =
-                    sys.title
-                        .items
-                        .iter()
-                        .filter_map(|(k, label)| {
-                            let action = match k.as_str() {
-                                "arcade" | "versus" | "training" | "watch" | "options"
-                                | "survival" => format!("mode:{k}"),
-                                "exit" => "quit".to_string(),
-                                _ => return None,
-                            };
-                            Some(json!({ "id": k, "label": label, "action": action }))
-                        })
-                        .collect();
+                let mut menu: Vec<Value> = sys
+                    .title
+                    .items
+                    .iter()
+                    .filter_map(|(k, label)| {
+                        let action = match k.as_str() {
+                            "arcade" | "versus" | "training" | "watch" | "options" | "survival"
+                            | "bossrush" => format!("mode:{k}"),
+                            "exit" => "quit".to_string(),
+                            _ => return None,
+                        };
+                        Some(json!({ "id": k, "label": label, "action": action }))
+                    })
+                    .collect();
                 let pos = |menu: &[Value], id: &str| {
                     menu.iter()
                         .position(|m| m["id"] == id)
@@ -1866,6 +1868,7 @@ impl UiScreen {
                 "tutorial" => Transition::Select(Mode::Tutorial),
                 "watch" => Transition::Select(Mode::Watch),
                 "survival" => Transition::Select(Mode::Survival),
+                "bossrush" => Transition::Select(Mode::BossRush),
                 "options" => Transition::Options,
                 _ => return None,
             }),
