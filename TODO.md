@@ -377,9 +377,16 @@ box) and screenshots.
   bundled fight.def. Not built from the mockup: the LANGUAGE half of the
   INTERFACE page (i18n comes last). Shots:
   `~/.cache/rugen-work/creators/shots/themes-{ink,dojo,live-reload,error}.png`.
-- [ ] **Fighter debugger.** `rugen debug <fighter>`: pause, step one frame,
+- [x] **Fighter debugger.** (72228bc) `rugen debug <fighter>`: pause, step one frame,
   show state number, anim, elem, vars, fvars, which controllers fired this
   frame and why; click a player to inspect.
+  Also STEP BACK (600 frames), slow motion, boxes, Tab through players
+  and helpers; failed triggers show the value of their left side. The
+  sim records outcomes in `World::trace` (off by default, never
+  checksummed). Not done: a break on state, watch expressions, the
+  special states' failed controllers (only fired -1 / -2 / -3 ones are
+  listed: -1 alone fails dozens every frame). Shots:
+  `~/.cache/rugen-work/creators/shots/debugger-{ink,dojo}.png`.
 
 ### Reach
 - [ ] **Translations (i18n).** Move every UI string into `motif/lang/en.toml`
