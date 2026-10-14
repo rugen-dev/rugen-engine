@@ -335,7 +335,7 @@ box) and screenshots.
   `shot-wind-ink.png`.
 
 ### Online
-- [x] **Ranked seasons.** (ead3a26; rugen-server ea293df, 4b94e1b) A season id and dates on the server; ratings soft
+- [x] **Ranked seasons.** (ead3a26; rugen-server 29a621e, bf34e9d) A season id and dates on the server; ratings soft
   reset at season start (pull toward 1200), last season's tier kept as a
   badge on the profile.
   `rugen_proto::season_reset` is the pure reset (tested); the server keeps
@@ -344,13 +344,13 @@ box) and screenshots.
   through past seasons with left / right. `POST /v1/admin/season_end` ends
   a season early. Shots: `~/.cache/rugen-work/ro/shots/board-{ink,dojo}.png`,
   `board-s2.png`.
-- [x] **Per-fighter leaderboards.** (fad0209; rugen-server c662609) Server keeps wins and rating per
+- [x] **Per-fighter leaderboards.** (fad0209; rugen-server 22e3365) Server keeps wins and rating per
   fingerprint; LEADERBOARD gets a FIGHTERS tab.
   Per player and fighter, per season (schema v8), ranked only; a new
   season starts a player's fighter rating from a soft reset of the last
   one. Tab switches PLAYERS / FIGHTERS, a FIGHTER stepper cycles the
   fighters with a board. Shots: `~/.cache/rugen-work/ro/shots/fboard-{ink,dojo}.png`.
-- [x] **Tournament brackets.** (1a2c5c7; rugen-server 5277884) In a room: 8 or 16 players, single
+- [x] **Tournament brackets.** (1a2c5c7; rugen-server bd91875) In a room: 8 or 16 players, single
   elimination, the server seeds by rating and calls each match; spectators
   watch the bracket.
   FORMAT on CREATE ROOM; the host starts the bracket (2+ entrants, byes
@@ -369,7 +369,7 @@ box) and screenshots.
   sizes, rules, seed, players, game version) and RGM1 chunks; uploads
   ride the relay session (`STREAM` / `STREAM_ACK`) when the ticket says
   `live`.
-- [x] **Server keeps the input log of every live match.** (078857f; rugen-server 21eaede, 5c19f78) The relay already
+- [x] **Server keeps the input log of every live match.** (078857f; rugen-server 7e7d96d, 8468e4b) The relay already
   forwards the inputs; keep a copy, fan out to spectators from the server (not
   from P1), drop the log when the match ends unless it is shared.
   Each player feeds only its own half of every frame; bounded (15 min a
@@ -395,7 +395,7 @@ box) and screenshots.
   `bracket-live-{ink,dojo}.png`, `bracket-watch-ink.png`.
 
 ### Replays
-- [x] **Shareable replays.** (c2fbd19; rugen-server 0396499) Keep a finished match's input log on the server
+- [x] **Shareable replays.** (c2fbd19; rugen-server d25b85e) Keep a finished match's input log on the server
   (see *Live watching*), get a short code; WATCH → BY CODE downloads and plays it,
   fetching missing fighters through the existing package sync. Kept 30 days.
   REPLAYS on the hub: SHARE (8-character code, copied), COPY CODE, SAVE
