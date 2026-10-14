@@ -10,6 +10,7 @@
 pub mod account;
 pub mod evidence;
 pub mod fair;
+pub mod machine;
 pub mod relay;
 pub mod room_code;
 pub mod size;
@@ -18,6 +19,7 @@ pub mod trust;
 
 pub use account::{AccountInfo, Session};
 pub use fair::*;
+pub use machine::MachineSummary;
 pub use trust::*;
 
 use serde::{Deserialize, Serialize};

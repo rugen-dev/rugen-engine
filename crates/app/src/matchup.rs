@@ -582,6 +582,7 @@ impl Worker {
                 stage: fp(2),
                 engine: engine(),
                 rules: v.rules.clone(),
+                machine: Some(crate::machine::summary()),
             };
             match self.client.ready(self.id, &report) {
                 Ok(nv) => {

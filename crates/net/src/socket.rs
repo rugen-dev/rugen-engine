@@ -14,6 +14,9 @@ use crate::{Error, Result};
 
 const PUNCH: &[u8] = b"rugen1 punch ";
 const PONG: &[u8] = b"rugen1 pong ";
+/// The sender's machine summary (`rugen1 hello <json>`), next to the
+/// punches; builds that do not know it ignore it.
+const HELLO: &[u8] = b"rugen1 hello ";
 
 /// Outcome of [`Socket::handshake`].
 #[derive(Clone, Debug)]
@@ -29,6 +32,9 @@ pub struct Punched {
     /// The peer's LAN protocol ([`LAN_PROTOCOL`]); `None` for a build that
     /// sends none (0.6.1 and earlier).
     pub peer_protocol: Option<u32>,
+    /// The peer's hello ([`Socket::handshake_full`]): its machine summary;
+    /// `None` from builds that send none.
+    pub peer_hello: Option<String>,
 }
 
 /// Match rules carried by [`Socket::handshake_with`]: the host sends its own
@@ -128,6 +134,26 @@ impl Socket {
         rules: HandshakeRules,
         progress: &mut dyn FnMut(&str),
     ) -> Result<Punched> {
+        self.handshake_full(peer, timeout, rules, None, progress)
+    }
+
+    /// [`handshake_with`](Self::handshake_with) that also sends `hello`
+    /// (a short line, our machine summary) next to every punch and keeps
+    /// the peer's. Never waited for: older builds send none.
+    pub fn handshake_full(
+        &mut self,
+        peer: SocketAddr,
+        timeout: Duration,
+        rules: HandshakeRules,
+        hello: Option<&str>,
+        progress: &mut dyn FnMut(&str),
+    ) -> Result<Punched> {
+        let hello: Option<Vec<u8>> = hello.filter(|h| h.len() <= 400).map(|h| {
+            let mut d = HELLO.to_vec();
+            d.extend_from_slice(h.as_bytes());
+            d
+        });
+        let mut peer_hello: Option<String> = None;
         let suffix = match rules {
             HandshakeRules::Send(r) => format!("{PROTOCOL}{LAN_PROTOCOL}{RULES}{r}"),
             _ => format!("{PROTOCOL}{LAN_PROTOCOL}"),
@@ -154,6 +180,9 @@ impl Socket {
                     let _ = self
                         .socket
                         .send_to(format!("rugen1 punch {}{suffix}", ms()).as_bytes(), peer);
+                    if let Some(h) = &hello {
+                        let _ = self.socket.send_to(h, peer);
+                    }
                 }
                 let us: Vec<u32> = samples.iter().map(|ms| ms * 1000).collect();
                 return Ok(Punched {
@@ -162,6 +191,7 @@ impl Socket {
                     rtt: crate::RttStats::from_us(&us),
                     rules: got,
                     peer_protocol,
+                    peer_hello,
                 });
             }
             let every = if contact.is_some() { 30 } else { 100 };
@@ -169,6 +199,9 @@ impl Socket {
                 let _ = self
                     .socket
                     .send_to(format!("rugen1 punch {}{suffix}", ms()).as_bytes(), peer);
+                if let Some(h) = &hello {
+                    let _ = self.socket.send_to(h, peer);
+                }
                 last_send = Instant::now();
             }
             match self.socket.recv_from(&mut buf) {
@@ -197,6 +230,10 @@ impl Socket {
                         let mut pong = PONG.to_vec();
                         pong.extend_from_slice(stamp.trim().as_bytes());
                         let _ = self.socket.send_to(&pong, from);
+                    } else if let Some(t) = d.strip_prefix(HELLO) {
+                        if let Ok(t) = std::str::from_utf8(t) {
+                            peer_hello = Some(t.trim().to_string());
+                        }
                     } else if let Some(t) = d.strip_prefix(PONG)
                         && let Some(t) = std::str::from_utf8(t)
                             .ok()
@@ -288,6 +325,70 @@ mod tests {
         assert_eq!(ra.remote.port(), pb);
         assert_eq!(rb.remote.port(), pa);
         assert!(ra.rtt_ms.unwrap() < 200);
+    }
+
+    /// Machine summaries ride next to the punches both ways; a build that
+    /// sends none (or does not know them) still connects, rules intact.
+    #[test]
+    fn handshake_carries_hellos() {
+        let mut a = Socket::bind(0).unwrap();
+        let mut b = Socket::bind(0).unwrap();
+        let (pa, pb) = (a.local_port(), b.local_port());
+        let t = std::thread::spawn(move || {
+            b.handshake_full(
+                SocketAddr::from(([127, 0, 0, 1], pa)),
+                Duration::from_secs(5),
+                HandshakeRules::Receive,
+                Some(r#"{"engine":"rugen 0.7.0","os":"B"}"#),
+                &mut |_| {},
+            )
+            .unwrap()
+        });
+        let ra = a
+            .handshake_full(
+                SocketAddr::from(([127, 0, 0, 1], pb)),
+                Duration::from_secs(5),
+                HandshakeRules::Send("fighter_size=chibi"),
+                Some(r#"{"engine":"rugen 0.7.0","os":"A"}"#),
+                &mut |_| {},
+            )
+            .unwrap();
+        let rb = t.join().unwrap();
+        assert_eq!(
+            ra.peer_hello.as_deref(),
+            Some(r#"{"engine":"rugen 0.7.0","os":"B"}"#)
+        );
+        assert_eq!(
+            rb.peer_hello.as_deref(),
+            Some(r#"{"engine":"rugen 0.7.0","os":"A"}"#)
+        );
+        assert_eq!(rb.rules.as_deref(), Some("fighter_size=chibi"));
+        // an older peer: no hello, nothing else changes
+        let mut a = Socket::bind(0).unwrap();
+        let mut b = Socket::bind(0).unwrap();
+        let (pa, pb) = (a.local_port(), b.local_port());
+        let t = std::thread::spawn(move || {
+            b.handshake_with(
+                SocketAddr::from(([127, 0, 0, 1], pa)),
+                Duration::from_secs(5),
+                HandshakeRules::Receive,
+                &mut |_| {},
+            )
+            .unwrap()
+        });
+        let ra = a
+            .handshake_full(
+                SocketAddr::from(([127, 0, 0, 1], pb)),
+                Duration::from_secs(5),
+                HandshakeRules::Send("fighter_size=chibi"),
+                Some("{}"),
+                &mut |_| {},
+            )
+            .unwrap();
+        let rb = t.join().unwrap();
+        assert_eq!(ra.peer_hello, None);
+        assert_eq!(rb.rules.as_deref(), Some("fighter_size=chibi"));
+        assert_eq!(rb.peer_protocol, Some(LAN_PROTOCOL));
     }
 
     #[test]

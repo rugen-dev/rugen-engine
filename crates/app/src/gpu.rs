@@ -41,6 +41,8 @@ impl Gpu {
             presentation,
         ))
         .expect("renderer");
+        crate::machine::set_gpu(renderer.adapter());
+        crate::machine::set_display(s.width, s.height);
         Self { renderer, window }
     }
 }

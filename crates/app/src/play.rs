@@ -5,6 +5,7 @@
 //! out of the box. Debug keys: Space pause, `.` step, F2 boxes, F1 debug
 //! (TRAINING: F1 hitboxes), +/- zoom.
 
+use rugen_proto::MachineSummary;
 use rugen_sim::scale::FighterSize;
 use rugen_sim::team::TeamMode;
 use std::collections::HashMap;
@@ -763,11 +764,13 @@ impl Match {
                 } else {
                     rugen_net::HandshakeRules::Receive
                 };
+                let hello = crate::machine::summary().encode();
                 let shake = socket
-                    .handshake_with(
+                    .handshake_full(
                         *remote,
                         std::time::Duration::from_secs(60),
                         rules,
+                        Some(&hello),
                         &mut |s| log::info!("netplay: {s}"),
                     )
                     .with_context(|| format!("netplay with {remote}"))?;
@@ -793,7 +796,12 @@ impl Match {
                     p95,
                     o.input_delay
                 );
-                Some(Netplay::p2p_with_socket(socket, *remote, *side, &o)?)
+                if let Some(m) = shake.peer_hello.as_deref().and_then(MachineSummary::decode) {
+                    log::info!("netplay: the other player runs {}", m.line());
+                }
+                let mut n = Netplay::p2p_with_socket(socket, *remote, *side, &o)?;
+                n.set_peer_machine(shake.peer_hello);
+                Some(n)
             }
             Some(NetMode::Relay {
                 server,
@@ -1493,6 +1501,14 @@ impl Match {
 
     /// What a result report carries: last frame, world checksum and both
     /// players' inputs (the server compares the two reports).
+    /// The other player's machine summary (online / LAN), once it sent one.
+    pub fn peer_machine(&self) -> Option<MachineSummary> {
+        self.net
+            .as_ref()
+            .and_then(|n| n.peer_machine())
+            .and_then(|s| MachineSummary::decode(&s))
+    }
+
     pub fn evidence(&self) -> rugen_net::online::Evidence {
         let turn = self.net.as_ref().and_then(|n| n.turn_stats());
         rugen_net::online::Evidence {
@@ -3521,6 +3537,8 @@ fn relay_session(
     socket.wait_for(0b011, Duration::from_secs(90), &mut |s| {
         log::info!("netplay: {s}")
     })?;
+    // each side's replay can say what the other ran
+    socket.set_machine(&crate::machine::summary().encode());
     // direct, TURN or the relay: the fastest working path within 1.5 s
     // (the others keep trying and take over mid-match when better)
     let path = socket.settle_paths(Duration::from_millis(1500));

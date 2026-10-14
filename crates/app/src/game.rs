@@ -906,6 +906,7 @@ impl Shell {
                 // applied at once (Wayland): no Resized event follows
                 if let Some(s) = g.window.request_inner_size(want) {
                     g.renderer.resize(s.width, s.height);
+                    crate::machine::set_display(s.width, s.height);
                 }
             }
         }
@@ -1196,15 +1197,10 @@ impl Shell {
         }
         let path = match &self.harness.record {
             Some(p) => p.clone(),
-            None => {
-                let t = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                self.lib.root.join("replays").join(format!("{t}.json"))
-            }
+            // `G6_Obito-vs-G6_Sakura-Forest-3f9a2c.json`
+            None => crate::replay::free_path(&self.lib.root.join("replays"), &rec.file_stem()),
         };
-        match rec.save(&path) {
+        match rec.save(&path, &self.lib.root) {
             Ok(()) => log::info!("replay saved to {}", path.display()),
             Err(e) => log::warn!("replay not saved: {e}"),
         }
@@ -1914,7 +1910,8 @@ impl Shell {
                             t.set_labels([&labels[0], &labels[1]]);
                             m.training = Some(t);
                         }
-                        if setup.net.is_none() {
+                        // never a recording of a replay being played
+                        if setup.net.is_none() && self.replay.is_none() {
                             m.record = Some(crate::replay::Replay::new(
                                 &setup,
                                 m.world.fighter_size,
@@ -2568,6 +2565,10 @@ impl Shell {
                                     seed: setup.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED),
                                     rules: om.rules.clone(),
                                     inputs: rugen_proto::stream::inputs_from_bytes(&ev.inputs),
+                                    side: om.my_side as u8,
+                                    peer: m.peer_machine(),
+                                    recorded_at: Some(crate::machine::now_rfc3339()),
+                                    mine: Some(crate::machine::summary()),
                                 },
                             );
                         }
@@ -2805,6 +2806,7 @@ impl Shell {
                 let s = gpu.window.inner_size();
                 let (w, h) = self.harness.window.unwrap_or((s.width, s.height));
                 gpu.renderer.resize(w, h);
+                crate::machine::set_display(w, h);
             }
             Err(e) => log::warn!("render: {e}"),
         }
@@ -3065,6 +3067,7 @@ impl ApplicationHandler for Shell {
         let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen, presentation);
         if let Some((w, h)) = self.harness.window {
             gpu.renderer.resize(w, h);
+            crate::machine::set_display(w, h);
         }
         self.latency.set_mode(
             format!("{:?}", gpu.renderer.present_mode()),
@@ -3106,6 +3109,7 @@ impl ApplicationHandler for Shell {
                 let (w, h) = self.harness.window.unwrap_or((s.width, s.height));
                 if let Some(g) = &mut self.gpu {
                     g.renderer.resize(w, h);
+                    crate::machine::set_display(w, h);
                 }
             }
             WindowEvent::RedrawRequested => {

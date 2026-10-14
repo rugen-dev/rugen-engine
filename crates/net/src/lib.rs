@@ -247,6 +247,8 @@ pub struct Netplay {
     remote: Option<SocketAddr>,
     /// Confirmed inputs for the server's input log (relay sessions).
     uplink: Option<std::sync::Arc<relay::Uplink>>,
+    /// The other player's machine summary (LAN hello, relay message).
+    peer_machine: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Netplay {
@@ -311,7 +313,9 @@ impl Netplay {
         let link = socket.link();
         let exit = socket.exit();
         let uplink = socket.uplink();
+        let peer_machine = socket.peer_machine();
         let mut n = Self::start(socket, &players, local_handle, opts)?;
+        n.peer_machine = peer_machine;
         n.uplink = uplink.enabled.then_some(uplink);
         n.remote = Some(slot_addr(1 - local_handle as u8));
         n.turn_meter = meter;
@@ -353,6 +357,20 @@ impl Netplay {
             peer_lost: false,
             remote: None,
             uplink: None,
+            peer_machine: Default::default(),
+        }
+    }
+
+    /// The other player's machine summary as it sent it (`None` until it
+    /// arrives, and from builds that send none).
+    pub fn peer_machine(&self) -> Option<String> {
+        self.peer_machine.lock().ok().and_then(|m| m.clone())
+    }
+
+    /// Note the summary a LAN peer sent in the handshake.
+    pub fn set_peer_machine(&mut self, summary: Option<String>) {
+        if let Ok(mut m) = self.peer_machine.lock() {
+            *m = summary;
         }
     }
 

@@ -543,6 +543,19 @@ themes, deck profile checked at 1280x800.
   `RUGEN_REPLAY_DAYS` / `RUGEN_REPLAY_MB`, 50 shares a day per account.
   Shots: `~/.cache/rugen-work/ro/shots/replays-{ink,dojo}.png`,
   `replays-shared-ink.png`, `replay-watch-ink.png`.
+- [x] **Replays say what produced them.** (5f6c652, e1ff741, b02bd28, 842eb40) Every replay records `engine`
+  (version, commit, target, build), `machine` (OS, arch, CPU, cores, RAM,
+  GPU / backend / driver, window, profile; never a hostname, user name,
+  address or home path), `mode` and `recorded_at`; online / LAN replays add
+  `online` (server or `lan`, match id, side, the peer's version and OS /
+  arch). Fighters and stages by id + fingerprint instead of absolute paths.
+  REPLAYS and `rugen replay <file> --info` show the header. The peer summary
+  travels in the LAN hello and relay DATA type 12 (no server change); shared
+  replays by code get the players' version / OS / arch only with the server
+  patch (`~/.cache/rugen-work/replaymeta/server.patch`). Shots:
+  `~/.cache/rugen-work/replaymeta/shots/replays-{ink,dojo}.png`.
+- [x] **Readable replay names.** (b142af6) `<p1>-vs-<p2>-<stage>-<hash>.json` instead
+  of a Unix time; old names keep working.
 
 ### Online safety
 Fighters players bring online are third-party files: send them only with

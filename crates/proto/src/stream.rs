@@ -84,6 +84,11 @@ pub struct MatchHeader {
     /// Unix time the match started.
     #[serde(default)]
     pub created: u64,
+    /// Each player's machine summary as its ready report gave it, without
+    /// graphics details ([`crate::MachineSummary::shared`]); empty from
+    /// servers or clients that send none.
+    #[serde(default, skip_serializing_if = "crate::machine::both_none")]
+    pub machines: [Option<crate::MachineSummary>; 2],
 }
 
 impl MatchHeader {

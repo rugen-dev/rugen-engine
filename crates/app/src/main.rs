@@ -37,8 +37,10 @@
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
 //! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 //! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
-//! rugen replay <file.json>                                      play back a recorded match
-//!   (quick play records to --record file.json, menu matches to replays/)
+//! rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
+//! rugen replay --list [--root dir]                              saved replays, newest first
+//!   (quick play records to --record file.json, menu matches to
+//!   replays/<p1>-vs-<p2>-<stage>-<hash>.json)
 //!
 //! `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 //! ```
@@ -69,6 +71,7 @@ mod keylabel;
 mod kit;
 mod latency;
 mod lifebar;
+mod machine;
 mod matchup;
 mod mouse;
 mod official;
@@ -112,33 +115,6 @@ fn library(root: Option<&str>) -> rugen_content::Library {
     lib
 }
 
-/// A recorded def path, or the same character / stage found again by id when
-/// the path is gone (`cache/chars/<id>-<hash>/x.def` of older versions).
-fn relocate(
-    lib: &rugen_content::Library,
-    def: &std::path::Path,
-    stage: bool,
-) -> std::path::PathBuf {
-    if rugen_formats::vfs::exists(def) {
-        return def.to_path_buf();
-    }
-    let id = def
-        .parent()
-        .and_then(|d| d.file_name())
-        .map(|n| n.to_string_lossy().to_string())
-        .map(|n| n.rsplit_once('-').map_or(n.clone(), |(a, _)| a.to_string()))
-        .unwrap_or_default();
-    let found = if stage {
-        lib.stages()
-            .into_iter()
-            .find(|e| e.id.eq_ignore_ascii_case(&id))
-            .and_then(|e| lib.prepare_stage(&e).ok())
-    } else {
-        lib.find_char(&id).and_then(|e| lib.prepare_char(&e).ok())
-    };
-    found.map_or_else(|| def.to_path_buf(), |(d, m)| m.def_path(&d))
-}
-
 /// `rugen --help` (the usage above).
 const USAGE: &str = "\
 rugen [--root dir]                                            full game: title, select, fight
@@ -177,8 +153,10 @@ rugen verify <char> | --all [--root dir]                      load + headless so
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
 rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
-rugen replay <file.json>                                      play back a recorded match
-  (quick play records to --record file.json, menu matches to replays/)
+rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
+rugen replay --list [--root dir]                              saved replays, newest first
+  (quick play records to --record file.json, menu matches to
+  replays/<p1>-vs-<p2>-<stage>-<hash>.json)
 
 `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 ";
@@ -728,12 +706,64 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Some("replay") if args.get(1).map(String::as_str) == Some("--list") => {
+            let root = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1));
+            let lib = rugen_content::Library::discover(root.map(std::path::Path::new));
+            let dir = lib.root.join("replays");
+            let list = replay::list_saved(&dir);
+            if list.is_empty() {
+                println!("no replays in {}", dir.display());
+            }
+            let mut out = std::io::stdout().lock();
+            for s in list {
+                let r = &s.replay;
+                let at = machine::rfc3339(s.at);
+                // `| head` closes the pipe early: stop quietly
+                use std::io::Write as _;
+                let ok = writeln!(
+                    out,
+                    "{}  {:<11}  {:<24}  {}",
+                    at[..16].replace('T', " "),
+                    r.mode.as_deref().unwrap_or("-"),
+                    r.engine.as_ref().map_or_else(|| "-".into(), |e| e.line()),
+                    s.path.file_name().unwrap_or_default().to_string_lossy()
+                );
+                if ok.is_err() {
+                    break;
+                }
+            }
+            Ok(())
+        }
         Some("replay") => {
             let path = args.get(1).ok_or_else(|| {
-                anyhow::anyhow!("usage: rugen replay <file.json> [--shot out.png] [--frames n]")
+                anyhow::anyhow!(
+                    "usage: rugen replay <file.json> [--info] [--shot out.png] [--frames n] | rugen replay --list"
+                )
             })?;
             let r = replay::Replay::load(std::path::Path::new(path))
                 .with_context(|| path.to_string())?;
+            // the header only, no window
+            if args.iter().any(|a| a == "--info") {
+                println!("{:<9} {path}", "file");
+                println!("{}", r.info());
+                // replays from before 0.6.5 stored absolute paths
+                let text = std::fs::read_to_string(path).unwrap_or_default();
+                if let Some(w) = machine::Personal::current().leaks(&text) {
+                    let w = if w.contains(['/', '\\']) {
+                        "a home folder"
+                    } else {
+                        "a personal name"
+                    };
+                    println!(
+                        "privacy   this file names {w} (an older replay with absolute paths); \
+                         newer replays store ids only"
+                    );
+                }
+                return Ok(());
+            }
             let opt = |name: &str| {
                 args.iter()
                     .position(|a| a == name)
@@ -760,11 +790,9 @@ fn main() -> anyhow::Result<()> {
                 debug: false,
                 window: harness_window(&args),
             };
-            let mut setup = r.setup();
-            // recordings made before content files point into old cache folders
-            setup.p1 = relocate(&lib, &setup.p1, false);
-            setup.p2 = relocate(&lib, &setup.p2, false);
-            setup.stage = setup.stage.map(|s| relocate(&lib, &s, true));
+            // fighters by path, fingerprint or id (moved, or an old replay's
+            // absolute path into an old cache folder)
+            let setup = r.resolve(&lib);
             game::Shell::new(
                 config,
                 lib,
