@@ -37,6 +37,10 @@ pub struct Replay {
     /// Team modes and partners (offline team matches); absent for 1v1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teams: Option<crate::play::TeamSetup>,
+    /// A CHALLENGE run's rules for this fight (rounds, P1's carried life);
+    /// absent for every other match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::play::RunRules>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
@@ -60,6 +64,7 @@ impl Replay {
             arena_ai,
             round_time: Some(round_time),
             teams: setup.teams.clone(),
+            run: setup.run,
             inputs: Vec::new(),
         }
     }
@@ -78,6 +83,7 @@ impl Replay {
             arena_ai: Some(self.arena_ai),
             round_time: self.round_time,
             teams: self.teams.clone(),
+            run: self.run,
         }
     }
 
@@ -145,6 +151,7 @@ mod tests {
             arena_ai: false,
             round_time: None,
             teams: None,
+            run: None,
             inputs: Vec::new(),
         }
         .setup();
@@ -182,5 +189,25 @@ mod tests {
         assert!(json.contains(r#""mode":["turns","single"]"#), "{json}");
         let back: Replay = serde_json::from_str(&json).unwrap();
         assert_eq!(back.setup().teams, setup.teams);
+    }
+
+    /// A Survival fight replays with its one round and P1's carried life;
+    /// other replays write no `run` and old ones read without one.
+    #[test]
+    fn replays_keep_their_run_rules() {
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"a","p2":"b","stage":null,"ai":[0,4],"inputs":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.setup().run, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("run"));
+        let mut setup = old.setup();
+        setup.run = Some(crate::play::RunRules {
+            match_wins: 1,
+            p1_life: Some(640),
+        });
+        let r = Replay::new(&setup, FighterSize::Normal, false, 60);
+        let back: Replay = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        assert_eq!(back.setup().run, setup.run);
     }
 }

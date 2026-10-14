@@ -994,6 +994,7 @@ mod tests {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         }
     }
 

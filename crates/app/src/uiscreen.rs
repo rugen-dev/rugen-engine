@@ -38,6 +38,8 @@ pub enum UiKind {
     Controls,
     /// Stage select between the fighter select and the VS screen (`ui/stages.toml`).
     Stages,
+    /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
+    Challenge,
 }
 
 /// A decoded RGBA image kept in memory and drawn through a `mem:<name>` asset key.
@@ -108,6 +110,10 @@ pub struct Profile {
     /// Last known online rating per server address.
     #[serde(default)]
     pub online_ranks: std::collections::BTreeMap<String, RankSnap>,
+    /// CHALLENGE bests per fighter (cache manifest id); profiles from
+    /// before the modes have none.
+    #[serde(default)]
+    pub challenge: std::collections::BTreeMap<String, crate::challenge::ChallengeBest>,
 }
 
 impl Default for Profile {
@@ -127,6 +133,7 @@ impl Default for Profile {
             online_accounts: Default::default(),
             online_names: Default::default(),
             online_ranks: Default::default(),
+            challenge: Default::default(),
         }
     }
 }
@@ -293,6 +300,8 @@ pub struct UiScreen {
     lib: Option<rugen_content::Library>,
     /// Controls page opened from the pause menu (Esc goes back to the match).
     from_pause: bool,
+    /// CHALLENGE menu: the mode cards (rules and bests), computed once.
+    challenge: Value,
 }
 
 /// What the pause menu shows.
@@ -477,6 +486,8 @@ fn menu_hints(device: crate::input::Device) -> (String, String) {
 fn menu_desc(id: &str) -> &'static str {
     match id {
         "arcade" => "Climb the ladder vs the CPU",
+        "challenge" => "Runs against the CPU, best scores kept",
+        "survival" => "One life bar, endless opponents",
         "versus" => "Two players, one keyboard",
         "arena" => "Platforms and stocks: knock them off the stage",
         "training" => "Free practice, no clock",
@@ -548,6 +559,7 @@ impl UiScreen {
             UiKind::Pause => "pause.toml",
             UiKind::Controls => "controls.toml",
             UiKind::Stages => "stages.toml",
+            UiKind::Challenge => "challenge.toml",
         }
     }
 
@@ -949,9 +961,13 @@ impl UiScreen {
             ticks: 0,
             lib: None,
             from_pause: false,
+            challenge: Value::Null,
         };
         if kind == UiKind::Title {
             s.load_title_facts(lib);
+        }
+        if kind == UiKind::Challenge {
+            s.challenge = crate::challenge::cards(&s.profile.challenge);
         }
         if let Some(r) = &s.roster
             && r.dual()
@@ -1119,6 +1135,11 @@ impl UiScreen {
                         m["label"] = json!("RESET POSITIONS");
                     }
                 }
+                // Survival carries P1's life between fights: a restarted round
+                // would hand it back full
+                if info.is_some_and(|p| p.mode == Some(Mode::Survival)) {
+                    menu.retain(|m| m["id"] != "restart");
+                }
                 if info.is_some_and(|p| p.mode.is_some()) {
                     menu.push(
                         json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select" }),
@@ -1192,21 +1213,20 @@ impl UiScreen {
                 })
             }
             UiKind::Title => {
-                let mut menu: Vec<Value> = sys
-                    .title
-                    .items
-                    .iter()
-                    .filter_map(|(k, label)| {
-                        let action = match k.as_str() {
-                            "arcade" | "versus" | "training" | "watch" | "options" => {
-                                format!("mode:{k}")
-                            }
-                            "exit" => "quit".to_string(),
-                            _ => return None,
-                        };
-                        Some(json!({ "id": k, "label": label, "action": action }))
-                    })
-                    .collect();
+                let mut menu: Vec<Value> =
+                    sys.title
+                        .items
+                        .iter()
+                        .filter_map(|(k, label)| {
+                            let action = match k.as_str() {
+                                "arcade" | "versus" | "training" | "watch" | "options"
+                                | "survival" => format!("mode:{k}"),
+                                "exit" => "quit".to_string(),
+                                _ => return None,
+                            };
+                            Some(json!({ "id": k, "label": label, "action": action }))
+                        })
+                        .collect();
                 let pos = |menu: &[Value], id: &str| {
                     menu.iter()
                         .position(|m| m["id"] == id)
@@ -1218,6 +1238,14 @@ impl UiScreen {
                     at,
                     json!({ "id": "tutorial", "label": "TUTORIAL", "action": "mode:tutorial" }),
                 );
+                // CHALLENGE (the runs against the CPU) right after arcade
+                if UiScreen::available(&self.motif, UiKind::Challenge) {
+                    let at = pos(&menu, "arcade");
+                    menu.insert(
+                        at,
+                        json!({ "id": "challenge", "label": "CHALLENGE", "action": "challenge" }),
+                    );
+                }
                 // ARENA (platform fighter rules) right after the two-player mode
                 let at = pos(&menu, "versus");
                 menu.insert(
@@ -1275,6 +1303,12 @@ impl UiScreen {
                     "version": env!("CARGO_PKG_VERSION"),
                 })
             }
+            UiKind::Challenge => json!({
+                "cards": self.challenge,
+                "profile": self.profile_json(),
+                "keys": self.keys_json(),
+                "version": env!("CARGO_PKG_VERSION"),
+            }),
             UiKind::Options | UiKind::Controls => {
                 let mut d = match &self.settings.controls {
                     Some(ctl) => ctl.data(&self.config, self.settings.ticks),
@@ -1544,6 +1578,10 @@ impl UiScreen {
                 Some(Transition::Resume)
             }
             UiKind::Options => self.escape(sys),
+            UiKind::Challenge => {
+                sfx(sys.title.cancel_snd);
+                Some(Transition::Title)
+            }
             // B is a fight button: it must not quit the game, leave a result or the bindings page
             UiKind::Title | UiKind::Result | UiKind::Controls | UiKind::Versus | UiKind::Stages => {
                 None
@@ -1815,6 +1853,7 @@ impl UiScreen {
             "netplay" => Some(Transition::Netplay),
             "online" => Some(Transition::Online),
             "profile" => Some(Transition::Profile),
+            "challenge" => Some(Transition::Challenge),
             "back" | "title" if matches!(self.kind, UiKind::Options) => {
                 self.guard(Transition::Title, sys)
             }
@@ -1826,6 +1865,7 @@ impl UiScreen {
                 "arena" => Transition::Select(Mode::Arena),
                 "tutorial" => Transition::Select(Mode::Tutorial),
                 "watch" => Transition::Select(Mode::Watch),
+                "survival" => Transition::Select(Mode::Survival),
                 "options" => Transition::Options,
                 _ => return None,
             }),
@@ -1903,6 +1943,7 @@ impl UiScreen {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         }))
     }
 

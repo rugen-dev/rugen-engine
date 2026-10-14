@@ -182,6 +182,7 @@ impl StagePlan {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         };
         Self {
             mode: Mode::Online,
@@ -839,16 +840,7 @@ impl StageSel {
     pub fn data(&self) -> Value {
         let plan = self.plan.as_ref();
         let mode = plan.map_or(Mode::Versus, |p| p.mode);
-        let mode_name = match mode {
-            Mode::Arcade => "ARCADE",
-            Mode::Versus => "VS MODE",
-            Mode::Training => "TRAINING",
-            Mode::Tutorial => "TUTORIAL",
-            Mode::Watch => "WATCH",
-            Mode::Arena => "ARENA",
-            Mode::Online => "ONLINE",
-            Mode::Netplay | Mode::Options | Mode::Exit => "",
-        };
+        let mode_name = mode.label();
         let names = plan.map(|p| p.names.clone()).unwrap_or_default();
         let online = plan.is_some_and(|p| p.online.is_some());
         let n = self.items.len();
@@ -1033,6 +1025,7 @@ mod tests {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         };
         let plan = StagePlan {
             mode: Mode::Versus,

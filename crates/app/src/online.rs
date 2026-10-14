@@ -1518,6 +1518,7 @@ impl OnlineScreen {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         };
         self.used_ticket = Some(ready.ticket.session);
         self.pending_versus = Some((setup, portraits));
@@ -3734,6 +3735,7 @@ impl OnlineScreen {
             arena_ai: None,
             round_time: None,
             teams: None,
+            run: None,
         });
     }
 

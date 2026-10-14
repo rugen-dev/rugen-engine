@@ -43,6 +43,7 @@
 
 use anyhow::Context;
 
+mod challenge;
 mod clipboard;
 mod config;
 mod dojogen;
@@ -431,6 +432,7 @@ fn main() -> anyhow::Result<()> {
                 arena_ai: arena_ai.map(|v| v != "0" && v != "off" && v != "false"),
                 round_time: None,
                 teams,
+                run: None,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),

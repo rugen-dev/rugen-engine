@@ -161,15 +161,18 @@ impl Roster {
         }
         let human = match mode {
             Mode::Versus => [true, true],
-            Mode::Arcade | Mode::Training | Mode::Tutorial | Mode::Arena | Mode::Online => {
-                [true, false]
-            }
+            Mode::Arcade
+            | Mode::Training
+            | Mode::Tutorial
+            | Mode::Arena
+            | Mode::Online
+            | Mode::Survival => [true, false],
             Mode::Watch | Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         // training, arena and watch: the cursor also picks the other side
         let chooses = match mode {
             Mode::Versus | Mode::Training | Mode::Watch | Mode::Arena => [true, true],
-            Mode::Arcade | Mode::Tutorial | Mode::Online => [true, false],
+            Mode::Arcade | Mode::Tutorial | Mode::Online | Mode::Survival => [true, false],
             Mode::Netplay | Mode::Options | Mode::Exit => [false, false],
         };
         let mut r = Self {
@@ -641,8 +644,8 @@ impl Roster {
             }
             t
         });
-        // arcade: the ladder decides (a random first stage), no stage select
-        let stage = if self.mode == Mode::Arcade {
+        // arcade ladders: the ladder decides (a random first stage), no stage select
+        let stage = if self.mode.is_ladder() {
             self.arcade_stage()
         } else {
             None
@@ -668,6 +671,7 @@ impl Roster {
             arena_ai: None,
             round_time: None,
             teams,
+            run: None,
         };
         if tutorial {
             let mut setup = setup;
@@ -675,7 +679,7 @@ impl Roster {
             return Some(Transition::Fight(setup));
         }
         let portraits = [self.portrait(0), self.portrait(1)];
-        if self.mode == Mode::Arcade {
+        if self.mode.is_ladder() {
             return Some(Transition::Versus(setup, portraits));
         }
         let name = |me: &Self, s: usize| {
@@ -707,6 +711,12 @@ impl Roster {
 
     /// Arcade's first stage: any installed one (only that one is prepared).
     fn arcade_stage(&mut self) -> Option<PathBuf> {
+        if self.mode.is_challenge() {
+            // CHALLENGE runs: any stage but the arenas
+            let all = crate::challenge::fight_stages(&self.lib);
+            let k = self.rand(all.len());
+            return all.get(k).cloned().or_else(|| self.lib.default_stage());
+        }
         let all = self.lib.stages();
         let pick = (!all.is_empty()).then(|| self.rand(all.len()));
         pick.and_then(|i| all.get(i))
@@ -999,17 +1009,8 @@ impl Roster {
             .enumerate()
             .map(|(i, &c)| self.cell_json(i, c))
             .collect();
-        let title = match self.mode {
-            Mode::Arcade => "ARCADE",
-            Mode::Versus => "VS MODE",
-            Mode::Training => "TRAINING",
-            Mode::Tutorial => "TUTORIAL",
-            Mode::Watch => "WATCH",
-            Mode::Arena => "ARENA",
-            Mode::Online => "ONLINE",
-            Mode::Netplay | Mode::Options | Mode::Exit => "",
-        };
-        let next = if self.mode == Mode::Arcade {
+        let title = self.mode.label();
+        let next = if self.mode.is_ladder() {
             "CONFIRM TO FIGHT"
         } else {
             "CONFIRM FOR THE STAGE"

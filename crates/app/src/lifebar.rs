@@ -1396,6 +1396,46 @@ impl Lifebar {
         }
     }
 
+    /// A CHALLENGE run's strip, bottom centre: `left` and `right` in a small
+    /// box with a hard shadow, in the arena clock's colours (`[ArenaHUD]
+    /// clock.color / clock.shadow / clock.bank`).
+    pub fn draw_run_strip(
+        &mut self,
+        r: &mut Renderer,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+        left: &str,
+        right: &str,
+    ) {
+        let st = self.arena.clone();
+        let lc = self.localcoord;
+        let k = lc[1] / 720.0;
+        let at = |x: f32, y: f32| hud(lc[0] / 2.0 + (x - 640.0) * k, y * k);
+        let us = u * k;
+        let Some(f) = self.fonts.get_mut(&1) else {
+            return;
+        };
+        let (pad, gap, bh) = (16.0, 40.0, 38.0);
+        let bw = f.width(left, 2.0) + f.width(right, 2.0) + gap + 2.0 * pad;
+        let (bx, by) = (640.0 - bw / 2.0, 720.0 - 22.0 - bh);
+        r.rect(
+            at(bx + 5.0, by + 5.0),
+            at(bx + bw + 5.0, by + bh + 5.0),
+            st.clock_shadow,
+        );
+        r.rect(at(bx, by), at(bx + bw, by + bh), st.clock);
+        let base = by + bh / 2.0 + 9.0;
+        f.draw(r, left, at(bx + pad, base), st.clock_bank, 1, 2.0 * us);
+        f.draw(
+            r,
+            right,
+            at(bx + bw - pad, base),
+            st.clock_bank,
+            -1,
+            2.0 * us,
+        );
+    }
+
     /// Draw everything. `hud(x, y)` maps fight.def coordinates to world
     /// space, `u` is world units per HUD pixel. `portraits[i]` is player i's
     /// 9000,0 sprite if the app uploaded it. `spread` (fight.def units) moves

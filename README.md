@@ -75,10 +75,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Turns**: teams fight one after another, the winner stays in.
 - [x] **Simul**: two against two, all on screen at once.
 - [x] **Tag**: switch partners in the middle of a fight.
+- [x] **Survival**: one life bar against an endless line of opponents.
 
 ### Planned
 
-- [ ] **Survival**: one life bar against an endless line of opponents.
 - [ ] **Boss Rush**: the toughest fighters back to back.
 - [ ] **Time Attack**: clear the ladder as fast as possible.
 - [ ] **Storyboards**: fighter intros and arcade endings.

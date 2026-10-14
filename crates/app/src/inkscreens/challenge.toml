@@ -1,0 +1,241 @@
+# rugen CHALLENGE — Shonen Ink theme (roadmap mockup "Challenge modes").
+# Coordinates are 1280x720. Title menu → CHALLENGE → fighter select → the run.
+# ◀ ▶ choose a card, A / Enter starts its fighter select, B / Esc goes back.
+# Data: cards[] {id title desc hud_l hud_r best action}, profile, keys, hint.
+background = [0.95, 0.93, 0.89, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/paper.webp"
+w = "100%"
+h = "100%"
+
+[[node]]
+kind = "hbox"
+x = 48
+y = 26
+w = 1000
+h = 56
+align = "end"
+gap = 18
+enter = "down"
+enter_time = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "CHALLENGE"
+  font = 3
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "PICK A RUN AND A FIGHTER"
+  font = 1
+  scale = 1
+  bank = 9
+  alpha = 0.72
+  text_dy = -6
+
+# the three modes: the focused card turns pink with a red edge over an ink shadow
+[[node]]
+kind = "hbox"
+id = "cards"
+x = 48
+y = 108
+w = 1184
+h = 500
+gap = 26
+items = "cards"
+stagger = 3
+enter = "up"
+enter_time = 16
+
+  [[node.children]]
+  kind = "panel"
+  x = 10
+  y = 10
+  w = 377
+  h = 500
+  color = [0.784, 0.063, 0.102, 1.0]
+  when = "blur"
+
+  [[node.children]]
+  kind = "panel"
+  x = 10
+  y = 10
+  w = 377
+  h = 500
+  color = [0.078, 0.071, 0.063, 1.0]
+  when = "focus"
+
+  [[node.children]]
+  kind = "button"
+  id = "card"
+  w = 377
+  h = 500
+  color = [1.0, 1.0, 1.0, 1.0]
+  color_focus = [0.984, 0.91, 0.902, 1.0]
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  on_press = "{item.action}"
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.title}"
+    x = 24
+    y = 26
+    font = 1
+    scale = 3
+    bank = 9
+    bank_focus = 10
+    inherit_focus = true
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.desc}"
+    x = 24
+    y = 96
+    w = 329
+    wrap = true
+    line_h = 30
+    font = 2
+    bank = 9
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.note}"
+    x = 24
+    y = 332
+    w = 329
+    h = 28
+    font = 1
+    scale = 1
+    bank = 10
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 24
+    y = 372
+    w = 329
+    h = 40
+    color = [0.078, 0.071, 0.063, 1.0]
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.hud_l}"
+    x = 36
+    y = 372
+    h = 40
+    font = 1
+    scale = 1
+    bank = 11
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.hud_r}"
+    x = 36
+    y = 372
+    w = 305
+    h = 40
+    align = "right"
+    font = 1
+    scale = 1
+    bank = 11
+
+    [[node.children.children]]
+    kind = "text"
+    text = "YOUR BEST"
+    x = 24
+    y = 426
+    h = 28
+    font = 1
+    scale = 1
+    bank = 9
+    alpha = 0.72
+
+    [[node.children.children]]
+    kind = "text"
+    text = "{item.best}"
+    x = 24
+    y = 456
+    w = 329
+    h = 28
+    font = 1
+    scale = 2
+    bank = 9
+
+[[node]]
+kind = "text"
+text = "BEST SCORES ARE SAVED PER FIGHTER IN YOUR PROFILE"
+x = 48
+y = 652
+h = 36
+font = 1
+scale = 1
+bank = 9
+alpha = 0.72
+
+[[node]]
+kind = "hbox"
+x = 560
+y = 652
+w = 672
+h = 36
+gap = 8
+justify = "end"
+align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "◀ ▶"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "CHOOSE  "
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{hint.ok}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "START  "
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{hint.back}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "BACK"
+  font = 2
+  bank = 9

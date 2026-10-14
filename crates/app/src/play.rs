@@ -156,6 +156,36 @@ pub struct FightSetup {
     /// Team modes (offline only): each side's mode and partners; `None` is
     /// a classic 1v1.
     pub teams: Option<TeamSetup>,
+    /// CHALLENGE run rules for this fight (offline 1v1 only): `None` plays
+    /// the motif's rounds with full life.
+    pub run: Option<RunRules>,
+}
+
+/// What a CHALLENGE run changes in one of its fights. Applied to the world
+/// right after it is built (before the first frame), so a replay that
+/// records them plays the fight again exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RunRules {
+    /// Round wins needed (Survival: 1, a draw ends the fight).
+    pub match_wins: u8,
+    /// P1's life at the start (Survival carries it from fight to fight);
+    /// `None` = full.
+    #[serde(default)]
+    pub p1_life: Option<i32>,
+}
+
+impl RunRules {
+    /// Set the rules on a freshly built world.
+    pub fn apply(&self, world: &mut World) {
+        world.round.config.match_wins = self.match_wins.max(1);
+        if self.match_wins <= 1 {
+            // one round: a draw ends the fight instead of replaying the round
+            world.round.config.max_drawgames = 0;
+        }
+        if let (Some(life), Some(p)) = (self.p1_life, world.players.first_mut()) {
+            p.life = life.clamp(1, p.life_max.max(1));
+        }
+    }
 }
 
 /// The teams of an offline team match: `FightSetup::p1` / `p2` are each
@@ -515,6 +545,8 @@ pub struct Match {
     pub stats_recorded: bool,
     /// TRAINING tools (hitboxes, ...): drawing and the dummy's inputs only.
     pub training: Option<crate::training::Training>,
+    /// A CHALLENGE run's strip over the fight (left, right), set by the shell.
+    pub run_hud: Option<(String, String)>,
 }
 
 impl Match {
@@ -636,6 +668,10 @@ impl Match {
         if let Some(w) = cfg.game.match_wins.filter(|_| setup.net.is_some()) {
             world.round.config.match_wins = w;
         }
+        // a CHALLENGE run's fight: its rounds and P1's carried life
+        if let Some(rules) = setup.run.filter(|_| setup.net.is_none() && teams.is_none()) {
+            rules.apply(&mut world);
+        }
         // a match rule for CPU sides; online rooms are human vs human
         world.arena_ai = setup.net.is_none() && setup.arena_ai.unwrap_or(cfg.game.arena_ai);
         for d in &world.data {
@@ -712,6 +748,7 @@ impl Match {
             tag_labels: ["TAG".into(), "TAG".into()],
             stats_recorded: false,
             training: None,
+            run_hud: None,
         })
     }
 
@@ -1967,6 +2004,9 @@ impl Match {
                 arena,
                 &tag_keys,
             );
+            if let Some((left, right)) = self.run_hud.as_ref() {
+                lb.draw_run_strip(r, &lb_hud, u * ratio, left, right);
+            }
         } else {
             // life bars (screen units via `hud`)
             for (i, p) in self
@@ -2466,6 +2506,64 @@ mod tests {
             run(match_zoom(None, &close)),
             "the settings do shape the camera (the test means something)"
         );
+    }
+
+    /// A Survival fight: one round with P1's carried life; P1 standing
+    /// still loses it and the match is over (no second round, life full
+    /// never comes back). Replaying the inputs gives the same world.
+    #[test]
+    fn run_rules_play_one_round_with_carried_life() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        let stage = root.join("stages/kfm.def");
+        if !kfm.exists() || !stage.exists() {
+            return;
+        }
+        let spec = rugen_sim::headless::MatchSpec {
+            p1: &kfm,
+            p2: &kfm,
+            stage: Some(&stage),
+            data_dir: &root.join("data"),
+            motif: &root.join("data/system.def"),
+            zoom: (1.0, 1.0),
+            movement: rugen_sim::world::Movement::default(),
+            round_time: Some(10),
+            ai: [0, 4],
+            fighter_size: Default::default(),
+        };
+        let rules = RunRules {
+            match_wins: 1,
+            p1_life: Some(150),
+        };
+        let build = || {
+            let mut w = rugen_sim::headless::build_world(&spec).expect("KFM world");
+            rules.apply(&mut w);
+            w
+        };
+        let mut w = build();
+        assert_eq!(w.players[0].life, 150);
+        assert_eq!(w.players[1].life, w.players[1].life_max);
+        assert_eq!(w.round.config.match_wins, 1);
+        let mut frames = 0;
+        while !w.round.match_over && frames < 60 * 30 {
+            w.step(&[Buttons::default(), Buttons::default()]);
+            assert!(w.players[0].life <= 150, "no refill mid-run");
+            frames += 1;
+        }
+        assert!(w.round.match_over, "one round decides the fight");
+        assert_eq!(w.round.round_no, 1);
+        let a = rugen_sim::headless::replay(&mut build(), &vec![0u8; frames * 4], None);
+        let b = rugen_sim::headless::replay(&mut build(), &vec![0u8; frames * 4], None);
+        assert_eq!(a.checksum, b.checksum);
+        // a carried life never starts below 1
+        let mut w = rugen_sim::headless::build_world(&spec).expect("KFM world");
+        RunRules {
+            match_wins: 1,
+            p1_life: Some(0),
+        }
+        .apply(&mut w);
+        assert_eq!(w.players[0].life, 1);
     }
 
     /// `--team1 turns:goku,kfm`: the mode, then the partners.

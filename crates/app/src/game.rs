@@ -52,6 +52,37 @@ pub enum Mode {
     Exit,
     /// Pick the fighter you bring to an online matchup (one cursor, local roster).
     Online,
+    /// CHALLENGE: one life bar against an endless line of random CPU
+    /// opponents, one round each, a little life back between fights.
+    Survival,
+}
+
+impl Mode {
+    /// Screen title of the mode (`""` for entries that are not modes).
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Arcade => "ARCADE",
+            Mode::Versus => "VS MODE",
+            Mode::Training => "TRAINING",
+            Mode::Tutorial => "TUTORIAL",
+            Mode::Watch => "WATCH",
+            Mode::Arena => "ARENA",
+            Mode::Online => "ONLINE",
+            Mode::Survival => "SURVIVAL",
+            Mode::Netplay | Mode::Options | Mode::Exit => "",
+        }
+    }
+
+    /// A ladder of CPU opponents the shell lines up one after another
+    /// (P1 picks alone, no stage select, CONTINUE after a win).
+    pub fn is_ladder(self) -> bool {
+        matches!(self, Mode::Arcade | Mode::Survival)
+    }
+
+    /// One of the CHALLENGE modes (records in the profile).
+    pub fn is_challenge(self) -> bool {
+        matches!(self, Mode::Survival)
+    }
 }
 
 #[derive(Debug)]
@@ -86,6 +117,8 @@ pub enum Transition {
     Result(Box<ResultInfo>),
     /// Result screen "continue": next arcade opponent or the title.
     Continue,
+    /// CHALLENGE menu: a card per challenge mode (`ui/challenge.toml`).
+    Challenge,
     /// Pause menu: back to the match.
     Resume,
     /// Pause menu: restart the current round.
@@ -285,8 +318,8 @@ pub struct Shell {
     quit: bool,
     /// Replay to feed into the next match.
     replay: Option<crate::replay::Replay>,
-    /// Arcade ladder: P1's character and wins so far.
-    arcade: Option<(PathBuf, u32)>,
+    /// Arcade ladder or CHALLENGE run in progress.
+    run: Option<crate::challenge::Run>,
     fullscreen: bool,
     /// Black overlay alpha for screen fades (1 = black).
     fade: f32,
@@ -296,8 +329,6 @@ pub struct Shell {
     parked: Option<Box<Match>>,
     /// Transition waiting for a TOML screen's leave animation.
     deferred: Option<Transition>,
-    /// P1 won the arcade match that just ended.
-    arcade_won: bool,
     /// Options tab to open next (back from the controls page).
     reopen_tab: Option<usize>,
     /// Shell ticks for `--keys`, and harness key releases due.
@@ -411,7 +442,7 @@ impl Shell {
             ticks: 0,
             quit: false,
             replay,
-            arcade: None,
+            run: None,
             fullscreen: config_fullscreen,
             online_match: None,
             parked_online: None,
@@ -421,7 +452,6 @@ impl Shell {
             pause: None,
             parked: None,
             deferred: None,
-            arcade_won: false,
             reopen_tab: None,
             key_ticks: 0,
             key_releases: Vec::new(),
@@ -804,25 +834,83 @@ impl Shell {
         audio.play_music(path.as_deref(), volume, looping);
     }
 
-    /// Arcade: after a win, line up the next random opponent; after a loss, the title.
-    fn arcade_next(&mut self, won: bool) -> Option<Transition> {
-        let (p1, wins) = self.arcade.clone()?;
-        if !won || wins + 1 >= 6 {
+    /// A ladder mode's fighter select is done: the run starts with P1's
+    /// pick, and the select's opponent is the first one.
+    /// Returns the transition to take instead of the select's own (its
+    /// fight with the run's rules).
+    fn start_run(&mut self, mode: Mode, next: Transition) -> Transition {
+        let Transition::Versus(mut setup, sides) = next else {
+            return next;
+        };
+        let name = rugen_content::manifest_for(&setup.p1)
+            .map(|(_, m)| m.display_name)
+            .unwrap_or_default();
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0x9e37_79b9, |d| d.subsec_nanos());
+        let mut run =
+            crate::challenge::Run::new(mode, setup.p1.clone(), setup.ids[0].clone(), name, seed);
+        let chars = self.lib.chars();
+        run.first_foe(
+            chars
+                .iter()
+                .position(|e| e.id.eq_ignore_ascii_case(&setup.ids[1])),
+        );
+        self.run = Some(run);
+        setup.mode = Some(mode);
+        setup.run = self.run.as_ref().and_then(|r| r.rules());
+        // a screenpack select may have drawn an arena stage: not for a run
+        if mode.is_challenge() {
+            let stages = crate::challenge::fight_stages(&self.lib);
+            if setup.stage.as_ref().is_none_or(|s| !stages.contains(s)) {
+                setup.stage = stages.first().cloned().or(setup.stage);
+            }
+        }
+        Transition::Versus(setup, sides)
+    }
+
+    /// After a win in a run: the next opponent (None once the run is over).
+    fn run_next(&mut self) -> Option<Transition> {
+        let run = self.run.as_ref()?;
+        if run.over.is_some() {
             return None;
         }
-        self.arcade = Some((p1.clone(), wins + 1));
+        self.run_fight(None)
+    }
+
+    /// The run's next fight on `stage` (else the ladder's next stage).
+    fn run_fight(&mut self, stage: Option<PathBuf>) -> Option<Transition> {
         let chars = self.lib.chars();
+        let run = self.run.as_mut()?;
         if chars.is_empty() {
             return None;
         }
-        let pick = chars[(wins as usize * 7 + 3) % chars.len()].clone();
+        let pick = chars[run.next_foe(chars.len())].clone();
+        let p1 = run.p1.clone();
+        let mode = run.mode;
+        let rules = run.rules();
         let (dir, man) = self.lib.prepare_char(&pick).ok()?;
         let p2 = man.def_path(&dir);
-        let stages = self.lib.stages();
-        let stage = stages
-            .get((wins as usize) % stages.len().max(1))
-            .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| m.def_path(&d)))
-            .or_else(|| self.lib.default_stage());
+        let stage = match stage {
+            Some(s) => Some(s),
+            // the arcade ladder walks every stage; CHALLENGE runs skip the arenas
+            None if mode.is_challenge() => {
+                let stages = crate::challenge::fight_stages(&self.lib);
+                let at = self.run.as_ref().map_or(0, |r| r.next_stage(stages.len()));
+                stages.get(at).cloned().or_else(|| self.lib.default_stage())
+            }
+            None => {
+                let at = self
+                    .run
+                    .as_ref()
+                    .map_or(0, |r| r.next_stage(self.lib.stages().len()));
+                self.lib
+                    .stages()
+                    .get(at)
+                    .and_then(|e| self.lib.prepare_stage(e).ok().map(|(d, m)| m.def_path(&d)))
+                    .or_else(|| self.lib.default_stage())
+            }
+        };
         let side = |def: &PathBuf| {
             let (name, img) = char_card(def);
             Portrait::new(name, img.map(|(w, h, rgba)| (w, h, rgba, [0, 0])))
@@ -836,14 +924,39 @@ impl Shell {
                 net: None,
                 tutorial: false,
                 ids: [manifest_id(&p1), man.id.clone()],
-                mode: Some(Mode::Arcade),
+                mode: Some(mode),
                 fighter_size: None,
                 arena_ai: None,
                 round_time: None,
                 teams: None,
+                run: rules,
             },
             [side(&p1), side(&p2)],
         ))
+    }
+
+    /// A run's fight ended (P1 `won` with `life` of `life_max` left): count
+    /// it, keep an ended CHALLENGE run's best in the profile, and return
+    /// the result screen's run rows.
+    fn finish_run_fight(&mut self, won: bool, life: i32, life_max: i32) -> Vec<(String, String)> {
+        let Some(run) = self.run.as_mut() else {
+            return Vec::new();
+        };
+        run.finish(won, life, life_max);
+        let mut profile = crate::uiscreen::Profile::load(&self.lib.root);
+        let mut best = profile
+            .challenge
+            .get(&run.p1_id)
+            .cloned()
+            .unwrap_or_default();
+        if run.over.is_some() && run.mode.is_challenge() && !run.p1_id.is_empty() {
+            run.record(&mut best);
+            if run.new_best {
+                profile.challenge.insert(run.p1_id.clone(), best.clone());
+                profile.save(&self.lib.root);
+            }
+        }
+        run.rows(&best)
     }
 
     /// Finished match → profile stats for P1's character (local, non-tutorial matches).
@@ -1007,6 +1120,7 @@ impl Shell {
                     arena_ai: None,
                     round_time: None,
                     teams: None,
+                    run: None,
                 }));
             }
             Transition::Resume => {
@@ -1034,12 +1148,41 @@ impl Shell {
                     m.record = None;
                 }
             }
-            Transition::Continue => {
-                let won = self.arcade_won;
-                match self.arcade_next(won) {
-                    Some(t) => self.transition(t),
-                    None => self.transition(Transition::Title),
+            Transition::Continue => match self.run_next() {
+                Some(t) => self.transition(t),
+                // an ended CHALLENGE run goes back to its menu (the new best on it)
+                None if self.run.as_ref().is_some_and(|r| r.mode.is_challenge())
+                    && UiScreen::available(&self.motif_dir, UiKind::Challenge) =>
+                {
+                    self.transition(Transition::Challenge)
                 }
+                None => self.transition(Transition::Title),
+            },
+            Transition::Challenge => {
+                self.run = None;
+                self.screen = match self.system.as_ref() {
+                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Challenge) => {
+                        match UiScreen::load(
+                            UiKind::Challenge,
+                            &self.motif_dir,
+                            &self.lib.root,
+                            sys,
+                            &self.config,
+                            &self.lib,
+                        ) {
+                            Ok(u) => Screen::Ui(Box::new(u)),
+                            Err(e) => {
+                                log::error!("ui/challenge.toml: {e:#}");
+                                self.transition(Transition::Title);
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.transition(Transition::Title);
+                        return;
+                    }
+                };
             }
             Transition::Result(info) => {
                 log::info!(
@@ -1193,7 +1336,7 @@ impl Shell {
                 self.online_match = None;
                 self.save_replay();
                 self.drop_pause();
-                self.arcade = None;
+                self.run = None;
                 self.play_system_music("title");
                 let netplay = !self.config.net.remote.trim().is_empty();
                 self.screen = match self.system.as_ref() {
@@ -1331,6 +1474,8 @@ impl Shell {
                 };
             }
             Transition::Select(mode) => {
+                // a run ends where its fighter select opens again
+                self.run = None;
                 self.play_system_music("select");
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Select(mode)) => {
@@ -1665,7 +1810,7 @@ impl Shell {
         let mut next: Option<Transition> = None;
         let mut advanced = true;
         let mut open_pause: Option<usize> = None;
-        let mut arcade_won: Option<bool> = None;
+        let mut run_end: Option<(bool, i32, i32)> = None;
         let mut result: Option<ResultCard> = None;
         match &mut self.screen {
             Screen::Blank => {}
@@ -1721,17 +1866,17 @@ impl Shell {
                 if u.kind == UiKind::Controls && matches!(next, Some(Transition::Options)) {
                     self.reopen_tab = Some(crate::settings::CONTROLS_TAB);
                 }
-                let arcade_pick = match (&next, u.mode()) {
-                    (Some(Transition::Versus(setup, _)), Some(Mode::Arcade)) => {
-                        Some(setup.p1.clone())
-                    }
+                let run_mode = match (&next, u.mode()) {
+                    (Some(Transition::Versus(..)), Some(m)) if m.is_ladder() => Some(m),
                     _ => None,
                 };
                 if next.is_some() && is_options {
                     self.apply_options();
                 }
-                if let Some(p1) = arcade_pick {
-                    self.arcade = Some((p1, 0));
+                if let Some(m) = run_mode
+                    && let Some(t) = next.take()
+                {
+                    next = Some(self.start_run(m, t));
                 }
             }
             Screen::Online(o) => {
@@ -1756,10 +1901,11 @@ impl Shell {
                 if let Some(sys) = self.system.as_ref() {
                     next = s.tick(pressed, sys, &mut |snd| sfx_queue.push(snd));
                 }
-                if let Some(Transition::Versus(setup, _)) = &next
-                    && s.mode() == Mode::Arcade
+                let mode = s.mode();
+                if mode.is_ladder()
+                    && let Some(t @ Transition::Versus(..)) = next.take()
                 {
-                    self.arcade = Some((setup.p1.clone(), 0));
+                    next = Some(self.start_run(mode, t));
                 }
             }
             Screen::Versus(v) => next = v.tick(pressed),
@@ -1835,6 +1981,10 @@ impl Shell {
                 if advanced {
                     self.match_stats.observe(&m.world);
                 }
+                // a run: the strip over the fight (and Time Attack's clock)
+                if let Some(run) = self.run.as_mut() {
+                    m.run_hud = run.hud();
+                }
                 // F1 toggles a training tool in the match: the next one keeps it
                 if let Some(t) = m.training.as_ref() {
                     self.training_cfg = t.cfg.clone();
@@ -1867,8 +2017,9 @@ impl Shell {
                             Transition::Title
                         });
                     } else {
-                        arcade_won = Some(m.winner() == Some(0));
-                        result = Some(m.result_card(self.quick, self.arcade.is_some()));
+                        let p = &m.world.players[0];
+                        run_end = Some((m.winner() == Some(0), p.life, p.life_max));
+                        result = Some(m.result_card(self.quick, self.run.is_some()));
                     }
                 }
             }
@@ -1876,9 +2027,10 @@ impl Shell {
         if let Some(side) = open_pause {
             self.open_pause(side);
         }
-        if let Some(w) = arcade_won {
-            self.arcade_won = w;
-        }
+        let run_rows = match run_end {
+            Some((won, life, max)) => self.finish_run_fight(won, life, max),
+            None => Vec::new(),
+        };
         if let Some((setup, winner, wins, names, arts, quick, arcade)) = result {
             let profile = crate::uiscreen::Profile::load(&self.lib.root);
             let rating = if setup.net.is_some() {
@@ -1896,7 +2048,12 @@ impl Shell {
                     n => quotes[self.match_stats.ticks as usize % n].clone(),
                 }
             };
-            let stats = self.match_stats.rows(side, wins);
+            let mut stats = self.match_stats.rows(side, wins);
+            // a CHALLENGE run: its rows instead of the time and supers
+            if !run_rows.is_empty() {
+                stats.truncate(3);
+                stats.extend(run_rows);
+            }
             next = Some(Transition::Result(Box::new(ResultInfo {
                 setup,
                 winner,
