@@ -662,6 +662,12 @@ pub struct Match {
     pub training: Option<crate::training::Training>,
     /// A CHALLENGE run's strip over the fight (left, right), set by the shell.
     pub run_hud: Option<(String, String)>,
+    /// The training lab's world edits in force (see [`crate::training::Edits`]).
+    edits: crate::training::Edits,
+    /// A training replay: the recorded edits and the frame each took effect on.
+    pub edit_plan: Vec<(u32, crate::training::Edits)>,
+    /// Ticks since the LESSONS were completed (free training follows).
+    lessons_over: u32,
 }
 
 impl Match {
@@ -890,6 +896,9 @@ impl Match {
             stats_recorded: false,
             training: None,
             run_hud: None,
+            edits: Default::default(),
+            edit_plan: Vec::new(),
+            lessons_over: 0,
         })
     }
 
@@ -902,6 +911,42 @@ impl Match {
 
     pub fn is_tutorial(&self) -> bool {
         self.tutorial.is_some()
+    }
+
+    /// Training: the LESSONS are running (Esc leaves them, not the match).
+    pub fn in_lessons(&self) -> bool {
+        self.tutorial.as_ref().is_some_and(|t| t.lessons)
+    }
+
+    /// Training pause menu → LESSONS: the tutorial's steps for P1's fighter
+    /// against the dummy, `keys` naming P1's buttons. The recorder stops.
+    pub fn start_lessons(&mut self, keys: &crate::keylabel::Labels) {
+        let Some(t) = self.training.as_mut() else {
+            return;
+        };
+        t.stop_recording();
+        t.rec = crate::training::Rec::Idle;
+        let Some(data) = self
+            .world
+            .players
+            .first()
+            .and_then(|p| self.world.data.get(p.data))
+        else {
+            return;
+        };
+        let mut lessons = crate::tutorial::Tutorial::new(data, keys);
+        lessons.lessons = true;
+        log::info!("training: lessons started");
+        self.tutorial = Some(lessons);
+        self.lessons_over = 0;
+    }
+
+    /// Leave the LESSONS: free training again.
+    pub fn end_lessons(&mut self) {
+        if self.in_lessons() {
+            self.tutorial = None;
+            self.lessons_over = 0;
+        }
     }
 
     pub fn setup_ids(&self) -> [String; 2] {
@@ -1077,6 +1122,26 @@ impl Match {
                 b.t = false;
             }
         }
+        // the training lab's world edits (offline): its settings, or a
+        // training replay's; a recording notes every change with its frame
+        if self.net.is_none() {
+            let want = match (&self.playback, &self.training) {
+                (Some((_, cursor)), _) => {
+                    crate::training::Edits::at(&self.edit_plan, cursor.saturating_sub(1) as u32)
+                }
+                (None, Some(_)) => crate::training::Edits {
+                    no_clock: self.tutorial.is_some(),
+                },
+                (None, None) => crate::training::Edits::default(),
+            };
+            if want != self.edits {
+                if let Some(rec) = self.record.as_mut() {
+                    rec.edits.push((rec.inputs.len() as u32, want));
+                }
+                self.edits = want;
+            }
+            self.edits.apply(&mut self.world);
+        }
         if let Some(rec) = self.record.as_mut() {
             rec.inputs.push([inputs[0].bits(), inputs[1].bits()]);
         }
@@ -1192,10 +1257,19 @@ impl Match {
             }
         }
         if let Some(t) = self.tutorial.as_mut() {
-            if self.world.round.time_left >= 0 {
+            // a tutorial match has no clock (the LESSONS stop it through the
+            // training edits, which a replay records)
+            if !t.lessons && self.world.round.time_left >= 0 {
                 self.world.round.time_left = -1;
             }
             t.tick(&self.world);
+            // completed LESSONS: free training again after a moment
+            if t.lessons && t.finished {
+                self.lessons_over += 1;
+            }
+        }
+        if self.lessons_over > LESSONS_LINGER {
+            self.end_lessons();
         }
         // content warnings (a character asking for a missing action, ...):
         // debug level, a normal session log stays readable
@@ -1208,17 +1282,23 @@ impl Match {
     /// A player pressed START (not a fighter button): skips a tutorial
     /// step / leaves a finished tutorial, skips the win pose and the
     /// early-end linger.
-    /// Returns true when START was used up (it ended a training recording).
+    /// Returns true when START was used up (it ended a training recording,
+    /// or a tutorial / the LESSONS took it).
     pub fn start_pressed(&mut self) -> bool {
         if self.training.as_mut().is_some_and(|t| t.stop_recording()) {
             return true;
         }
-        if let Some(t) = self.tutorial.as_mut() {
+        // a tutorial (or the LESSONS) takes START: skip a step, leave at the end
+        if self.tutorial.as_ref().is_some_and(|t| t.finished && t.lessons) {
+            self.end_lessons();
+            return true;
+        } else if let Some(t) = self.tutorial.as_mut() {
             if t.finished {
                 self.leave = true;
             } else {
                 t.skip();
             }
+            return true;
         }
         if self.world.round.match_over && self.over_ticks > 30 {
             self.leave = true;
@@ -3024,6 +3104,9 @@ pub fn parse_script(s: &str) -> Vec<Buttons> {
     out
 }
 
+/// Ticks "LESSONS COMPLETE" stays before free training comes back.
+const LESSONS_LINGER: u32 = 150;
+
 /// Where the tutorial panel goes (HUD units): its box and each line's
 /// baseline, from the lines' `[width, ink top, ink bottom]` (the ink band
 /// relative to the baseline).
@@ -3429,6 +3512,80 @@ mod tests {
         }
         .apply(&mut w);
         assert_eq!(w.players[0].life, 1);
+    }
+
+    /// Training LESSONS stop the round clock through the training edits; a
+    /// training replay records them and plays the match back exactly.
+    #[test]
+    fn training_replays_keep_the_lessons_clock() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = base.join("reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        if !kfm.exists() {
+            return;
+        }
+        let motif = base.join("motif/themes/ink");
+        let data = root.join("data");
+        let cfg = Config::default();
+        let setup = FightSetup {
+            p1: kfm.clone(),
+            p2: kfm,
+            stage: None,
+            ai: [0, 0],
+            net: None,
+            tutorial: false,
+            ids: [String::new(), String::new()],
+            mode: Some(crate::game::Mode::Training),
+            fighter_size: None,
+            arena_ai: None,
+            round_time: Some(5),
+            teams: None,
+            run: None,
+            seed: Some(9),
+        };
+        let mut m = Match::load(&setup, &motif, &data, &cfg).expect("KFM match");
+        m.training = Some(crate::training::Training::new(Default::default()));
+        m.record = Some(crate::replay::Replay::new(
+            &setup,
+            m.world.fighter_size,
+            m.world.arena_ai,
+            m.world.round.config.round_time,
+            m.world.seed(),
+        ));
+        let walk = Buttons {
+            r: true,
+            ..Default::default()
+        };
+        let mut audio = None;
+        for f in 0..900 {
+            if f == 200 {
+                let keys = crate::keylabel::Labels::new(
+                    &cfg.input,
+                    0,
+                    crate::input::Device::Keyboard,
+                );
+                m.start_lessons(&keys);
+            }
+            if f == 700 {
+                m.end_lessons();
+            }
+            let b = if f % 90 < 40 { walk } else { Buttons::default() };
+            m.tick([b, Buttons::default()], &mut audio);
+        }
+        assert_eq!(m.world.round.time_left, -1, "the lessons stopped the clock");
+        let want = m.world.checksum();
+        let rec = m.record.take().expect("recorded");
+        assert_eq!(rec.edits.len(), 2, "lessons on, then off: {:?}", rec.edits);
+        let rec: crate::replay::Replay =
+            serde_json::from_slice(&serde_json::to_vec(&rec).unwrap()).unwrap();
+        let mut p = Match::load(&rec.setup(), &motif, &data, &cfg).expect("replay");
+        p.edit_plan = rec.edits.clone();
+        let n = rec.inputs.len();
+        p.playback = Some((rec.inputs, 0));
+        for _ in 0..n {
+            p.tick([Buttons::default(); 2], &mut audio);
+        }
+        assert_eq!(p.world.checksum(), want, "the replay plays the same match");
     }
 
     /// `--team1 turns:goku,kfm`: the mode, then the partners.

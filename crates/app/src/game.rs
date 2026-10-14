@@ -146,6 +146,8 @@ pub enum Transition {
     Restart,
     /// Training pause menu: back to the match and RECORD / PLAY / LOOP.
     Training(crate::training::Command),
+    /// Training pause menu: back to the match with the LESSONS running.
+    Lessons,
     Quit,
 }
 
@@ -1208,6 +1210,7 @@ impl Shell {
                     | Transition::Resume
                     | Transition::Restart
                     | Transition::Training(_)
+                    | Transition::Lessons
             )
         {
             u.release_gpu(&mut g.renderer);
@@ -1295,6 +1298,15 @@ impl Shell {
                     && let Some(t) = m.training.as_mut()
                 {
                     t.command(cmd);
+                }
+            }
+            Transition::Lessons => {
+                self.drop_pause();
+                self.fade = 0.0;
+                let keys =
+                    crate::keylabel::Labels::new(&self.config.input, 0, self.input.devices()[0]);
+                if let Screen::Match(m) = &mut self.screen {
+                    m.start_lessons(&keys);
                 }
             }
             Transition::Restart => {
@@ -1539,6 +1551,8 @@ impl Shell {
                 self.run = None;
                 self.play_system_music("title");
                 let netplay = !self.config.net.remote.trim().is_empty();
+                // the LESSONS live in the Training pause menu (a theme with one)
+                let lessons = UiScreen::available(&self.motif_dir, UiKind::Pause);
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Title) => {
                         match UiScreen::load(
@@ -1552,11 +1566,11 @@ impl Shell {
                             Ok(u) => Screen::Ui(Box::new(u)),
                             Err(e) => {
                                 log::error!("ui/title.toml: {e:#}");
-                                Screen::Title(Box::new(TitleScreen::new(sys, netplay)))
+                                Screen::Title(Box::new(TitleScreen::new(sys, netplay, lessons)))
                             }
                         }
                     }
-                    Some(sys) => Screen::Title(Box::new(TitleScreen::new(sys, netplay))),
+                    Some(sys) => Screen::Title(Box::new(TitleScreen::new(sys, netplay, lessons))),
                     None => {
                         log::error!("no system.def: cannot show the title screen");
                         self.quit = true;
@@ -1814,6 +1828,7 @@ impl Shell {
                         }
                         if let Some(r) = self.replay.take() {
                             m.playback = Some((r.inputs, 0));
+                            m.edit_plan = r.edits;
                         }
                         let initial = m.world.events.clone();
                         m.handle_events(initial, &mut self.audio);
@@ -2260,6 +2275,10 @@ impl Shell {
                 // local matches (S is the fighters' button: power charge, taunts)
                 // START ending a training recording does nothing else
                 let used = start_side.is_some() && m.start_pressed();
+                // the LESSONS: a pad's Select / Back leaves them (START skips a step)
+                if pad_pause.is_some() && m.in_lessons() {
+                    m.end_lessons();
+                }
                 let pause_req = if used { None } else { start_side.or(pad_pause) };
                 if let Some(side) = pause_req
                     && !m.is_net()
@@ -2775,6 +2794,8 @@ impl Shell {
                 let _ = m;
                 self.drop_pause();
             }
+            // the LESSONS: Esc leaves them, free training goes on
+            Screen::Match(ref mut m) if m.in_lessons() => m.end_lessons(),
             // netplay: the online menu (RESUME / FLEE); once the match is
             // over, Esc leaves the normal way (the result is reported)
             Screen::Match(ref mut m) if m.is_netplay_seat() => {

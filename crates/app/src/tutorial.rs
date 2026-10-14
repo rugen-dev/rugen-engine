@@ -31,6 +31,9 @@ pub struct Tutorial {
     pub finished: bool,
     /// The START key's label for "PRESS P TO LEAVE".
     start: String,
+    /// Run as the LESSONS of a Training match (Esc leaves, free training
+    /// follows) instead of a tutorial match of its own.
+    pub lessons: bool,
 }
 
 /// A command key as the player presses it: directions as arrows (facing
@@ -141,11 +144,19 @@ impl Tutorial {
             celebrate: 0,
             finished: false,
             start,
+            lessons: false,
         }
     }
 
     /// Lines to show: title, hint, progress.
     pub fn text(&self) -> [String; 3] {
+        if self.finished && self.lessons {
+            return [
+                "LESSONS COMPLETE".into(),
+                format!("FREE TRAINING NEXT · {} NOW", self.start),
+                String::new(),
+            ];
+        }
         if self.finished {
             return [
                 "TUTORIAL COMPLETE".into(),
@@ -159,16 +170,22 @@ impl Tutorial {
         } else {
             s.title.clone()
         };
-        [
-            title,
-            s.hint.clone(),
+        let progress = if self.lessons {
+            format!(
+                "LESSON {} OF {}   {} SKIPS · ESC LEAVES",
+                self.idx + 1,
+                self.steps.len(),
+                self.start
+            )
+        } else {
             format!(
                 "STEP {} OF {}   {} SKIPS",
                 self.idx + 1,
                 self.steps.len(),
                 self.start
-            ),
-        ]
+            )
+        };
+        [title, s.hint.clone(), progress]
     }
 
     pub fn skip(&mut self) {

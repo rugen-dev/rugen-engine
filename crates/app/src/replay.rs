@@ -45,6 +45,10 @@ pub struct Replay {
     /// simulated with [`rugen_sim::headless::LEGACY_SEED`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// Training: the lab's world edits and the frame (input index) each
+    /// took effect on; absent for every other match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<(u32, crate::training::Edits)>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
 }
@@ -71,6 +75,7 @@ impl Replay {
             teams: setup.teams.clone(),
             run: setup.run,
             seed: Some(seed),
+            edits: Vec::new(),
             inputs: Vec::new(),
         }
     }
@@ -160,6 +165,7 @@ mod tests {
             teams: None,
             run: None,
             seed: None,
+            edits: Vec::new(),
             inputs: Vec::new(),
         }
         .setup();

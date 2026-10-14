@@ -13,10 +13,12 @@ pub struct TitleScreen {
     /// First visible item when the menu scrolls.
     top: usize,
     netplay: bool,
+    /// The Training pause menu runs the LESSONS: no TUTORIAL entry.
+    lessons: bool,
 }
 
 impl TitleScreen {
-    pub fn new(sys: &SystemData, netplay: bool) -> Self {
+    pub fn new(sys: &SystemData, netplay: bool, lessons: bool) -> Self {
         let bg = match StageVisual::load_prefixed(&sys.def_path, "titlebg", Some(&sys.sff_path)) {
             Ok(b) => Some(b),
             Err(e) => {
@@ -29,11 +31,12 @@ impl TitleScreen {
             bg,
             top: 0,
             netplay,
+            lessons,
         }
     }
 
     /// Menu entries we can actually run; NETPLAY is added before EXIT when configured.
-    fn items(sys: &SystemData, netplay: bool) -> Vec<(Mode, String)> {
+    fn items(sys: &SystemData, netplay: bool, lessons: bool) -> Vec<(Mode, String)> {
         let mut out: Vec<(Mode, String)> = sys
             .title
             .items
@@ -59,7 +62,10 @@ impl TitleScreen {
             .iter()
             .position(|(m, _)| *m == Mode::Training)
             .map_or(out.len(), |i| i + 1);
-        out.insert(after_training, (Mode::Tutorial, "TUTORIAL".into()));
+        // no pause menu to hold the LESSONS: the tutorial keeps its entry
+        if !lessons {
+            out.insert(after_training, (Mode::Tutorial, "TUTORIAL".into()));
+        }
         if !out.iter().any(|(m, _)| *m == Mode::Options) {
             let at = out
                 .iter()
@@ -84,7 +90,7 @@ impl TitleScreen {
         sys: &SystemData,
         sfx: &mut dyn FnMut(Option<(i32, i32)>),
     ) -> Option<Transition> {
-        let items = Self::items(sys, self.netplay);
+        let items = Self::items(sys, self.netplay, self.lessons);
         if items.is_empty() {
             return Some(Transition::Select(Mode::Versus));
         }
@@ -130,7 +136,7 @@ impl TitleScreen {
         if let Some(b) = self.bg.as_mut() {
             b.draw(r, 0, [0.0, 0.0], 1.0, sw, Default::default());
         }
-        let items = Self::items(sys, self.netplay);
+        let items = Self::items(sys, self.netplay, self.lessons);
         let t = &sys.title;
         let visible = t.visible_items.max(1);
         let (pos, spacing, item_font, active_font, box_cursor) = (

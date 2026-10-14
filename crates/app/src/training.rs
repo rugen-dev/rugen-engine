@@ -184,6 +184,34 @@ fn row_json((id, label, options, sel): Row) -> Value {
     })
 }
 
+/// What the training lab changes in the world itself (the clock while the
+/// LESSONS run; more to come), applied by the match right before each step.
+/// Offline Training only. A recording keeps every change with the frame it
+/// took effect on, so a training replay plays back the same.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Edits {
+    /// No round clock (the LESSONS run).
+    pub no_clock: bool,
+}
+
+impl Edits {
+    /// Put the edits on the world before a step.
+    pub fn apply(&self, world: &mut rugen_sim::World) {
+        if self.no_clock && world.round.time_left >= 0 {
+            world.round.time_left = -1;
+        }
+    }
+
+    /// The edits in force on frame `frame` of a recording's change list.
+    pub fn at(plan: &[(u32, Edits)], frame: u32) -> Edits {
+        plan.iter()
+            .take_while(|(f, _)| *f <= frame)
+            .last()
+            .map_or_else(Edits::default, |(_, e)| *e)
+    }
+}
+
 /// The training lab runs in local TRAINING matches only: never in another
 /// mode, a tutorial or an online match.
 pub fn applies(setup: &crate::play::FightSetup) -> bool {
@@ -973,6 +1001,22 @@ impl FrameData {
             ),
             format!("ON HIT {}  ON BLOCK {}", a(self.on_hit), a(self.on_block)),
         ]
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::Edits;
+
+    #[test]
+    fn edits_follow_the_recorded_frames() {
+        let on = Edits { no_clock: true };
+        let plan = [(10, on), (25, Edits::default())];
+        assert_eq!(Edits::at(&plan, 0), Edits::default());
+        assert_eq!(Edits::at(&plan, 10), on);
+        assert_eq!(Edits::at(&plan, 24), on);
+        assert_eq!(Edits::at(&plan, 25), Edits::default());
+        assert_eq!(Edits::at(&[], 99), Edits::default());
     }
 }
 

@@ -1298,6 +1298,11 @@ impl UiScreen {
                     if let Some(m) = menu.iter_mut().find(|m| m["id"] == "restart") {
                         m["label"] = json!("RESET POSITIONS");
                     }
+                    // the tutorial's lessons, with this fighter against the dummy
+                    menu.insert(
+                        1,
+                        json!({ "id": "lessons", "label": "LESSONS", "action": "lessons" }),
+                    );
                 }
                 // Survival carries P1's life between fights: a restarted round
                 // would hand it back full
@@ -1409,7 +1414,8 @@ impl UiScreen {
                         at,
                         json!({ "id": "practice", "label": "PRACTICE", "action": "practice" }),
                     );
-                } else {
+                } else if !UiScreen::available(&self.motif, UiKind::Pause) {
+                    // no pause menu to hold the LESSONS: the tutorial keeps its entry
                     let at = pos(&menu, "training");
                     menu.insert(
                         at,
@@ -1997,6 +2003,9 @@ impl UiScreen {
             }
             return match a {
                 "resume" | "back" => Some(Transition::Resume),
+                "lessons" if self.pause.as_ref().is_some_and(|p| p.training.is_some()) => {
+                    Some(Transition::Lessons)
+                }
                 "options" => Some(Transition::Options),
                 "restart" => Some(Transition::Restart),
                 "moves" | "page:1" | "page:-1" => {
