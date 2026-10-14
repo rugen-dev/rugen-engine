@@ -42,6 +42,8 @@ pub enum UiKind {
     Challenge,
     /// PRACTICE page: TRAINING, WATCH and the DEBUGGER (`ui/practice.toml`).
     Practice,
+    /// TEAM MODE step before the fighter grid of VS MODE / WATCH (`ui/teams.toml`).
+    Teams(Mode),
     /// The fighter debugger's panel around a running match (`ui/debug.toml`).
     Debug,
 }
@@ -378,6 +380,8 @@ pub struct UiScreen {
     from_pause: bool,
     /// CHALLENGE menu: the mode cards (rules and bests), computed once.
     challenge: Value,
+    /// TEAM MODE step only.
+    teamstep: Option<crate::teamstep::TeamStep>,
 }
 
 /// What the pause menu shows.
@@ -588,12 +592,26 @@ fn menu_desc(id: &str) -> &'static str {
 fn select_exit(mode: Mode, motif: &Path) -> Transition {
     match mode {
         Mode::Online => Transition::Online,
+        // the team modes: back to the TEAM MODE step
+        Mode::Versus | Mode::Watch if UiScreen::available(motif, UiKind::Teams(mode)) => {
+            Transition::Select(mode)
+        }
         Mode::Training | Mode::Watch | Mode::Debugger
             if UiScreen::available(motif, UiKind::Practice) =>
         {
             Transition::Practice
         }
         _ => Transition::Title,
+    }
+}
+
+/// Where backing out of the TEAM MODE step goes: PRACTICE for WATCH (in a
+/// theme with the page), else the title.
+fn team_exit(mode: Mode, motif: &Path) -> Transition {
+    if mode == Mode::Watch && UiScreen::available(motif, UiKind::Practice) {
+        Transition::Practice
+    } else {
+        Transition::Title
     }
 }
 
@@ -658,6 +676,7 @@ impl UiScreen {
             UiKind::Stages => "stages.toml",
             UiKind::Challenge => "challenge.toml",
             UiKind::Practice => "practice.toml",
+            UiKind::Teams(_) => "teams.toml",
             UiKind::Debug => "debug.toml",
         }
     }
@@ -712,6 +731,33 @@ impl UiScreen {
         s.lib = Some(lib.clone());
         s.refresh_data(sys);
         Ok(s)
+    }
+
+    /// TEAM MODE step for `mode` (VS MODE or WATCH), starting from the
+    /// teams picked last time.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_teams(
+        motif: &Path,
+        root: &Path,
+        sys: &SystemData,
+        config: &Config,
+        lib: &rugen_content::Library,
+        mode: Mode,
+        last: Option<[crate::roster::Team; 2]>,
+        tag_keys: [String; 2],
+    ) -> anyhow::Result<Self> {
+        let mut s = Self::load(UiKind::Teams(mode), motif, root, sys, config, lib)?;
+        s.teamstep = Some(crate::teamstep::TeamStep::new(mode, last, tag_keys));
+        s.refresh_data(sys);
+        Ok(s)
+    }
+
+    /// The fighter grid after the TEAM MODE step: its teams.
+    pub fn set_teams(&mut self, teams: [crate::roster::Team; 2], sys: &SystemData) {
+        if let Some(r) = self.roster.as_mut() {
+            r.set_teams(teams);
+        }
+        self.refresh_data(sys);
     }
 
     /// Back on the fighter select from the stage select: both picks locked again.
@@ -1004,7 +1050,6 @@ impl UiScreen {
             "c": self.hint_cap(0, 6),
             "x": self.hint_cap(0, 7),
             "s": self.hint_cap(0, 10),
-            "team": format!("{} / {}", self.hint_cap(0, 7), self.hint_cap(0, 8)),
             "start": self.hint_cap(0, crate::keylabel::START),
         })
     }
@@ -1127,6 +1172,7 @@ impl UiScreen {
             lib: None,
             from_pause: false,
             challenge: Value::Null,
+            teamstep: None,
         };
         if kind == UiKind::Title {
             s.load_title_facts(lib);
@@ -1506,6 +1552,17 @@ impl UiScreen {
                 })
             }
             UiKind::Debug => self.debug.clone(),
+            UiKind::Teams(_) => {
+                let mut d = self
+                    .teamstep
+                    .as_ref()
+                    .map_or(Value::Null, crate::teamstep::TeamStep::data);
+                if let Value::Object(m) = &mut d {
+                    m.insert("keys".into(), self.keys_json());
+                    m.insert("profile".into(), self.profile_json());
+                }
+                d
+            }
             UiKind::Practice => json!({
                 "cards": crate::practice::cards(),
                 "note": crate::practice::NOTE,
@@ -1718,6 +1775,26 @@ impl UiScreen {
             UiKind::Controls => self.guard(Transition::Options, sys),
             // back to the fighters, both picks still locked
             UiKind::Stages => self.stages.as_mut().map(|s| s.back()),
+            // Esc is player 1's back: un-ready, else leave
+            UiKind::Teams(mode) => {
+                let back = Buttons {
+                    b: true,
+                    ..Default::default()
+                };
+                let out = self
+                    .teamstep
+                    .as_mut()
+                    .map(|t| t.tick([back, Buttons::default()]));
+                match out {
+                    Some(crate::teamstep::StepOut::Leave) | None => {
+                        Some(team_exit(mode, &self.motif))
+                    }
+                    _ => {
+                        self.refresh_data(sys);
+                        None
+                    }
+                }
+            }
             UiKind::Select(mode) => {
                 // Esc is player 1's: take back their pick (one cursor: the
                 // last pick), leave when there is none
@@ -1789,6 +1866,7 @@ impl UiScreen {
             | UiKind::Controls
             | UiKind::Versus
             | UiKind::Stages
+            | UiKind::Teams(_)
             | UiKind::Debug => None,
         }
     }
@@ -1920,6 +1998,13 @@ impl UiScreen {
         // the debugger's buttons belong to the match under the panel
         if let Some(rest) = a.strip_prefix("dbg:") {
             self.debug_actions.push(rest.to_string());
+            return None;
+        }
+        // TEAM MODE step: a card or a size square
+        if let Some(step) = self.teamstep.as_mut() {
+            if step.action(a) {
+                self.refresh_data(sys);
+            }
             return None;
         }
         // a click on a stage strip tile
@@ -2210,25 +2295,28 @@ impl UiScreen {
             back: b.b,
         };
         let dual = self.roster.as_ref().is_some_and(|r| r.dual());
-        // fighter select with team modes: X / Y step the team (VS: each
-        // player their own side), they do not pick
-        let mut pressed = pressed;
-        if let Some(r) = self.roster.as_mut().filter(|r| r.teams_ok())
-            && !self.ui.text_focused()
+        // the TEAM MODE step: the players drive it, the UI engine draws it
+        let mut team_out = None;
+        if let Some(step) = self.teamstep.as_mut()
+            && !self.ui.leaving()
         {
-            let mut changed = false;
-            for (p, b) in pressed.iter_mut().enumerate() {
-                let dir = i32::from(b.y) - i32::from(b.x);
-                if b.x || b.y {
-                    let side = if dual { p } else { r.team_side() };
-                    changed |= dir != 0 && r.step_team(side, dir);
-                    b.x = false;
-                    b.y = false;
+            match step.tick(pressed) {
+                crate::teamstep::StepOut::Nothing => {}
+                crate::teamstep::StepOut::Changed(confirm) => {
+                    sfx(if confirm {
+                        sys.title.done_snd
+                    } else {
+                        sys.title.move_snd
+                    });
+                    self.refresh_data(sys);
                 }
-            }
-            if changed {
-                sfx(sys.title.move_snd);
-                self.refresh_data(sys);
+                crate::teamstep::StepOut::Done(t) => {
+                    team_out = Some(Transition::SelectTeams(step.mode, t));
+                }
+                crate::teamstep::StepOut::Leave => {
+                    sfx(sys.title.cancel_snd);
+                    team_out = Some(team_exit(step.mode, &self.motif));
+                }
             }
         }
         let listening = self
@@ -2334,6 +2422,10 @@ impl UiScreen {
             nav2 = Nav::default();
             self.refresh_data(sys);
         }
+        if self.teamstep.is_some() {
+            nav = Nav::default();
+            nav2 = Nav::default();
+        }
         let events = {
             let mut host = Host {
                 r,
@@ -2401,6 +2493,9 @@ impl UiScreen {
         }
         if stage_out.is_some() {
             return stage_out;
+        }
+        if team_out.is_some() {
+            return team_out;
         }
         if hovered_tile
             && let Some(i) = self
@@ -2903,18 +2998,35 @@ impl Painter for Host<'_> {
 mod tests {
     use super::*;
 
-    /// Leaving the Training, Watch or Debugger fighter select goes back to
-    /// PRACTICE in a theme with the page; other modes go to the title.
+    /// Leaving a fighter select: Training and the Debugger go back to
+    /// PRACTICE, VS MODE and WATCH to their TEAM MODE step, the rest to the
+    /// title.
     #[test]
     fn practice_modes_go_back_to_practice() {
         let ink = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif/themes/ink");
-        for m in [Mode::Training, Mode::Watch, Mode::Debugger] {
-            assert!(matches!(select_exit(m, &ink), Transition::Practice), "{m:?}");
+        for m in [Mode::Training, Mode::Debugger] {
+            assert!(
+                matches!(select_exit(m, &ink), Transition::Practice),
+                "{m:?}"
+            );
         }
-        assert!(matches!(select_exit(Mode::Versus, &ink), Transition::Title));
-        assert!(matches!(select_exit(Mode::Online, &ink), Transition::Online));
+        // VS MODE and WATCH: back to their TEAM MODE step, which leaves
+        // for the title / PRACTICE
+        for m in [Mode::Versus, Mode::Watch] {
+            assert!(matches!(select_exit(m, &ink), Transition::Select(x) if x == m));
+        }
+        assert!(matches!(team_exit(Mode::Watch, &ink), Transition::Practice));
+        assert!(matches!(team_exit(Mode::Versus, &ink), Transition::Title));
+        assert!(matches!(select_exit(Mode::Arena, &ink), Transition::Title));
+        assert!(matches!(
+            select_exit(Mode::Online, &ink),
+            Transition::Online
+        ));
         let none = std::path::Path::new("/nonexistent-theme");
-        assert!(matches!(select_exit(Mode::Training, none), Transition::Title));
+        assert!(matches!(
+            select_exit(Mode::Training, none),
+            Transition::Title
+        ));
     }
 
     /// The DUMMY panel's recorder line follows the chosen slot.

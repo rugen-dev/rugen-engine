@@ -43,14 +43,6 @@ enum Sort {
 /// Each side's team: its mode and how many fighters it brings.
 pub type Team = (TeamMode, usize);
 
-/// The team entries X / Y step through (Ikemen team sizes 2..=4).
-fn team_choices() -> Vec<Team> {
-    TeamMode::ALL
-        .into_iter()
-        .flat_map(|m| m.sizes().map(move |n| (m, n)))
-        .collect()
-}
-
 /// The picks made so far (manifest ids, in pick order) and each side's
 /// team, handed to the stage select and back.
 #[derive(Clone, Debug, PartialEq)]
@@ -354,35 +346,26 @@ impl Roster {
         [0, 1].map(|s| self.chooses[s] && !self.done(s))
     }
 
-    /// Step `side`'s team (mode and size) by `dir` through the choices;
-    /// picks beyond the new size are dropped. False when teams are not
-    /// offered here or the side is not picked on this screen.
-    pub fn step_team(&mut self, side: usize, dir: i32) -> bool {
-        if !self.teams_ok || side > 1 || !self.chooses[side] {
+    /// The teams the TEAM MODE step chose (each side's mode and size);
+    /// picks beyond a size are dropped. False when teams are not offered
+    /// here (only VS MODE and WATCH have them).
+    pub fn set_teams(&mut self, teams: [Team; 2]) -> bool {
+        if !self.teams_ok {
             return false;
         }
-        let choices = team_choices();
-        let at = choices
-            .iter()
-            .position(|&t| t == self.team[side])
-            .unwrap_or(0) as i32;
-        let n = choices.len() as i32;
-        self.team[side] = choices[((at + dir) % n + n) as usize % n as usize];
-        self.picks[side].truncate(self.team[side].1);
+        for (side, t) in teams.into_iter().enumerate() {
+            let size = t.1.clamp(1, rugen_sim::team::MAX_MEMBERS);
+            self.team[side] = if t.0 == TeamMode::Single {
+                (t.0, 1)
+            } else {
+                (t.0, size.max(2))
+            };
+            self.picks[side].truncate(self.team[side].1);
+        }
         self.picking = self.next_picking();
         self.ready_in = None;
         self.arm_ready();
         true
-    }
-
-    /// The side a single cursor's team keys change: the one picking now
-    /// (the last one once everyone picked).
-    pub fn team_side(&self) -> usize {
-        if self.picking < 2 {
-            self.picking
-        } else {
-            (0..2).rev().find(|&s| self.chooses[s]).unwrap_or(0)
-        }
     }
 
     /// Team modes can be chosen on this screen.
@@ -582,23 +565,6 @@ impl Roster {
                     self.arm_ready();
                 }
                 Outcome::Refresh
-            }
-            // team:<side>:<+1|-1>; side `cur` is whoever picks now
-            "team" => {
-                let mut parts = arg.split(':');
-                let side = match parts.next() {
-                    Some("cur") => Some(self.team_side()),
-                    Some(s) => s.parse::<usize>().ok(),
-                    None => None,
-                };
-                let dir = parts
-                    .next()
-                    .and_then(|d| d.parse::<i32>().ok())
-                    .unwrap_or(1);
-                match side {
-                    Some(s) if self.step_team(s, dir.signum()) => Outcome::Refresh,
-                    _ => Outcome::None,
-                }
             }
             // an empty slot: nothing to pick
             "search" | "empty" => Outcome::None,
@@ -1238,8 +1204,8 @@ mod tests {
         let mut r = Roster::new(Mode::Versus, &lib, 4);
         assert!(r.teams_ok());
         assert_eq!(r.data(&p, "")["card1"]["team_on"], false);
-        // P1: TURNS for 2, P2 stays single
-        assert!(r.step_team(0, 1));
+        // the TEAM MODE step chose TURNS for 2 for P1, P2 stays single
+        assert!(r.set_teams([(TeamMode::Turns, 2), (TeamMode::Single, 1)]));
         assert_eq!(r.team[0], (TeamMode::Turns, 2));
         let d = r.data(&p, "");
         assert_eq!(d["card1"]["team_on"], true);
@@ -1259,10 +1225,10 @@ mod tests {
         let d = r.data(&p, "");
         assert_eq!(d["card1"]["slots"][1]["label"], "2 · KUNG FU MAN");
         // a smaller team drops the extra pick, back takes one pick away
-        assert!(r.step_team(0, -1));
+        assert!(r.set_teams([(TeamMode::Single, 1); 2]));
         assert_eq!(r.team[0], (TeamMode::Single, 1));
         assert_eq!(r.picks[0].len(), 1);
-        assert!(r.step_team(0, 1));
+        assert!(r.set_teams([(TeamMode::Turns, 2), (TeamMode::Single, 1)]));
         assert!(r.cancel(Some(0)));
         assert!(r.picks[0].is_empty());
         r.action("pick:0");
@@ -1287,19 +1253,16 @@ mod tests {
             },
             _ => panic!("everyone picked"),
         }
-        // the choices run SINGLE, TURNS 2-4, SIMUL 2-4 (and back round)
+        // WATCH takes teams too; a single team is one fighter
         let mut c = Roster::new(Mode::Watch, &lib, 4);
-        assert_eq!(c.team_side(), 0, "one cursor: the side being picked");
-        for _ in 0..4 {
-            c.step_team(0, 1);
+        assert!(c.set_teams([(TeamMode::Tag, 9), (TeamMode::Single, 3)]));
+        assert_eq!(c.team, [(TeamMode::Tag, 4), (TeamMode::Single, 1)]);
+        // modes without teams never take them (ARENA, the CHALLENGE runs)
+        for m in [Mode::Arcade, Mode::Arena, Mode::Survival, Mode::Training] {
+            let mut a = Roster::new(m, &lib, 4);
+            assert!(!a.teams_ok());
+            assert!(!a.set_teams([(TeamMode::Turns, 2); 2]));
         }
-        assert_eq!(c.team[0], (TeamMode::Simul, 2));
-        assert!(c.step_team(0, -1));
-        assert_eq!(c.team[0], (TeamMode::Turns, 4));
-        // modes without teams never offer them
-        let mut a = Roster::new(Mode::Arcade, &lib, 4);
-        assert!(!a.teams_ok());
-        assert!(!a.step_team(0, 1));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

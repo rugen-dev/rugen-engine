@@ -1,0 +1,1040 @@
+# rugen TEAM MODE — Shonen Ink theme (roadmap mockup "v2 · Team mode step").
+# Coordinates are 1280x720. VS MODE / WATCH → TEAM MODE → fighter select.
+# ←→ mode, ↑↓ team size (2-4), A / Enter READY, B / Esc back (un-ready first).
+# The players drive the step; clicks send tm:<side>:<mode> / size:<side>:<n>.
+# Data: title note p1/p2 {tag status ready choosing active idle title rules next
+# cards[] {name desc press plain lit chosen dim show_sizes pix[] {x y w h main red
+# white mute} sizes[] {label on off press}} slots[]}, keys, hint.
+background = [0.95, 0.93, 0.89, 1.0]
+exit_time = 8
+
+[[node]]
+kind = "image"
+fit = "cover"
+image = "ui/paper.webp"
+w = "100%"
+h = "100%"
+
+[[node]]
+kind = "panel"
+dock = "top"
+x = 0
+y = 0
+w = "100%"
+h = 56
+color = [0.078, 0.071, 0.063, 1.0]
+enter = "down"
+enter_time = 12
+
+  [[node.children]]
+  kind = "text"
+  text = "{title}"
+  x = 28
+  y = 0
+  h = 56
+  font = 1
+  scale = 3
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "STEP 1 · CHOOSE HOW YOU FIGHT"
+  x = 360
+  y = 10
+  h = 36
+  pad = 18
+  skew = 12
+  color = [0.784, 0.063, 0.102, 1.0]
+  font = 1
+  scale = 2
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "STEP 2 · PICK FIGHTERS"
+  dock = "right"
+  x = 900
+  y = 0
+  w = 352
+  h = 56
+  align = "right"
+  font = 1
+  scale = 1
+  bank = 11
+  alpha = 0.72
+
+# ------------------------------------------------------------- P1 side
+[[node]]
+kind = "panel"
+x = 36
+y = 90
+w = 538
+h = 522
+deck = { h = 548 }
+color = [0.784, 0.063, 0.102, 1.0]
+enter = "up"
+enter_time = 14
+
+[[node]]
+kind = "panel"
+x = 28
+y = 82
+w = 538
+h = 522
+deck = { h = 548 }
+color = [1.0, 1.0, 1.0, 1.0]
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+enter = "up"
+enter_time = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.tag}"
+  x = 16
+  y = 14
+  h = 28
+  pad = 10
+  color = [0.784, 0.063, 0.102, 1.0]
+  font = 1
+  scale = 1
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.status}"
+  x = 16
+  y = 14
+  w = 506
+  h = 28
+  align = "right"
+  font = 1
+  scale = 1
+  bank = 10
+  visible = "p1.choosing"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.status}"
+  x = 406
+  y = 14
+  w = 116
+  h = 28
+  align = "center"
+  color = [0.078, 0.071, 0.063, 1.0]
+  font = 1
+  scale = 1
+  bank = 11
+  visible = "p1.ready"
+
+  # the four modes; the focused card is pink in a red edge, a ready pick fills in
+  [[node.children]]
+  kind = "hbox"
+  x = 16
+  y = 54
+  w = 506
+  h = 218
+  deck = { h = 248 }
+  gap = 10
+  items = "p1.cards"
+
+    [[node.children.children]]
+    kind = "button"
+    w = 119
+    h = 218
+    deck = { h = 248 }
+    on_press = "{item.press}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [1.0, 1.0, 1.0, 1.0]
+      border = 3
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [1.0, 1.0, 1.0, 1.0]
+      border = 3
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 5
+      y = 5
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.984, 0.91, 0.902, 1.0]
+      border = 5
+      border_color = [0.784, 0.063, 0.102, 1.0]
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.078, 0.071, 0.063, 1.0]
+      border = 5
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.chosen"
+
+      # pictogram: rectangles on a 56 x 56 grid
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 31
+      y = 12
+      w = 56
+      h = 56
+      items = "item.pix"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.078, 0.071, 0.063, 1.0]
+        visible = "item.main"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.784, 0.063, 0.102, 1.0]
+        visible = "item.red"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [1.0, 1.0, 1.0, 1.0]
+        visible = "item.white"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.725, 0.698, 0.643, 1.0]
+        visible = "item.mute"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 9
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 9
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 10
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 11
+      visible = "item.chosen"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 11
+      visible = "item.chosen"
+
+      # team size 2-4 on the focused card
+      [[node.children.children.children]]
+      kind = "hbox"
+      x = 4
+      y = 176
+      deck = { y = 206 }
+      w = 111
+      h = 30
+      gap = 4
+      justify = "center"
+      items = "item.sizes"
+      visible = "item.show_sizes"
+
+        [[node.children.children.children.children]]
+        kind = "button"
+        w = 32
+        h = 30
+        color = [1.0, 1.0, 1.0, 1.0]
+        border = 3
+        border_color = [0.078, 0.071, 0.063, 1.0]
+        text = "{item.label}"
+        align = "center"
+        font = 1
+        scale = 1
+        bank = 9
+        on_press = "{item.press}"
+        visible = "item.off"
+
+        [[node.children.children.children.children]]
+        kind = "button"
+        w = 32
+        h = 30
+        color = [0.784, 0.063, 0.102, 1.0]
+        border = 3
+        border_color = [0.784, 0.063, 0.102, 1.0]
+        text = "{item.label}"
+        align = "center"
+        font = 1
+        scale = 1
+        bank = 11
+        on_press = "{item.press}"
+        visible = "item.on"
+
+  # the rules of the mode on display
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 286
+  deck = { y = 316 }
+  w = 506
+  h = 120
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  visible = "p1.choosing"
+
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 286
+  deck = { y = 316 }
+  w = 506
+  h = 120
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  visible = "p1.ready"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.title}"
+  x = 30
+  y = 298
+  deck = { y = 326 }
+  h = 26
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.rules}"
+  x = 30
+  y = 330
+  deck = { y = 358 }
+  w = 478
+  h = 72
+  wrap = true
+  line_h = 24
+  font = 2
+  bank = 9
+
+  # the fighter slots this team fills on the grid next
+  [[node.children]]
+  kind = "text"
+  text = "NEXT:"
+  x = 16
+  y = 426
+  deck = { y = 456 }
+  h = 44
+  font = 1
+  scale = 1
+  bank = 9
+  alpha = 0.72
+
+  [[node.children]]
+  kind = "hbox"
+  x = 82
+  y = 426
+  deck = { y = 456 }
+  w = 200
+  h = 44
+  gap = 8
+  items = "p1.slots"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 44
+    h = 44
+    border = 3
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    visible = "p1.choosing"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 44
+    h = 44
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    visible = "p1.ready"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p1.next}"
+  x = 16
+  y = 482
+  deck = { y = 512 }
+  w = 506
+  h = 24
+  font = 1
+  scale = 1
+  bank = 9
+  alpha = 0.72
+
+# ------------------------------------------------------------- VS between
+[[node]]
+kind = "text"
+text = "VS"
+x = 566
+y = 250
+w = 148
+align = "center"
+font = 1
+scale = 3
+bank = 9
+
+[[node]]
+kind = "text"
+text = "{note}"
+x = 574
+y = 316
+w = 132
+h = 80
+wrap = true
+line_h = 20
+align = "center"
+font = 1
+scale = 1
+bank = 9
+
+# ------------------------------------------------------------- P2 side
+[[node]]
+kind = "panel"
+x = 722
+y = 90
+w = 538
+h = 522
+deck = { h = 548 }
+color = [0.078, 0.071, 0.063, 1.0]
+enter = "up"
+enter_time = 14
+
+[[node]]
+kind = "panel"
+x = 714
+y = 82
+w = 538
+h = 522
+deck = { h = 548 }
+color = [1.0, 1.0, 1.0, 1.0]
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+enter = "up"
+enter_time = 14
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.tag}"
+  x = 16
+  y = 14
+  h = 28
+  pad = 10
+  color = [0.078, 0.071, 0.063, 1.0]
+  font = 1
+  scale = 1
+  bank = 11
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.status}"
+  x = 16
+  y = 14
+  w = 506
+  h = 28
+  align = "right"
+  font = 1
+  scale = 1
+  bank = 10
+  visible = "p2.choosing"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.status}"
+  x = 406
+  y = 14
+  w = 116
+  h = 28
+  align = "center"
+  color = [0.078, 0.071, 0.063, 1.0]
+  font = 1
+  scale = 1
+  bank = 11
+  visible = "p2.ready"
+
+  # the four modes; the focused card is pink in a red edge, a ready pick fills in
+  [[node.children]]
+  kind = "hbox"
+  x = 16
+  y = 54
+  w = 506
+  h = 218
+  deck = { h = 248 }
+  gap = 10
+  items = "p2.cards"
+
+    [[node.children.children]]
+    kind = "button"
+    w = 119
+    h = 218
+    deck = { h = 248 }
+    on_press = "{item.press}"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [1.0, 1.0, 1.0, 1.0]
+      border = 3
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [1.0, 1.0, 1.0, 1.0]
+      border = 3
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 5
+      y = 5
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.984, 0.91, 0.902, 1.0]
+      border = 5
+      border_color = [0.784, 0.063, 0.102, 1.0]
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "panel"
+      w = 119
+      h = 218
+      deck = { h = 248 }
+      color = [0.078, 0.071, 0.063, 1.0]
+      border = 5
+      border_color = [0.078, 0.071, 0.063, 1.0]
+      visible = "item.chosen"
+
+      # pictogram: rectangles on a 56 x 56 grid
+      [[node.children.children.children]]
+      kind = "panel"
+      x = 31
+      y = 12
+      w = 56
+      h = 56
+      items = "item.pix"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.078, 0.071, 0.063, 1.0]
+        visible = "item.main"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.784, 0.063, 0.102, 1.0]
+        visible = "item.red"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [1.0, 1.0, 1.0, 1.0]
+        visible = "item.white"
+
+        [[node.children.children.children.children]]
+        kind = "panel"
+        x = "{item.x}"
+        y = "{item.y}"
+        w = "{item.w}"
+        h = "{item.h}"
+        color = [0.725, 0.698, 0.643, 1.0]
+        visible = "item.mute"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 9
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 9
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 10
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.name}"
+      x = 0
+      y = 76
+      w = 119
+      h = 26
+      align = "center"
+      font = 2
+      bank = 11
+      visible = "item.chosen"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      visible = "item.plain"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      visible = "item.lit"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 9
+      alpha = 0.45
+      visible = "item.dim"
+
+      [[node.children.children.children]]
+      kind = "text"
+      text = "{item.desc}"
+      x = 8
+      y = 108
+      w = 103
+      h = 60
+      deck = { h = 92 }
+      wrap = true
+      line_h = 18
+      align = "center"
+      font = 1
+      scale = 1
+      bank = 11
+      visible = "item.chosen"
+
+      # team size 2-4 on the focused card
+      [[node.children.children.children]]
+      kind = "hbox"
+      x = 4
+      y = 176
+      deck = { y = 206 }
+      w = 111
+      h = 30
+      gap = 4
+      justify = "center"
+      items = "item.sizes"
+      visible = "item.show_sizes"
+
+        [[node.children.children.children.children]]
+        kind = "button"
+        w = 32
+        h = 30
+        color = [1.0, 1.0, 1.0, 1.0]
+        border = 3
+        border_color = [0.078, 0.071, 0.063, 1.0]
+        text = "{item.label}"
+        align = "center"
+        font = 1
+        scale = 1
+        bank = 9
+        on_press = "{item.press}"
+        visible = "item.off"
+
+        [[node.children.children.children.children]]
+        kind = "button"
+        w = 32
+        h = 30
+        color = [0.784, 0.063, 0.102, 1.0]
+        border = 3
+        border_color = [0.784, 0.063, 0.102, 1.0]
+        text = "{item.label}"
+        align = "center"
+        font = 1
+        scale = 1
+        bank = 11
+        on_press = "{item.press}"
+        visible = "item.on"
+
+  # the rules of the mode on display
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 286
+  deck = { y = 316 }
+  w = 506
+  h = 120
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.784, 0.063, 0.102, 1.0]
+  visible = "p2.choosing"
+
+  [[node.children]]
+  kind = "panel"
+  x = 16
+  y = 286
+  deck = { y = 316 }
+  w = 506
+  h = 120
+  color = [1.0, 1.0, 1.0, 1.0]
+  border = 3
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  visible = "p2.ready"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.title}"
+  x = 30
+  y = 298
+  deck = { y = 326 }
+  h = 26
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.rules}"
+  x = 30
+  y = 330
+  deck = { y = 358 }
+  w = 478
+  h = 72
+  wrap = true
+  line_h = 24
+  font = 2
+  bank = 9
+
+  # the fighter slots this team fills on the grid next
+  [[node.children]]
+  kind = "text"
+  text = "NEXT:"
+  x = 16
+  y = 426
+  deck = { y = 456 }
+  h = 44
+  font = 1
+  scale = 1
+  bank = 9
+  alpha = 0.72
+
+  [[node.children]]
+  kind = "hbox"
+  x = 82
+  y = 426
+  deck = { y = 456 }
+  w = 200
+  h = 44
+  gap = 8
+  items = "p2.slots"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 44
+    h = 44
+    border = 3
+    border_color = [0.784, 0.063, 0.102, 1.0]
+    visible = "p2.choosing"
+
+    [[node.children.children]]
+    kind = "panel"
+    w = 44
+    h = 44
+    border = 3
+    border_color = [0.078, 0.071, 0.063, 1.0]
+    visible = "p2.ready"
+
+  [[node.children]]
+  kind = "text"
+  text = "{p2.next}"
+  x = 16
+  y = 482
+  deck = { y = 512 }
+  w = 506
+  h = 24
+  font = 1
+  scale = 1
+  bank = 9
+  alpha = 0.72
+
+# ------------------------------------------------------------- key hints
+[[node]]
+kind = "hbox"
+x = 28
+y = 662
+deck = { y = 670 }
+w = 1224
+h = 36
+gap = 8
+justify = "end"
+align = "center"
+
+  [[node.children]]
+  kind = "text"
+  text = "◀ ▶"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "MODE  "
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "↑ ↓"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "TEAM SIZE  "
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{keys.a}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "READY  "
+  font = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "{hint.back}"
+  h = 36
+  pad = 10
+  image = "ui/key9.webp"
+  nine = [4, 4, 4, 8]
+  font = 1
+  scale = 2
+  bank = 9
+
+  [[node.children]]
+  kind = "text"
+  text = "BACK"
+  font = 2
+  bank = 9

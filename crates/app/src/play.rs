@@ -1289,7 +1289,11 @@ impl Match {
             return true;
         }
         // a tutorial (or the LESSONS) takes START: skip a step, leave at the end
-        if self.tutorial.as_ref().is_some_and(|t| t.finished && t.lessons) {
+        if self
+            .tutorial
+            .as_ref()
+            .is_some_and(|t| t.finished && t.lessons)
+        {
             self.end_lessons();
             return true;
         } else if let Some(t) = self.tutorial.as_mut() {
@@ -3570,17 +3574,18 @@ mod tests {
         let mut audio = None;
         for f in 0..900 {
             if f == 200 {
-                let keys = crate::keylabel::Labels::new(
-                    &cfg.input,
-                    0,
-                    crate::input::Device::Keyboard,
-                );
+                let keys =
+                    crate::keylabel::Labels::new(&cfg.input, 0, crate::input::Device::Keyboard);
                 m.start_lessons(&keys);
             }
             if f == 700 {
                 m.end_lessons();
             }
-            let b = if f % 90 < 40 { walk } else { Buttons::default() };
+            let b = if f % 90 < 40 {
+                walk
+            } else {
+                Buttons::default()
+            };
             m.tick([b, Buttons::default()], &mut audio);
         }
         assert_eq!(m.world.round.time_left, -1, "the lessons stopped the clock");

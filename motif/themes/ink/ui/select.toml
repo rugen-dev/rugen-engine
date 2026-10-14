@@ -6,7 +6,7 @@
 # status ok bad record picked cpu present; facts* / slab_* = those flags
 # while no team mode is on; team_on team_off modes[] sizes[] {label on off}
 # slots[] {label face has_face picked next empty} team_hint},
-# ready, query, sort, keys {a b start team}, teams_ok, team_note.
+# ready, query, sort, keys {a b start}, team_note.
 background = [0.95, 0.94, 0.89, 1.0]
 exit_time = 8
 
@@ -62,23 +62,7 @@ enter_time = 12
   justify = "end"
   align = "center"
 
-    [[node.children.children]]
-    kind = "text"
-    text = "{keys.team}"
-    h = 26
-    pad = 8
-    image = "ui/key9_dark.webp"
-    nine = [4, 4, 4, 8]
-    font = 2
-    bank = 11
-    visible = "teams_ok"
 
-    [[node.children.children]]
-    kind = "text"
-    text = "TEAM MODE  "
-    font = 2
-    bank = 11
-    visible = "teams_ok"
 
     [[node.children.children]]
     kind = "text"

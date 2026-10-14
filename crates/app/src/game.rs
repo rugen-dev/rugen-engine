@@ -110,6 +110,8 @@ impl Mode {
 pub enum Transition {
     Title,
     Select(Mode),
+    /// The TEAM MODE step is done: the fighter select with these teams.
+    SelectTeams(Mode, [crate::roster::Team; 2]),
     /// Back from the stage select: the fighter select with these picks
     /// (manifest ids) locked again.
     SelectAgain(Mode, Box<crate::roster::Picks>),
@@ -427,6 +429,8 @@ pub struct Shell {
     frame_stats: crate::framestats::Reporter,
     /// The screenpack's logo / intro storyboards were offered (first title).
     booted: bool,
+    /// The TEAM MODE step's last choice per mode (VS MODE, WATCH).
+    last_teams: Vec<(Mode, [crate::roster::Team; 2])>,
 }
 
 impl Shell {
@@ -542,6 +546,7 @@ impl Shell {
             last_redraw: Instant::now(),
             frame_stats: crate::framestats::Reporter::default(),
             booted: false,
+            last_teams: Vec::new(),
         }
     }
 
@@ -1662,7 +1667,7 @@ impl Shell {
                 }
             }
             Transition::SelectAgain(mode, picks) => {
-                self.transition(Transition::Select(mode));
+                self.open_select(mode);
                 if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
                     u.restore_picks(&picks, sys);
                 }
@@ -1701,41 +1706,54 @@ impl Shell {
                     }
                 };
             }
-            Transition::Select(mode) => {
-                // a run ends where its fighter select opens again
+            // VS MODE and WATCH: the TEAM MODE step first (a theme with it)
+            Transition::Select(mode)
+                if matches!(mode, Mode::Versus | Mode::Watch)
+                    && UiScreen::available(&self.motif_dir, UiKind::Teams(mode))
+                    && UiScreen::available(&self.motif_dir, UiKind::Select(mode)) =>
+            {
                 self.run = None;
                 self.play_system_music("select");
-                self.screen = match self.system.as_ref() {
-                    Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Select(mode)) => {
-                        match UiScreen::load(
-                            UiKind::Select(mode),
-                            &self.motif_dir,
-                            &self.lib.root,
-                            sys,
-                            &self.config,
-                            &self.lib,
-                        ) {
-                            Ok(u) => Screen::Ui(Box::new(u)),
-                            Err(e) => {
-                                log::warn!("ui/select.toml: {e:#}; using the screenpack select");
-                                Screen::Select(Box::new(SelectScreen::new(
-                                    mode,
-                                    sys,
-                                    &self.lib,
-                                    self.config.game.ai_level,
-                                )))
-                            }
-                        }
-                    }
-                    Some(sys) => Screen::Select(Box::new(SelectScreen::new(
-                        mode,
+                let last = self
+                    .last_teams
+                    .iter()
+                    .find(|(m, _)| *m == mode)
+                    .map(|(_, t)| *t);
+                let devices = self.input.devices();
+                let tag = [0, 1].map(|i| {
+                    crate::keylabel::cap(&self.config.input, i, crate::keylabel::TAG, devices[i])
+                        .plain()
+                });
+                let loaded = self.system.as_ref().map(|sys| {
+                    UiScreen::load_teams(
+                        &self.motif_dir,
+                        &self.lib.root,
                         sys,
+                        &self.config,
                         &self.lib,
-                        self.config.game.ai_level,
-                    ))),
-                    None => Screen::Blank,
-                };
+                        mode,
+                        last,
+                        tag,
+                    )
+                });
+                match loaded {
+                    Some(Ok(u)) => self.screen = Screen::Ui(Box::new(u)),
+                    Some(Err(e)) => {
+                        log::error!("ui/teams.toml: {e:#}");
+                        self.open_select(mode);
+                    }
+                    None => self.screen = Screen::Blank,
+                }
             }
+            Transition::SelectTeams(mode, teams) => {
+                self.last_teams.retain(|(m, _)| *m != mode);
+                self.last_teams.push((mode, teams));
+                self.open_select(mode);
+                if let (Screen::Ui(u), Some(sys)) = (&mut self.screen, self.system.as_ref()) {
+                    u.set_teams(teams, sys);
+                }
+            }
+            Transition::Select(mode) => self.open_select(mode),
             // the debugger has no VS screen: straight into its match
             Transition::Versus(setup, _) if setup.mode == Some(Mode::Debugger) => {
                 self.transition(Transition::Fight(setup));
@@ -1916,6 +1934,43 @@ impl Shell {
         {
             u.release_gpu(&mut g.renderer);
         }
+    }
+
+    /// The fighter select for `mode` (the UI screen, else the screenpack's).
+    fn open_select(&mut self, mode: Mode) {
+        // a run ends where its fighter select opens again
+        self.run = None;
+        self.play_system_music("select");
+        self.screen = match self.system.as_ref() {
+            Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Select(mode)) => {
+                match UiScreen::load(
+                    UiKind::Select(mode),
+                    &self.motif_dir,
+                    &self.lib.root,
+                    sys,
+                    &self.config,
+                    &self.lib,
+                ) {
+                    Ok(u) => Screen::Ui(Box::new(u)),
+                    Err(e) => {
+                        log::warn!("ui/select.toml: {e:#}; using the screenpack select");
+                        Screen::Select(Box::new(SelectScreen::new(
+                            mode,
+                            sys,
+                            &self.lib,
+                            self.config.game.ai_level,
+                        )))
+                    }
+                }
+            }
+            Some(sys) => Screen::Select(Box::new(SelectScreen::new(
+                mode,
+                sys,
+                &self.lib,
+                self.config.game.ai_level,
+            ))),
+            None => Screen::Blank,
+        };
     }
 
     /// `rugen debug`: attach the debugger to a new match and open its panel.

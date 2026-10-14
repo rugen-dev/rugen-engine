@@ -304,6 +304,10 @@ impl StageSel {
         if plan.online.as_ref().is_some_and(|o| o.arena) {
             items.retain(StageItem::is_arena);
         }
+        // a VS team match never plays on an [Arena] stage
+        if plan.mode == Mode::Versus && plan.setup.teams.is_some() {
+            items.retain(|s| !s.is_arena());
+        }
         log::debug!(
             "stage select: {} stages listed in {:?}",
             items.len(),

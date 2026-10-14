@@ -7,9 +7,7 @@ use serde_json::{Value, json};
 
 /// The cards in order. `f1` is what opens the hitboxes (always F1 today).
 pub fn cards() -> Value {
-    let row = |name: &str, text: &str, hot: bool| {
-        json!({ "name": name, "text": text, "hot": hot, "cold": !hot })
-    };
+    let row = |name: &str, text: &str, hot: bool| json!({ "name": name, "text": text, "hot": hot, "cold": !hot });
     json!([
         {
             "id": "training",

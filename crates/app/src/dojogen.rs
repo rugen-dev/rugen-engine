@@ -1235,7 +1235,7 @@ pub fn screens(ui: &Path) -> anyhow::Result<()> {
 }
 
 /// The dojo screens (options / controls come from `settings_gen`).
-pub const SCREENS: [(&str, &str); 10] = [
+pub const SCREENS: [(&str, &str); 11] = [
     ("title.toml", include_str!("dojoscreens/title.toml")),
     ("select.toml", include_str!("dojoscreens/select.toml")),
     ("vs.toml", include_str!("dojoscreens/vs.toml")),
@@ -1245,6 +1245,7 @@ pub const SCREENS: [(&str, &str); 10] = [
     ("stages.toml", include_str!("dojoscreens/stages.toml")),
     ("challenge.toml", include_str!("dojoscreens/challenge.toml")),
     ("practice.toml", include_str!("dojoscreens/practice.toml")),
+    ("teams.toml", include_str!("dojoscreens/teams.toml")),
     ("debug.toml", include_str!("dojoscreens/debug.toml")),
 ];
 

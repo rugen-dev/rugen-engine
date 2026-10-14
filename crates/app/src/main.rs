@@ -92,6 +92,7 @@ mod stagegen;
 mod stagesel;
 mod storyboard;
 mod system;
+mod teamstep;
 mod themes;
 mod title;
 mod training;
