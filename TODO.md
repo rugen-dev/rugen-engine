@@ -344,8 +344,12 @@ box) and screenshots.
   through past seasons with left / right. `POST /v1/admin/season_end` ends
   a season early. Shots: `~/.cache/rugen-work/ro/shots/board-{ink,dojo}.png`,
   `board-s2.png`.
-- [ ] **Per-fighter leaderboards.** Server keeps wins and rating per
+- [x] **Per-fighter leaderboards.** (fad0209; rugen-server c662609) Server keeps wins and rating per
   fingerprint; LEADERBOARD gets a FIGHTERS tab.
+  Per player and fighter, per season (schema v8), ranked only; a new
+  season starts a player's fighter rating from a soft reset of the last
+  one. Tab switches PLAYERS / FIGHTERS, a FIGHTER stepper cycles the
+  fighters with a board. Shots: `~/.cache/rugen-work/ro/shots/fboard-{ink,dojo}.png`.
 - [ ] **Tournament brackets.** In a room: 8 or 16 players, single
   elimination, the server seeds by rating and calls each match; spectators
   watch the bracket.
