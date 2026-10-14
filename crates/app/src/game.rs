@@ -93,6 +93,13 @@ impl Mode {
     pub fn is_challenge(self) -> bool {
         matches!(self, Mode::Survival | Mode::BossRush | Mode::TimeAttack)
     }
+
+    /// Never fought on an `[Arena]` stage: the ladders (Arcade and the
+    /// CHALLENGE runs) play classic rounds; stocks and blast zones belong
+    /// to ARENA.
+    pub fn avoids_arenas(self) -> bool {
+        self.is_ladder()
+    }
 }
 
 #[derive(Debug)]
@@ -895,8 +902,8 @@ impl Shell {
         {
             return Transition::Story(p, Box::new(Transition::Versus(setup, sides)));
         }
-        // a screenpack select may have drawn an arena stage: not for a run
-        if mode.is_challenge() {
+        // a screenpack select may have drawn an arena stage: not for a ladder
+        if mode.avoids_arenas() {
             let stages = crate::challenge::fight_stages(&self.lib);
             if setup.stage.as_ref().is_none_or(|s| !stages.contains(s)) {
                 setup.stage = stages.first().cloned().or(setup.stage);
@@ -946,8 +953,8 @@ impl Shell {
         let p2 = man.def_path(&dir);
         let stage = match stage {
             Some(s) => Some(s),
-            // the arcade ladder walks every stage; CHALLENGE runs skip the arenas
-            None if mode.is_challenge() => {
+            // the ladders walk every stage but the arenas
+            None if mode.avoids_arenas() => {
                 let stages = crate::challenge::fight_stages(&self.lib);
                 let at = self.run.as_ref().map_or(0, |r| r.next_stage(stages.len()));
                 stages.get(at).cloned().or_else(|| self.lib.default_stage())

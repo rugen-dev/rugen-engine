@@ -444,7 +444,7 @@ pub fn bosses(lib: &rugen_content::Library) -> (Vec<String>, bool) {
     boss_line(&cands, &flagged)
 }
 
-/// Stages a CHALLENGE run fights on: every installed stage except the
+/// Stages a ladder (Arcade, CHALLENGE runs) fights on: every installed stage except the
 /// `[Arena]` ones (stocks and blast zones belong to ARENA), else whatever
 /// there is.
 pub fn fight_stages(lib: &rugen_content::Library) -> Vec<PathBuf> {
@@ -540,6 +540,23 @@ mod tests {
 
     fn run(mode: Mode) -> Run {
         Run::new(mode, "p1.def".into(), "naruto".into(), "Naruto".into(), 7)
+    }
+
+    /// Arcade and the CHALLENGE runs never land on an `[Arena]` stage;
+    /// the free modes still may.
+    #[test]
+    fn ladders_avoid_arena_stages() {
+        for m in [
+            Mode::Arcade,
+            Mode::Survival,
+            Mode::BossRush,
+            Mode::TimeAttack,
+        ] {
+            assert!(m.avoids_arenas(), "{m:?}");
+        }
+        for m in [Mode::Versus, Mode::Arena, Mode::Training, Mode::Watch] {
+            assert!(!m.avoids_arenas(), "{m:?}");
+        }
     }
 
     #[test]

@@ -725,8 +725,8 @@ impl Roster {
 
     /// Arcade's first stage: any installed one (only that one is prepared).
     fn arcade_stage(&mut self) -> Option<PathBuf> {
-        if self.mode.is_challenge() {
-            // CHALLENGE runs: any stage but the arenas
+        if self.mode.avoids_arenas() {
+            // Arcade and CHALLENGE runs: any stage but the arenas
             let all = crate::challenge::fight_stages(&self.lib);
             let k = self.rand(all.len());
             return all.get(k).cloned().or_else(|| self.lib.default_stage());
