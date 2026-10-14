@@ -230,9 +230,14 @@ box) and screenshots.
   the simulation (AI level, life) rather than the dummy's inputs.
 
 ### Team modes
-- [ ] **Turns.** Pick 1–4 fighters per side on fighter select; the winner of
+- [x] **Turns.** (4d43a08) Pick 1–4 fighters per side on fighter select; the winner of
   a round stays, keeps its life, the loser's next fighter comes in. Needs the
   select screen to pick several and the round code to swap a player.
+  VS MODE and WATCH: X / Y step a side's team (SINGLE, then 2-4 per mode),
+  Ikemen GO rules (the newcomer brings the fallen fighter's power; each
+  side needs the other's Turns size in wins). Sim change for team matches
+  only: `golden_tests` pins 1v1 checksums (KFM, plus Naruto / Sasuke /
+  Goku with `--ignored`).
 - [ ] **Simul.** Two fighters per side on screen at once (P1 + partner CPU or
   P3). Needs 4-player support in the sim (targets, pushing, camera) and the
   `teammode` / `numpartner` triggers characters already check.
