@@ -243,6 +243,10 @@ pub struct ServerInfo {
     /// API 5). False from older servers: anonymous accounts only.
     #[serde(default)]
     pub accounts: bool,
+    /// Days the server keeps the fighters players send it before deleting
+    /// them (the consent dialog says it). 0 from older servers.
+    #[serde(default)]
+    pub pkg_days: u32,
 }
 
 impl ServerInfo {

@@ -119,6 +119,37 @@ pub struct Profile {
     /// Replays shared or watched by code, newest first (REPLAYS · RECENT).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_replays: Vec<RecentReplay>,
+    /// Online consent per server address: the player agreed that their
+    /// fighters go to that server, their opponents and viewers. Absent =
+    /// never agreed (nothing is uploaded there).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub online_consent: std::collections::BTreeMap<String, Consent>,
+}
+
+/// Terms of the online consent dialog. Raise it when they change: every
+/// player is asked again.
+pub const CONSENT_VERSION: u32 = 1;
+
+/// Days a server keeps fighters when it does not say (older servers).
+pub const CONSENT_DAYS: u32 = 3;
+
+/// One server's online consent.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Consent {
+    /// [`CONSENT_VERSION`] the player agreed to.
+    pub version: u32,
+    /// Days the dialog said the server keeps fighters.
+    pub days: u32,
+    /// Unix time of the answer.
+    pub at: u64,
+}
+
+impl Consent {
+    /// Still valid for a server keeping fighters `days` days (0: unknown).
+    pub fn covers(&self, days: u32) -> bool {
+        self.version >= CONSENT_VERSION && (days == 0 || self.days == days)
+    }
 }
 
 /// A shared replay the player shared or watched.
@@ -132,6 +163,14 @@ pub struct RecentReplay {
 }
 
 impl Profile {
+    /// Whether the player agreed to send fighters to `server`, which keeps
+    /// them `days` days (0: the server does not say).
+    pub fn consents(&self, server: &str, days: u32) -> bool {
+        self.online_consent
+            .get(server)
+            .is_some_and(|c| c.covers(days))
+    }
+
     /// Remember a replay code (newest first, ten kept).
     pub fn note_replay(&mut self, r: RecentReplay) {
         self.recent_replays.retain(|x| x.code != r.code);
@@ -159,6 +198,7 @@ impl Default for Profile {
             online_ranks: Default::default(),
             challenge: Default::default(),
             recent_replays: Vec::new(),
+            online_consent: Default::default(),
         }
     }
 }

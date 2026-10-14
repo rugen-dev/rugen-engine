@@ -50,6 +50,9 @@ use serde_json::{Value, json};
 /// serving several APIs keep players of different versions apart.
 const API: u32 = rugen_proto::API_VERSION;
 
+/// Why an upload is not made: the player did not agree to online play.
+pub const NO_CONSENT: &str = "you did not agree to send fighters to this server";
+
 #[derive(Debug, thiserror::Error)]
 pub enum OnlineError {
     #[error("{0}")]
@@ -94,6 +97,9 @@ pub struct OnlineClient {
     pub server: String,
     pub key: Option<String>,
     pub timeout: Duration,
+    /// The player agreed to send fighters to this server (the online
+    /// consent): uploads say so, and without it nothing is uploaded.
+    pub consent: bool,
 }
 
 impl OnlineClient {
@@ -102,6 +108,7 @@ impl OnlineClient {
             server: server.trim().to_string(),
             key: key.filter(|k| !k.is_empty()),
             timeout: Duration::from_secs(8),
+            consent: false,
         }
     }
 
@@ -423,7 +430,10 @@ impl OnlineClient {
         fighter: Option<&FighterDecl>,
         stage: Option<&FighterDecl>,
     ) -> OnlineResult<MatchupView> {
-        let b = self.with_key(json!({ "fighter": fighter, "stage": stage }))?;
+        // `uploads: false`: we play without online consent, so the server
+        // never gets our files (servers without it ignore the field)
+        let b =
+            self.with_key(json!({ "fighter": fighter, "stage": stage, "uploads": self.consent }))?;
         Self::decode(self.call("POST", &format!("/matchup/{id}/pick"), Some(b))?)
     }
 
@@ -445,6 +455,14 @@ impl OnlineClient {
         Ok(())
     }
 
+    /// Leave because we lack `fp` and its owner sends nothing (no online
+    /// consent): the server tells both players why.
+    pub fn leave_matchup_missing(&self, id: u64, fp: &str) -> OnlineResult<()> {
+        let b = self.with_key(json!({ "reason": "missing", "fingerprint": fp }))?;
+        self.call("POST", &format!("/matchup/{id}/leave"), Some(b))?;
+        Ok(())
+    }
+
     /// `HAS <fingerprint>`: stored on the server, or how much of our upload it has.
     pub fn pkg_status(&self, fp: &str) -> OnlineResult<PackageStatus> {
         let k = self.key()?;
@@ -453,6 +471,7 @@ impl OnlineClient {
 
     /// Upload the package file at `path` as `fp`, resuming where the server
     /// is, in [`CHUNK`]s. Returns once the server stored and verified it.
+    /// Refused without the player's online consent ([`Self::consent`]).
     pub fn upload_package(
         &self,
         fp: &str,
@@ -460,6 +479,9 @@ impl OnlineClient {
         progress: &Transfer,
     ) -> OnlineResult<PackageStatus> {
         use std::io::{Read, Seek, SeekFrom};
+        if !self.consent {
+            return Err(OnlineError::Server(NO_CONSENT.into()));
+        }
         let total = std::fs::metadata(path)?.len();
         progress.total.store(total, Ordering::Relaxed);
         let st = self.pkg_status(fp)?;
@@ -480,7 +502,10 @@ impl OnlineClient {
             progress.done.store(offset, Ordering::Relaxed);
             f.seek(SeekFrom::Start(offset))?;
             let n = (&mut f).take(CHUNK as u64).read(&mut buf)?;
-            let url = format!("{base}/pkg/{fp}/upload?key={key}&offset={offset}&total={total}");
+            let consent = u8::from(self.consent);
+            let url = format!(
+                "{base}/pkg/{fp}/upload?key={key}&offset={offset}&total={total}&consent={consent}"
+            );
             let res = self
                 .agent_with(Duration::from_secs(120))
                 .post(&url)

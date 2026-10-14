@@ -15,6 +15,8 @@
 //!                                                               brings <char>, shows the matchup, confirms
 //!                                                               unless BLOCKED, syncs files, fights, quits;
 //!                                                               with --shot: picture of the matchup screen
+//!   --consent yes|no                                            send our fighters to the server (default: the
+//!                                                               profile's online consent for that server)
 //!   --synctest                                                  local match that verifies determinism
 //!   --ai n                                                      P2 computer level (default 4, 0 = human)
 //!   --watch                                                     both sides computer controlled
@@ -149,6 +151,8 @@ rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboa
                                                               brings <char>, shows the matchup, confirms
                                                               unless BLOCKED, syncs files, fights, quits;
                                                               with --shot: picture of the matchup screen
+  --consent yes|no                                            send our fighters to the server (default: the
+                                                              profile's online consent for that server)
   --synctest                                                  local match that verifies determinism
   --ai n                                                      P2 computer level (default 4, 0 = human)
   --watch                                                     both sides computer controlled
@@ -276,8 +280,10 @@ fn main() -> anyhow::Result<()> {
             let seed = opt("--seed");
             let team1 = opt("--team1");
             let team2 = opt("--team2");
+            let consent = opt("--consent");
             let taken = [
                 opt("--mouse"),
+                consent.clone(),
                 opt("--window"),
                 team1.clone(),
                 team2.clone(),
@@ -354,6 +360,12 @@ fn main() -> anyhow::Result<()> {
                     stage: stage.clone(),
                     spectate,
                     guest,
+                    consent: match consent.as_deref() {
+                        None => None,
+                        Some("yes" | "1" | "true") => Some(true),
+                        Some("no" | "0" | "false") => Some(false),
+                        Some(other) => anyhow::bail!("--consent expects yes or no, not {other:?}"),
+                    },
                 };
                 let harness = game::Harness {
                     shot: shot.map(std::path::PathBuf::from),

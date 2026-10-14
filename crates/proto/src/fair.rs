@@ -211,6 +211,11 @@ pub struct MatchupView {
     pub ticket: Option<SessionTicket>,
     /// The verdict as a [`crate::VerdictStatement`] signed by the server (API 4).
     pub signed: Option<crate::SignedBlob>,
+    /// Fingerprints the server lacks and will never get: every player
+    /// that brings them plays without online consent (nothing uploaded),
+    /// so only a member who already has them can play or watch. Empty
+    /// from older servers.
+    pub offline: Vec<String>,
 }
 
 impl MatchupView {

@@ -173,6 +173,9 @@ pub struct OnlineAuto {
     pub spectate: bool,
     /// Throwaway account (not saved to the profile).
     pub guest: bool,
+    /// `--consent yes|no`: send our fighters (or not) whatever the profile
+    /// says; `None` follows the profile's online consent for the server.
+    pub consent: Option<bool>,
 }
 
 /// A matchup on screen: the worker and what the match needs afterwards.
@@ -598,6 +601,9 @@ pub struct OnlineScreen {
     sel: usize,
     /// Hub action waiting for the connection (`quick`, `ranked`, `lobby`, `board`).
     pending_action: Option<String>,
+    /// Servers whose consent dialog got NOT NOW this session (not asked
+    /// again until the game restarts).
+    consent_declined: std::collections::HashSet<String>,
     toast: Option<Toast>,
     dialog: Option<Dialog>,
     /// Hotkey per action (see [`HOTKEYS`]); missing when every key is bound.
@@ -622,6 +628,15 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
         return (profile.online_id, profile.online_key.clone());
     }
     (0, String::new())
+}
+
+/// The consent dialog's text for a server keeping fighters `days` days.
+fn consent_text(days: u32) -> String {
+    format!(
+        "ONLINE PLAY SENDS YOUR FIGHTERS TO THE SERVER, YOUR OPPONENT AND VIEWERS. THEY'RE KEPT {} {}, THEN DELETED.",
+        days,
+        if days == 1 { "DAY" } else { "DAYS" }
+    )
 }
 
 /// Unix time now (seconds).
@@ -856,6 +871,7 @@ impl OnlineScreen {
             acct_again: String::new(),
             sel: 0,
             pending_action: None,
+            consent_declined: Default::default(),
             toast: None,
             dialog: None,
             keys: hotkeys(config),
@@ -2024,6 +2040,7 @@ impl OnlineScreen {
         let blocked = c.decl.profile.as_ref().is_some_and(|p| p.blocked())
             || official::blocked(&c.decl.fingerprint).is_some();
         let failed = xfer.iter().any(|x| matches!(x.state, XferState::Failed(_)));
+        let withheld = xfer.iter().any(|x| x.state == XferState::Withheld);
         let moving = !xfer.is_empty() && !xfer.iter().all(Xfer::finished);
         let frac = if xfer.is_empty() {
             0.0
@@ -2034,6 +2051,8 @@ impl OnlineScreen {
             ("BLOCKED".to_string(), 0)
         } else if failed {
             (format!("{sending} FAILED"), (frac * 100.0) as u32)
+        } else if withheld {
+            ("NOT SENT: NO ONLINE CONSENT".to_string(), 0)
         } else if moving {
             let pct = (frac * 100.0) as u32;
             (format!("{sending} {pct}%"), pct)
@@ -2237,6 +2256,14 @@ impl OnlineScreen {
             self.dialog = Some(d);
             return;
         }
+        // the first time on a server: may our fighters go there?
+        if self.auto.is_none()
+            && !self.profile.consents(server, self.server_days(server))
+            && !self.consent_declined.contains(server)
+        {
+            self.dialog = Some(self.consent_dialog(server));
+            return;
+        }
         let (id, key) = account_for(&self.profile, &self.config, server);
         // a server with named accounts: create one or log in first (the
         // `rugen play --server` harness keeps registering anonymously)
@@ -2251,11 +2278,14 @@ impl OnlineScreen {
             self.open_account(i);
             return;
         }
+        let consent = self.consent_for(server);
         if official::same_server(&self.client.server, server) && self.client.key.is_some() {
+            self.client.consent = consent;
             self.run_pending();
             return;
         }
         self.client = OnlineClient::new(server, (!key.is_empty()).then_some(key));
+        self.client.consent = consent;
         self.me = None;
         self.error.clear();
         self.status = format!("CONNECTING TO {}", server.to_uppercase());
@@ -2273,6 +2303,46 @@ impl OnlineScreen {
             self.jobs
                 .push(Job::Me(Pending::spawn(move || c.profile(id))));
             self.run_pending();
+        }
+    }
+
+    /// Days `server` keeps the fighters it receives (0: it does not say).
+    fn server_days(&self, server: &str) -> u32 {
+        self.servers
+            .iter()
+            .find(|r| official::same_server(&r.addr, server))
+            .and_then(|r| r.info.as_ref())
+            .map_or(0, |i| i.pkg_days)
+    }
+
+    /// Whether our fighters may be uploaded to `server`: the player agreed
+    /// in the consent dialog (`rugen play --server`: `--consent`, else the
+    /// profile).
+    fn consent_for(&self, server: &str) -> bool {
+        if let Some(c) = self.auto.as_ref().and_then(|a| a.consent) {
+            return c;
+        }
+        self.profile.consents(server, self.server_days(server))
+    }
+
+    /// The online consent dialog for `server`.
+    fn consent_dialog(&self, server: &str) -> Dialog {
+        let days = match self.server_days(server) {
+            0 => crate::uiscreen::CONSENT_DAYS,
+            d => d,
+        };
+        let name = self
+            .servers
+            .iter()
+            .position(|r| official::same_server(&r.addr, server))
+            .map_or_else(|| server.to_uppercase(), |i| self.row_name(i));
+        Dialog {
+            kicker: format!("ONLINE PLAY · {}", fit(&name, 22)),
+            title: "YOUR FIGHTERS GO ONLINE".into(),
+            body: consent_text(days),
+            primary: ("I AGREE".into(), format!("consent:yes:{server}")),
+            secondary: Some(("NOT NOW".into(), format!("consent:no:{server}"))),
+            ..Default::default()
         }
     }
 
@@ -4059,6 +4129,37 @@ impl OnlineScreen {
                 if self.state == State::AddServer {
                     self.state = State::Servers;
                 }
+            }
+            ("consent", answer) => {
+                let (yes, server) = match answer.split_once(':') {
+                    Some(("yes", s)) => (true, s.to_string()),
+                    Some((_, s)) => (false, s.to_string()),
+                    None => return None,
+                };
+                self.dialog = None;
+                if yes {
+                    let days = self.server_days(&server);
+                    self.profile.online_consent.insert(
+                        server.clone(),
+                        crate::uiscreen::Consent {
+                            version: crate::uiscreen::CONSENT_VERSION,
+                            days: if days == 0 {
+                                crate::uiscreen::CONSENT_DAYS
+                            } else {
+                                days
+                            },
+                            at: now_secs(),
+                        },
+                    );
+                    self.profile.save(&self.root);
+                } else {
+                    self.consent_declined.insert(server.clone());
+                    self.notice(
+                        "NOTHING WILL BE UPLOADED",
+                        "YOU CAN STILL PLAY WHEN BOTH PLAYERS HAVE THE FIGHTERS.",
+                    );
+                }
+                self.connect(&server);
             }
             ("dialog", "details") => {
                 if let Some(d) = self.dialog.as_mut() {
@@ -5969,6 +6070,37 @@ mod tests {
         assert_eq!(badge_name(&p), "AXEL");
         p.verified = true;
         assert_eq!(badge_name(&p), "AXEL ✓");
+    }
+
+    /// The consent dialog: once per server, asked again when the terms or
+    /// the server's days change.
+    #[test]
+    fn online_consent_is_per_server_and_versioned() {
+        use crate::uiscreen::{CONSENT_VERSION, Consent};
+        assert_eq!(
+            consent_text(3),
+            "ONLINE PLAY SENDS YOUR FIGHTERS TO THE SERVER, YOUR OPPONENT AND VIEWERS. THEY'RE KEPT 3 DAYS, THEN DELETED."
+        );
+        assert!(consent_text(1).contains("KEPT 1 DAY,"));
+        let mut p = Profile::default();
+        assert!(!p.consents("play.example", 3));
+        p.online_consent.insert(
+            "play.example".into(),
+            Consent {
+                version: CONSENT_VERSION,
+                days: 3,
+                at: 1,
+            },
+        );
+        assert!(p.consents("play.example", 3));
+        assert!(p.consents("play.example", 0), "a server that does not say");
+        assert!(!p.consents("other.example", 3), "per server");
+        assert!(!p.consents("play.example", 7), "longer storage asks again");
+        p.online_consent.get_mut("play.example").unwrap().version = CONSENT_VERSION - 1;
+        assert!(!p.consents("play.example", 3), "new terms ask again");
+        // profiles from before the dialog load without it
+        let old: Profile = serde_json::from_str(r#"{"name":"AXEL"}"#).unwrap();
+        assert!(old.online_consent.is_empty());
     }
 
     fn info(api: u32, api_min: u32) -> ServerInfo {

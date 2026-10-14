@@ -33,6 +33,14 @@ const MAX_UNPACKED: u64 = 1 << 30;
 const OLDER_PEER: &str =
     "your opponent runs an older rugen (0.5): both players need the same version";
 
+/// Why a match cannot run: we lack `name` and its owner sends nothing.
+pub fn missing_offline(name: &str) -> String {
+    format!(
+        "you don't have {}, and your opponent plays without sending fighters to the server",
+        name.to_lowercase()
+    )
+}
+
 /// First 12 hex digits of a fingerprint, for logs.
 pub fn short(fp: &str) -> String {
     fp.chars().take(12).collect()
@@ -50,6 +58,10 @@ pub enum XferState {
     Running,
     /// Already on the server (upload) or in our cache (download): instant.
     Cached,
+    /// Not uploaded: the player did not agree to send fighters to this
+    /// server (online consent). The match still runs when the opponent has
+    /// the files.
+    Withheld,
     Done,
     Failed(String),
 }
@@ -75,13 +87,16 @@ impl Xfer {
 
     pub fn fraction(&self) -> f32 {
         match self.state {
-            XferState::Cached | XferState::Done => 1.0,
+            XferState::Cached | XferState::Done | XferState::Withheld => 1.0,
             _ => self.progress.fraction(),
         }
     }
 
     pub fn finished(&self) -> bool {
-        matches!(self.state, XferState::Cached | XferState::Done)
+        matches!(
+            self.state,
+            XferState::Cached | XferState::Done | XferState::Withheld
+        )
     }
 }
 
@@ -426,6 +441,9 @@ impl Worker {
                     if c.pkg_status(&fp).map_err(|e| e.to_string())?.complete {
                         return Ok(true);
                     }
+                    if !c.consent {
+                        return Err(rugen_net::online::NO_CONSENT.into());
+                    }
                     let path = lib.package(&dir, &m).map_err(|e| e.to_string())?;
                     set(XferState::Running);
                     let t = Instant::now();
@@ -446,6 +464,10 @@ impl Worker {
                         set(XferState::Cached)
                     }
                     Ok(false) => set(XferState::Done),
+                    Err(e) if e == rugen_net::online::NO_CONSENT => {
+                        log::info!("upload {}: not sent (no online consent)", short(&fp));
+                        set(XferState::Withheld)
+                    }
                     Err(e) => {
                         log::warn!("upload {}: {e}", short(&fp));
                         set(XferState::Failed(e))
@@ -511,6 +533,18 @@ impl Worker {
                 continue;
             }
             all_local = false;
+            if v.offline.iter().any(|o| o == fp) {
+                // never coming: its owner plays without sending fighters
+                let name = if i < 2 { &v.fighters[i] } else { &v.stage }
+                    .as_ref()
+                    .map(|c| c.decl.name.to_uppercase())
+                    .unwrap_or_else(|| "A FIGHTER".into());
+                if v.side <= 2 {
+                    let _ = self.client.leave_matchup_missing(self.id, fp);
+                }
+                self.fatal(missing_offline(&name));
+                return;
+            }
             if self.downloading.contains(*fp) || v.missing.iter().any(|m| m == fp) {
                 continue;
             }
