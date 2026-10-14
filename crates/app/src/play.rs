@@ -1510,7 +1510,8 @@ impl Match {
             };
             let inside = (at[0] - feet[0]).abs() <= half && at[1] <= feet[1] + 4.0 && at[1] >= top;
             let mid = [feet[0], (feet[1] + top) / 2.0];
-            let dist = ((at[0] - mid[0]).powi(2) + (at[1] - mid[1]).powi(2)).sqrt();
+            let (dx, dy) = (at[0] - mid[0], at[1] - mid[1]);
+            let dist = libm::sqrtf(dx * dx + dy * dy);
             let score = if inside { half } else { 1000.0 + dist };
             if dist < 120.0 && best.is_none_or(|(s, _)| score < s) {
                 best = Some((score, i));

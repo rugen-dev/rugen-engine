@@ -2444,7 +2444,6 @@ pub fn motif_file(motif: &Path, rel: &str) -> Option<std::path::PathBuf> {
 }
 
 /// Decode a WebP or PNG file to straight RGBA.
-
 pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let ext = path
         .extension()
