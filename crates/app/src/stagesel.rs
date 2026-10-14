@@ -949,8 +949,8 @@ fn draw_stage(r: &mut Renderer, visual: &mut StageVisual, size: [f32; 2], start_
     let k = dst.h / size[1];
     let screen_w = dst.w / k;
     let cam = [start_x, 0.0];
+    let _ = screen_w;
     let view = View {
-        src: [cam[0] - screen_w / 2.0, 0.0],
         k,
         dst: [dst.x, dst.y, dst.w, dst.h],
     };

@@ -238,6 +238,66 @@ impl Draw {
     }
 }
 
+/// A textured quad with free corners (MUGEN background elements: parallax
+/// trapezoids, sheared floors). `corners` are top-left, top-right,
+/// bottom-right, bottom-left in logical coordinates and take the whole
+/// texture (`uv` = 0..1 across, top to bottom). `strips` > 1 cuts it into
+/// horizontal bands so a trapezoid maps its texture row by row, as MUGEN's
+/// raster parallax does, instead of bending along a diagonal.
+#[derive(Clone, Copy, Debug)]
+pub struct Quad {
+    pub tex: TextureId,
+    pub pal: Option<PaletteId>,
+    pub corners: [[f32; 2]; 4],
+    pub color: [f32; 4],
+    pub tint: Tint,
+    pub blend: Blend,
+    /// `[min x, min y, max x, max y]`.
+    pub clip: Option<[f32; 4]>,
+    pub strips: u32,
+}
+
+/// Clip a convex polygon (positions with texture coordinates) to a
+/// rectangle (Sutherland-Hodgman, coordinates interpolated along edges).
+fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [f32; 2])> {
+    let mut out = pts;
+    // (axis, bound, keep below the bound)
+    for (axis, bound, below) in [(0, r[0], false), (0, r[2], true), (1, r[1], false), (1, r[3], true)] {
+        if out.is_empty() {
+            break;
+        }
+        let inside = |p: &([f32; 2], [f32; 2])| {
+            if below {
+                p.0[axis] <= bound
+            } else {
+                p.0[axis] >= bound
+            }
+        };
+        let cut = |a: &([f32; 2], [f32; 2]), b: &([f32; 2], [f32; 2])| {
+            let t = (bound - a.0[axis]) / (b.0[axis] - a.0[axis]);
+            let l = |x: f32, y: f32| x + (y - x) * t;
+            (
+                [l(a.0[0], b.0[0]), l(a.0[1], b.0[1])],
+                [l(a.1[0], b.1[0]), l(a.1[1], b.1[1])],
+            )
+        };
+        let input = std::mem::take(&mut out);
+        for i in 0..input.len() {
+            let (a, b) = (&input[i], &input[(i + 1) % input.len()]);
+            match (inside(a), inside(b)) {
+                (true, true) => out.push(*b),
+                (true, false) => out.push(cut(a, b)),
+                (false, true) => {
+                    out.push(cut(a, b));
+                    out.push(*b);
+                }
+                (false, false) => {}
+            }
+        }
+    }
+    out
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -860,6 +920,49 @@ impl Renderer {
             d.pal,
             d.blend,
         );
+    }
+
+    /// Queue a [`Quad`].
+    pub fn draw_quad(&mut self, q: &Quad) {
+        let [tl, tr, br, bl] = q.corners;
+        let n = q.strips.clamp(1, 256);
+        let lerp = |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        let mut color = q.color;
+        color[3] *= q.blend.src_scale();
+        for k in 0..n {
+            let (t0, t1) = (k as f32 / n as f32, (k + 1) as f32 / n as f32);
+            let mut poly = vec![
+                (lerp(tl, bl, t0), [0.0, t0]),
+                (lerp(tr, br, t0), [1.0, t0]),
+                (lerp(tr, br, t1), [1.0, t1]),
+                (lerp(tl, bl, t1), [0.0, t1]),
+            ];
+            if let Some(c) = q.clip {
+                poly = clip_polygon(poly, c);
+            }
+            if poly.len() < 3 {
+                continue;
+            }
+            // a fan of triangles, two per pushed quad (a lone last one is
+            // doubled: a quad of six vertices stays the buffer's unit)
+            let mut k2 = 1;
+            while k2 + 1 < poly.len() {
+                let a = poly[0];
+                let b = poly[k2];
+                let c = poly[k2 + 1];
+                let d = if k2 + 2 < poly.len() { poly[k2 + 2] } else { c };
+                self.push_quad(
+                    [a.0, b.0, c.0, d.0],
+                    [a.1, b.1, c.1, d.1],
+                    color,
+                    q.tint,
+                    q.tex,
+                    q.pal,
+                    q.blend,
+                );
+                k2 += 2;
+            }
+        }
     }
 
     /// Where the next queued draw starts (see [`Renderer::remap_since`]).

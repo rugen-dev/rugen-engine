@@ -1188,7 +1188,11 @@ impl Match {
             t.observe(&self.world);
         }
         if let Some(sv) = self.stage_visual.as_mut() {
-            sv.step();
+            sv.round_started(self.world.round.round_no);
+            // the stage stands still under a Pause / SuperPause (pausebg)
+            if self.world.pausetime <= 0 && self.world.supertime <= 0 {
+                sv.step();
+            }
         }
         if let Some(lb) = self.lifebar.as_mut() {
             lb.step();
@@ -2356,8 +2360,14 @@ impl Match {
         // overdrawlow; the ground line stays put on screen at any zoom.
         // HUD coordinates are "screen" units mapped back into the zoomed
         // world so bars never scale with the camera
-        let screen_w = stage.width;
-        let screen_h = stage.width / aspect.max(0.1);
+        let arena = self.is_arena();
+        let (screen_w, screen_h) = if arena {
+            // rugen's [Arena] stages have no walls and need the whole
+            // height: the window's width at the stage's height
+            (stage.height * aspect, stage.height)
+        } else {
+            (stage.width, stage.width / aspect.max(0.1))
+        };
         let framing = stage_visual.as_ref().map_or(
             crate::stage::Framing {
                 zoffset: ground,
@@ -2366,7 +2376,13 @@ impl Match {
             },
             |sv| sv.framing,
         );
-        let ground_level = framing.ground_level(screen_h);
+        // arena stages lift the ground toward two thirds of the screen as
+        // the camera pulls back, so the pit below shows as well as the sky
+        let ground_level = if arena {
+            arena_ground_frac(ground / stage.height, zoom) * stage.height
+        } else {
+            framing.ground_level(screen_h)
+        };
         let center_y = ground - (ground_level - screen_h / 2.0) / zoom;
         let u = 1.0 / zoom;
         let hud_left = cam_x - screen_w * u / 2.0;
@@ -2394,15 +2410,20 @@ impl Match {
             asserted(rugen_sim::player::assert::NOFG),
             asserted(rugen_sim::player::assert::NOBARDISPLAY),
         );
+        let bg_view = crate::stage::BgView {
+            // Ikemen keeps the camera's y multiplied by its zoom
+            pos: [cam_x, self.world.cam_y * zoom],
+            zoom,
+            screen: [screen_w, screen_h],
+            stage: true,
+            ground_level,
+            shake_y: shake[1],
+            origin: [hud_left, hud_top],
+            k: u,
+            clip: None,
+        };
         match stage_visual.as_mut().filter(|_| !no_bg) {
-            Some(sv) => sv.draw(
-                r,
-                0,
-                [cam_x, cam_y],
-                stage.width / sv.localcoord[0],
-                screen_w * u,
-                bg_tint,
-            ),
+            Some(sv) => sv.draw_bg(r, 0, &bg_view, bg_tint),
             None if no_bg => r.rect([-8000.0, -8000.0], [8000.0, 8000.0], [0.0, 0.0, 0.0, 1.0]),
             None => r.rect(
                 [-4000.0, ground],
@@ -2487,14 +2508,7 @@ impl Match {
         self.draw_hazards(r, ground, cam_y, cam_x, screen_w * u);
         self.draw_arena_items(r, ground, cam_y);
         if let Some(sv) = stage_visual.as_mut().filter(|_| !no_bg && !no_fg) {
-            sv.draw(
-                r,
-                1,
-                [cam_x, cam_y],
-                stage.width / sv.localcoord[0],
-                screen_w * u,
-                bg_tint,
-            );
+            sv.draw_bg(r, 1, &bg_view, bg_tint);
         }
         if self.overlay {
             self.draw_overlay(r, &hud, u, screen_w);
@@ -3178,6 +3192,15 @@ pub fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()>
 /// peer unless either player opted out, else TURN, else the relay itself),
 /// measure the round trip on that path and start the rollback session (or
 /// a spectator session for slots 2+).
+/// Where an arena stage's ground line sits on screen (0 = top, 1 =
+/// bottom) at `zoom`: the stage's own `zoffset` fraction at zoom 1 and
+/// above, easing to 0.66 as the camera pulls back to 0.3.
+fn arena_ground_frac(at_rest: f32, zoom: f32) -> f32 {
+    let target = 0.66f32.min(at_rest);
+    let t = ((1.0 - zoom) / 0.7).clamp(0.0, 1.0);
+    at_rest + (target - at_rest) * t
+}
+
 fn relay_session(
     server: &str,
     ticket: &rugen_net::online::SessionTicket,
