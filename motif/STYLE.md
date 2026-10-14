@@ -23,6 +23,9 @@ screenpack (`system.def`) come with each theme.
   `crates/app/src/inkscreens/` / `dojoscreens/` (screens); the options and
   controls pages come from `crates/app/src/settings_gen.rs`. Hand-edit the
   output if you like, but a regeneration overwrites it: change the source.
+  The output is reproducible: `generated_themes_match_the_committed_files`
+  (`cargo test -p rugen`) fails when a generator change lands without its
+  regenerated files (both themes and the flat `motif/font/`).
 - **Fonts.** `font/src/` holds the two OFL pixel fonts (Press Start 2P and
   Jersey 10); `rugen fontgen` cuts them into role fonts (title, menu, small,
   numbers, code) with one colour bank per ink of each theme. Banks are listed

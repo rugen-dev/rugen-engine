@@ -1321,3 +1321,59 @@ red.color = 255,210,63
 down.color = 185,178,164
 label.font = 1,9,1
 "#;
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    fn files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                files(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+
+    /// Every file `rugen ui-gen --theme ink|dojo` and `rugen fontgen --roles`
+    /// write must match the committed one byte for byte: a change to a
+    /// generator lands together with its regenerated output.
+    #[test]
+    fn generated_themes_match_the_committed_files() {
+        let motif = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../motif");
+        let tmp = std::env::temp_dir().join(format!("rugen-themegen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        type Gen = fn(&Path, &Path, Option<&[u8]>) -> anyhow::Result<()>;
+        let gens: [(&str, PathBuf, Gen); 3] = [
+            ("themes/ink", motif.join("themes/ink"), super::generate),
+            ("themes/dojo", motif.join("themes/dojo"), crate::dojogen::generate),
+            ("font", motif.join("font"), crate::fontgen::generate_roles_into),
+        ];
+        let mut stale = Vec::new();
+        for (name, committed, generate) in gens {
+            let out = tmp.join(name);
+            // no fallback TTF: the output must not depend on system fonts
+            generate(&motif, &out, None).unwrap();
+            let mut written = Vec::new();
+            files(&out, &mut written);
+            assert!(!written.is_empty(), "{name}: nothing generated");
+            for p in written {
+                let rel = p.strip_prefix(&out).unwrap();
+                let want = std::fs::read(committed.join(rel)).ok();
+                if want.as_deref() != Some(std::fs::read(&p).unwrap().as_slice()) {
+                    stale.push(format!("motif/{name}/{}", rel.display()));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(
+            stale.is_empty(),
+            "generated output differs from the committed files; run \
+             `rugen ui-gen --theme ink`, `rugen ui-gen --theme dojo` and \
+             `rugen fontgen --roles`, check the result and commit it:\n  {}",
+            stale.join("\n  ")
+        );
+    }
+}
