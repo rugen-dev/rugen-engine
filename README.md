@@ -26,8 +26,10 @@ rugen play kfm        # a quick match against the computer
 
 - Loads M.U.G.E.N 1.1 / Ikemen GO content as it is (`.def` `.cns` `.cmd`
   `.air` `.sff` `.snd`), and packs it into compact `.rgc` / `.rgs` files.
-- Arcade, VS, Arena (stocks, blast zones, platforms), Training, a Tutorial
-  built from each fighter's own moves, and Watch.
+- Arcade, VS (against a friend or the CPU, singles or teams), Arena (stocks,
+  blast zones, platforms), challenge runs, and a PRACTICE page: Training
+  with lessons built from each fighter's own moves, Watch and an in-game
+  fighter debugger.
 - Online play with rollback: rooms, quick match, ranked, spectators, peer to
   peer first with TURN and relay fallbacks.
 - Bring your own character: players don't need the same fighters; the server
@@ -45,9 +47,8 @@ rugen play kfm        # a quick match against the computer
 - [x] **MUGEN content**: M.U.G.E.N 1.1 / Ikemen GO characters and stages load unchanged.
 - [x] **`.rgc` / `.rgs` files**: content packed small, with lossless sprites and Opus sound.
 - [x] **Arcade**: a ladder of CPU opponents.
-- [x] **VS**: two players on one machine.
-- [x] **Training**: practice against a dummy.
-- [x] **Tutorial**: lessons built from each fighter's own moves.
+- [x] **VS**: two players on one machine, or against the CPU.
+- [x] **Training**: practice against a dummy, with lessons built from each fighter's own moves.
 - [x] **Watch**: CPU against CPU.
 - [x] **Arena**: stocks, blast zones and platforms.
 - [x] **Arena HUD**: Smash-style fighter cards along the bottom.
