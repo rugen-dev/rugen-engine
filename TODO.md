@@ -263,8 +263,12 @@ box) and screenshots.
   one round per fight, +15 % life after a win, no `[Arena]` stages, best
   wins per fighter in profile.json. No sim change (`RunRules` set the
   rounds and P1's life on the built world; replays record them).
-- [ ] **Boss Rush.** The roster's `boss = 1` fighters (select.def) back to
+- [x] **Boss Rush.** (dcf987a) The roster's `boss = 1` fighters (select.def) back to
   back; if none are flagged, the five strongest by the balance verdict.
+  rugen has no select.def of its own: it reads `select.def` (or
+  `data/select.def`) in the game root only for the flags, matched to
+  `chars/` by folder, archive or def name. The fallback line fights the
+  weakest of the five first; no continues.
 - [ ] **Time Attack.** The arcade ladder with a run timer; best times saved
   per fighter in the profile.
 
