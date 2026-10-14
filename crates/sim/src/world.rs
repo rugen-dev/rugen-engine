@@ -196,6 +196,19 @@ impl Stage {
             s.width = lc[0];
             s.height = lc[1];
         }
+        // defaults follow the localcoord, as a character's do (Ikemen GO
+        // `loadStage`): an HD stage without [Bound] keeps 15 / 320 of its
+        // width from the screen edges, not 15 of its own pixels
+        if s.width != 320.0 && s.width > 0.0 {
+            let k = s.width / 320.0;
+            s.left_bound *= k;
+            s.right_bound *= k;
+            s.screen_left = libm::truncf(s.screen_left * k);
+            s.screen_right = libm::truncf(s.screen_right * k);
+            s.partner_spacing = libm::truncf(s.partner_spacing * k);
+            s.p1_start_x = libm::truncf(s.p1_start_x * k);
+            s.p2_start_x = libm::truncf(s.p2_start_x * k);
+        }
         if let Some(v) = g("stageinfo", "zoffset") {
             s.zoffset = v;
         }
@@ -721,11 +734,28 @@ impl World {
         let st = &self.stage;
         let zoom = st.zoom_out.min(self.cam_zoom).max(0.05);
         let half = st.width / (2.0 * zoom);
-        let edge = st.width / 2.0;
+        let (min_left, max_right) = self.camera_limits();
         (
-            (self.cam_x - half).max(st.bound_left - edge) + st.screen_left,
-            (self.cam_x + half).min(st.bound_right + edge) - st.screen_right,
+            (self.cam_x - half).max(min_left) + st.screen_left,
+            (self.cam_x + half).min(max_right) - st.screen_right,
         )
+    }
+
+    /// The furthest the screen's edges can go (stage units), as Ikemen GO's
+    /// `Camera.minLeft` / `maxRight`: `boundleft` / `boundright` are the
+    /// camera's centre at zoom 1; a stage that zooms out lets its edges go
+    /// half a zoomed-out screen past them, plus MUGEN 1.1's extra room for
+    /// the zoom (`(1 - zoomout) * 100 / zoomout * 1.6` per 320 of width).
+    pub fn camera_limits(&self) -> (f32, f32) {
+        let st = &self.stage;
+        let zo = st.zoom_out.clamp(0.05, 1.0);
+        let extra = if zo < 1.0 {
+            (1.0 - zo) * 100.0 * zo * (1.0 / zo) * (1.0 / zo) * 1.6 * (st.width / 320.0)
+        } else {
+            0.0
+        };
+        let half = st.width / (2.0 * zo);
+        (st.bound_left - extra - half, st.bound_right + extra + half)
     }
 
     // ------------------------------------------------------------ state changes
@@ -3835,8 +3865,8 @@ impl World {
         }
         let half = st.width / 2.0;
         let tension = st.tension.max(0.0);
-        let min_left = st.bound_left - half;
-        let max_right = st.bound_right + half;
+        let (min_left, max_right) = self.camera_limits();
+        let st = &self.stage;
         let scale = self.cam_zoom;
         let (old_left, old_right) = (self.cam_x - half / scale, self.cam_x + half / scale);
         let (mut tl, mut tr) = (old_left, old_right);
