@@ -45,6 +45,7 @@
 //! - `[TeamHUD]` partner strips of a team match (face, small life bar and a
 //!   caption plate per partner, stacked from `pN.pos`, P2 mirrored):
 //!   `spacing`, `face.size`, `bar.size = w,h`, `simul.bar.width`, `border`,
+//!   `pN.tag.pos` (the `TAG <key>` plate of a Tag team a player drives),
 //!   colours `border.color`, `bar.bg`, `face.bg`, `life.color`,
 //!   `red.color` (life a Tag partner wins back), `down.color`, and
 //!   `label.font` (default: the name font at half scale). Without the
@@ -402,6 +403,8 @@ struct TeamStyle {
     /// as this.
     simul_bar: f32,
     border: f32,
+    /// Tag: where the `TAG <key>` plate starts.
+    tag_pos: [Option<[f32; 2]>; 2],
     ink: [f32; 4],
     paper: [f32; 4],
     face_bg: [f32; 4],
@@ -434,6 +437,7 @@ impl TeamStyle {
             bar: size("bar.size", [160.0, 10.0]),
             simul_bar: num("simul.bar.width", 300.0),
             border: num("border", 2.0),
+            tag_pos: [pos("p1.tag.pos"), pos("p2.tag.pos")],
             ink: col("border.color", INK),
             paper: col("bar.bg", [1.0, 1.0, 1.0, 1.0]),
             face_bg: col("face.bg", [0.949, 0.933, 0.894, 1.0]),
@@ -1094,7 +1098,11 @@ impl Lifebar {
             let frac = |v: i32| (v.max(0) as f32 / p.life_max.max(1) as f32).clamp(0.0, 1.0);
             let fallen = !p.alive() || (mode == TeamMode::Turns && p.member < active_member);
             let life = if fallen { 0.0 } else { frac(p.life) };
-            let red = life;
+            let red = if mode == TeamMode::Tag {
+                frac(p.red_life).max(life)
+            } else {
+                life
+            };
             let x0 = bx + dir * b;
             if red > life {
                 rect(
@@ -1118,6 +1126,8 @@ impl Lifebar {
                 match mode {
                     TeamMode::Turns if p.member == active_member + 1 => "NEXT",
                     TeamMode::Turns => "WAITING",
+                    TeamMode::Tag if red > life => "RECOVERING",
+                    TeamMode::Tag => "READY",
                     _ => "",
                 }
             };
@@ -1147,6 +1157,52 @@ impl Lifebar {
                 self.text(r, Some(font), &line, hud(lx + dir * pad, base), u);
             }
         }
+    }
+
+    /// Tag: `TAG <key>` on a plate by the side's power bar
+    /// (`[TeamHUD] pN.tag.pos`, else just inside the power bar's end).
+    fn draw_tag_key(
+        &mut self,
+        r: &mut Renderer,
+        side: usize,
+        key: &str,
+        hud: &dyn Fn(f32, f32) -> [f32; 2],
+        u: f32,
+    ) {
+        let st = self.team.clone();
+        let Some(mut font) = st.label.or_else(|| self.names[side].font) else {
+            return;
+        };
+        let dir = if side == 0 { 1.0 } else { -1.0 };
+        let pos = st.tag_pos[side].unwrap_or_else(|| {
+            let b = &self.power[side];
+            [b.pos[0] + b.range[1] + dir * 12.0, b.pos[1]]
+        });
+        font.f.align = if side == 0 { 1 } else { -1 };
+        let line = format!("TAG {key}");
+        let tw = self.text_width(Some(font), &line);
+        let (pad, h) = (6.0, st.face * 0.7);
+        let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
+            r.rect(hud(x0.min(x1), y0), hud(x0.max(x1), y1), c);
+        };
+        rect(
+            r,
+            pos[0],
+            pos[1] - h / 2.0,
+            pos[0] + dir * (tw + 2.0 * pad),
+            pos[1] + h / 2.0,
+            st.ink,
+        );
+        rect(
+            r,
+            pos[0] + dir,
+            pos[1] - h / 2.0 + 1.0,
+            pos[0] + dir * (tw + 2.0 * pad - 1.0),
+            pos[1] + h / 2.0 - 1.0,
+            st.paper,
+        );
+        let base = pos[1] + self.text_center(Some(font));
+        self.text(r, Some(font), &line, hud(pos[0] + dir * pad, base), u);
     }
 
     fn draw_arena(
@@ -1356,6 +1412,7 @@ impl Lifebar {
         portraits: &[Option<Portrait>],
         spread: f32,
         arena: bool,
+        tag_keys: &[Option<String>; 2],
     ) {
         let lc = self.localcoord;
         let spread = if lc[0] >= lc[1] * 1.7 { spread } else { 0.0 };
@@ -1509,10 +1566,13 @@ impl Lifebar {
             }
         }
         if w.teams.active() && !arena {
-            for side in 0..2 {
+            for (side, key) in tag_keys.iter().enumerate() {
                 let dx = if side == 0 { -spread } else { spread };
                 let side_hud = move |x: f32, y: f32| hud(x + dx, y);
                 self.draw_team(r, w, side, &side_hud, u, &portrait);
+                if let Some(key) = key {
+                    self.draw_tag_key(r, side, key, &side_hud, u);
+                }
             }
         }
         // clock

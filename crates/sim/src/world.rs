@@ -540,7 +540,9 @@ impl World {
         self.players
             .iter()
             .enumerate()
-            .filter(|(i, o)| *i != me && !o.removed && o.player_type && o.team != p.team)
+            .filter(|(i, o)| {
+                *i != me && !o.removed && !o.standby && o.player_type && o.team != p.team
+            })
             .min_by(|(a, _), (b, _)| {
                 let da = self.rel_pos(me, *a)[0].abs();
                 let db = self.rel_pos(me, *b)[0].abs();
@@ -957,6 +959,9 @@ impl World {
                     .unwrap_or_default()
             };
             let p = &mut self.players[i];
+            // TAG (team Tag matches): an edge, read by `tag_step`
+            p.tag_press = b.t && !p.tag_held;
+            p.tag_held = b.t;
             let (back, fwd) = if p.facing < 0.0 {
                 (b.r, b.l)
             } else {
@@ -978,12 +983,21 @@ impl World {
             i += 1;
         }
 
+        // Tag teams: switches, partners leaving / jumping in (team.rs)
+        if self.teams.active() {
+            self.tag_step();
+        }
+
         // 3. run states, physics, landing (helpers spawned mid-loop run this tick too)
         let mut i = 0;
         while i < self.players.len() {
             if !self.players[i].removed && !self.players[i].broken {
                 self.running = Some(i);
-                self.run(i);
+                if self.players[i].tag == crate::team::TagPhase::None {
+                    self.run(i);
+                } else {
+                    self.tag_phase_step(i);
+                }
                 self.sanitize(i);
             }
             i += 1;
@@ -3542,7 +3556,7 @@ impl World {
             .players
             .iter()
             .enumerate()
-            .filter(|(_, p)| !p.removed && p.helper_index == 0 && p.player_type)
+            .filter(|(_, p)| !p.removed && !p.standby && p.helper_index == 0 && p.player_type)
         {
             let s = self.local_scale(i);
             let (x, y) = (p.pos[0] * s, p.pos[1] * s);
@@ -3846,6 +3860,7 @@ mod tests {
         y: false,
         z: false,
         s: false,
+        t: false,
     };
     const DOWN: Buttons = Buttons { d: true, ..NONE };
 

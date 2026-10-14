@@ -17,11 +17,15 @@ pub struct Buttons {
     pub y: bool,
     pub z: bool,
     pub s: bool,
+    /// TAG (team Tag matches only, bit 12; bit 11 is the app's START):
+    /// never reaches the command buffer.
+    pub t: bool,
 }
 
 impl Buttons {
     pub fn bits(self) -> u16 {
-        [
+        let tag = u16::from(self.t) << 12;
+        tag | [
             self.u, self.d, self.l, self.r, self.a, self.b, self.c, self.x, self.y, self.z, self.s,
         ]
         .iter()
@@ -42,6 +46,7 @@ impl Buttons {
             y: g(8),
             z: g(9),
             s: g(10),
+            t: g(12),
         }
     }
 }
@@ -406,6 +411,7 @@ impl AiInput {
             y: self.yt != 0,
             z: self.zt != 0,
             s: self.st != 0,
+            t: false,
         }
     }
 }

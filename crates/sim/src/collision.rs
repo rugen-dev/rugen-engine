@@ -372,7 +372,7 @@ pub fn push_detection(w: &mut World) {
 
 fn attr_check(w: &World, getter: usize, attacker: usize, hd: &HitDef) -> bool {
     let g = &w.players[getter];
-    if g.unhittable_time > 0 || hd.attr == 0 {
+    if g.unhittable_time > 0 || g.standby || hd.attr == 0 {
         return false;
     }
     if hd.chainid >= 0 && g.ghv.hitid != hd.chainid {
@@ -506,7 +506,7 @@ pub fn hit_detection(w: &mut World) {
     });
     for &c in &order {
         let p = &w.players[c];
-        if p.removed || p.move_type == MoveType::I {
+        if p.removed || p.standby || p.move_type == MoveType::I {
             continue;
         }
         let Some(hd) = p.hitdef.clone() else { continue };

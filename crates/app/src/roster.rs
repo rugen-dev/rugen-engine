@@ -43,12 +43,10 @@ enum Sort {
 /// Each side's team: its mode and how many fighters it brings.
 pub type Team = (TeamMode, usize);
 
-/// The team entries X / Y step through (Ikemen team sizes 2..=4), the
-/// modes this build plays.
+/// The team entries X / Y step through (Ikemen team sizes 2..=4).
 fn team_choices() -> Vec<Team> {
     TeamMode::ALL
         .into_iter()
-        .filter(|&m| crate::play::team_mode_ready(m))
         .flat_map(|m| m.sizes().map(move |n| (m, n)))
         .collect()
 }
@@ -344,9 +342,6 @@ impl Roster {
             return false;
         }
         let choices = team_choices();
-        if choices.len() < 2 {
-            return false;
-        }
         let at = choices
             .iter()
             .position(|&t| t == self.team[side])
@@ -372,7 +367,7 @@ impl Roster {
 
     /// Team modes can be chosen on this screen.
     pub fn teams_ok(&self) -> bool {
-        self.teams_ok && team_choices().len() > 1
+        self.teams_ok
     }
 
     /// Both humans pick at the same time (each with their own cursor).
@@ -918,7 +913,6 @@ impl Roster {
         let on = mode != TeamMode::Single;
         let modes: Vec<Value> = TeamMode::ALL
             .into_iter()
-            .filter(|&m| crate::play::team_mode_ready(m))
             .map(|m| json!({ "label": m.as_str().to_uppercase(), "on": m == mode, "off": m != mode }))
             .collect();
         let sizes: Vec<Value> = (2..=rugen_sim::team::MAX_MEMBERS)
@@ -957,7 +951,7 @@ impl Roster {
             TeamMode::Single => "",
             TeamMode::Turns => "TURNS: THE WINNER STAYS AND KEEPS ITS LIFE",
             TeamMode::Simul => "SIMUL: PARTNERS FIGHT SIDE BY SIDE",
-            TeamMode::Tag => "TAG: SWAP PARTNERS MID-FIGHT WITH THE TAG BUTTON",
+            TeamMode::Tag => "TAG: SWAP PARTNERS MID-FIGHT WITH TAG",
         });
     }
 

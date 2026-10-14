@@ -537,7 +537,7 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
 // ---------------------------------------------------------------- controls
 
 /// `(id, label, group)` in config order (Buttons order + START).
-pub const ACTIONS: [(&str, &str, &str); 12] = [
+pub const ACTIONS: [(&str, &str, &str); 13] = [
     ("up", "UP", "MOVE"),
     ("down", "DOWN", "MOVE"),
     ("left", "LEFT", "MOVE"),
@@ -550,11 +550,12 @@ pub const ACTIONS: [(&str, &str, &str); 12] = [
     ("z", "Z", "TOP ROW"),
     ("s", "S", "FIGHTER EXTRA"),
     ("start", "START", "PAUSE / MENUS"),
+    ("tag", "TAG", "TAG TEAMS"),
 ];
 
 /// One-press layouts for a whole player.
 pub fn presets() -> [(&'static str, PlayerKeys); 3] {
-    let keys = |n: [&str; 12]| {
+    let keys = |n: [&str; 13]| {
         let mut k = PlayerKeys::p1();
         for (i, name) in n.iter().enumerate() {
             k.set(i, name);
@@ -565,7 +566,9 @@ pub fn presets() -> [(&'static str, PlayerKeys); 3] {
         ("AZERTY ZQSD", PlayerKeys::p1()),
         (
             "QWERTY WASD",
-            keys(["w", "s", "a", "d", "j", "k", "l", "u", "i", "o", ";", "p"]),
+            keys([
+                "w", "s", "a", "d", "j", "k", "l", "u", "i", "o", ";", "p", "n",
+            ]),
         ),
         ("ARROWS + NUMPAD", PlayerKeys::p2()),
     ]
@@ -576,7 +579,7 @@ fn same_key(a: &str, b: &str) -> bool {
 }
 
 /// Per action of `player`: the conflict text ("ALSO B", "ALSO 2P A") if its key is used twice.
-pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 12] {
+pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 13] {
     let me = keys[player].names();
     let other = keys[1 - player].names();
     std::array::from_fn(|i| {
@@ -584,7 +587,7 @@ pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 12] 
         if let Some(j) = other.iter().position(|o| same_key(k, o)) {
             return Some(format!("ALSO {}P {}", 2 - player, ACTIONS[j].1));
         }
-        (0..12)
+        (0..ACTIONS.len())
             .find(|&j| j != i && same_key(k, me[j]))
             .map(|j| format!("ALSO {}", ACTIONS[j].1))
     })
@@ -644,7 +647,7 @@ impl Controls {
             .and_then(|f| f.strip_prefix("binds["))
             .and_then(|r| r.split(']').next())
             .and_then(|i| i.parse::<usize>().ok())
-            .filter(|i| *i < 12);
+            .filter(|i| *i < ACTIONS.len());
         match key {
             Key::Named(NamedKey::Tab) => {
                 self.player = 1 - self.player;
@@ -699,7 +702,7 @@ impl Controls {
             }
             "listen" => {
                 if self.on_pad().is_none() {
-                    let i = arg.parse::<usize>().unwrap_or(0).min(11);
+                    let i = arg.parse::<usize>().unwrap_or(0).min(ACTIONS.len() - 1);
                     self.listen = if self.listen == Some(i) {
                         None
                     } else {
@@ -736,7 +739,7 @@ impl Controls {
         } else {
             conflicts(keys, self.player)
         };
-        let lit: [bool; 12] = std::array::from_fn(|i| match pad {
+        let lit: [bool; ACTIONS.len()] = std::array::from_fn(|i| match pad {
             Some((_, _, b)) => button(*b, i),
             None => !names[i].is_empty() && self.held.contains(&names[i].to_lowercase()),
         });
@@ -760,7 +763,13 @@ impl Controls {
                     "id": id,
                     "label": label,
                     "group": if pad.is_some() { "FIXED ON PAD" } else { *group },
-                    "icon": if dir || *id == "start" { String::new() } else { label.to_string() },
+                    "icon": if dir || *id == "start" {
+                        String::new()
+                    } else if *id == "tag" {
+                        "T".to_string()
+                    } else {
+                        label.to_string()
+                    },
                     "icon_glyph": if dir { *id } else if *id == "start" { "tri_right" } else { "" },
                     "round": !dir && *id != "start",
                     "square": dir || *id == "start",

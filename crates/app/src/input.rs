@@ -136,7 +136,7 @@ impl Pad {
     }
 }
 
-/// Gamepad button → slot (order u d l r a b c x y z s start), the fixed
+/// Gamepad button → slot (order u d l r a b c x y z s start tag), the fixed
 /// mapping the controls page shows.
 pub fn pad_slot(b: gilrs::Button) -> Option<usize> {
     use gilrs::Button;
@@ -153,13 +153,14 @@ pub fn pad_slot(b: gilrs::Button) -> Option<usize> {
         Button::RightTrigger => 9,
         Button::LeftTrigger => 10,
         Button::Start => 11,
+        Button::LeftTrigger2 => 12,
         _ => return None,
     })
 }
 
 pub struct InputState {
     /// Per player: 12 keys (u d l r a b c x y z s start).
-    keys: [[Key; 12]; 2],
+    keys: [[Key; 13]; 2],
     /// Raw masks: Buttons bits + [`START_BIT`].
     keyboard: [u16; 2],
     /// Keys pressed since the last tick: a tap shorter than a tick (or one that
@@ -177,7 +178,7 @@ pub struct InputState {
 
 impl InputState {
     pub fn new(cfg: &config::Input) -> Self {
-        let map = |k: &config::PlayerKeys| -> [Key; 12] {
+        let map = |k: &config::PlayerKeys| -> [Key; 13] {
             let n = k.names();
             std::array::from_fn(|i| parse_key(n[i]))
         };
@@ -214,7 +215,7 @@ impl InputState {
 
     /// Replace the keyboard mapping (after rebinding in the options screen).
     pub fn rebind(&mut self, cfg: &config::Input) {
-        let map = |k: &config::PlayerKeys| -> [Key; 12] {
+        let map = |k: &config::PlayerKeys| -> [Key; 13] {
             let n = k.names();
             std::array::from_fn(|i| parse_key(n[i]))
         };

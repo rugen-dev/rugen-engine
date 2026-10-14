@@ -1413,6 +1413,16 @@ impl Shell {
                             self.input.devices()[0],
                         )
                         .start();
+                        // Tag teams: what each side presses for TAG
+                        for side in 0..2 {
+                            m.tag_labels[side] = crate::keylabel::cap(
+                                &self.config.input,
+                                side,
+                                crate::keylabel::TAG,
+                                self.input.devices()[side],
+                            )
+                            .plain();
+                        }
                         if setup.tutorial {
                             let keys = crate::keylabel::Labels::new(
                                 &self.config.input,

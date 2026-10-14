@@ -9,9 +9,10 @@
 use crate::config::Input;
 use crate::input::{Device, PadKind};
 
-/// Slots in binding order: u d l r a b c x y z s start.
-pub const SLOTS: usize = 12;
+/// Slots in binding order: u d l r a b c x y z s start tag.
+pub const SLOTS: usize = 13;
 pub const START: usize = 11;
+pub const TAG: usize = 12;
 
 /// What a key cap shows: `text`, or a UI glyph name (`up`, `back`...) when
 /// `glyph` is set.
@@ -74,20 +75,21 @@ pub fn key_cap(name: &str) -> Cap {
 }
 
 /// Gamepad button names per slot for a pad family (the fixed mapping of
-/// `input::pad_slot`: South A, East B, RT2 C, West X, North Y, RB Z, LB S).
+/// `input::pad_slot`: South A, East B, RT2 C, West X, North Y, RB Z, LB S,
+/// Start, LT2 TAG).
 pub fn pad_cap(kind: PadKind, slot: usize) -> Cap {
     const DIRS: [&str; 4] = ["up", "down", "left", "right"];
     if slot < 4 {
         return Cap::glyph(DIRS[slot]);
     }
-    let names: [&str; 8] = match kind {
-        PadKind::PlayStation => ["X", "O", "R2", "SQ", "TRI", "R1", "L1", "OPT"],
+    let names: [&str; 9] = match kind {
+        PadKind::PlayStation => ["X", "O", "R2", "SQ", "TRI", "R1", "L1", "OPT", "L2"],
         // Nintendo prints A on the east face, B on the south one
-        PadKind::Nintendo => ["B", "A", "ZR", "Y", "X", "R", "L", "+"],
-        PadKind::Xbox => ["A", "B", "RT", "X", "Y", "RB", "LB", "MENU"],
-        PadKind::Generic => ["A", "B", "RT", "X", "Y", "RB", "LB", "START"],
+        PadKind::Nintendo => ["B", "A", "ZR", "Y", "X", "R", "L", "+", "ZL"],
+        PadKind::Xbox => ["A", "B", "RT", "X", "Y", "RB", "LB", "MENU", "LT"],
+        PadKind::Generic => ["A", "B", "RT", "X", "Y", "RB", "LB", "START", "LT"],
     };
-    Cap::text(names[(slot - 4).min(7)])
+    Cap::text(names[(slot - 4).min(8)])
 }
 
 /// What `player` presses for `slot` on `device`.

@@ -835,7 +835,7 @@ enter_time = 18
   y = 60
   w = 528
   h = 456
-  gap = 2
+  gap = 1
   items = "binds"
   group = "binds"
 

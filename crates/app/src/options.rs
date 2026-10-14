@@ -10,8 +10,8 @@ use crate::game::Transition;
 use crate::stage::StageVisual;
 use crate::system::SystemData;
 
-const BUTTON_NAMES: [&str; 12] = [
-    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "S", "START",
+const BUTTON_NAMES: [&str; 13] = [
+    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "S", "START", "TAG",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

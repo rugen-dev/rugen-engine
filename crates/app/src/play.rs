@@ -214,11 +214,6 @@ pub fn partner_ai(side_ai: [i32; 2], ai_level: i32) -> [i32; 2] {
     side_ai.map(|a| if a > 0 { a } else { ai_level.clamp(1, 8) })
 }
 
-/// Team modes this build offers on the fighter select and `rugen play`.
-pub fn team_mode_ready(m: TeamMode) -> bool {
-    matches!(m, TeamMode::Single | TeamMode::Turns | TeamMode::Simul)
-}
-
 /// Team modes as their names in replays (`"turns"`).
 mod team_modes {
     use rugen_sim::team::TeamMode;
@@ -514,6 +509,8 @@ pub struct Match {
     pub tutorial: Option<crate::tutorial::Tutorial>,
     /// What this player presses for START (hints in the fight overlays).
     pub start_label: String,
+    /// What each side presses for TAG (Tag teams: the HUD hint).
+    pub tag_labels: [String; 2],
     /// Profile stats already written for this match.
     pub stats_recorded: bool,
     /// TRAINING tools (hitboxes, ...): drawing and the dummy's inputs only.
@@ -712,6 +709,7 @@ impl Match {
             bgm,
             tutorial: None,
             start_label: "START".into(),
+            tag_labels: ["TAG".into(), "TAG".into()],
             stats_recorded: false,
             training: None,
         })
@@ -876,6 +874,12 @@ impl Match {
             && let Some(view) = crate::training::DummyView::of(&self.world)
         {
             inputs = t.inputs_for(inputs, view);
+        }
+        // TAG belongs to offline Tag teams: never on the wire
+        if self.net.is_some() {
+            for b in &mut inputs {
+                b.t = false;
+            }
         }
         if let Some(rec) = self.record.as_mut() {
             rec.inputs.push([inputs[0].bits(), inputs[1].bits()]);
@@ -1948,6 +1952,11 @@ impl Match {
             let lb_hud = |x: f32, y: f32| hud(x * ratio + x_off, y * ratio);
             // wider than the fight.def: each side's bars move out to its edge
             let arena = self.is_arena();
+            // Tag teams a player drives: the TAG key by the power bar
+            let tag_keys = [0, 1].map(|s| {
+                (self.world.team_mode(s) == TeamMode::Tag && self.setup.ai[s] == 0)
+                    .then(|| self.tag_labels[s].clone())
+            });
             lb.draw(
                 r,
                 &self.world,
@@ -1956,6 +1965,7 @@ impl Match {
                 &portraits,
                 x_off / ratio,
                 arena,
+                &tag_keys,
             );
         } else {
             // life bars (screen units via `hud`)
@@ -2470,8 +2480,6 @@ mod tests {
             Some((TeamMode::Single, vec![]))
         );
         assert_eq!(TeamSetup::parse_side("trio:goku"), None);
-        assert!(team_mode_ready(TeamMode::Turns));
-        assert!(team_mode_ready(TeamMode::Simul));
         // VS: both humans, their partners play at COMPUTER LEVEL
         assert_eq!(partner_ai([0, 0], 5), [5, 5]);
         // the CPU side keeps its level; a level of 0 still means a computer partner

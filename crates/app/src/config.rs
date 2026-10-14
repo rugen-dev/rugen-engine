@@ -169,6 +169,10 @@ pub struct PlayerKeys {
     /// START: pause, menus, confirm. Never a fighter input (not sent online,
     /// not recorded in replays).
     pub start: String,
+    /// TAG: swap partners in a Tag team match. Missing in configs older
+    /// than v0.6.2 (see [`Input::migrate_tag`]).
+    #[serde(default)]
+    pub tag: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -432,6 +436,7 @@ impl PlayerKeys {
             z: "o".into(),
             s: "m".into(),
             start: "p".into(),
+            tag: "n".into(),
         }
     }
     /// Arrows + number keys (player 2 default).
@@ -449,9 +454,10 @@ impl PlayerKeys {
             z: "6".into(),
             s: "7".into(),
             start: "Enter".into(),
+            tag: "8".into(),
         }
     }
-    /// Set the key for the button at `i` (order: u d l r a b c x y z s start).
+    /// Set the key for the button at `i` (order: u d l r a b c x y z s start tag).
     pub fn set(&mut self, i: usize, name: &str) {
         let slot = match i {
             0 => &mut self.up,
@@ -465,13 +471,15 @@ impl PlayerKeys {
             8 => &mut self.y,
             9 => &mut self.z,
             10 => &mut self.s,
-            _ => &mut self.start,
+            11 => &mut self.start,
+            _ => &mut self.tag,
         };
         *slot = name.to_string();
     }
 
-    /// Mapping in order: u d l r a b c x y z s start (Buttons order + START).
-    pub fn names(&self) -> [&str; 12] {
+    /// Mapping in order: u d l r a b c x y z s start tag (Buttons order +
+    /// START + TAG).
+    pub fn names(&self) -> [&str; 13] {
         [
             &self.up,
             &self.down,
@@ -485,6 +493,7 @@ impl PlayerKeys {
             &self.z,
             &self.s,
             &self.start,
+            &self.tag,
         ]
     }
 
@@ -505,6 +514,37 @@ impl PlayerKeys {
 }
 
 impl Input {
+    /// Configs older than v0.6.2 have no TAG key: each player gets the new
+    /// default, or the next free candidate when another binding has it.
+    /// True when anything changed.
+    pub fn migrate_tag(&mut self) -> bool {
+        let mut changed = false;
+        for p in 0..2 {
+            let keys = if p == 0 { &self.p1 } else { &self.p2 };
+            if !keys.tag.is_empty() {
+                continue;
+            }
+            let taken = |k: &str| {
+                [&self.p1, &self.p2]
+                    .iter()
+                    .any(|pk| pk.names().iter().any(|n| n.eq_ignore_ascii_case(k)))
+            };
+            let candidates: &[&str] = if p == 0 {
+                &["n", "b", "h", "v"]
+            } else {
+                &["8", "9", "0", "Backspace"]
+            };
+            let tag = candidates
+                .iter()
+                .find(|c| !taken(c))
+                .map_or(String::new(), |c| c.to_string());
+            let keys = if p == 0 { &mut self.p1 } else { &mut self.p2 };
+            keys.tag = tag;
+            changed = true;
+        }
+        changed
+    }
+
     /// Configs older than v0.6.1 had one `start` key for both MUGEN's `s`
     /// button and the menus. Split it: a player still on the old default
     /// gets the new default pair; a custom key stays the `s` button and START
@@ -591,6 +631,13 @@ impl Config {
                             c.input.p2.start
                         );
                     }
+                    if c.input.migrate_tag() {
+                        log::info!(
+                            "rugen.toml: TAG key added (P1 {:?}, P2 {:?})",
+                            c.input.p1.tag,
+                            c.input.p2.tag
+                        );
+                    }
                     if c.camera.zoom_in == OLD_DEFAULT_ZOOM_IN {
                         c.camera.zoom_in = CameraCfg::default().zoom_in;
                     }
@@ -666,6 +713,24 @@ mod tests {
         uniq.sort();
         uniq.dedup();
         assert_eq!(uniq.len(), all.len(), "default keys never overlap: {all:?}");
+    }
+
+    /// Configs from before TAG: each player gets the default key, or the
+    /// next free one when another binding has it.
+    #[test]
+    fn old_configs_get_a_tag_key() {
+        let text = "[input.p1]\nup = \"z\"\ndown = \"s\"\nleft = \"q\"\nright = \"d\"\na = \"j\"\nb = \"k\"\nc = \"l\"\nx = \"u\"\ny = \"i\"\nz = \"n\"\ns = \"m\"\nstart = \"p\"\n";
+        let mut i = toml::from_str::<Config>(text).unwrap().input;
+        assert_eq!(i.p1.tag, "");
+        assert!(i.migrate_tag());
+        assert_eq!(i.p1.tag, "b", "n is P1's Z here");
+        assert_eq!(i.p2.tag, "8", "P2 kept the defaults");
+        assert!(!i.migrate_tag(), "idempotent");
+        assert!(
+            !Input::default().migrate_tag(),
+            "a fresh config has TAG keys"
+        );
+        assert_eq!(Input::default().p1.names()[12], "n");
     }
 
     #[test]

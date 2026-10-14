@@ -218,6 +218,20 @@ pub struct Player {
     pub input_slot: usize,
     /// Position in its team (0 = the first pick).
     pub member: u8,
+    /// Tag: out of the fight (leaving, waiting outside, or down): not hit,
+    /// not pushed, not followed by the camera, never anyone's P2.
+    pub standby: bool,
+    /// Tag: the engine's switch movement this player is in, if any.
+    pub tag: crate::team::TagPhase,
+    /// Tag: distance still to run onto the screen (stage units).
+    pub tag_dist: f32,
+    /// Tag: life it wins back while waiting outside (Ikemen red life).
+    pub red_life: i32,
+    /// Life last tick (red life follows the damage taken).
+    pub last_life: i32,
+    /// The TAG button: held last tick, pressed this tick.
+    pub tag_held: bool,
+    pub tag_press: bool,
     /// Set by `World::step_checked` when this player's content panicked: it no
     /// longer runs states and loses the round.
     pub broken: bool,
@@ -432,6 +446,13 @@ impl Player {
             removed: false,
             input_slot: 0,
             member: 0,
+            standby: false,
+            tag: crate::team::TagPhase::None,
+            tag_dist: 0.0,
+            red_life: life,
+            last_life: life,
+            tag_held: false,
+            tag_press: false,
             broken: false,
             loop_warned: false,
             pctype: ProjContact::None,

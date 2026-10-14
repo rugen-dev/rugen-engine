@@ -401,12 +401,6 @@ fn main() -> anyhow::Result<()> {
                             side + 1
                         )
                     })?;
-                    anyhow::ensure!(
-                        play::team_mode_ready(mode),
-                        "--team{}: {} is not available yet",
-                        side + 1,
-                        mode.as_str()
-                    );
                     t.mode[side] = mode;
                     for n in names {
                         t.partners[side].push(resolve(&n)?);

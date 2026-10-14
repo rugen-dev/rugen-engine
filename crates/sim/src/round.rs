@@ -284,6 +284,9 @@ impl World {
             p.sysfvars.iter_mut().for_each(|v| *v = 0.0);
             p.cmds.reset();
             p.input = Default::default();
+            if self.teams.active() && self.teams.mode[p.team as usize] == TeamMode::Tag {
+                self.tag_reset(i);
+            }
             self.self_state(i, 5900, Some(0), Some(false));
             self.run_current_pub(i);
         }
@@ -390,7 +393,12 @@ impl World {
                         continue;
                     }
                     let p = &self.players[i];
-                    if !p.alive() || p.hit_pause_time > 0 {
+                    // (a Tag partner still outside or on its way poses once in)
+                    if !p.alive()
+                        || p.hit_pause_time > 0
+                        || p.standby
+                        || p.tag != crate::team::TagPhase::None
+                    {
                         continue;
                     }
                     if self.round.over_flagged.len() <= i {
