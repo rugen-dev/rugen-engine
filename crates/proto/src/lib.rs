@@ -481,7 +481,7 @@ pub struct RoomInfo {
     /// The room's tournament (absent: a 1 v 1 room). Members who do not
     /// play the called match have `side` 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tournament: Option<TournamentView>,
+    pub tournament: Option<Box<TournamentView>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
