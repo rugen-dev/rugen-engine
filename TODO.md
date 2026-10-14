@@ -273,7 +273,7 @@ themes, deck profile checked at 1280x800.
 - [x] **PRACTICE page.** (104dbbf) TRAINING, TUTORIAL and WATCH become one PRACTICE
   entry on the title; its page (TITLE › PRACTICE, Esc back) has the
   TRAINING, WATCH and DEBUGGER (NEW) cards (keyboard, pad, mouse).
-- [ ] **LESSONS inside Training.** The tutorial lessons run from the
+- [x] **LESSONS inside Training.** (083b616) The tutorial lessons run from the
   Training pause menu with the current fighter against the dummy, then
   free training again; no separate Tutorial entry.
 - [ ] **In-game DEBUGGER.** PRACTICE → DEBUGGER picks 1 or 2 fighters and a
