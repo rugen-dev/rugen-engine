@@ -361,10 +361,14 @@ box) and screenshots.
   `create-format-{ink,dojo}.png`.
 
 ### Live watching (shared base for replays and brackets)
-- [ ] **One match format: header + input stream.** Header: rugen version,
+- [x] **One match format: header + input stream.** (5ee5279) Header: rugen version,
   fighter and stage fingerprints, fighter size, rules, round seed. Body: the
   confirmed inputs per frame. Saved replays stay `.json`; the live stream is
   compact binary (~2 bytes per player per frame, ~15 KB a minute).
+  `rugen_proto::stream`: `MatchHeader` (fingerprints, names and package
+  sizes, rules, seed, players, game version) and RGM1 chunks; uploads
+  ride the relay session (`STREAM` / `STREAM_ACK`) when the ticket says
+  `live`.
 - [ ] **Server keeps the input log of every live match.** The relay already
   forwards the inputs; keep a copy, fan out to spectators from the server (not
   from P1), drop the log when the match ends unless it is shared.
