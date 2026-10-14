@@ -335,9 +335,15 @@ box) and screenshots.
   `shot-wind-ink.png`.
 
 ### Online
-- [ ] **Ranked seasons.** A season id and dates on the server; ratings soft
+- [x] **Ranked seasons.** (ead3a26; rugen-server ea293df, 4b94e1b) A season id and dates on the server; ratings soft
   reset at season start (pull toward 1200), last season's tier kept as a
   badge on the profile.
+  `rugen_proto::season_reset` is the pure reset (tested); the server keeps
+  every finished season's final standings (schema v7) and serves them with
+  `?season=N`; the badge is the tier of the final rating. LEADERBOARD steps
+  through past seasons with left / right. `POST /v1/admin/season_end` ends
+  a season early. Shots: `~/.cache/rugen-work/ro/shots/board-{ink,dojo}.png`,
+  `board-s2.png`.
 - [ ] **Per-fighter leaderboards.** Server keeps wins and rating per
   fingerprint; LEADERBOARD gets a FIGHTERS tab.
 - [ ] **Tournament brackets.** In a room: 8 or 16 players, single
