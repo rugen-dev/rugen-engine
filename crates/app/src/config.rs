@@ -130,6 +130,8 @@ pub struct Video {
     /// frame), a frame drawn right after each tick. Off: the driver's
     /// default vsync with frames drawn continuously (up to two queued).
     pub low_latency: bool,
+    /// `auto` (a Steam Deck is detected), `deck` or `desktop`: see `deck.rs`.
+    pub profile: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -397,6 +399,7 @@ impl Default for Video {
             fullscreen: false,
             theme: "ink".into(),
             low_latency: true,
+            profile: "auto".into(),
         }
     }
 }
@@ -655,7 +658,12 @@ impl Config {
                 }
             },
             Err(_) => {
-                let c = Config::default();
+                let mut c = Config::default();
+                // first launch on a Steam Deck: its screen, fullscreen
+                if crate::deck::detected() {
+                    (c.video.width, c.video.height) = (1280, 800);
+                    c.video.fullscreen = true;
+                }
                 if let Ok(text) = toml::to_string_pretty(&c)
                     && let Err(e) = std::fs::write(&path, text)
                 {

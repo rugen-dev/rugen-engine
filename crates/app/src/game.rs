@@ -230,6 +230,10 @@ enum Screen {
     Story(Box<crate::storyboard::StoryScreen>, Box<Transition>),
 }
 
+/// A wall-clock gap longer than this between two frames is a suspend or a
+/// stall: the game carries on instead of running the missed ticks.
+const RESUME_GAP: Duration = Duration::from_millis(250);
+
 /// Automated-run options.
 #[derive(Default)]
 pub struct Harness {
@@ -250,6 +254,9 @@ pub struct Harness {
     pub in_match: bool,
     /// `rugen debug`: every local match runs with the fighter debugger.
     pub debug: bool,
+    /// `--window WxH`: draw (and screenshot) at exactly this size, whatever
+    /// size the window manager gives the window.
+    pub window: Option<(u32, u32)>,
 }
 
 /// A point of the debugger panel (virtual units) in the fight's drawing
@@ -465,7 +472,11 @@ impl Shell {
             }
         };
         Self {
-            input: InputState::new(&config.input),
+            input: {
+                let mut i = InputState::new(&config.input);
+                i.set_deck(crate::deck::active(&config.video.profile));
+                i
+            },
             saved: config.clone(),
             config,
             lib,
@@ -599,6 +610,30 @@ impl Shell {
     fn mouse_yields(&mut self) {
         if self.mouse.keyboard() {
             self.mouse_to_screen(MouseEvent::Left);
+        }
+    }
+
+    /// The window lost the focus (the Steam button, another window, a
+    /// suspend): a local fight pauses instead of running on unattended.
+    /// Never in a scripted harness run (its window may lose the focus).
+    fn pause_on_focus_loss(&mut self) {
+        let h = &self.harness;
+        if h.frames.is_some() || h.script.is_some() || !h.keys.is_empty() || self.pause.is_some() {
+            return;
+        }
+        let Screen::Match(m) = &mut self.screen else {
+            return;
+        };
+        if m.is_net() {
+            return;
+        }
+        if self.debug_ui.is_some() {
+            m.hold();
+            return;
+        }
+        if !m.is_tutorial() && !m.world.round.match_over && m.world.round.round_state() == 2 {
+            log::info!("window lost the focus: match paused");
+            self.open_pause(0);
         }
     }
 
@@ -801,6 +836,8 @@ impl Shell {
             .eq_ignore_ascii_case(config.video.theme.trim());
         self.config = config;
         self.input.rebind(&self.config.input);
+        self.input
+            .set_deck(crate::deck::active(&self.config.video.profile));
         if let Some(a) = self.audio.as_mut() {
             a.set_master_volume(self.config.audio.master);
             a.set_music_volume(self.config.audio.music);
@@ -1877,8 +1914,18 @@ impl Shell {
     /// Run the ticks that are due by the wall clock.
     fn run_ticks(&mut self) {
         let now = Instant::now();
-        self.tick_acc += now - self.last;
+        let gap = now - self.last;
         self.last = now;
+        // a suspend (or any long stall) resumes where it stopped: one tick,
+        // not a burst catching up on the time away
+        // (online the rollback session catches up on its own terms)
+        let online = matches!(&self.screen, Screen::Match(m) if m.is_net());
+        if gap > RESUME_GAP && !online {
+            log::info!("resumed after {:.1} s: no catching up", gap.as_secs_f32());
+            self.tick_acc = self.tick_len();
+        } else {
+            self.tick_acc += gap;
+        }
         // the tick length can stretch a little during online matches
         // (time sync); it is read again before every tick
         let mut len = self.tick_len();
@@ -2459,7 +2506,8 @@ impl Shell {
             }
             Err(rugen_render::SurfaceError::Lost | rugen_render::SurfaceError::Outdated) => {
                 let s = gpu.window.inner_size();
-                gpu.renderer.resize(s.width, s.height);
+                let (w, h) = self.harness.window.unwrap_or((s.width, s.height));
+                gpu.renderer.resize(w, h);
             }
             Err(e) => log::warn!("render: {e}"),
         }
@@ -2707,6 +2755,9 @@ impl ApplicationHandler for Shell {
             rugen_render::Presentation::Vsync
         };
         let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen, presentation);
+        if let Some((w, h)) = self.harness.window {
+            gpu.renderer.resize(w, h);
+        }
         self.latency.set_mode(
             format!("{:?}", gpu.renderer.present_mode()),
             gpu.renderer.frame_latency(),
@@ -2744,8 +2795,9 @@ impl ApplicationHandler for Shell {
                 }
             }
             WindowEvent::Resized(s) => {
+                let (w, h) = self.harness.window.unwrap_or((s.width, s.height));
                 if let Some(g) = &mut self.gpu {
-                    g.renderer.resize(s.width, s.height);
+                    g.renderer.resize(w, h);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -2776,6 +2828,7 @@ impl ApplicationHandler for Shell {
                 self.input.release_all();
                 self.menu_keys = Buttons::default();
                 self.menu_taps = Buttons::default();
+                self.pause_on_focus_loss();
             }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 if event.state == ElementState::Pressed {

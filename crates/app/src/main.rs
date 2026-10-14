@@ -4,6 +4,7 @@
 //! rugen [--root dir]                                            full game: title, select, fight
 //!   --open online|profile|options|controls                      harness: start on that screen
 //!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
+//!   --window 1280x800                                           harness: window size (logical px), not fullscreen
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 //! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -51,6 +52,7 @@ mod challenge;
 mod clipboard;
 mod config;
 mod debugger;
+mod deck;
 mod dojogen;
 mod fontgen;
 mod framestats;
@@ -135,6 +137,7 @@ const USAGE: &str = "\
 rugen [--root dir]                                            full game: title, select, fight
   --open online|profile|options|controls                      harness: start on that screen
   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
+  --window 1280x800                                           harness: window size (logical px), not fullscreen
 rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
 rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena)
 rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
@@ -170,6 +173,32 @@ rugen replay <file.json>                                      play back a record
 
 `<char>` is an id from chars/ (file stem of a .rgc / .zip / .rar / folder) or a path.
 ";
+
+/// Harness: `--window 1280x800` opens a window of that size (logical
+/// pixels) instead of `[video] width / height`, never fullscreen.
+fn window_override(mut config: config::Config, args: &[String]) -> anyhow::Result<config::Config> {
+    if let Some(v) = args
+        .iter()
+        .position(|a| a == "--window")
+        .and_then(|i| args.get(i + 1))
+    {
+        let (w, h) = v
+            .split_once(['x', 'X'])
+            .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+            .with_context(|| format!("--window expects WIDTHxHEIGHT, got {v:?}"))?;
+        config.video.width = w;
+        config.video.height = h;
+        config.video.fullscreen = false;
+    }
+    Ok(config)
+}
+
+/// `--window WxH` for the harness (see [`window_override`]).
+fn harness_window(args: &[String]) -> Option<(u32, u32)> {
+    let v = args.get(args.iter().position(|a| a == "--window")? + 1)?;
+    let (w, h) = v.split_once(['x', 'X'])?;
+    Some((w.parse().ok()?, h.parse().ok()?))
+}
 
 fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -248,6 +277,7 @@ fn main() -> anyhow::Result<()> {
             let team2 = opt("--team2");
             let taken = [
                 opt("--mouse"),
+                opt("--window"),
                 team1.clone(),
                 team2.clone(),
                 keys.clone(),
@@ -303,7 +333,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 Ok(m.def_path(&dir))
             };
-            let config = config::Config::load(&lib.root);
+            let config = window_override(config::Config::load(&lib.root), &args)?;
             // online: the ONLINE screen drives the room and the matchup
             if let Some(room) = &room {
                 let server = server
@@ -471,6 +501,7 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_default(),
                 in_match: false,
                 debug,
+                window: harness_window(&args),
             };
             let shell = game::Shell::new(
                 config,
@@ -688,7 +719,7 @@ fn main() -> anyhow::Result<()> {
             let lib = rugen_content::Library::discover(
                 opt("--root").as_deref().map(std::path::Path::new),
             );
-            let config = config::Config::load(&lib.root);
+            let config = window_override(config::Config::load(&lib.root), &args)?;
             let harness = game::Harness {
                 shot: opt("--shot").map(std::path::PathBuf::from),
                 frames: opt("--frames")
@@ -704,6 +735,7 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_default(),
                 in_match: false,
                 debug: false,
+                window: harness_window(&args),
             };
             let mut setup = r.setup();
             // recordings made before content files point into old cache folders
@@ -757,7 +789,7 @@ fn main() -> anyhow::Result<()> {
             let lib = rugen_content::Library::discover(
                 opt("--root").as_deref().map(std::path::Path::new),
             );
-            let config = config::Config::load(&lib.root);
+            let config = window_override(config::Config::load(&lib.root), &args)?;
             let harness = game::Harness {
                 shot: opt("--shot").map(std::path::PathBuf::from),
                 frames: opt("--frames")
@@ -976,7 +1008,7 @@ fn main() -> anyhow::Result<()> {
             };
             let root = opt("--root");
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
-            let config = config::Config::load(&lib.root);
+            let config = window_override(config::Config::load(&lib.root), &args)?;
             let harness = game::Harness {
                 shot: opt("--shot").map(std::path::PathBuf::from),
                 frames: opt("--frames")
@@ -995,6 +1027,7 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_default(),
                 in_match: false,
                 debug: false,
+                window: harness_window(&args),
             };
             // harness: start on another screen (`--open online|profile`)
             let start = match opt("--open").as_deref() {

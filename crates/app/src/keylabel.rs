@@ -88,6 +88,7 @@ pub fn pad_cap(kind: PadKind, slot: usize) -> Cap {
         PadKind::Nintendo => ["B", "A", "ZR", "Y", "X", "R", "L", "+", "ZL"],
         PadKind::Xbox => ["A", "B", "RT", "X", "Y", "RB", "LB", "MENU", "LT"],
         PadKind::Generic => ["A", "B", "RT", "X", "Y", "RB", "LB", "START", "LT"],
+        PadKind::SteamDeck => ["A", "B", "R2", "X", "Y", "R1", "L1", "MENU", "L2"],
     };
     Cap::text(names[(slot - 4).min(8)])
 }

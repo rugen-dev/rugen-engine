@@ -87,6 +87,8 @@ pub enum PadKind {
     Xbox,
     PlayStation,
     Nintendo,
+    /// The Steam Deck's built-in controls (A B X Y, L1 R1, L2 R2).
+    SteamDeck,
 }
 
 impl PadKind {
@@ -104,6 +106,8 @@ impl PadKind {
             "sony",
         ]) {
             Self::PlayStation
+        } else if any(&["steam deck"]) {
+            Self::SteamDeck
         } else if any(&["nintendo", "switch", "joy-con", "pro controller"]) {
             Self::Nintendo
         } else if any(&["xbox", "x-box", "xinput", "microsoft"]) {
@@ -111,6 +115,15 @@ impl PadKind {
         } else {
             Self::Generic
         }
+    }
+}
+
+/// The name a pad's buttons get: on the Steam Deck the built-in controls
+/// reach the game as a generic or Xbox-like pad (Steam Input).
+fn deck_kind(deck: bool, kind: PadKind) -> PadKind {
+    match kind {
+        PadKind::Generic | PadKind::Xbox if deck => PadKind::SteamDeck,
+        k => k,
     }
 }
 
@@ -174,6 +187,9 @@ pub struct InputState {
     deadzone: f32,
     /// What each player pressed last: keyboard or its gamepad.
     device: [Device; 2],
+    /// Steam Deck profile: hints start on the pad, and the pads Steam Input
+    /// presents are named as the Deck's controls.
+    deck: bool,
 }
 
 impl InputState {
@@ -199,6 +215,7 @@ impl InputState {
             pad_pause: None,
             deadzone: cfg.deadzone.clamp(0.1, 0.95),
             device: [Device::Keyboard; 2],
+            deck: false,
         };
         if let Some(g) = &s.gilrs {
             let found: Vec<(gilrs::GamepadId, PadKind)> = g
@@ -279,6 +296,15 @@ impl InputState {
         self.device
     }
 
+    /// The Steam Deck profile on or off: on, player 1's hints show the
+    /// Deck's buttons until a key is pressed.
+    pub fn set_deck(&mut self, on: bool) {
+        self.deck = on;
+        if on && self.device[0] == Device::Keyboard {
+            self.device[0] = Device::Pad(PadKind::SteamDeck);
+        }
+    }
+
     /// Drain gamepad events.
     pub fn poll(&mut self) {
         let Some(g) = self.gilrs.as_mut() else { return };
@@ -304,7 +330,7 @@ impl InputState {
                         }
                     }
                     if pressed && let Some(p) = owner {
-                        self.device[p] = Device::Pad(pad.kind);
+                        self.device[p] = Device::Pad(deck_kind(self.deck, pad.kind));
                     }
                     if pressed && matches!(b, Button::Select | Button::Mode) {
                         self.pad_pause = owner;
@@ -413,6 +439,30 @@ fn set(b: &mut u16, i: usize, v: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Steam Deck profile: hints start on the Deck's buttons, Steam Input's
+    /// virtual pads are named as the Deck; a real PlayStation pad keeps its
+    /// own names, and the desktop profile changes nothing.
+    #[test]
+    fn the_deck_profile_starts_on_the_pad() {
+        let mut s = InputState::new(&config::Input::default());
+        assert_eq!(s.devices()[0], Device::Keyboard);
+        s.set_deck(true);
+        assert_eq!(s.devices()[0], Device::Pad(PadKind::SteamDeck));
+        assert_eq!(s.devices()[1], Device::Keyboard);
+        assert_eq!(deck_kind(true, PadKind::Xbox), PadKind::SteamDeck);
+        assert_eq!(deck_kind(true, PadKind::Generic), PadKind::SteamDeck);
+        assert_eq!(deck_kind(true, PadKind::PlayStation), PadKind::PlayStation);
+        assert_eq!(deck_kind(false, PadKind::Xbox), PadKind::Xbox);
+        assert_eq!(
+            PadKind::from_name("Steam Deck Controller"),
+            PadKind::SteamDeck
+        );
+        assert_eq!(
+            crate::keylabel::pad_cap(PadKind::SteamDeck, 9).plain(),
+            "R1"
+        );
+    }
 
     #[test]
     fn a_tap_between_two_ticks_still_counts_once() {

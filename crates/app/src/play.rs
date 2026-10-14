@@ -1461,6 +1461,11 @@ impl Match {
         true
     }
 
+    /// Freeze the match (the debugger's PAUSE).
+    pub fn hold(&mut self) {
+        self.paused = true;
+    }
+
     /// The debugger panel's data (`ui/debug.toml`).
     pub fn debug_data(&mut self) -> Option<serde_json::Value> {
         let (paused, boxes) = (self.paused, self.show_boxes);

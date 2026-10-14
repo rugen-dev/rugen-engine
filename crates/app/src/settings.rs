@@ -30,7 +30,7 @@ pub const CONTROLS_TAB: usize = 3;
 pub const INTERFACE_TAB: usize = 5;
 
 const ROUND_TIMES: [i32; 4] = [30, 60, 99, 0];
-const RESOLUTIONS: [(u32, u32); 3] = [(1280, 720), (1600, 900), (1920, 1080)];
+const RESOLUTIONS: [(u32, u32); 4] = [(1280, 720), (1280, 800), (1600, 900), (1920, 1080)];
 
 enum Widget {
     /// `max` squares, `on` filled.
@@ -171,6 +171,21 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 ),
                 String::new(),
                 "Size of the game window. Menus stretch to any shape of window.",
+            ),
+            row(
+                "profile",
+                "DEVICE",
+                Widget::Choice(
+                    crate::deck::PROFILES
+                        .iter()
+                        .map(|p| crate::deck::label(p).to_string())
+                        .collect(),
+                    crate::deck::PROFILES
+                        .iter()
+                        .position(|p| p.eq_ignore_ascii_case(c.video.profile.trim())),
+                ),
+                String::new(),
+                "Steam Deck: hints name the Deck's buttons. Auto picks it on a Steam Deck.",
             ),
             row(
                 "mouse",
@@ -508,6 +523,13 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
                 .unwrap_or(2);
             c.game.round_time = ROUND_TIMES[cycle(cur, ROUND_TIMES.len())];
         }
+        "profile" => {
+            let cur = crate::deck::PROFILES
+                .iter()
+                .position(|p| p.eq_ignore_ascii_case(c.video.profile.trim()))
+                .unwrap_or(0);
+            c.video.profile = crate::deck::PROFILES[cycle(cur, 3)].into();
+        }
         "resolution" => {
             let cur = RESOLUTIONS
                 .iter()
@@ -562,6 +584,7 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
         }
         "air_jumps" => c.game.air_jumps = i.min(3) as i32,
         "round_time" => c.game.round_time = ROUND_TIMES[i.min(ROUND_TIMES.len() - 1)],
+        "profile" => c.video.profile = crate::deck::PROFILES[i.min(2)].into(),
         "resolution" => {
             let (w, h) = RESOLUTIONS[i.min(RESOLUTIONS.len() - 1)];
             c.video.width = w;
