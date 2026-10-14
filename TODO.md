@@ -432,10 +432,35 @@ viewers cheap for the server.
   any error use the direct download. Objects go with their packages and
   after `RUGEN_PKG_DAYS`; above `RUGEN_PKG_S3_MAX_GB` (8) nothing new is
   copied; `/health` / `/admin/stats` show `packages_r2`.
-- [ ] **Viewer cap and viewers in the self-benchmark.** `RUGEN_LIVE_VIEWERS`
-  (500) per match ("this match is full"), batched live fan-out, a
-  `viewers` field in the bench plan (2000 viewers measurable in
-  production).
+- [x] **Viewer cap and viewers in the self-benchmark.** (c0f2579;
+  rugen-server 46275bd, cfe041e, 07fe4ca) `RUGEN_LIVE_VIEWERS` (500) per
+  match: one more gets 409 "this match is full" and the game says so at
+  once instead of retrying. The fan-out was already batched (a viewer
+  pulls every new frame in one response ~2.5 times a second). The bench
+  plan takes `viewers` (one number or one per step), relayed bench players
+  feed the input log; a laptop run held 1000 clients + 2000 viewers with
+  no errors (docs/performance.md); production numbers still to take.
+
+### Fighter library (SHARE)
+Not built yet. Owner's decisions (2026-10-14): opt-in only, R2 storage, no
+P2P (it would expose players' IPs and make them distributors of
+copyrighted fighters).
+- [ ] **Share a fighter.** A SHARE action on a fighter you made or may
+  share: an attestation ("I made it / I have the author's permission")
+  stored with the upload, the fighter's fingerprint, card and fairness
+  profile. Uploads reuse the package path (server re-verifies the content,
+  then copies it to R2 under its own prefix, e.g. `library/<sha256>.rgc`,
+  never the 3-day `chars/` cache).
+- [ ] **Browse and download.** A LIBRARY screen (both themes): search by
+  name / author, cards with ratings, download through presigned R2 URLs
+  (as the package bucket does), installed into `chars/` as a content file.
+- [ ] **Reports and takedowns.** A REPORT button on every library card
+  (reason, reporter); an admin queue (`/v1/admin/library/*`) to hide or
+  delete an entry and block its fingerprint; takedown requests answered
+  by deleting the object and the record; the uploader can delete theirs.
+- [ ] **Free-tier guard.** A server cap (~8 GB) on library bytes like
+  `RUGEN_PKG_S3_MAX_GB`, R2 lifecycle rules for removed entries, ideally a
+  separate Cloudflare account from the owner's other services.
 
 ### Creators
 - [x] **User themes folder.** (7149d7c) `themes/` next to `chars/`; any folder with a

@@ -94,10 +94,7 @@ rugen play kfm        # a quick match against the computer
 ### Planned
 
 - [ ] **Translations (i18n)**: the menus in 10+ languages: Brazilian Portuguese, Spanish, French, Italian, German, Polish, Turkish, Indonesian, Filipino and Japanese.
-
-### Not planned for now
-
-- **Fighter catalogue**: browsing and downloading fighters from inside the game.
+- [ ] **Fighter library (SHARE)**: opt-in sharing of fighters you made or may share, with reports and takedowns; stored on Cloudflare R2.
 
 ## Build from source
 
