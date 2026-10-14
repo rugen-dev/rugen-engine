@@ -3152,7 +3152,8 @@ nine = [12, 12, 12, 12]
 # ---- REPLAYS: share the last match by code (left), watch one by code (right)
 # Data: is_replays, rp.* (has_last no_last title line shared unshared code[]
 # (dash cell c active idle) share_label can_save typed[] recent[] (title when
-# action) has_recent no_recent note keep copy)
+# action) has_recent no_recent note keep copy you them: the last match's
+# engine / OS / arch of this machine and the other player's)
 [[node]]
 kind = "panel"
 visible = "is_replays"
@@ -3326,6 +3327,28 @@ nine = [12, 12, 12, 12]
   font = 2
   text = "{rp.note}"
   wrap = true
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.has_last"
+  x = 28
+  y = 372
+  w = 512
+  ellipsis = true
+  bank = 17
+  font = 2
+  text = "{rp.you}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "rp.has_last"
+  x = 28
+  y = 398
+  w = 512
+  ellipsis = true
+  bank = 17
+  font = 2
+  text = "{rp.them}"
 
   [[node.children]]
   kind = "text"

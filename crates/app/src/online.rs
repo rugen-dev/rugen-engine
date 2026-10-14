@@ -126,6 +126,20 @@ pub struct Played {
     /// When the match was played (UTC RFC 3339).
     #[serde(default)]
     pub recorded_at: Option<String>,
+    /// This machine's summary when it played the match.
+    #[serde(default)]
+    pub mine: Option<rugen_proto::MachineSummary>,
+}
+
+/// `RUGEN 0.6.4 · FEDORA LINUX 44 · X86_64 · VULKAN` for REPLAYS (the
+/// commit stays in the files and `rugen replay --info`).
+fn machine_words(m: &rugen_proto::MachineSummary) -> String {
+    rugen_proto::MachineSummary {
+        commit: String::new(),
+        ..m.clone()
+    }
+    .line()
+    .to_uppercase()
 }
 
 /// How a replay names the server a match was played on: its host name,
@@ -1763,6 +1777,14 @@ impl OnlineScreen {
             "recent": recent,
             "has_recent": !recent.is_empty(),
             "no_recent": recent.is_empty(),
+            "you": played.as_ref().map_or(String::new(), |p| {
+                let mine = p.mine.clone().unwrap_or_else(crate::machine::summary);
+                format!("YOU  {}", machine_words(&mine))
+            }),
+            "them": played.as_ref().map_or(String::new(), |p| match &p.peer {
+                Some(m) => format!("THEM  {}", machine_words(m)),
+                None => "THEM  NO DETAILS SENT (AN OLDER RUGEN)".into(),
+            }),
             "note": self.rp_note.clone(),
             "keep": format!("ONLY THE INPUTS ARE UPLOADED (A FEW KB). KEPT {} DAYS ON THE SERVER.", 30),
             "copy": self.clipboard,
@@ -6405,6 +6427,7 @@ mod tests {
             side: 1,
             peer: None,
             recorded_at: None,
+            mine: None,
         };
         note_played(&root, p);
         // a new session reads it back from the cache

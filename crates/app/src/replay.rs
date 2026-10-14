@@ -488,6 +488,117 @@ impl Replay {
         parts.join("-")
     }
 
+    /// The header in words (`rugen replay <file> --info`): what recorded
+    /// it, where, and what it plays; never the inputs.
+    pub fn info(&self) -> String {
+        let mut rows: Vec<(&str, String)> = vec![("version", self.version.to_string())];
+        match &self.engine {
+            Some(e) => {
+                let mut line = format!("rugen {}", e.version);
+                if !e.commit.is_empty() {
+                    line.push_str(&format!(" ({})", e.commit));
+                }
+                rows.push(("engine", format!("{line} · {} · {}", e.target, e.build)));
+            }
+            None => rows.push(("engine", "not recorded (an older rugen)".into())),
+        }
+        if let Some(at) = &self.recorded_at {
+            rows.push(("recorded", at.clone()));
+        }
+        if let Some(m) = &self.mode {
+            rows.push(("mode", m.clone()));
+        }
+        if let Some(m) = &self.machine {
+            rows.push(("machine", m.line()));
+            let mut more = format!("{} {}", m.os, m.os_version).trim().to_string();
+            if !m.driver.is_empty() {
+                more.push_str(&format!(" · driver {}", m.driver));
+            }
+            rows.push(("", more));
+        }
+        if let Some(o) = &self.online {
+            let mut line = o.server.clone();
+            if o.match_id != 0 {
+                line.push_str(&format!(" · match {}", o.match_id));
+            }
+            line.push_str(&format!(" · we played P{}", o.side + 1));
+            rows.push(("online", line));
+            rows.push((
+                "peer",
+                o.peer
+                    .as_ref()
+                    .map_or_else(|| "no details sent (an older rugen)".into(), |m| m.line()),
+            ));
+        }
+        let refs = self.content.as_ref();
+        let content = |p: &Path, r: Option<&ContentRef>| {
+            let id = r.map(|r| r.id.clone()).unwrap_or_else(|| {
+                ids_of(p).into_iter().next().unwrap_or_default()
+            });
+            let fp = r
+                .and_then(|r| r.fingerprint.as_deref())
+                .map(|f| format!(" (fingerprint {})", &f[..f.len().min(12)]))
+                .unwrap_or_default();
+            format!("{id}{fp} · {}", p.display())
+        };
+        rows.push(("p1", content(&self.p1, refs.map(|r| &r.p1))));
+        rows.push(("p2", content(&self.p2, refs.map(|r| &r.p2))));
+        if let Some(s) = &self.stage {
+            rows.push(("stage", content(s, refs.and_then(|r| r.stage.as_ref()))));
+        }
+        if let Some(t) = &self.teams {
+            for side in 0..2 {
+                if !t.partners[side].is_empty() {
+                    let names: Vec<String> = t.partners[side]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            refs.and_then(|r| r.partners[side].get(i))
+                                .map(|r| r.id.clone())
+                                .unwrap_or_else(|| {
+                                    ids_of(p).into_iter().next().unwrap_or_default()
+                                })
+                        })
+                        .collect();
+                    rows.push((
+                        if side == 0 { "p1 team" } else { "p2 team" },
+                        format!("{:?} with {}", t.mode[side], names.join(", ")).to_lowercase(),
+                    ));
+                }
+            }
+        }
+        let secs = self.inputs.len() / 60;
+        rows.push((
+            "frames",
+            format!("{} ({}:{:02})", self.inputs.len(), secs / 60, secs % 60),
+        ));
+        let mut rules = vec![
+            format!("seed {}", self.seed.unwrap_or(rugen_sim::headless::LEGACY_SEED)),
+            format!("fighter size {}", self.fighter_size.as_str()),
+        ];
+        if let Some(t) = self.round_time {
+            rules.push(if t > 0 {
+                format!("round time {t}")
+            } else {
+                "no round clock".into()
+            });
+        }
+        if let Some(l) = self.life {
+            rules.push(format!("life {l}"));
+        }
+        if self.arena_ai {
+            rules.push("arena ai".into());
+        }
+        if !self.edits.is_empty() {
+            rules.push(format!("{} training edits", self.edits.len()));
+        }
+        rows.push(("rules", rules.join(" · ")));
+        rows.iter()
+            .map(|(k, v)| format!("{k:<9} {v}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// The replay as it is written: fighters and the stage at most relative
     /// to the game root `root` (else by id), never an absolute path.
     pub fn private(&self, root: &Path) -> Self {
@@ -1036,5 +1147,20 @@ mod tests {
         assert!(names[1].ends_with("-2.json") && !names[2].ends_with("-2.json"));
         assert!(Replay::load(&old).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn info_reads_the_header() {
+        let old: Replay = serde_json::from_str(
+            r#"{"version":1,"p1":"/home/u/RUGEN/chars/kfm/kfm.def","p2":"b","stage":null,"ai":[0,4],"inputs":[[1,2]]}"#,
+        )
+        .unwrap();
+        let text = old.info();
+        assert!(text.contains("not recorded (an older rugen)"), "{text}");
+        assert!(text.contains("p1        kfm · /home/u/RUGEN/chars/kfm/kfm.def"), "{text}");
+        let r = Replay::new(&old.setup(), FighterSize::None, false, 99, 4, None);
+        let text = r.info();
+        assert!(text.contains(&format!("rugen {}", env!("CARGO_PKG_VERSION"))), "{text}");
+        assert!(text.contains("machine") && text.contains(std::env::consts::ARCH), "{text}");
     }
 }

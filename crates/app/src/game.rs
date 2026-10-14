@@ -2491,6 +2491,7 @@ impl Shell {
                                     side: om.my_side as u8,
                                     peer: m.peer_machine(),
                                     recorded_at: Some(crate::machine::now_rfc3339()),
+                                    mine: Some(crate::machine::summary()),
                                 },
                             );
                         }

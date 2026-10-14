@@ -37,7 +37,7 @@
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
 //! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 //! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
-//! rugen replay <file.json>                                      play back a recorded match
+//! rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
 //! rugen replay --list [--root dir]                              saved replays, newest first
 //!   (quick play records to --record file.json, menu matches to
 //!   replays/<p1>-vs-<p2>-<stage>-<hash>.json)
@@ -151,7 +151,7 @@ rugen verify <char> | --all [--root dir]                      load + headless so
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
 rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
-rugen replay <file.json>                                      play back a recorded match
+rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
 rugen replay --list [--root dir]                              saved replays, newest first
   (quick play records to --record file.json, menu matches to
   replays/<p1>-vs-<p2>-<stage>-<hash>.json)
@@ -736,10 +736,27 @@ fn main() -> anyhow::Result<()> {
         }
         Some("replay") => {
             let path = args.get(1).ok_or_else(|| {
-                anyhow::anyhow!("usage: rugen replay <file.json> [--shot out.png] [--frames n]")
+                anyhow::anyhow!(
+                    "usage: rugen replay <file.json> [--info] [--shot out.png] [--frames n] | rugen replay --list"
+                )
             })?;
             let r = replay::Replay::load(std::path::Path::new(path))
                 .with_context(|| path.to_string())?;
+            // the header only, no window
+            if args.iter().any(|a| a == "--info") {
+                println!("{:<9} {path}", "file");
+                println!("{}", r.info());
+                // replays from before 0.6.5 stored absolute paths
+                let text = std::fs::read_to_string(path).unwrap_or_default();
+                if let Some(w) = machine::Personal::current().leaks(&text) {
+                    let w = if w.contains(['/', '\\']) { "a home folder" } else { "a personal name" };
+                    println!(
+                        "privacy   this file names {w} (an older replay with absolute paths); \
+                         newer replays store ids only"
+                    );
+                }
+                return Ok(());
+            }
             let opt = |name: &str| {
                 args.iter()
                     .position(|a| a == name)
