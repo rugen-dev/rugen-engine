@@ -369,9 +369,13 @@ box) and screenshots.
   sizes, rules, seed, players, game version) and RGM1 chunks; uploads
   ride the relay session (`STREAM` / `STREAM_ACK`) when the ticket says
   `live`.
-- [ ] **Server keeps the input log of every live match.** The relay already
+- [x] **Server keeps the input log of every live match.** (078857f; rugen-server 21eaede, 5c19f78) The relay already
   forwards the inputs; keep a copy, fan out to spectators from the server (not
   from P1), drop the log when the match ends unless it is shared.
+  Each player feeds only its own half of every frame; bounded (15 min a
+  match, `RUGEN_LIVE_MB` = 64 for all); a finished match's log stays 15
+  minutes (late viewers, sharing from the result screen), then goes.
+  `GET /v1/live`, `GET /v1/live/{id}?from=N` (binary chunks).
 - [ ] **Watch any live match, even mid-match.** WATCH downloads missing
   fighters and stage through the package sync, fetches the backlog from frame
   0, fast-forwards the sim without drawing ("CATCHING UP…"), then follows
