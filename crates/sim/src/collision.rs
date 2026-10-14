@@ -270,6 +270,10 @@ pub fn clsn_world(w: &World, i: usize, group: u8) -> Vec<[f32; 4]> {
         out.push([b[0] * scale, b[1] * scale, b[2] * scale, b[3] * scale]);
         return out;
     }
+    // a helper without an animation has no boxes (Ikemen: nil anim)
+    if p.anim_none {
+        return out;
+    }
     let d = &w.data[p.anim_owner];
     let Some(frame) = d.air.get(p.anim.action).and_then(|a| p.anim.frame(a)) else {
         return out;

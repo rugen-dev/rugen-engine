@@ -887,11 +887,16 @@ impl World {
                 "P{} attempted to change to invalid action {no}",
                 i + 1
             ));
+            // MUGEN: the player is left without a valid animation and draws
+            // nothing until a valid one (Goku's FX helpers change to actions
+            // his AIR lacks and were drawn as copies of his stance)
+            self.players[i].anim_none = true;
             return;
         };
         let p = &mut self.players[i];
         p.prev_anim_no = p.anim.action;
         p.anim = AnimState::start(no);
+        p.anim_none = false;
         p.anim_owner = owner;
         if let Some((e, t)) = elem {
             p.anim.set_elem(action, e, t);
@@ -1263,7 +1268,7 @@ impl World {
         let Some(ai) = p.afterimage.as_ref() else {
             return;
         };
-        if !ai.is_active() {
+        if !ai.is_active() || p.anim_none {
             return;
         }
         if p.hit_pause_time > 0 && !ai.ignorehitpause {

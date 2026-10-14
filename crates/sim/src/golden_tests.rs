@@ -188,7 +188,9 @@ const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2]); 3] = [
     // re-recorded with the hitpause animation step (see GOLDEN_KFM)
     (0xe86442fa2ca1cddd, 12000, [1, 0]),
     (0xd8a3ac02e4f7d455, 20000, [2, 0]),
-    (0x03e8581d59d82711, 12000, [0, 1]),
+    // and with Goku's FX helpers left without an animation after a
+    // ChangeAnim to an action his AIR lacks (no boxes)
+    (0x211d2cf47e342d49, 12000, [0, 1]),
 ];
 
 /// The fighter debugger's trace records what the state machine did, never

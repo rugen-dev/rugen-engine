@@ -275,6 +275,11 @@ pub struct Player {
     /// the animation still steps at the end of the tick in which a hit
     /// started a hitpause.
     pub acted: bool,
+    /// The last ChangeAnim asked for an action its AIR lacks: MUGEN leaves
+    /// the player without a valid animation, drawing nothing and without
+    /// boxes, until a valid change. The previous anim state stays for
+    /// triggers.
+    pub anim_none: bool,
     pub afterimage: Option<Box<AfterImage>>,
     /// `[Size]` in effect: the cns constants for a root, the Helper's
     /// `size.*` parameters (else the root's constants) for a helper.
@@ -492,6 +497,7 @@ impl Player {
             palfx: PalFx::default(),
             ownpal: true,
             acted: false,
+            anim_none: false,
             afterimage: None,
             size: Size::default(),
         }

@@ -507,3 +507,45 @@ fn goku_air_b_ends() {
     assert!(longest < 120, "610 lasted {longest} ticks");
     assert_eq!(w.players[0].state_no, 0, "back to standing");
 }
+
+/// Owner report 5 (Goku doubled during attacks): Goku's "Honda FX"
+/// helpers (state 25185) have no `anim` in their statedef, so they start in
+/// anim 0, his stance, and ChangeAnim to an action Goku.air lacks (31160).
+/// rugen kept anim 0 and each drew an additive copy of Goku; in MUGEN the
+/// helper has no valid animation then and draws nothing (no boxes either).
+#[test]
+fn helper_without_an_animation_draws_nothing() {
+    let Some(mut w) = kfm_world(FighterSize::None) else {
+        return;
+    };
+    let text = format!(
+        "{}{}",
+        state_text(
+            7700,
+            "[State 7700, fx]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7701\nid = 93\n\n\
+             [State 7700, ok]\ntype = Helper\ntrigger1 = time = 0\nstateno = 7702\nid = 94\n"
+        ),
+        "[Statedef 7701]\ntype = S\nmovetype = I\nphysics = S\nctrl = 0\n\n\
+         [State 7701, a]\ntype = ChangeAnim\ntrigger1 = time = 0\nvalue = 31160\n\n\
+         [Statedef 7702]\ntype = S\nmovetype = I\nphysics = S\nctrl = 0\n\n\
+         [State 7702, a]\ntype = ChangeAnim\ntrigger1 = time = 0\nvalue = 200\n",
+    );
+    let d = w.data[0].with_states("compat", &text).unwrap();
+    w.data[0] = d;
+    w.change_state(0, 7700, None, None);
+    run(&mut w, 3);
+    let find = |hid: i32| {
+        w.players
+            .iter()
+            .position(|p| !p.removed && p.helper_id == hid)
+            .unwrap_or_else(|| panic!("helper {hid}"))
+    };
+    let (fx, ok) = (find(93), find(94));
+    assert!(
+        w.players[fx].anim_none,
+        "missing action: still no animation"
+    );
+    assert!(crate::collision::clsn_world(&w, fx, 2).is_empty());
+    assert!(!w.players[ok].anim_none, "a valid ChangeAnim gives one");
+    assert_eq!(w.players[ok].anim.action, 200);
+}
