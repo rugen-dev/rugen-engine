@@ -1949,6 +1949,7 @@ impl UiScreen {
             round_time: None,
             teams: None,
             run: None,
+            seed: None,
         }))
     }
 

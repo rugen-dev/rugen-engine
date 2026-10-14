@@ -13,6 +13,22 @@ use crate::{CharData, FxData, Stage, World};
 /// re-simulation must use the same ones, never a player's own settings.
 pub const ONLINE_ZOOM: (f32, f32) = (0.6, 1.25);
 
+/// The seed every match used before matches got their own (rugen 0.6.2 and
+/// earlier): replays that record none, LAN peers too old to agree on one,
+/// and the golden checksums.
+pub const LEGACY_SEED: u64 = 1;
+
+/// The seed of an online match, from the server's match id: both peers,
+/// spectators, stored replays and `rugen-server`'s re-simulation derive the
+/// same one without exchanging anything (SplitMix64 of the id, so
+/// consecutive ids give unrelated seeds; never 0).
+pub fn online_seed(match_id: u64) -> u64 {
+    let mut z = match_id.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)).max(1)
+}
+
 /// Everything that shapes a match's simulation.
 #[derive(Clone, Debug)]
 pub struct MatchSpec<'a> {
@@ -31,6 +47,10 @@ pub struct MatchSpec<'a> {
     pub ai: [i32; 2],
     /// FIGHTER SIZE (a match rule: replays record it, online peers share it).
     pub fighter_size: crate::scale::FighterSize,
+    /// The match seed (CNS `Random`, AI, arena item drops): a fresh one per
+    /// offline match (replays record it), [`online_seed`] online,
+    /// [`LEGACY_SEED`] for older recordings.
+    pub seed: u64,
 }
 
 /// The partners of a team match (see [`crate::team`]): `MatchSpec::p1` /
@@ -70,7 +90,7 @@ fn build(spec: &MatchSpec, teams: Option<&TeamSpec>) -> crate::Result<World> {
     } else {
         CharData::load_with_data(spec.p2, spec.data_dir)?
     };
-    let mut world = World::new(stage, 1);
+    let mut world = World::new(stage, spec.seed);
     world.fighter_size = spec.fighter_size;
     match FxData::load_with_motif(spec.motif, spec.data_dir) {
         Ok(fx) => {
@@ -162,5 +182,24 @@ pub fn replay(world: &mut World, inputs: &[u8], stop_frame: Option<u32>) -> Repl
             (world.round.match_over && w[0] != w[1]).then(|| usize::from(w[1] > w[0]))
         },
         match_over: world.round.match_over,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Online seeds: the same id gives the same seed on every machine,
+    /// neighbouring ids unrelated ones, and never 0.
+    #[test]
+    fn online_seeds_are_stable_and_spread() {
+        assert_eq!(online_seed(42), online_seed(42));
+        assert_eq!(online_seed(0), 0xE220_A839_7B1D_CDAF);
+        let seeds: Vec<u64> = (0..1000).map(online_seed).collect();
+        let mut sorted = seeds.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), seeds.len());
+        assert!(seeds.iter().all(|&s| s != 0 && s != LEGACY_SEED));
     }
 }

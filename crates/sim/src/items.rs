@@ -772,6 +772,7 @@ mod bundled {
             round_time: None,
             ai: [0, 0],
             fighter_size: Default::default(),
+            seed: crate::headless::LEGACY_SEED,
         };
         let mut w = build_world(&spec).expect("world");
         assert!(w.stage.arena.items);
@@ -781,5 +782,54 @@ mod bundled {
             seen = seen.max(w.items.list.len());
         }
         assert!(seen > 0, "timer {}", w.items.timer);
+    }
+
+    /// Per-match seed: two matches with different seeds drop different
+    /// items (where and what), the same seed drops the same ones.
+    #[test]
+    fn the_match_seed_shapes_the_drops() {
+        let here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = here.join("../../reference/mugen-1.1b1");
+        let kfm = root.join("chars/kfm/kfm.def");
+        let stage = here.join("../../motif/stages/ink_arena/ink_arena.def");
+        if !kfm.exists() {
+            return;
+        }
+        let data = root.join("data");
+        let motif = root.join("data/system.def");
+        let drops = |seed: u64| {
+            let spec = MatchSpec {
+                p1: &kfm,
+                p2: &kfm,
+                stage: Some(&stage),
+                data_dir: &data,
+                motif: &motif,
+                zoom: crate::headless::ONLINE_ZOOM,
+                movement: Default::default(),
+                round_time: None,
+                ai: [0, 0],
+                fighter_size: Default::default(),
+                seed,
+            };
+            let mut w = build_world(&spec).expect("world");
+            assert_eq!(w.seed(), seed);
+            let mut seen: Vec<(u32, super::ItemKind, i32, u32)> = Vec::new();
+            for _ in 0..3000 {
+                w.step(&[]);
+                for it in &w.items.list {
+                    if !seen.iter().any(|(id, ..)| *id == it.id) {
+                        seen.push((it.id, it.kind, it.pos[0] as i32, w.frame));
+                    }
+                }
+            }
+            seen
+        };
+        let a = drops(crate::headless::LEGACY_SEED);
+        assert!(!a.is_empty());
+        assert_eq!(a, drops(crate::headless::LEGACY_SEED));
+        let others: Vec<_> = (2..6)
+            .map(|m| drops(crate::headless::online_seed(m)))
+            .collect();
+        assert!(others.iter().any(|b| *b != a), "{a:?} vs {others:?}");
     }
 }

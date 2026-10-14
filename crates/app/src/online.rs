@@ -1519,6 +1519,8 @@ impl OnlineScreen {
             round_time: None,
             teams: None,
             run: None,
+            // both peers, spectators and the server's re-simulation derive it
+            seed: Some(rugen_sim::headless::online_seed(v.id)),
         };
         self.used_ticket = Some(ready.ticket.session);
         self.pending_versus = Some((setup, portraits));
@@ -3736,6 +3738,7 @@ impl OnlineScreen {
             round_time: None,
             teams: None,
             run: None,
+            seed: None,
         });
     }
 

@@ -717,6 +717,7 @@ mod tests {
             round_time: None,
             ai,
             fighter_size: Default::default(),
+            seed: crate::headless::LEGACY_SEED,
         };
         let partners = sizes.map(|n| vec![kfm.as_path(); n.saturating_sub(1)]);
         let t = TeamSpec {

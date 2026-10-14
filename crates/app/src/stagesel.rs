@@ -183,6 +183,7 @@ impl StagePlan {
             round_time: None,
             teams: None,
             run: None,
+            seed: None,
         };
         Self {
             mode: Mode::Online,
@@ -1026,6 +1027,7 @@ mod tests {
             round_time: None,
             teams: None,
             run: None,
+            seed: None,
         };
         let plan = StagePlan {
             mode: Mode::Versus,

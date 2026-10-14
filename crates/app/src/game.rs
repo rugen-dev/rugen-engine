@@ -990,6 +990,7 @@ impl Shell {
                 round_time: None,
                 teams: None,
                 run: rules,
+                seed: None,
             },
             [side(&p1), side(&p2)],
         ))
@@ -1184,6 +1185,7 @@ impl Shell {
                     round_time: None,
                     teams: None,
                     run: None,
+                    seed: None,
                 }));
             }
             Transition::Resume => {
@@ -1706,6 +1708,7 @@ impl Shell {
                                 m.world.fighter_size,
                                 m.world.arena_ai,
                                 m.world.round.config.round_time,
+                                m.world.seed(),
                             ));
                         }
                         if let Some(r) = self.replay.take() {

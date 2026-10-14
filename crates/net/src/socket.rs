@@ -46,8 +46,16 @@ const RULES: &str = " r=";
 const PROTOCOL: &str = " v=";
 /// LAN protocol of this build, sent in every punch. 2: the host's rules
 /// carry the engine movement (air jumps, air dash, fast fall) next to the
-/// fighter size. Builds before it (0.6.1 and earlier) send no number.
-pub const LAN_PROTOCOL: u32 = 2;
+/// fighter size. 3: they carry the match seed too. Builds before 2 (0.6.1
+/// and earlier) send no number.
+pub const LAN_PROTOCOL: u32 = 3;
+
+/// The oldest LAN protocol a peer may run: a protocol 2 peer agrees on
+/// everything but the seed, so both sides play seed 1 with it.
+pub const LAN_PROTOCOL_MIN: u32 = 2;
+
+/// The first LAN protocol whose host sends the match seed.
+pub const LAN_PROTOCOL_SEED: u32 = 3;
 
 pub struct Socket {
     socket: UdpSocket,

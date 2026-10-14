@@ -686,6 +686,7 @@ impl Roster {
             round_time: None,
             teams,
             run: None,
+            seed: None,
         };
         if tutorial {
             let mut setup = setup;

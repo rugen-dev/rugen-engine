@@ -515,6 +515,11 @@ impl World {
         self.data_scale(self.players[i].data)
     }
 
+    /// The seed the world was built with ([`World::new`]).
+    pub fn seed(&self) -> u64 {
+        self.items.seed
+    }
+
     /// `j`'s position minus `i`'s, in `i`'s local units. Fighters whose
     /// localcoord or FIGHTER SIZE differ keep positions in their own units,
     /// so raw positions of two of them must never be compared.

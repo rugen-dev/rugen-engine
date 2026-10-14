@@ -70,6 +70,7 @@ fn run(r: &Run) -> (u64, u32, [u8; 2]) {
         round_time: None,
         ai: r.ai,
         fighter_size: Default::default(),
+        seed: crate::headless::LEGACY_SEED,
     };
     let mut w = build_world(&spec).expect("world");
     w.arena_ai = r.arena_ai;

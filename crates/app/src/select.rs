@@ -197,6 +197,7 @@ impl SelectScreen {
             round_time: None,
             teams: None,
             run: None,
+            seed: None,
         };
         if tutorial {
             return Some(Transition::Fight(setup));

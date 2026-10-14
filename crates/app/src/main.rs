@@ -19,6 +19,7 @@
 //!   --watch                                                     both sides computer controlled
 //!   --training                                                  TRAINING mode (dummy P2, training pause menu)
 //!   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
+//!   --seed n                                                    match seed (offline; default a fresh one per match)
 //!   --team1 / --team2 turns|simul|tag[:char,char]               team modes (offline): the side's mode and the
 //!                                                               partners after its first fighter
 //!   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
@@ -145,6 +146,7 @@ rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboa
   --watch                                                     both sides computer controlled
   --training                                                  TRAINING mode (dummy P2, training pause menu)
   --arena-ai 0|1                                              CPU arena AI on arena stages (default [game] arena_ai)
+  --seed n                                                    match seed (offline; default a fresh one per match)
   --team1 / --team2 turns|simul|tag[:char,char]               team modes (offline): the side's mode and the
                                                               partners after its first fighter
   --shot out.png --frames n --script keys --script2 keys     harness: P1 / P2 scripted inputs
@@ -230,6 +232,7 @@ fn main() -> anyhow::Result<()> {
             let record = opt("--record");
             let keys = opt("--keys");
             let arena_ai = opt("--arena-ai");
+            let seed = opt("--seed");
             let team1 = opt("--team1");
             let team2 = opt("--team2");
             let taken = [
@@ -249,6 +252,7 @@ fn main() -> anyhow::Result<()> {
                 ai.clone(),
                 record.clone(),
                 arena_ai.clone(),
+                seed.clone(),
             ];
             let p2_side = args.iter().any(|a| a == "--p2");
             let watch = args.iter().any(|a| a == "--watch");
@@ -436,6 +440,9 @@ fn main() -> anyhow::Result<()> {
                 round_time: None,
                 teams,
                 run: None,
+                seed: seed
+                    .map(|s| s.parse::<u64>().context("--seed expects a number"))
+                    .transpose()?,
             };
             let harness = game::Harness {
                 shot: shot.map(std::path::PathBuf::from),
