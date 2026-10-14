@@ -134,8 +134,15 @@ pub struct Played {
 /// `RUGEN 0.6.4 · FEDORA LINUX 44 · X86_64 · VULKAN` for REPLAYS (the
 /// commit stays in the files and `rugen replay --info`).
 fn machine_words(m: &rugen_proto::MachineSummary) -> String {
+    // `Windows 11 10.0.22631` → `Windows 11`: build numbers stay in the file
+    let os: Vec<&str> = m
+        .os
+        .split_whitespace()
+        .filter(|w| w.matches('.').count() < 2)
+        .collect();
     rugen_proto::MachineSummary {
         commit: String::new(),
+        os: os.join(" "),
         ..m.clone()
     }
     .line()
@@ -6447,6 +6454,10 @@ mod tests {
         let o = r.online.unwrap();
         assert_eq!((o.server.as_str(), o.match_id, o.side), ("s", 7, 1));
         assert_eq!(o.peer, back.peer);
+        assert_eq!(
+            machine_words(back.peer.as_ref().unwrap()),
+            "RUGEN 0.7.0 · WINDOWS 11 · X86_64"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
