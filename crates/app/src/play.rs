@@ -238,6 +238,9 @@ pub struct SimRules {
     /// fight.def's on LAN); `None`: the match's own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_wins: Option<u8>,
+    /// COMPUTER LEVEL the team partners played at (offline team matches).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_level: Option<i32>,
 }
 
 impl SimRules {
@@ -260,6 +263,7 @@ impl SimRules {
             }),
             online: true,
             match_wins: Some(rounds.clamp(1, 9)),
+            ai_level: None,
         }
     }
 }
@@ -938,13 +942,15 @@ impl Match {
         };
         // team modes are offline only: online stays 1v1
         let teams = setup.teams.as_ref().filter(|_| setup.net.is_none());
+        // a replay's recorded partner level, else the options'
+        let partner_level = setup.sim.ai_level.unwrap_or(cfg.game.ai_level);
         let mut world = match teams {
             None => rugen_sim::headless::build_world(&spec),
             Some(t) => {
                 let ts = rugen_sim::headless::TeamSpec {
                     mode: t.mode,
                     partners: [0, 1].map(|s| t.partners[s].iter().map(PathBuf::as_path).collect()),
-                    partner_ai: partner_ai(setup.ai, cfg.game.ai_level),
+                    partner_ai: partner_ai(setup.ai, partner_level),
                 };
                 rugen_sim::headless::build_team_world(&spec, &ts)
             }
@@ -964,6 +970,7 @@ impl Match {
             movement: Some(movement.into()),
             online: online_rules,
             match_wins: online_rules.then_some(world.round.config.match_wins),
+            ai_level: teams.is_some().then_some(partner_level),
         };
         // a CHALLENGE run's fight: its rounds and P1's carried life
         if let Some(rules) = setup.run.filter(|_| setup.net.is_none() && teams.is_none()) {
