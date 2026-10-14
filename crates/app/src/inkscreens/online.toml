@@ -3913,7 +3913,7 @@ visible = "is_profile"
 x = 48
 y = 98
 w = 506
-h = 542
+h = 404
 gap = 12
 items = "accts"
 
@@ -4069,6 +4069,103 @@ items = "accts"
     font = 1
     scale = 1
     text = "{item.status}"
+
+# PROFILE: the selected server's ONLINE CONSENT (AGREE / WITHDRAW)
+[[node]]
+kind = "panel"
+visible = "consent.show"
+x = 54
+y = 522
+w = 494
+h = 124
+color = [0.078, 0.071, 0.063, 1.0]
+
+[[node]]
+kind = "panel"
+visible = "consent.show"
+x = 48
+y = 516
+w = 494
+h = 124
+border = 4
+border_color = [0.078, 0.071, 0.063, 1.0]
+color = [1.0, 1.0, 1.0, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 18
+  y = 14
+  h = 22
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{consent.title}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "consent.agreed"
+  anchor = "tr"
+  x = 18
+  y = 14
+  h = 22
+  pad = 6
+  align = "center"
+  bank = 11
+  color = [0.122, 0.435, 0.227, 1.0]
+  font = 1
+  scale = 1
+  text = "{consent.status}"
+
+  [[node.children]]
+  kind = "text"
+  visible = "!consent.agreed"
+  anchor = "tr"
+  x = 18
+  y = 14
+  h = 22
+  pad = 6
+  align = "center"
+  bank = 11
+  color = [0.541, 0.514, 0.471, 1.0]
+  font = 1
+  scale = 1
+  text = "{consent.status}"
+
+  [[node.children]]
+  kind = "text"
+  x = 18
+  y = 44
+  w = 300
+  h = 66
+  wrap = true
+  line_h = 20
+  deck = { line_h = 18 }
+  alpha = 0.72
+  bank = 9
+  font = 1
+  scale = 1
+  text = "{consent.line}"
+
+  [[node.children]]
+  kind = "button"
+  id = "consent"
+  anchor = "br"
+  x = 18
+  y = 18
+  w = 146
+  h = 44
+  border = 4
+  border_color = [0.078, 0.071, 0.063, 1.0]
+  border_color_focus = [0.784, 0.063, 0.102, 1.0]
+  color = [0.078, 0.071, 0.063, 1.0]
+  color_focus = [0.784, 0.063, 0.102, 1.0]
+  shadow_focus = [5, 5]
+  align = "center"
+  bank = 11
+  font = 1
+  scale = 1
+  text = "{consent.label}"
+  on_press = "{consent.action}"
 
 [[node]]
 kind = "panel"

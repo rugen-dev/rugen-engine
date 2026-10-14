@@ -604,6 +604,9 @@ pub struct OnlineScreen {
     /// Servers whose consent dialog got NOT NOW this session (not asked
     /// again until the game restarts).
     consent_declined: std::collections::HashSet<String>,
+    /// The consent dialog was opened from PROFILE's ONLINE CONSENT row:
+    /// answering it stays on the page instead of connecting.
+    consent_from_profile: bool,
     toast: Option<Toast>,
     dialog: Option<Dialog>,
     /// Hotkey per action (see [`HOTKEYS`]); missing when every key is bound.
@@ -872,6 +875,7 @@ impl OnlineScreen {
             sel: 0,
             pending_action: None,
             consent_declined: Default::default(),
+            consent_from_profile: false,
             toast: None,
             dialog: None,
             keys: hotkeys(config),
@@ -2329,6 +2333,21 @@ impl OnlineScreen {
         self.profile.consents(server, self.server_days(server))
     }
 
+    /// PROFILE → WITHDRAW: forget the consent for `server` (saved), stop
+    /// uploading there now, and do not ask again this session.
+    fn withdraw_consent(&mut self, server: &str) {
+        self.profile.online_consent.remove(server);
+        self.profile.save(&self.root);
+        self.consent_declined.insert(server.to_string());
+        if official::same_server(&self.client.server, server) {
+            self.client.consent = false;
+        }
+        self.notice(
+            "CONSENT WITHDRAWN",
+            "NOTHING MORE GOES TO THIS SERVER. WHAT IS THERE IS DELETED IN TIME.",
+        );
+    }
+
     /// The online consent dialog for `server`.
     fn consent_dialog(&self, server: &str) -> Dialog {
         let days = match self.server_days(server) {
@@ -2961,6 +2980,41 @@ impl OnlineScreen {
     }
 
     /// PROFILE panel: the selected server's account, or its form.
+    /// PROFILE's ONLINE CONSENT row for the selected server: what the
+    /// player answered and the button that changes it.
+    fn consent_json(&self) -> Value {
+        let addr = self.acct_addr();
+        let days = self.server_days(&addr);
+        let given = self.profile.online_consent.get(&addr);
+        let agreed = self.profile.consents(&addr, days);
+        let kept = |d: u32| plural(d.max(1) as usize, "DAY", "DAYS");
+        let line = match given {
+            Some(c) if agreed => format!(
+                "AGREED {}: YOUR FIGHTERS GO TO THIS SERVER AND ARE KEPT {}.",
+                when_text(c.at, now_secs()),
+                kept(c.days)
+            ),
+            Some(_) => "THE TERMS CHANGED: NOTHING IS UPLOADED UNTIL YOU AGREE AGAIN.".to_string(),
+            None if self.consent_declined.contains(&addr) => {
+                "NOT NOW (THIS SESSION): NOTHING IS UPLOADED HERE.".to_string()
+            }
+            None => "NOTHING IS UPLOADED TO THIS SERVER UNTIL YOU AGREE.".to_string(),
+        };
+        json!({
+            "show": !addr.is_empty(),
+            "title": "ONLINE CONSENT",
+            "line": line,
+            "agreed": agreed,
+            "status": if agreed { "AGREED" } else { "NOT GIVEN" },
+            "label": if agreed { "WITHDRAW" } else { "AGREE" },
+            "action": if agreed {
+                format!("consent:withdraw:{addr}")
+            } else {
+                format!("consent:ask:{addr}")
+            },
+        })
+    }
+
     fn acct_json(&self) -> Value {
         let i = self.acct_server;
         let addr = self.acct_addr();
@@ -3897,6 +3951,7 @@ impl OnlineScreen {
             "sel": if hub { self.sel_json() } else { json!({}) },
             "accts": if self.state == State::Profile { self.accts_json() } else { Vec::new() },
             "acct": if self.state == State::Profile { self.acct_json() } else { json!({}) },
+            "consent": if self.state == State::Profile { self.consent_json() } else { json!({}) },
             "lobby": if self.state == State::Lobby { self.lobby_json() } else { json!({}) },
             "room": if self.state == State::Room && !self.in_bracket() { self.room_json() } else { json!({}) },
             "bk": if self.state == State::Room && self.in_bracket() { self.bracket_json() } else { json!({}) },
@@ -4134,6 +4189,17 @@ impl OnlineScreen {
                     self.state = State::Servers;
                 }
             }
+            // PROFILE: AGREE shows the consent dialog (its answer stays on
+            // the page), WITHDRAW takes the consent back at once
+            ("consent", answer) if answer.starts_with("ask:") => {
+                let server = answer.trim_start_matches("ask:").to_string();
+                self.consent_from_profile = true;
+                self.dialog = Some(self.consent_dialog(&server));
+            }
+            ("consent", answer) if answer.starts_with("withdraw:") => {
+                let server = answer.trim_start_matches("withdraw:").to_string();
+                self.withdraw_consent(&server);
+            }
             ("consent", answer) => {
                 let (yes, server) = match answer.split_once(':') {
                     Some(("yes", s)) => (true, s.to_string()),
@@ -4141,6 +4207,7 @@ impl OnlineScreen {
                     None => return None,
                 };
                 self.dialog = None;
+                let from_profile = std::mem::take(&mut self.consent_from_profile);
                 if yes {
                     let days = self.server_days(&server);
                     self.profile.online_consent.insert(
@@ -4163,7 +4230,14 @@ impl OnlineScreen {
                         "YOU CAN STILL PLAY WHEN BOTH PLAYERS HAVE THE FIGHTERS.",
                     );
                 }
-                self.connect(&server);
+                if from_profile {
+                    // the answer applies to the session's client at once
+                    if official::same_server(&self.client.server, &server) {
+                        self.client.consent = self.consent_for(&server);
+                    }
+                } else {
+                    self.connect(&server);
+                }
             }
             ("dialog", "details") => {
                 if let Some(d) = self.dialog.as_mut() {
@@ -4815,6 +4889,7 @@ impl OnlineScreen {
     fn cancel(&mut self) {
         // a dialog, then an error toast, close before the screen
         if self.dialog.take().is_some() {
+            self.consent_from_profile = false;
             if self.state == State::AddServer {
                 self.state = State::Servers;
             }
