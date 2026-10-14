@@ -84,10 +84,10 @@ rugen play kfm        # a quick match against the computer
 - [x] **Stage hazards**: moving platforms and stage events.
 - [x] **User themes folder**: your own themes with live reload, no rebuild.
 - [x] **Fighter debugger**: step through frames, states and variables.
+- [x] **Ranked seasons**: ratings that soft-reset every 90 days; past seasons and tier badges stay.
 
 ### Planned
 
-- [ ] **Ranked seasons**: ratings that reset on a schedule.
 - [ ] **Per-fighter leaderboards**: the best players of each character.
 - [ ] **Tournament brackets**: eight or sixteen players inside a room.
 - [ ] **Shareable replays**: send a match to someone by code.

@@ -22,8 +22,8 @@
 # (server on_server details form note has_note name rating devices hint enter
 # tab0/tab1 (show label action on off) has_user has_again has_new pass_label
 # user_rule rule guest has_guest masked show_label submit error has_error),
-# board.* (rows[] (pos top name verified rating record tier) empty loading me.*
-# scope), queue.* (time count found searching found_line rule), direct.* (sides
+# board.* (rows[] (pos top name verified rating record last.*) empty loading me.*
+# scope season.* finished note), queue.* (time count found searching found_line rule), direct.* (sides
 # side mine fighters netplay), toast.* (show title body retry error), dialog.*
 # (show kicker title body primary primary_action secondary secondary_action
 # has_secondary input), mx.* (matchup, below).
@@ -3320,52 +3320,115 @@ nine = [12, 12, 12, 12]
     border_color = [0.706, 0.188, 0.102, 1.0]
     border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
+# ---- LEADERBOARD: season plaque (top right), season stepper, the table, the
+# player's own line pinned under it, the season rule in the footer.
+# Data: board.* (rows[] (pos top name verified rating record last {has tier hi lo})
+# me.* season {name line pick can_step} finished badge_col note empty loading scope)
 [[node]]
-kind = "text"
+kind = "hbox"
 visible = "is_board"
 anchor = "tr"
 x = 48
-y = 32
-h = 40
+y = 28
+h = 44
 align = "center"
-bank = 14
 color = [0.133, 0.078, 0.059, 1.0]
-font = 2
-pad = 18
-text = "PLAYERS"
+gap = 12
+hug = true
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
+
+  [[node.children]]
+  kind = "text"
+  bank = 4
+  font = 6
+  text = "{board.season.name}"
+
+  [[node.children]]
+  kind = "text"
+  bank = 14
+  font = 2
+  text = "{board.season.line}"
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
 
 [[node]]
 kind = "text"
 visible = "is_board"
-anchor = "tr"
-x = 170
-y = 46
+x = 48
+y = 108
 bank = 16
 font = 2
 text = "{board.scope}"
 
 [[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 250
+y = 108
+bank = 16
+font = 2
+text = "SEASON"
+
+[[node]]
+kind = "button"
+id = "board_season"
+visible = "is_board"
+anchor = "tr"
+x = 48
+y = 96
+w = 190
+h = 38
+border = 3
+border_color = [0.133, 0.078, 0.059, 1.0]
+border_color_focus = [0.706, 0.188, 0.102, 1.0]
+border_focus = 4
+color = [0.976, 0.949, 0.886, 1.0]
+color_focus = [0.976, 0.949, 0.886, 1.0]
+on_left = "board:older"
+on_press = "board:older"
+on_right = "board:newer"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 12
+  w = 190
+  align = "center"
+  bank = 12
+  font = 2
+  text = "◀ {board.season.pick} ▶"
+
+[[node]]
 kind = "panel"
 visible = "is_board"
 x = 48
-y = 98
+y = 150
 w = 1184
-h = 542
+h = 490
 image = "ui/sheet9.webp"
 nine = [12, 12, 12, 12]
 
   [[node.children]]
   kind = "text"
   x = 24
-  y = 16
+  y = 14
   bank = 17
   font = 2
-  text = "RANK"
+  text = "#"
 
   [[node.children]]
   kind = "text"
   x = 130
-  y = 16
+  y = 14
   bank = 17
   font = 2
   text = "PLAYER"
@@ -3373,31 +3436,31 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "text"
   x = 620
-  y = 16
+  y = 14
   bank = 17
   font = 2
   text = "RATING"
 
   [[node.children]]
   kind = "text"
-  x = 800
-  y = 16
+  x = 790
+  y = 14
   bank = 17
   font = 2
-  text = "W - L"
+  text = "RECORD"
 
   [[node.children]]
   kind = "text"
   x = 980
-  y = 16
+  y = 14
   bank = 17
   font = 2
-  text = "TIER"
+  text = "{board.badge_col}"
 
   [[node.children]]
   kind = "panel"
   x = 10
-  y = 38
+  y = 36
   w = 1164
   h = 3
   color = [0.133, 0.078, 0.059, 1.0]
@@ -3406,9 +3469,9 @@ nine = [12, 12, 12, 12]
   kind = "list"
   id = "board_list"
   x = 4
-  y = 41
+  y = 39
   w = 1176
-  h = 432
+  h = 384
   items = "board.rows"
 
     [[node.children.children]]
@@ -3421,7 +3484,9 @@ nine = [12, 12, 12, 12]
     border_color_focus = [0.706, 0.188, 0.102, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
     color_focus = [0.957, 0.788, 0.62, 1.0]
+    on_left = "board:older"
     on_press = "board:row"
+    on_right = "board:newer"
 
       [[node.children.children.children]]
       kind = "panel"
@@ -3468,6 +3533,14 @@ nine = [12, 12, 12, 12]
 
         [[node.children.children.children.children]]
         kind = "text"
+        visible = "item.top"
+        bank = 13
+        font = 6
+        text = "{item.name}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "!item.top"
         bank = 12
         font = 6
         text = "{item.name}"
@@ -3494,7 +3567,7 @@ nine = [12, 12, 12, 12]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 796
+      x = 786
       y = 15
       bank = 12
       font = 6
@@ -3502,17 +3575,44 @@ nine = [12, 12, 12, 12]
 
       [[node.children.children.children]]
       kind = "text"
+      visible = "item.last.hi"
       x = 976
-      y = 19
+      y = 14
+      h = 20
+      align = "center"
+      bank = 12
+      color = [0.89, 0.702, 0.298, 1.0]
+      font = 2
+      pad = 6
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.last.lo"
+      x = 976
+      y = 14
+      h = 20
+      align = "center"
+      bank = 12
+      color = [0.839, 0.769, 0.627, 1.0]
+      font = 2
+      pad = 6
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "!item.last.has"
+      x = 976
+      y = 17
       bank = 17
       font = 2
-      text = "{item.tier}"
+      text = "-"
 
   [[node.children]]
   kind = "text"
   visible = "board.empty"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   bank = 12
@@ -3523,7 +3623,7 @@ nine = [12, 12, 12, 12]
   kind = "text"
   visible = "board.loading"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   bank = 17
@@ -3533,11 +3633,19 @@ nine = [12, 12, 12, 12]
   [[node.children]]
   kind = "panel"
   visible = "board.me.show"
-  x = 0
-  y = 474
+  x = 4
+  y = 422
   w = 1176
   h = 60
   color = [0.133, 0.078, 0.059, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 0
+    y = 0
+    w = 8
+    h = 60
+    color = [0.706, 0.188, 0.102, 1.0]
 
     [[node.children.children]]
     kind = "text"
@@ -3565,7 +3673,7 @@ nine = [12, 12, 12, 12]
 
     [[node.children.children]]
     kind = "text"
-    x = 796
+    x = 786
     y = 19
     bank = 14
     font = 6
@@ -3573,11 +3681,38 @@ nine = [12, 12, 12, 12]
 
     [[node.children.children]]
     kind = "text"
+    visible = "board.me.last.hi"
     x = 976
-    y = 23
-    bank = 14
+    y = 20
+    h = 20
+    align = "center"
+    bank = 12
+    color = [0.89, 0.702, 0.298, 1.0]
     font = 2
-    text = "{board.me.tier}"
+    pad = 6
+    text = "{board.me.last.tier}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "board.me.last.lo"
+    x = 976
+    y = 20
+    h = 20
+    align = "center"
+    bank = 12
+    color = [0.839, 0.769, 0.627, 1.0]
+    font = 2
+    pad = 6
+    text = "{board.me.last.tier}"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+x = 48
+y = 678
+bank = 16
+font = 2
+text = "{board.note}"
 
 [[node]]
 kind = "panel"

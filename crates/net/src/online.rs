@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 pub use rugen_proto::{
     AccountInfo, CharRating, FairnessProfile, FighterCard, FighterDecl, Leaderboard, MatchInfo,
     MatchupView, PackageStatus, ProfileInfo, QueueStatus, ReadyReport, Registered, Replay,
-    ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, ServerInfo, ServerMsg, Session,
-    SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode, ping_bars, rank_name,
+    ResultAck, RoomInfo, RoomMember, RoomSummary, Rules, Season, SeasonBadge, ServerInfo,
+    ServerMsg, Session, SessionTicket, SignedBlob, TruthFeed, Verdict, VerdictKind, b64_decode,
+    ping_bars, rank_name,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -607,9 +608,24 @@ impl OnlineClient {
     }
 
     pub fn leaderboard(&self) -> OnlineResult<Leaderboard> {
-        let path = match &self.key {
-            Some(k) => format!("/leaderboard?key={k}"),
-            None => "/leaderboard".into(),
+        self.leaderboard_of(None)
+    }
+
+    /// The board of a finished season (`Some(n)`, its final standings) or
+    /// the live one (`None`). Older servers ignore `season` and answer the
+    /// live board (`finished` false).
+    pub fn leaderboard_of(&self, season: Option<u32>) -> OnlineResult<Leaderboard> {
+        let mut q: Vec<String> = Vec::new();
+        if let Some(k) = &self.key {
+            q.push(format!("key={k}"));
+        }
+        if let Some(n) = season {
+            q.push(format!("season={n}"));
+        }
+        let path = if q.is_empty() {
+            "/leaderboard".to_string()
+        } else {
+            format!("/leaderboard?{}", q.join("&"))
         };
         Self::decode(self.call("GET", &path, None)?)
     }

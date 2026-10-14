@@ -21,8 +21,8 @@
 # (server on_server details form note has_note name rating devices hint enter
 # tab0/tab1 (show label action on off) has_user has_again has_new pass_label
 # user_rule rule guest has_guest masked show_label submit error has_error),
-# board.* (rows[] (pos top name verified rating record tier) empty loading me.*
-# scope), queue.* (time count found searching found_line rule), direct.* (sides
+# board.* (rows[] (pos top name verified rating record last.*) empty loading me.*
+# scope season.* finished note), queue.* (time count found searching found_line rule), direct.* (sides
 # side mine fighters netplay), toast.* (show title body retry error), dialog.*
 # (show kicker title body primary primary_action secondary secondary_action
 # has_secondary input), mx.* (matchup, below).
@@ -3667,27 +3667,51 @@ color = [1.0, 1.0, 1.0, 1.0]
     text = "ENTER SERVER"
     shadow_focus = [6, 6]
 
+# ---- LEADERBOARD: season box (top right), season stepper, the table, the
+# player's own line pinned under it, the season rule in the footer.
+# Data: board.* (rows[] (pos top name verified rating record last {has tier hi lo})
+# me.* season {name line pick can_step} finished badge_col note empty loading scope)
 [[node]]
-kind = "text"
+kind = "hbox"
 visible = "is_board"
 anchor = "tr"
 x = 48
-y = 32
-h = 40
+y = 28
+h = 44
 align = "center"
-bank = 11
 color = [0.078, 0.071, 0.063, 1.0]
-font = 1
-pad = 18
-scale = 1
-text = "PLAYERS"
+gap = 12
+hug = true
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
+
+  [[node.children]]
+  kind = "text"
+  bank = 4
+  font = 1
+  scale = 2
+  text = "{board.season.name}"
+
+  [[node.children]]
+  kind = "text"
+  bank = 11
+  font = 1
+  scale = 1
+  text = "{board.season.line}"
+
+  [[node.children]]
+  kind = "panel"
+  w = 2
+  h = 2
 
 [[node]]
 kind = "text"
 visible = "is_board"
-anchor = "tr"
-x = 170
-y = 46
+x = 48
+y = 108
 alpha = 0.72
 bank = 9
 font = 1
@@ -3695,21 +3719,64 @@ scale = 1
 text = "{board.scope}"
 
 [[node]]
+kind = "text"
+visible = "is_board"
+anchor = "tr"
+x = 250
+y = 108
+alpha = 0.72
+bank = 9
+font = 1
+scale = 1
+text = "SEASON"
+
+[[node]]
+kind = "button"
+id = "board_season"
+visible = "is_board"
+anchor = "tr"
+x = 48
+y = 96
+w = 190
+h = 38
+border = 3
+border_color = [0.078, 0.071, 0.063, 1.0]
+border_color_focus = [0.784, 0.063, 0.102, 1.0]
+border_focus = 4
+color = [1.0, 1.0, 1.0, 1.0]
+color_focus = [1.0, 1.0, 1.0, 1.0]
+on_left = "board:older"
+on_press = "board:older"
+on_right = "board:newer"
+shadow_focus = [4, 4]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 14
+  w = 190
+  align = "center"
+  bank = 9
+  font = 1
+  scale = 1
+  text = "◀ {board.season.pick} ▶"
+
+[[node]]
 kind = "panel"
 visible = "is_board"
 x = 58
-y = 108
+y = 160
 w = 1184
-h = 542
+h = 490
 color = [0.078, 0.071, 0.063, 1.0]
 
 [[node]]
 kind = "panel"
 visible = "is_board"
 x = 48
-y = 98
+y = 150
 w = 1184
-h = 542
+h = 490
 border = 4
 border_color = [0.078, 0.071, 0.063, 1.0]
 color = [1.0, 1.0, 1.0, 1.0]
@@ -3717,17 +3784,17 @@ color = [1.0, 1.0, 1.0, 1.0]
   [[node.children]]
   kind = "text"
   x = 24
-  y = 16
+  y = 14
   alpha = 0.72
   bank = 9
   font = 1
   scale = 1
-  text = "RANK"
+  text = "#"
 
   [[node.children]]
   kind = "text"
   x = 130
-  y = 16
+  y = 14
   alpha = 0.72
   bank = 9
   font = 1
@@ -3737,7 +3804,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   [[node.children]]
   kind = "text"
   x = 620
-  y = 16
+  y = 14
   alpha = 0.72
   bank = 9
   font = 1
@@ -3746,28 +3813,28 @@ color = [1.0, 1.0, 1.0, 1.0]
 
   [[node.children]]
   kind = "text"
-  x = 800
-  y = 16
+  x = 790
+  y = 14
   alpha = 0.72
   bank = 9
   font = 1
   scale = 1
-  text = "W - L"
+  text = "RECORD"
 
   [[node.children]]
   kind = "text"
   x = 980
-  y = 16
+  y = 14
   alpha = 0.72
   bank = 9
   font = 1
   scale = 1
-  text = "TIER"
+  text = "{board.badge_col}"
 
   [[node.children]]
   kind = "panel"
   x = 0
-  y = 38
+  y = 36
   w = 1176
   h = 3
   color = [0.078, 0.071, 0.063, 1.0]
@@ -3776,22 +3843,24 @@ color = [1.0, 1.0, 1.0, 1.0]
   kind = "list"
   id = "board_list"
   x = 4
-  y = 41
-  w = 1176
-  h = 432
+  y = 39
+  w = 1168
+  h = 384
   items = "board.rows"
 
     [[node.children.children]]
     kind = "button"
     id = "row"
-    w = 1176
+    w = 1168
     h = 48
     border = 3
     border_color = [0.0, 0.0, 0.0, 0.0]
     border_color_focus = [0.784, 0.063, 0.102, 1.0]
     color = [0.0, 0.0, 0.0, 0.0]
     color_focus = [0.976, 0.808, 0.788, 1.0]
+    on_left = "board:older"
     on_press = "board:row"
+    on_right = "board:newer"
 
       [[node.children.children.children]]
       kind = "panel"
@@ -3806,7 +3875,7 @@ color = [1.0, 1.0, 1.0, 1.0]
       kind = "panel"
       x = 0
       y = 0
-      w = 1176
+      w = 1168
       h = 2
       color = [0.886, 0.863, 0.812, 1.0]
 
@@ -3840,6 +3909,15 @@ color = [1.0, 1.0, 1.0, 1.0]
 
         [[node.children.children.children.children]]
         kind = "text"
+        visible = "item.top"
+        bank = 10
+        font = 1
+        scale = 2
+        text = "{item.name}"
+
+        [[node.children.children.children.children]]
+        kind = "text"
+        visible = "!item.top"
         bank = 9
         font = 1
         scale = 2
@@ -3868,7 +3946,7 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
-      x = 796
+      x = 786
       y = 15
       bank = 9
       font = 1
@@ -3877,19 +3955,48 @@ color = [1.0, 1.0, 1.0, 1.0]
 
       [[node.children.children.children]]
       kind = "text"
+      visible = "item.last.hi"
       x = 976
-      y = 19
+      y = 14
+      h = 20
+      align = "center"
+      bank = 9
+      color = [1.0, 0.824, 0.247, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "item.last.lo"
+      x = 976
+      y = 14
+      h = 20
+      align = "center"
+      bank = 9
+      color = [0.851, 0.824, 0.765, 1.0]
+      font = 1
+      pad = 6
+      scale = 1
+      text = "{item.last.tier}"
+
+      [[node.children.children.children]]
+      kind = "text"
+      visible = "!item.last.has"
+      x = 976
+      y = 17
       alpha = 0.72
       bank = 9
       font = 1
       scale = 1
-      text = "{item.tier}"
+      text = "-"
 
   [[node.children]]
   kind = "text"
   visible = "board.empty"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   bank = 9
@@ -3901,7 +4008,7 @@ color = [1.0, 1.0, 1.0, 1.0]
   kind = "text"
   visible = "board.loading"
   x = 0
-  y = 200
+  y = 190
   w = 1176
   align = "center"
   alpha = 0.72
@@ -3914,16 +4021,24 @@ color = [1.0, 1.0, 1.0, 1.0]
   kind = "panel"
   visible = "board.me.show"
   x = 0
-  y = 474
+  y = 422
   w = 1176
   h = 60
-  color = [0.078, 0.071, 0.063, 1.0]
+  color = [0.984, 0.910, 0.902, 1.0]
+
+    [[node.children.children]]
+    kind = "panel"
+    x = 0
+    y = 0
+    w = 8
+    h = 60
+    color = [0.784, 0.063, 0.102, 1.0]
 
     [[node.children.children]]
     kind = "text"
     x = 20
     y = 19
-    bank = 11
+    bank = 9
     font = 1
     scale = 2
     text = "{board.me.pos}"
@@ -3932,7 +4047,7 @@ color = [1.0, 1.0, 1.0, 1.0]
     kind = "text"
     x = 126
     y = 19
-    bank = 11
+    bank = 9
     font = 1
     scale = 2
     text = "{board.me.name}"
@@ -3941,28 +4056,58 @@ color = [1.0, 1.0, 1.0, 1.0]
     kind = "text"
     x = 616
     y = 19
-    bank = 11
+    bank = 9
     font = 1
     scale = 2
     text = "{board.me.rating}"
 
     [[node.children.children]]
     kind = "text"
-    x = 796
+    x = 786
     y = 19
-    bank = 11
+    bank = 9
     font = 1
     scale = 2
     text = "{board.me.record}"
 
     [[node.children.children]]
     kind = "text"
+    visible = "board.me.last.hi"
     x = 976
-    y = 23
-    bank = 11
+    y = 20
+    h = 20
+    align = "center"
+    bank = 9
+    color = [1.0, 0.824, 0.247, 1.0]
     font = 1
+    pad = 6
     scale = 1
-    text = "{board.me.tier}"
+    text = "{board.me.last.tier}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "board.me.last.lo"
+    x = 976
+    y = 20
+    h = 20
+    align = "center"
+    bank = 9
+    color = [0.851, 0.824, 0.765, 1.0]
+    font = 1
+    pad = 6
+    scale = 1
+    text = "{board.me.last.tier}"
+
+[[node]]
+kind = "text"
+visible = "is_board"
+x = 48
+y = 678
+alpha = 0.72
+bank = 9
+font = 1
+scale = 1
+text = "{board.note}"
 
 [[node]]
 kind = "panel"

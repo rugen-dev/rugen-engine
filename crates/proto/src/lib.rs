@@ -80,6 +80,35 @@ pub struct ProfileInfo {
     /// accounts never carry it, so a username cannot be impersonated.
     #[serde(default, skip_serializing_if = "is_false")]
     pub verified: bool,
+    /// How the player finished the last season it played in (the badge
+    /// kept on the profile and the boards); absent from older servers and
+    /// for players who never finished a season.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_season: Option<SeasonBadge>,
+}
+
+/// A finished season's standing, kept as a badge: the tier of the rating
+/// the player ended the season with ([`rank_name`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SeasonBadge {
+    pub season: u32,
+    /// Final rating of that season (before the soft reset).
+    pub rating: i32,
+    /// Final leaderboard position (1-based).
+    pub rank: u32,
+    /// [`rank_name`] of `rating`.
+    pub tier: String,
+}
+
+impl SeasonBadge {
+    pub fn new(season: u32, rating: i32, rank: u32) -> Self {
+        Self {
+            season,
+            rating,
+            rank,
+            tier: rank_name(rating).to_string(),
+        }
+    }
 }
 
 fn is_false(v: &bool) -> bool {
@@ -397,11 +426,38 @@ pub struct MatchInfo {
     pub matchup: Option<MatchupView>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A ranked season: ratings soft-reset toward the start rating when it
+/// ends ([`season_reset`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Season {
     pub number: u32,
     pub name: String,
     pub ends_at: u64,
+    /// Unix time it started (0 from older servers).
+    #[serde(default)]
+    pub started_at: u64,
+    /// Seconds left when the server answered (0: over, or an older
+    /// server: use `ends_at`). Immune to a wrong client clock.
+    #[serde(default)]
+    pub secs_left: u64,
+}
+
+impl Season {
+    /// "ENDS IN 12 DAYS" / "ENDS IN 5 HOURS" / "ENDED"; `now` = Unix time
+    /// of the client, used only when the server did not say.
+    pub fn ends_line(&self, now: u64) -> String {
+        let left = if self.secs_left > 0 {
+            self.secs_left
+        } else {
+            self.ends_at.saturating_sub(now)
+        };
+        match left {
+            0 => "ENDED".into(),
+            s if s >= 2 * 86_400 => format!("ENDS IN {} DAYS", s / 86_400),
+            s if s >= 2 * 3600 => format!("ENDS IN {} HOURS", s / 3600),
+            _ => "ENDS SOON".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -409,6 +465,73 @@ pub struct Leaderboard {
     pub season: Season,
     pub rows: Vec<ProfileInfo>,
     pub me: Option<(usize, ProfileInfo)>,
+    /// Finished seasons the server keeps final standings of, newest first
+    /// (`GET /leaderboard?season=N`); empty from older servers.
+    #[serde(default)]
+    pub past: Vec<u32>,
+    /// `rows` are a finished season's final standings (ratings as they
+    /// ended it), not the live board.
+    #[serde(default)]
+    pub finished: bool,
+}
+
+/// One player's line in a season reset: the rating and record it ends
+/// the season with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Standing {
+    pub account: u64,
+    pub rating: i32,
+    pub wins: u32,
+    pub losses: u32,
+}
+
+/// What a season reset decides ([`season_reset`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SeasonReset {
+    /// Final standings of the players who played the season (a win or a
+    /// loss), best first: (account, final rating, wins, losses, 1-based
+    /// position).
+    pub results: Vec<(u64, i32, u32, u32, u32)>,
+    /// New rating of every account (records restart at 0-0).
+    pub ratings: Vec<(u64, i32)>,
+}
+
+/// Rating a season reset pulls everyone toward (the start rating).
+pub const SEASON_PIVOT: i32 = 1200;
+
+/// A rating after the soft reset: halfway to [`SEASON_PIVOT`] (integer
+/// division, rounded toward the pivot).
+pub fn soft_reset(rating: i32) -> i32 {
+    let d = rating - SEASON_PIVOT;
+    SEASON_PIVOT + d / 2
+}
+
+/// The end of a season, as a pure function of the standings: the final
+/// positions of the players who played (rating, then the older account
+/// first, like the leaderboard) and everyone's new rating.
+pub fn season_reset(players: &[Standing]) -> SeasonReset {
+    let mut played: Vec<&Standing> = players.iter().filter(|p| p.wins + p.losses > 0).collect();
+    played.sort_by_key(|p| (std::cmp::Reverse(p.rating), p.account));
+    SeasonReset {
+        results: played
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.account, p.rating, p.wins, p.losses, i as u32 + 1))
+            .collect(),
+        ratings: players
+            .iter()
+            .map(|p| (p.account, soft_reset(p.rating)))
+            .collect(),
+    }
+}
+
+/// Which season `now` falls in when season 1 started at `first_start` and
+/// each lasts `len` seconds: (number, its start). Times before the first
+/// start are season 1.
+pub fn season_at(first_start: u64, len: u64, now: u64) -> (u32, u64) {
+    let len = len.max(1);
+    let n = now.saturating_sub(first_start) / len;
+    (n as u32 + 1, first_start + n * len)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -668,6 +791,87 @@ mod tests {
             serde_json::from_str(r#"{"session":1,"slot":0,"token":"","spectators":0,"udp":"h:1"}"#)
                 .unwrap();
         assert!(old.transports.is_empty() && old.turn().is_none());
+    }
+
+    #[test]
+    fn season_reset_pulls_toward_1200_and_ranks_who_played() {
+        assert_eq!(soft_reset(1600), 1400);
+        assert_eq!(soft_reset(1200), 1200);
+        assert_eq!(soft_reset(1000), 1100);
+        assert_eq!(soft_reset(1201), 1200);
+        assert_eq!(soft_reset(1199), 1200);
+        assert_eq!(soft_reset(1803), 1501);
+        // the reset never crosses the pivot and never moves it
+        for r in 0..3000 {
+            let n = soft_reset(r);
+            assert!((n - 1200).abs() <= (r - 1200).abs());
+            assert!((n - 1200).signum() * (r - 1200).signum() >= 0);
+        }
+        let st = |account, rating, wins, losses| Standing {
+            account,
+            rating,
+            wins,
+            losses,
+        };
+        let r = season_reset(&[
+            st(7, 1500, 3, 1),
+            st(3, 1700, 9, 2),
+            st(9, 1250, 0, 0),
+            st(5, 1500, 1, 4),
+        ]);
+        // best first; a tie goes to the older (lower) account
+        assert_eq!(
+            r.results,
+            vec![(3, 1700, 9, 2, 1), (5, 1500, 1, 4, 2), (7, 1500, 3, 1, 3)]
+        );
+        assert_eq!(r.ratings, vec![(7, 1350), (3, 1450), (9, 1225), (5, 1350)]);
+        assert_eq!(season_reset(&[]), SeasonReset::default());
+        let b = SeasonBadge::new(2, 1450, 4);
+        assert_eq!(b.tier, "GOLD");
+    }
+
+    #[test]
+    fn seasons_follow_the_clock() {
+        let day = 86_400;
+        assert_eq!(season_at(1000, 90 * day, 1000), (1, 1000));
+        assert_eq!(season_at(1000, 90 * day, 500), (1, 1000));
+        assert_eq!(season_at(1000, 90 * day, 1000 + 90 * day - 1), (1, 1000));
+        assert_eq!(
+            season_at(1000, 90 * day, 1000 + 90 * day),
+            (2, 1000 + 90 * day)
+        );
+        assert_eq!(season_at(0, 10, 35), (4, 30));
+        let s = Season {
+            number: 3,
+            name: "SEASON 3".into(),
+            ends_at: 100 * day,
+            started_at: 0,
+            secs_left: 0,
+        };
+        assert_eq!(s.ends_line(88 * day), "ENDS IN 12 DAYS");
+        assert_eq!(s.ends_line(100 * day - 5 * 3600), "ENDS IN 5 HOURS");
+        assert_eq!(s.ends_line(100 * day), "ENDED");
+        let told = Season {
+            secs_left: 3 * day,
+            ..s.clone()
+        };
+        assert_eq!(
+            told.ends_line(0),
+            "ENDS IN 3 DAYS",
+            "the server's count wins"
+        );
+        // an older server's season and board still decode
+        let old: Leaderboard = serde_json::from_str(
+            r#"{"season":{"number":1,"name":"SEASON 1","ends_at":5},"rows":[],"me":null}"#,
+        )
+        .unwrap();
+        assert!(old.past.is_empty() && !old.finished && old.season.started_at == 0);
+        let p: ProfileInfo = serde_json::from_str(
+            r#"{"id":1,"name":"x","avatar":0,"rating":1200,"best_rating":1200,"wins":0,"losses":0,"rank":"SILVER"}"#,
+        )
+        .unwrap();
+        assert!(p.last_season.is_none());
+        assert!(!serde_json::to_string(&p).unwrap().contains("last_season"));
     }
 
     #[test]

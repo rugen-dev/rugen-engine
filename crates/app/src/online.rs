@@ -450,6 +450,11 @@ pub struct OnlineScreen {
     queue: Option<QueueStatus>,
     ranked: bool,
     board: Option<Leaderboard>,
+    /// LEADERBOARD: the finished season on display (`None`: the live one).
+    board_season: Option<u32>,
+    /// Seasons the board can step through: the live one, then the
+    /// finished ones newest first (from the last board).
+    board_seasons: Vec<u32>,
     jobs: Vec<Job>,
     tick: u32,
     /// Set when a match is about to start; the shell takes it.
@@ -527,6 +532,13 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
         return (profile.online_id, profile.online_key.clone());
     }
     (0, String::new())
+}
+
+/// Unix time now (seconds).
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn ping_text(ms: Option<u32>) -> String {
@@ -691,6 +703,8 @@ impl OnlineScreen {
             queue: None,
             ranked: true,
             board: None,
+            board_season: None,
+            board_seasons: Vec::new(),
             jobs: Vec::new(),
             tick: 0,
             started: None,
@@ -1899,11 +1913,10 @@ impl OnlineScreen {
                     .push(Job::Rooms(Pending::spawn(move || c.rooms())));
             }
             "board" => {
-                let c = self.client.clone();
-                self.board = None;
+                self.board_season = None;
+                self.board_seasons.clear();
                 self.state = State::Board;
-                self.jobs
-                    .push(Job::Board(Pending::spawn(move || c.leaderboard())));
+                self.fetch_board();
             }
             _ => log::warn!("online: unknown hub action {a:?}"),
         }
@@ -2214,7 +2227,13 @@ impl OnlineScreen {
                 }
                 push(esc, "BACK");
             }
-            State::Board => push(esc, "BACK"),
+            State::Board => {
+                if self.board_seasons.len() > 1 {
+                    push(Some("@left".into()), "");
+                    push(Some("@right".into()), "SEASON");
+                }
+                push(esc, "BACK");
+            }
             State::Queue => push(esc, "CANCEL"),
             State::Direct => {
                 push(Some("@left".into()), "");
@@ -2433,8 +2452,13 @@ impl OnlineScreen {
         };
         let rating = profile
             .map(|p| {
+                let badge = p
+                    .last_season
+                    .as_ref()
+                    .map(|s| format!(" · S{} {}", s.season, s.tier))
+                    .unwrap_or_default();
                 format!(
-                    "{} {} · BEST {} · {}W {}L",
+                    "{} {} · BEST {} · {}W {}L{badge}",
                     p.rank, p.rating, p.best_rating, p.wins, p.losses
                 )
             })
@@ -2758,11 +2782,79 @@ impl OnlineScreen {
         })
     }
 
+    /// Fetch the board of the season on display.
+    fn fetch_board(&mut self) {
+        let c = self.client.clone();
+        let season = self.board_season;
+        self.board = None;
+        self.jobs.retain(|j| !matches!(j, Job::Board(_)));
+        self.jobs
+            .push(Job::Board(Pending::spawn(move || c.leaderboard_of(season))));
+    }
+
+    /// LEADERBOARD ◀ / ▶ on the season: `-1` an older season, `+1` a newer
+    /// one (the live season is the newest).
+    fn step_season(&mut self, dir: i32) {
+        let list = &self.board_seasons;
+        if list.len() < 2 {
+            return;
+        }
+        let cur = self
+            .board_season
+            .and_then(|n| list.iter().position(|&s| s == n))
+            .unwrap_or(0);
+        let next = (cur as i32 - dir).clamp(0, list.len() as i32 - 1) as usize;
+        if next == cur {
+            return;
+        }
+        self.board_season = (next > 0).then(|| list[next]);
+        self.fetch_board();
+    }
+
     fn board_json(&self) -> Value {
+        let season_chip = |b: Option<&Leaderboard>| -> Value {
+            let live = self.board_seasons.first().copied();
+            let shown = self.board_season.or(live);
+            let line = match (b, self.board_season) {
+                (Some(b), None) => b.season.ends_line(now_secs()),
+                (Some(_), Some(_)) => "FINAL STANDINGS".into(),
+                (None, _) => String::new(),
+            };
+            json!({
+                "name": shown.map_or(String::new(), |n| format!("SEASON {n}")),
+                "line": line,
+                "pick": match (shown, self.board_season) {
+                    (Some(n), None) => format!("{n} · NOW"),
+                    (Some(n), Some(_)) => format!("{n} · FINAL"),
+                    _ => "NOW".into(),
+                },
+                "can_step": self.board_seasons.len() > 1,
+            })
+        };
         let Some(b) = self.board.as_ref() else {
-            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false } });
+            return json!({ "loading": true, "rows": [], "empty": false, "me": { "show": false }, "season": season_chip(None), "finished": self.board_season.is_some() });
         };
         let my = self.my_id();
+        // a finished season's board shows the tier each player ended it in
+        let badge = |p: &ProfileInfo| -> Value {
+            if b.finished {
+                return json!({
+                    "has": true,
+                    "tier": p.rank,
+                    "hi": p.rating >= 1400,
+                    "lo": p.rating < 1400,
+                });
+            }
+            match &p.last_season {
+                Some(s) => json!({
+                    "has": true,
+                    "tier": s.tier,
+                    "hi": s.rating >= 1400,
+                    "lo": s.rating < 1400,
+                }),
+                None => json!({ "has": false }),
+            }
+        };
         let rows: Vec<Value> = b
             .rows
             .iter()
@@ -2774,8 +2866,9 @@ impl OnlineScreen {
                     "name": fit(&p.name.to_uppercase(), 20),
                     "verified": p.verified,
                     "rating": p.rating,
-                    "record": format!("{} - {}", p.wins, p.losses),
+                    "record": format!("{}W {}L", p.wins, p.losses),
                     "tier": p.rank,
+                    "last": badge(p),
                     "you": p.id == my,
                 })
             })
@@ -2784,10 +2877,11 @@ impl OnlineScreen {
             json!({
                 "show": true,
                 "pos": format!("#{pos}"),
-                "name": format!("{} (YOU)", fit(&p.name.to_uppercase(), 16)),
+                "name": format!("{} · YOU", fit(&p.name.to_uppercase(), 16)),
                 "rating": p.rating,
-                "record": format!("{} - {}", p.wins, p.losses),
+                "record": format!("{}W {}L", p.wins, p.losses),
                 "tier": p.rank,
+                "last": badge(p),
             })
         });
         json!({
@@ -2796,6 +2890,14 @@ impl OnlineScreen {
             "empty": b.rows.is_empty(),
             "me": me,
             "scope": self.scope(),
+            "season": season_chip(Some(b)),
+            "finished": b.finished,
+            "badge_col": if b.finished { "FINAL TIER" } else { "LAST SEASON" },
+            "note": if b.finished {
+                "FINAL RATINGS OF THAT SEASON · EACH PLAYER'S TIER STAYS AS A BADGE"
+            } else {
+                "RATINGS SOFT-RESET TOWARD 1200 EACH SEASON · LAST SEASON'S TIER STAYS AS A BADGE"
+            },
         })
     }
 
@@ -2876,17 +2978,10 @@ impl OnlineScreen {
                 if self.ranked { "RANKED" } else { "QUICK MATCH" }.into(),
                 server(),
             ),
-            State::Board => {
-                let season = self
-                    .board
-                    .as_ref()
-                    .map(|b| format!(" · {}", b.season.name.to_uppercase()))
-                    .unwrap_or_default();
-                (
-                    "LEADERBOARD".into(),
-                    format!("{}{season}", fit(&self.server_name().to_uppercase(), 22)),
-                )
-            }
+            State::Board => (
+                "LEADERBOARD".into(),
+                fit(&self.server_name().to_uppercase(), 28),
+            ),
             State::Direct => (
                 "LAN / DIRECT IP".into(),
                 "NO SERVER: TYPE EACH OTHER'S ADDRESS".into(),
@@ -3610,6 +3705,8 @@ impl OnlineScreen {
                     }
                 }
             }
+            ("board", "older") => self.step_season(-1),
+            ("board", "newer") => self.step_season(1),
             ("online", "quick") => self.run_action("quick"),
             ("online", "ranked") => self.run_action("ranked"),
             ("online", "board") => self.run_action("board"),
@@ -4173,6 +4270,12 @@ impl OnlineScreen {
                     None => keep.push(j),
                     Some(Ok(b)) => {
                         self.status.clear();
+                        if !b.finished {
+                            // the live season first, then the finished ones
+                            self.board_seasons = std::iter::once(b.season.number)
+                                .chain(b.past.iter().copied())
+                                .collect();
+                        }
                         self.board = Some(b);
                     }
                     Some(Err(e)) => self.fail("leaderboard", e),
