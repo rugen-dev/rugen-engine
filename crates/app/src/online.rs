@@ -1444,7 +1444,11 @@ impl OnlineScreen {
             return;
         }
         if let Some(e) = w.feed.error() {
-            w.error = Some(format!("THE MATCH STREAM STOPPED: {}", e.to_uppercase()));
+            w.error = Some(if crate::watch::is_full(&e) {
+                "THIS MATCH IS FULL: TOO MANY PEOPLE ARE WATCHING IT. TRY ANOTHER ONE.".into()
+            } else {
+                format!("THE MATCH STREAM STOPPED: {}", e.to_uppercase())
+            });
             return;
         }
         let Some(h) = w.feed.header() else { return };

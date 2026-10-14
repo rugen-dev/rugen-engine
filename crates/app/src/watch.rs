@@ -81,7 +81,8 @@ impl Feed {
                     }
                     Err(e) => {
                         failures += 1;
-                        if failures >= 10 {
+                        // the server's viewer cap: no point asking again
+                        if failures >= 10 || is_full(&e.to_string()) {
                             if let Some(state) = weak.upgrade()
                                 && let Ok(mut s) = state.lock()
                             {
@@ -132,6 +133,11 @@ impl Feed {
     pub fn error(&self) -> Option<String> {
         self.0.lock().ok()?.error.clone()
     }
+}
+
+/// Whether a stream error is the server's viewer cap (`RUGEN_LIVE_VIEWERS`).
+pub fn is_full(e: &str) -> bool {
+    e.contains("this match is full")
 }
 
 /// How many frames to simulate this drawn frame, `cursor` frames in with
