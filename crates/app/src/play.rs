@@ -648,6 +648,8 @@ pub struct Match {
     gpu_dirty: Vec<usize>,
     /// Stage music file, if any.
     pub bgm: Option<PathBuf>,
+    /// The stage's `bgmvolume` as a gain (1 = as recorded).
+    pub bgm_volume: f32,
     pub tutorial: Option<crate::tutorial::Tutorial>,
     /// What this player presses for START (hints in the fight overlays).
     pub start_label: String,
@@ -822,19 +824,40 @@ impl Match {
         }
         log::info!("{} vs {}", world.data[0].name, world.data[1].name);
 
-        // stage music: paths are relative to the game root (`sound/x.mp3`), else the stage dir
-        let bgm = setup.stage.as_ref().and_then(|p| {
-            let def = rugen_formats::def::Def::open(p).ok()?;
-            let name = def.section("music")?.raw("bgmusic")?.trim().to_string();
-            if name.is_empty() {
-                return None;
-            }
-            let root = data_dir.parent().unwrap_or(data_dir);
-            let stage_dir = p.parent().unwrap_or(Path::new("."));
-            [root.join(&name), stage_dir.join(&name)]
-                .into_iter()
-                .find(|c| rugen_formats::vfs::exists(c))
-        });
+        // stage music (Ikemen `parseMusicSection`): the stage's folder, the
+        // game root (`sound/x.mp3`), `sound/`; a converted stage keeps its
+        // files at its root, so `stages/x.mp3` is also looked for by name
+        let (bgm, bgm_volume) = setup
+            .stage
+            .as_ref()
+            .and_then(|p| {
+                let def = rugen_formats::def::Def::open(p).ok()?;
+                let music = def.section("music")?;
+                let name = music.raw("bgmusic")?.trim().replace('\\', "/");
+                if name.is_empty() {
+                    return None;
+                }
+                // percent (Ikemen `bgmvolume`, 100 = as recorded), never louder
+                let volume = music
+                    .f32("bgmvolume")
+                    .map_or(1.0, |v| (v / 100.0).clamp(0.0, 1.0));
+                let root = data_dir.parent().unwrap_or(data_dir);
+                let stage_dir = p.parent().unwrap_or(Path::new("."));
+                let base = Path::new(&name).file_name().map(PathBuf::from);
+                let mut tries = vec![
+                    stage_dir.join(&name),
+                    root.join(&name),
+                    root.join("sound").join(&name),
+                ];
+                tries.extend(base.map(|b| stage_dir.join(b)));
+                let Some(path) = tries.into_iter().find(|c| rugen_formats::vfs::exists(c)) else {
+                    log::info!("stage music {name:?} not found");
+                    return None;
+                };
+                log::debug!("stage music {}", path.display());
+                Some((Some(path), volume))
+            })
+            .unwrap_or((None, 1.0));
         let lifebar = match crate::lifebar::Lifebar::load(motif, data_dir) {
             Ok(lb) => Some(lb),
             Err(e) => {
@@ -883,6 +906,7 @@ impl Match {
             reload_tick: 0,
             gpu_dirty: Vec::new(),
             bgm,
+            bgm_volume,
             tutorial: None,
             start_label: "START".into(),
             tag_labels: ["TAG".into(), "TAG".into()],

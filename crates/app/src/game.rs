@@ -1781,7 +1781,7 @@ impl Shell {
                                 Some(crate::tutorial::Tutorial::new(&m.world.data[0], &keys));
                         }
                         if let Some(a) = self.audio.as_mut() {
-                            a.play_music(m.bgm.as_deref(), 1.0, true);
+                            a.play_music(m.bgm.as_deref(), m.bgm_volume, true);
                         }
                         if setup.net.is_some() {
                             m.ranked = self.online_match.as_ref().map(|om| om.ranked);
