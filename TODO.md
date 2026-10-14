@@ -276,10 +276,18 @@ box) and screenshots.
   rush and time attack shots in `~/.cache/rugen-work/modes/`.
 
 ### Storyboards
-- [ ] **Intros and endings.** Play MUGEN `.def` storyboards: the screenpack
+- [x] **Intros and endings.** (1dc4b3e) Play MUGEN `.def` storyboards: the screenpack
   intro and logo, each fighter's `intro.storyboard` before its first arcade
   fight and `ending.storyboard` after the last. Skip with START. Scenes,
   layers, BG, text and sound per the MUGEN storyboard format.
+  Checked with MUGEN 1.1b1's KFM intro / ending and the KFM motif's logo
+  and intro (scrolling `bg.name` background), also from inside the `.rgc`.
+  A fight button skips one scene, START / Esc the whole storyboard;
+  `rugen storyboard <file.def>`. Not done: the game over, credits and
+  default ending storyboards (rugen has no continue screen or credits),
+  TrueType font colours, Ikemen's extra keys (`layerX.scale`, `jump`...).
+  None of the community fighters in `chars/` ships one. The bundled
+  themes have no intro.
 
 ### Arena
 - [ ] **Ledge grab.** When a falling fighter's hand reaches the edge of the
