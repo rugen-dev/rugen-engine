@@ -16,6 +16,8 @@ struct VsIn {
     @location(3) fx_mul: vec4<f32>,
     // PalFX add rgb + invert flag
     @location(4) fx_add: vec4<f32>,
+    // atlas rectangle [x, y, w, h] sampled as the whole texture (w = 0: none)
+    @location(5) rect: vec4<u32>,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -23,6 +25,7 @@ struct VsOut {
     @location(1) color: vec4<f32>,
     @location(2) fx_mul: vec4<f32>,
     @location(3) fx_add: vec4<f32>,
+    @location(4) @interpolate(flat) rect: vec4<u32>,
 };
 
 @vertex
@@ -34,6 +37,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.color = in.color;
     out.fx_mul = in.fx_mul;
     out.fx_add = in.fx_add;
+    out.rect = in.rect;
     return out;
 }
 
@@ -64,8 +68,12 @@ fn finish(c_in: vec4<f32>, in: VsOut) -> vec4<f32> {
 
 @fragment
 fn fs_indexed(in: VsOut) -> @location(0) vec4<f32> {
-    let dim = vec2<f32>(textureDimensions(idx_tex));
-    let texel = vec2<i32>(clamp(in.uv * dim, vec2<f32>(0.0), dim - vec2<f32>(1.0)));
+    // a glyph of an atlas page is sampled with its own size and origin, so
+    // its pixels come out exactly as from a texture of its own
+    let whole = in.rect.z == 0u;
+    let dim = select(vec2<f32>(f32(in.rect.z), f32(in.rect.w)), vec2<f32>(textureDimensions(idx_tex)), whole);
+    let origin = select(vec2<i32>(i32(in.rect.x), i32(in.rect.y)), vec2<i32>(0, 0), whole);
+    let texel = origin + vec2<i32>(clamp(in.uv * dim, vec2<f32>(0.0), dim - vec2<f32>(1.0)));
     let i = textureLoad(idx_tex, texel, 0).r;
     let c = textureLoad(pal_tex, vec2<i32>(i32(i), 0), 0);
     return finish(c, in);

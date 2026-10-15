@@ -211,9 +211,70 @@ impl FontRef {
     }
 }
 
+/// Pack a font's glyphs onto one indexed texture page (rows of glyphs, a
+/// transparent texel between them), returning the page and each glyph's
+/// `[x, y, w, h]`; `None` when the font has no glyph or outgrows the GPU's
+/// texture limit (the caller then uploads glyphs one by one).
+fn glyph_atlas(r: &mut Renderer, font: &Font) -> Option<(TextureId, HashMap<char, [u32; 4]>)> {
+    let mut glyphs: Vec<(char, &rugen_formats::fnt::Glyph)> = font
+        .glyphs
+        .iter()
+        .filter(|(_, g)| g.width > 0 && g.height > 0)
+        .map(|(c, g)| (*c, g))
+        .collect();
+    if glyphs.is_empty() {
+        return None;
+    }
+    glyphs.sort_by_key(|(c, _)| *c);
+    let max = r.max_texture_size();
+    let area: u64 = glyphs
+        .iter()
+        .map(|(_, g)| (g.width as u64 + 1) * (g.height as u64 + 1))
+        .sum();
+    let width = ((area as f64).sqrt() as u32 + 1)
+        .next_power_of_two()
+        .clamp(64, max);
+    let (mut x, mut y, mut row) = (0u32, 0u32, 0u32);
+    let mut places = HashMap::with_capacity(glyphs.len());
+    for (c, g) in &glyphs {
+        let (w, h) = (g.width as u32, g.height as u32);
+        if w + 1 > width {
+            return None;
+        }
+        if x + w + 1 > width {
+            x = 0;
+            y += row;
+            row = 0;
+        }
+        places.insert(*c, [x, y, w, h]);
+        x += w + 1;
+        row = row.max(h + 1);
+    }
+    let height = y + row;
+    if height > max {
+        return None;
+    }
+    let mut pixels = vec![0u8; (width * height) as usize];
+    for (c, g) in &glyphs {
+        let [px, py, w, h] = places[c];
+        for line in 0..h {
+            let Some(src) = g.pixels.get((line * w) as usize..((line + 1) * w) as usize) else {
+                break;
+            };
+            let at = ((py + line) * width + px) as usize;
+            pixels[at..at + w as usize].copy_from_slice(src);
+        }
+    }
+    Some((r.add_indexed(width, height, &pixels), places))
+}
+
 /// A bitmap font uploaded to the GPU.
 pub struct FontGpu {
     pub font: Font,
+    /// Every glyph on one texture page, and where each sits (`[x, y, w, h]`):
+    /// a line of text is one draw call instead of one per character.
+    atlas: Option<(TextureId, HashMap<char, [u32; 4]>)>,
+    /// One texture per glyph when the font does not fit a page.
     glyphs: HashMap<char, TextureId>,
     banks: Vec<PaletteId>,
     /// Window pixels per drawing unit: upright glyphs start on whole window
@@ -234,6 +295,7 @@ impl FontGpu {
         });
         Self {
             font,
+            atlas: None,
             glyphs: HashMap::new(),
             banks: Vec::new(),
             snap: None,
@@ -255,6 +317,7 @@ impl FontGpu {
         if self.banks.is_empty() {
             self.banks.push(r.add_palette(&[[255; 4]; 256]));
         }
+        self.atlas = glyph_atlas(r, &self.font);
     }
 
     pub fn width(&self, text: &str, scale: f32) -> f32 {
@@ -263,7 +326,8 @@ impl FontGpu {
 
     /// Give back the glyph textures and bank palettes (the font goes away).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
-        r.free_textures(self.glyphs.drain().map(|(_, t)| t));
+        let page = self.atlas.take().map(|(t, _)| t);
+        r.free_textures(self.glyphs.drain().map(|(_, t)| t).chain(page));
         r.free_palettes(self.banks.drain(..));
     }
 
@@ -343,10 +407,15 @@ impl FontGpu {
             if let Some(g) = self.font.glyphs.get(&c)
                 && g.width > 0
             {
-                let tex = *self
-                    .glyphs
-                    .entry(c)
-                    .or_insert_with(|| r.add_indexed(g.width as u32, g.height as u32, &g.pixels));
+                let (tex, rect) = match &self.atlas {
+                    Some((page, places)) => (*page, places.get(&c).copied()),
+                    None => (
+                        *self.glyphs.entry(c).or_insert_with(|| {
+                            r.add_indexed(g.width as u32, g.height as u32, &g.pixels)
+                        }),
+                        None,
+                    ),
+                };
                 let at = match self.snap {
                     Some([kx, ky]) if xf.is_none() && kx > 0.0 && ky > 0.0 => {
                         [libm::roundf(x * kx) / kx, libm::roundf(y * ky) / ky]
@@ -354,6 +423,7 @@ impl FontGpu {
                     _ => [x, y],
                 };
                 let mut d = Draw::new(tex, Some(bank), at, [0.0, 0.0]);
+                d.rect = rect;
                 d.scale = [scale, scale];
                 d.clip = clip;
                 if let Some((angle, pivot)) = xf {

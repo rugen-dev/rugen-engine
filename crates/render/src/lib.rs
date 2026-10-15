@@ -37,7 +37,13 @@ struct Vertex {
     color: [f32; 4],
     fx_mul: [f32; 4],
     fx_add: [f32; 4],
+    /// Texel rectangle of an atlas page sampled as if it were the whole
+    /// texture (`[x, y, w, h]`, `w == 0` = the texture itself); see [`Draw::rect`].
+    rect: [u16; 4],
 }
+
+/// No atlas rectangle: sample the texture itself.
+const WHOLE: [u16; 4] = [0; 4];
 
 /// How a draw combines with what is already on screen. Alphas are MUGEN
 /// style 0..=255: `Add { src, dst }` gives `dst*dst/255 + src*src/255`,
@@ -230,6 +236,12 @@ pub struct Draw {
     /// Apply `clip` before `angle` (clip in the draw's unrotated frame), so
     /// rotated UI subtrees keep their clipping.
     pub clip_local: bool,
+    /// Draw this texel rectangle `[x, y, w, h]` of an indexed atlas page as
+    /// if it were a texture of its own (a glyph of a font page): the quad
+    /// takes its size, `uv` runs 0..1 over it and the shader clamps inside
+    /// it, so the pixels match a standalone texture exactly while every
+    /// glyph of a page shares one draw call. Unlike `src`, which trims `uv`.
+    pub rect: Option<[u32; 4]>,
 }
 
 impl Draw {
@@ -250,6 +262,7 @@ impl Draw {
             clip: None,
             skew: 0.0,
             clip_local: false,
+            rect: None,
         }
     }
 }
@@ -644,7 +657,7 @@ impl Renderer {
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Uint16x4],
         };
         // The shader emits premultiplied colour and an alpha that already
         // encodes the destination scale, so Alpha and Add share one state.
@@ -1043,7 +1056,10 @@ impl Renderer {
     }
 
     pub fn draw(&mut self, d: Draw) {
-        let (tw, th) = self.texture_size(d.tex);
+        let (tw, th) = match d.rect {
+            Some(rc) => (rc[2], rc[3]),
+            None => self.texture_size(d.tex),
+        };
         let src = d.src.unwrap_or([0, 0, tw, th]);
         let (w, h) = (src[2] as f32 * d.scale[0], src[3] as f32 * d.scale[1]);
         if w <= 0.0 || h <= 0.0 {
@@ -1105,6 +1121,9 @@ impl Renderer {
         }
         let mut color = d.color;
         color[3] *= d.blend.src_scale();
+        let rect = d
+            .rect
+            .map_or(WHOLE, |rc| rc.map(|v| v.min(u16::MAX as u32) as u16));
         self.push_quad(
             corners,
             [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
@@ -1113,6 +1132,7 @@ impl Renderer {
             d.tex,
             d.pal,
             d.blend,
+            rect,
         );
     }
 
@@ -1154,6 +1174,7 @@ impl Renderer {
                     q.tex,
                     q.pal,
                     q.blend,
+                    WHOLE,
                 );
                 k2 += 2;
             }
@@ -1230,6 +1251,7 @@ impl Renderer {
             tex,
             pal,
             Blend::Alpha,
+            WHOLE,
         );
     }
 
@@ -1244,6 +1266,7 @@ impl Renderer {
         tex: TextureId,
         pal: Option<PaletteId>,
         blend: Blend,
+        rect: [u16; 4],
     ) {
         let pal = pal.map(|p| p.0);
         let start = (self.verts.len() / QUAD_VERTS) as u32;
@@ -1269,6 +1292,7 @@ impl Renderer {
             color,
             fx_mul,
             fx_add,
+            rect,
         };
         self.verts.extend_from_slice(&[v(0), v(1), v(2), v(3)]);
     }
@@ -1524,6 +1548,7 @@ mod remap_tests {
             color: [1.0; 4],
             fx_mul: [1.0; 4],
             fx_add: [0.0; 4],
+            rect: WHOLE,
         };
         [
             v(x0, y0, 0.0, 0.0),
