@@ -311,14 +311,14 @@ pub struct CommandTable {
     offsets: Vec<usize>,
     /// Command indices per name (a CMD may define one name several times).
     /// Only looked up, never iterated (iteration order is not deterministic).
-    by_name: std::collections::HashMap<String, Vec<u16>>,
+    by_name: rugen_cns::fnv::FnvHashMap<String, Vec<u16>>,
     steps: usize,
 }
 
 impl CommandTable {
     pub fn new(defs: Vec<CommandDef>) -> Self {
         let mut offsets = Vec::with_capacity(defs.len());
-        let mut by_name: std::collections::HashMap<String, Vec<u16>> = Default::default();
+        let mut by_name: rugen_cns::fnv::FnvHashMap<String, Vec<u16>> = Default::default();
         let mut steps = 0;
         for (i, d) in defs.iter().enumerate() {
             offsets.push(steps);

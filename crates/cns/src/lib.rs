@@ -17,6 +17,7 @@
 
 pub mod cmd;
 pub mod code;
+pub mod fnv;
 pub mod lexer;
 pub mod parser;
 pub mod state;

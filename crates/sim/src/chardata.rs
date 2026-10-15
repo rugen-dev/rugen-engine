@@ -54,7 +54,7 @@ pub struct CharData {
     pub localcoord: [f32; 2],
     pub mugen_version: f32,
     /// Constants keyed by `Const()` names: `data.life`, `size.xscale`, `velocity.walk.fwd.x` …
-    pub consts: IndexMap<String, f32>,
+    pub consts: rugen_cns::fnv::FnvIndexMap<String, f32>,
     pub states: BTreeMap<i32, State>,
     pub cmd: Cmd,
     pub sff: Sff,
@@ -203,7 +203,7 @@ impl Sources {
 /// Everything parsed from the AIR / CMD / CNS files.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Logic {
-    consts: IndexMap<String, f32>,
+    consts: rugen_cns::fnv::FnvIndexMap<String, f32>,
     states: BTreeMap<i32, State>,
     cmd: Cmd,
     air: Air,
@@ -730,9 +730,9 @@ const DEFAULTS: &[(&str, f32, bool)] = &[
 ];
 
 /// Read `[Data] [Size] [Velocity] [Movement]` into `Const()`-style keys.
-pub fn load_consts(def: &Def, localcoord_w: f32) -> IndexMap<String, f32> {
+pub fn load_consts(def: &Def, localcoord_w: f32) -> rugen_cns::fnv::FnvIndexMap<String, f32> {
     let ratio = localcoord_w / 320.0;
-    let mut m: IndexMap<String, f32> = DEFAULTS
+    let mut m: rugen_cns::fnv::FnvIndexMap<String, f32> = DEFAULTS
         .iter()
         .map(|&(k, v, scaled)| (k.to_string(), if scaled { v * ratio } else { v }))
         .collect();
@@ -743,7 +743,9 @@ pub fn load_consts(def: &Def, localcoord_w: f32) -> IndexMap<String, f32> {
         let late = |k: &str| k.starts_with("runjump.") || k.starts_with("airjump.");
         for pass in 0..2 {
             if sec == "velocity" && pass == 1 {
-                let g = |m: &IndexMap<String, f32>, k: &str| m.get(k).copied().unwrap_or(0.0);
+                let g = |m: &rugen_cns::fnv::FnvIndexMap<String, f32>, k: &str| {
+                    m.get(k).copied().unwrap_or(0.0)
+                };
                 let (nx, ny) = (g(&m, "velocity.jump.neu.x"), g(&m, "velocity.jump.y"));
                 let (bx, fx) = (g(&m, "velocity.jump.back.x"), g(&m, "velocity.jump.fwd.x"));
                 for (k, v) in [
