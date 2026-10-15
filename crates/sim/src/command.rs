@@ -339,12 +339,25 @@ impl CommandTable {
 /// The compiled commands sit behind an `Arc`; only the runtime state (three
 /// flat arrays of plain values) is copied when the world is snapshotted for
 /// rollback or a helper copies its root's commands.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub struct CommandList {
     pub table: std::sync::Arc<CommandTable>,
     pub state: Vec<CmdState>,
     completed: Vec<bool>,
     step_timers: Vec<i32>,
+}
+
+/// The runtime state only: the shared table is immutable fighter data (and
+/// holds a `HashMap`, whose order would make `World::deep_checksum` vary).
+impl std::fmt::Debug for CommandList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandList")
+            .field("commands", &self.state.len())
+            .field("state", &self.state)
+            .field("completed", &self.completed)
+            .field("step_timers", &self.step_timers)
+            .finish()
+    }
 }
 
 impl Clone for CommandList {

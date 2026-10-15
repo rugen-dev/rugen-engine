@@ -4047,6 +4047,55 @@ impl World {
     }
 }
 
+impl World {
+    /// Exhaustive hash of the gameplay state: every field of every player,
+    /// explod, projectile, the stage, teams, items and the round, through
+    /// their `Debug` form (floats print exactly). Orders of magnitude slower
+    /// than [`World::checksum`] and never used online: it validates
+    /// optimisations in tests and `rugen bench`, where the fast checksum
+    /// (positions, state, life, power, vars) could miss a changed velocity
+    /// or explod.
+    pub fn deep_checksum(&self) -> u64 {
+        use std::fmt::Write as _;
+        let mut s = String::with_capacity(1 << 16);
+        let _ = write!(
+            s,
+            "{} {:?} {:?} {:?} {:?} {} {} {} {} {} {} {:?} {:?} {:?} {:?} {:?} {:?} {} {:?} {:?} {:?}",
+            self.frame,
+            self.rng,
+            self.cam_x,
+            self.cam_y,
+            self.cam_zoom,
+            self.pausetime,
+            self.supertime,
+            self.pausetime_buffer,
+            self.supertime_buffer,
+            self.pause_player,
+            self.super_player,
+            self.superbrightness,
+            self.envshake,
+            self.allpalfx,
+            self.bgpalfx,
+            self.movement,
+            self.teams,
+            self.hazard_t,
+            self.items,
+            self.round,
+            self.stage,
+        );
+        for p in &self.players {
+            let _ = write!(s, "{p:?}");
+        }
+        let _ = write!(s, "{:?}{:?}", self.explods, self.projs);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in s.bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

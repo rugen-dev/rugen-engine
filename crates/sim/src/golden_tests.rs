@@ -57,7 +57,11 @@ struct Run<'a> {
     seed: u64,
 }
 
-fn run(r: &Run) -> (u64, u32, [u8; 2]) {
+/// Fast checksum, frames, wins and a deep checksum folded every 600 frames
+/// and at the end (every field of every player, explod and projectile, so
+/// an optimisation that changes something the fast checksum ignores, a
+/// velocity or an explod, still shows).
+fn run(r: &Run) -> (u64, u32, [u8; 2], u64) {
     let root = reference();
     let spec = MatchSpec {
         life: None,
@@ -75,8 +79,18 @@ fn run(r: &Run) -> (u64, u32, [u8; 2]) {
     };
     let mut w = build_world(&spec).expect("world");
     w.arena_ai = r.arena_ai;
-    let out = replay(&mut w, &noise(r.frames, r.seed), None);
-    (out.checksum, out.frames, w.round.wins)
+    let inputs = noise(r.frames, r.seed);
+    let mut deep: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut fold = |v: u64| {
+        deep ^= v;
+        deep = deep.wrapping_mul(0x0100_0000_01b3);
+    };
+    let mut out = replay(&mut w, &inputs[..0], None);
+    for chunk in inputs.chunks(600 * 4) {
+        out = replay(&mut w, chunk, None);
+        fold(w.deep_checksum());
+    }
+    (out.checksum, out.frames, w.round.wins, deep)
 }
 
 #[test]
@@ -123,7 +137,7 @@ fn kfm_matches_are_bit_identical() {
         }),
     ];
     for g in &got {
-        eprintln!("({:#018x}, {}, {:?}),", g.0, g.1, g.2);
+        eprintln!("({:#018x}, {}, {:?}, {:#018x}),", g.0, g.1, g.2, g.3);
     }
     assert_eq!(got, GOLDEN_KFM);
 }
@@ -133,13 +147,13 @@ fn kfm_matches_are_bit_identical() {
 // report: fighters walked past the end of HD stages' art). These zoom out
 // (ONLINE_ZOOM) and fight near the stage's ends, so the three changed then;
 // the arena run kept its value.
-const GOLDEN_KFM: [(u64, u32, [u8; 2]); 4] = [
-    (0xeaf07d0ce97df321, 12000, [1, 0]),
-    (0x24a46a57967e1c02, 20000, [2, 1]),
-    (0x3dc3e1c20fc7b2fa, 12000, [0, 1]),
+const GOLDEN_KFM: [(u64, u32, [u8; 2], u64); 4] = [
+    (0xeaf07d0ce97df321, 12000, [1, 0], 0x0ee7c18781d2049e),
+    (0x24a46a57967e1c02, 20000, [2, 1], 0x2dd68218a01d96e6),
+    (0x3dc3e1c20fc7b2fa, 12000, [0, 1], 0xb658b61cc084852f),
     // examples/arena has items and hazards (moving / dropping platforms,
     // wind) since those features, on purpose
-    (0xc540f0b530e524f5, 4000, [0, 0]),
+    (0xc540f0b530e524f5, 4000, [0, 0], 0x6a2d133e6d08d3b6),
 ];
 
 /// The same with real community fighters (Naruto, Sasuke and Goku have
@@ -182,17 +196,17 @@ fn community_matches_are_bit_identical() {
         }),
     ];
     for g in &got {
-        eprintln!("({:#018x}, {}, {:?}),", g.0, g.1, g.2);
+        eprintln!("({:#018x}, {}, {:?}, {:#018x}),", g.0, g.1, g.2, g.3);
     }
     assert_eq!(got, GOLDEN_COMMUNITY);
 }
 
-const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2]); 3] = [
+const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2], u64); 3] = [
     // re-recorded with the camera's centre held inside its bounds (see
     // GOLDEN_KFM)
-    (0x3895c0df60c847ee, 12000, [1, 0]),
-    (0x9003bb5a90445e68, 20000, [2, 1]),
-    (0x5d545012b91f4cbd, 12000, [0, 1]),
+    (0x3895c0df60c847ee, 12000, [1, 0], 0x1c88345c16ce1295),
+    (0x9003bb5a90445e68, 20000, [2, 1], 0x304c4ecb1f2fdc7d),
+    (0x5d545012b91f4cbd, 12000, [0, 1], 0xe97fb35f83d73d47),
 ];
 
 /// The fighter debugger's trace records what the state machine did, never
