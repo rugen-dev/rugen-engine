@@ -33,6 +33,7 @@
 //! rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
 //! rugen check <char> [--root dir]                               report unsupported controllers
 //! rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
+//! rugen bench [--root dir] [--chars A,B] [--convert src] [--out f.md]  sim / rollback / render / convert numbers (docs/performance)
 //!   (play refuses `broken` characters unless --force)
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
 //! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
@@ -52,6 +53,7 @@
 
 use anyhow::Context;
 
+mod bench;
 mod challenge;
 mod clipboard;
 mod config;
@@ -149,6 +151,7 @@ rugen fontgen --roles [--motif motif] [--out dir]             regenerate the mot
 rugen export <file.rgc|.rgs> [out_dir] [--force]              back to a MUGEN folder (Fighter Factory)
 rugen check <char> [--root dir]                               report unsupported controllers
 rugen verify <char> | --all [--root dir]                      load + headless soak, verdict stored in the cache
+rugen bench [--root dir] [--chars A,B] [--convert src] [--out f.md]  sim / rollback / render / convert numbers (docs/performance)
   (play refuses `broken` characters unless --force)
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
 rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
@@ -868,6 +871,7 @@ fn main() -> anyhow::Result<()> {
             )
             .run()
         }
+        Some("bench") => bench::run(&args),
         Some("verify") => {
             let opt = |name: &str| {
                 args.iter()
