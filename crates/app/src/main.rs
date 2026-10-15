@@ -900,8 +900,13 @@ fn main() -> anyhow::Result<()> {
             let mut broken = 0;
             for entry in targets {
                 let (dir, mut m) = lib.prepare_char(&entry)?;
-                let report =
-                    verify::verify(&m.def_path(&dir), &lib.data_dir(), sparring.as_deref());
+                // the command's verdict is about the text files, never precompiled logic
+                let report = verify::verify(
+                    &m.def_path(&dir),
+                    &lib.data_dir(),
+                    sparring.as_deref(),
+                    false,
+                );
                 report.print();
                 if report.verdict == verify::Verdict::Broken {
                     broken += 1;

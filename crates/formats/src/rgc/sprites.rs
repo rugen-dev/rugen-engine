@@ -8,7 +8,7 @@
 //!   visible block is stored, with its position inside the sprite;
 //! - identical blocks are stored once (linked sprites, duplicates);
 //! - identical palettes are stored once, palette slots map onto them;
-//! - each block is its own zstd frame (level 19), so any sprite decodes
+//! - each block is its own zstd frame ([`super::level`]), so any sprite decodes
 //!   alone, without its neighbours (random access, nothing up front).
 //!
 //! Layout (little endian, offsets from the section start):
@@ -33,7 +33,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::pack::Packed;
-use crate::sff::{Key, Palette, Pixels, Sff, Sprite, Version};
+use crate::sff::{CanonicalHasher, Key, Palette, Pixels, Sff, Sprite, Version};
 use crate::{Error, Result};
 
 const F: &str = "rgc sprites";
@@ -41,8 +41,8 @@ pub const MAGIC: &[u8; 4] = b"RSPR";
 pub const VERSION: u16 = 1;
 const HEADER: usize = 48;
 const NONE: u32 = u32::MAX;
-/// zstd level of the pixel blocks.
-pub const LEVEL: i32 = 19;
+/// zstd level of the pixel blocks: [`super::level`].
+pub use super::level;
 
 /// How decoded sprites are presented.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,26 +115,183 @@ fn crop(px: &[u8], w: usize, bpp: usize, (x, y, cw, ch): (usize, usize, usize, u
     out
 }
 
-struct Block {
+/// What encoding an SFF produced.
+pub struct Encoded {
+    /// The section.
+    pub bytes: Vec<u8>,
+    pub stats: Stats,
+    /// [`Sff::canonical_hash`] of the sprites, computed while encoding.
+    pub hash: [u8; 32],
+    /// sha256 of every block's stored pixel bytes, in block order (what a
+    /// reader must get back when it decompresses them).
+    pub block_hashes: Vec<[u8; 32]>,
+}
+
+/// A sprite's visible block, before compression.
+struct Cropped {
     rgba: bool,
     /// Pixel bytes that do not match the sprite's size (kept as parsed).
     free: bool,
     w: u16,
     h: u16,
+    x: u16,
+    y: u16,
     px: Vec<u8>,
+    hash: [u8; 32],
 }
+
+/// A block as the section's table lists it.
+struct BlockMeta {
+    rgba: bool,
+    free: bool,
+    w: u16,
+    h: u16,
+    raw_len: u32,
+    ofs: u64,
+    zlen: u32,
+}
+
+/// One decoded sprite of a batch.
+struct Prepared {
+    px: Pixels,
+    palette: Option<usize>,
+    block: Option<Cropped>,
+}
+
+/// Decoded bytes a batch may hold at once (the cropped copies and the
+/// compressed frames come on top): keeps the peak low on 32-bit hosts.
+const BATCH_BYTES: usize = 32 << 20;
+const BATCH_SPRITES: usize = 512;
 
 /// Encode a parsed SFF (`is_char`: parsed with `Sff::parse(.., true)`).
 pub fn encode(sff: &Sff, is_char: bool) -> (Vec<u8>, Stats) {
+    let e = encode_with(
+        sff,
+        is_char,
+        |i| {
+            let s = &sff.sprites[i];
+            (s.decoded().into_owned(), s.palette)
+        },
+        |i| match &sff.sprites[i].pixels {
+            Pixels::Indexed(p) | Pixels::Rgba(p) => p.len(),
+            Pixels::Packed(p) => p.raw_len(),
+        },
+    );
+    (e.bytes, e.stats)
+}
+
+/// Encode the SFF in `file` one batch of sprites at a time: decoded
+/// pixels are hashed, cropped, compressed and dropped, so the memory
+/// peak is a few batches, not the decoded file.
+pub fn encode_file(file: &[u8], is_char: bool) -> Result<Encoded> {
+    let lazy = Sff::parse_lazy(file, is_char)?;
+    Ok(encode_with(
+        &lazy.sff,
+        is_char,
+        |i| lazy.materialise(i, file),
+        |i| lazy.recipes.get(i).map_or(0, |(r, _)| r.size_hint()),
+    ))
+}
+
+/// Run `f(i)` for `i < n` on the encoder threads; results in index order.
+fn par_map<U: Send>(n: usize, f: impl Fn(usize) -> U + Sync) -> Vec<U> {
+    let threads = crate::encode_threads().min(n.max(1));
+    if threads <= 1 {
+        return (0..n).map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut slots: Vec<Option<U>> = (0..n).map(|_| None).collect();
+    let done = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if i >= n {
+                            break;
+                        }
+                        out.push((i, f(i)));
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect::<Vec<_>>()
+    });
+    for (i, u) in done {
+        slots[i] = Some(u);
+    }
+    // a worker that panicked leaves holes: fill them on this thread
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(i, u)| u.unwrap_or_else(|| f(i)))
+        .collect()
+}
+
+/// Visible block of a sprite's pixels, with its identity hash.
+fn prepare_block(px: &[u8], rgba: bool, w: usize, h: usize) -> Option<Cropped> {
+    if px.is_empty() {
+        return None;
+    }
+    let bpp = if rgba { 4 } else { 1 };
+    // pixels that do not fill the sprite (a PNG of another size) are kept as they are
+    let free = px.len() != w * h * bpp;
+    let rect = if free {
+        (0, 0, 0, 0)
+    } else {
+        visible_rect(px, w, h, bpp)
+    };
+    let data = if free || rect == (0, 0, w, h) {
+        px.to_vec()
+    } else {
+        crop(px, w, bpp, rect)
+    };
+    let (bw, bh) = (rect.2 as u16, rect.3 as u16);
+    let hash = {
+        use sha2::Digest;
+        let mut hs = sha2::Sha256::new();
+        hs.update([u8::from(rgba), u8::from(free)]);
+        hs.update(bw.to_le_bytes());
+        hs.update(bh.to_le_bytes());
+        hs.update(&data);
+        hs.finalize().into()
+    };
+    Some(Cropped {
+        rgba,
+        free,
+        w: bw,
+        h: bh,
+        x: rect.0 as u16,
+        y: rect.1 as u16,
+        px: data,
+        hash,
+    })
+}
+
+/// The encoder: `skel` gives version, palettes, keys and every sprite's
+/// key, size and axis; `decode(i)` its pixels and final palette slot,
+/// `hint(i)` the decoded size (batch sizing).
+fn encode_with(
+    skel: &Sff,
+    is_char: bool,
+    decode: impl Fn(usize) -> (Pixels, Option<usize>) + Sync,
+    hint: impl Fn(usize) -> usize,
+) -> Encoded {
+    let n = skel.sprites.len();
     let mut stats = Stats {
-        sprites: sff.sprites.len(),
-        palettes_in: sff.palettes.len(),
+        sprites: n,
+        palettes_in: skel.palettes.len(),
         ..Default::default()
     };
     // palettes: unique contents, slots point at them
     let mut uniq: Vec<&Palette> = Vec::new();
     let mut seen: HashMap<&Palette, u32> = HashMap::new();
-    let slots: Vec<u32> = sff
+    let slots: Vec<u32> = skel
         .palettes
         .iter()
         .map(|p| {
@@ -146,88 +303,104 @@ pub fn encode(sff: &Sff, is_char: bool) -> (Vec<u8>, Stats) {
         .collect();
     stats.palettes_out = uniq.len();
 
-    let mut blocks: Vec<Block> = Vec::new();
-    let mut by_hash: HashMap<u64, Vec<u32>> = HashMap::new();
-    let mut rows: Vec<[u8; 24]> = Vec::with_capacity(sff.sprites.len());
-    for ((g, n), s) in &sff.sprites {
-        let decoded = s.decoded();
-        let (rgba, px): (bool, &[u8]) = match decoded.as_ref() {
-            Pixels::Indexed(p) => (false, p),
-            Pixels::Rgba(p) => (true, p),
-            Pixels::Packed(_) => (false, &[]),
-        };
-        stats.raw_bytes += px.len();
-        let (w, h) = (s.width as usize, s.height as usize);
-        let bpp = if rgba { 4 } else { 1 };
-        let (block, x, y) = if px.is_empty() {
-            (NONE, 0, 0)
-        } else {
-            // pixels that do not fill the sprite (a PNG of another size) are kept as they are
-            let free = px.len() != w * h * bpp;
-            let rect = if free {
-                (0, 0, 0, 0)
-            } else {
-                visible_rect(px, w, h, bpp)
+    let mut hasher = CanonicalHasher::new(skel.version, &skel.palettes, &skel.palette_keys, n);
+    let mut blocks: Vec<BlockMeta> = Vec::new();
+    let mut block_hashes: Vec<[u8; 32]> = Vec::new();
+    let mut by_hash: HashMap<[u8; 32], u32> = HashMap::new();
+    let mut data: Vec<u8> = Vec::new();
+    let mut rows: Vec<[u8; 24]> = Vec::with_capacity(n);
+    let level = level();
+
+    let mut start = 0;
+    while start < n {
+        // a batch: sprites up to a decoded-byte budget
+        let mut end = start;
+        let mut bytes = 0usize;
+        while end < n && (end == start || (bytes < BATCH_BYTES && end - start < BATCH_SPRITES)) {
+            bytes += hint(end);
+            end += 1;
+        }
+        let batch: Vec<Prepared> = par_map(end - start, |k| {
+            let (_, s) = skel.sprites.get_index(start + k).expect("in range");
+            let (px, palette) = decode(start + k);
+            let block = match &px {
+                Pixels::Indexed(p) => prepare_block(p, false, s.width as usize, s.height as usize),
+                Pixels::Rgba(p) => prepare_block(p, true, s.width as usize, s.height as usize),
+                Pixels::Packed(_) => None,
             };
-            let data = if free || rect == (0, 0, w, h) {
-                px.to_vec()
-            } else {
-                crop(px, w, bpp, rect)
+            Prepared { px, palette, block }
+        });
+        // in order: hash, dedupe, table rows; new blocks go to compression
+        let mut fresh: Vec<(u32, Vec<u8>)> = Vec::new();
+        for (k, p) in batch.into_iter().enumerate() {
+            let (&(g, nr), s) = skel.sprites.get_index(start + k).expect("in range");
+            hasher.sprite((g, nr), s.width, s.height, s.offset, p.palette, &p.px);
+            stats.raw_bytes += match &p.px {
+                Pixels::Indexed(v) | Pixels::Rgba(v) => v.len(),
+                Pixels::Packed(_) => 0,
             };
-            let (bw, bh) = (rect.2 as u16, rect.3 as u16);
-            let hash = {
-                use std::hash::{Hash, Hasher};
-                let mut hs = std::collections::hash_map::DefaultHasher::new();
-                (rgba, free, bw, bh, &data).hash(&mut hs);
-                hs.finish()
-            };
-            let cands = by_hash.entry(hash).or_default();
-            let b = match cands.iter().find(|&&b| {
-                let o = &blocks[b as usize];
-                o.rgba == rgba && o.free == free && o.w == bw && o.h == bh && o.px == data
-            }) {
-                Some(&b) => b,
-                None => {
-                    stats.unique_bytes += data.len();
-                    blocks.push(Block {
-                        rgba,
-                        free,
-                        w: bw,
-                        h: bh,
-                        px: data,
-                    });
-                    let b = (blocks.len() - 1) as u32;
-                    cands.push(b);
-                    b
+            drop(p.px);
+            let (block, x, y) = match p.block {
+                None => (NONE, 0, 0),
+                Some(c) => {
+                    let id = match by_hash.get(&c.hash) {
+                        Some(&id) => id,
+                        None => {
+                            let id = blocks.len() as u32;
+                            by_hash.insert(c.hash, id);
+                            block_hashes.push(c.hash);
+                            stats.unique_bytes += c.px.len();
+                            blocks.push(BlockMeta {
+                                rgba: c.rgba,
+                                free: c.free,
+                                w: c.w,
+                                h: c.h,
+                                raw_len: c.px.len() as u32,
+                                ofs: 0,
+                                zlen: 0,
+                            });
+                            fresh.push((id, c.px));
+                            id
+                        }
+                    };
+                    (id, c.x, c.y)
                 }
             };
-            (b, rect.0 as u16, rect.1 as u16)
-        };
-        let slot = s
-            .palette
-            .map_or(NONE, |p| u32::try_from(p).unwrap_or(NONE - 1));
-        let mut row = [0u8; 24];
-        row[0..2].copy_from_slice(&g.to_le_bytes());
-        row[2..4].copy_from_slice(&n.to_le_bytes());
-        row[4..6].copy_from_slice(&s.width.to_le_bytes());
-        row[6..8].copy_from_slice(&s.height.to_le_bytes());
-        row[8..10].copy_from_slice(&s.offset[0].to_le_bytes());
-        row[10..12].copy_from_slice(&s.offset[1].to_le_bytes());
-        row[12..14].copy_from_slice(&x.to_le_bytes());
-        row[14..16].copy_from_slice(&y.to_le_bytes());
-        row[16..20].copy_from_slice(&slot.to_le_bytes());
-        row[20..24].copy_from_slice(&block.to_le_bytes());
-        rows.push(row);
+            let slot = p
+                .palette
+                .map_or(NONE, |p| u32::try_from(p).unwrap_or(NONE - 1));
+            let mut row = [0u8; 24];
+            row[0..2].copy_from_slice(&g.to_le_bytes());
+            row[2..4].copy_from_slice(&nr.to_le_bytes());
+            row[4..6].copy_from_slice(&s.width.to_le_bytes());
+            row[6..8].copy_from_slice(&s.height.to_le_bytes());
+            row[8..10].copy_from_slice(&s.offset[0].to_le_bytes());
+            row[10..12].copy_from_slice(&s.offset[1].to_le_bytes());
+            row[12..14].copy_from_slice(&x.to_le_bytes());
+            row[14..16].copy_from_slice(&y.to_le_bytes());
+            row[16..20].copy_from_slice(&slot.to_le_bytes());
+            row[20..24].copy_from_slice(&block.to_le_bytes());
+            rows.push(row);
+        }
+        let packed = par_map(fresh.len(), |k| {
+            crate::pack::zstd(&fresh[k].1, level).unwrap_or_default()
+        });
+        for ((id, _), z) in fresh.iter().zip(packed) {
+            let b = &mut blocks[*id as usize];
+            b.ofs = data.len() as u64;
+            b.zlen = z.len() as u32;
+            data.extend_from_slice(&z);
+        }
+        start = end;
     }
     stats.blocks = blocks.len();
-    let packed = compress_all(&blocks);
-    stats.packed_bytes = packed.iter().map(Vec::len).sum();
+    stats.packed_bytes = data.len();
 
     let mut out = vec![0u8; HEADER];
     out[..4].copy_from_slice(MAGIC);
     out[4..6].copy_from_slice(&VERSION.to_le_bytes());
     out[6..8].copy_from_slice(&u16::from(is_char).to_le_bytes());
-    let (vk, vp) = match sff.version {
+    let (vk, vp) = match skel.version {
         None => (0u8, 0u8),
         Some(Version::V1) => (1, 0),
         Some(Version::V2 { patch }) => (2, patch),
@@ -236,7 +409,7 @@ pub fn encode(sff: &Sff, is_char: bool) -> (Vec<u8>, Stats) {
     out[9] = vp;
     out[12..16].copy_from_slice(&(slots.len() as u32).to_le_bytes());
     out[16..20].copy_from_slice(&(uniq.len() as u32).to_le_bytes());
-    out[20..24].copy_from_slice(&(sff.palette_keys.len() as u32).to_le_bytes());
+    out[20..24].copy_from_slice(&(skel.palette_keys.len() as u32).to_le_bytes());
     out[24..28].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
     out[28..32].copy_from_slice(&(rows.len() as u32).to_le_bytes());
     for p in &uniq {
@@ -249,71 +422,32 @@ pub fn encode(sff: &Sff, is_char: bool) -> (Vec<u8>, Stats) {
     for s in &slots {
         out.extend_from_slice(&s.to_le_bytes());
     }
-    for (&(g, n), &i) in &sff.palette_keys {
+    for (&(g, n), &i) in &skel.palette_keys {
         out.extend_from_slice(&g.to_le_bytes());
         out.extend_from_slice(&n.to_le_bytes());
         out.extend_from_slice(&(i as u32).to_le_bytes());
     }
-    let mut ofs = 0u64;
-    for (b, p) in blocks.iter().zip(&packed) {
-        out.extend_from_slice(&ofs.to_le_bytes());
-        out.extend_from_slice(&(p.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(b.px.len() as u32).to_le_bytes());
+    for b in &blocks {
+        out.extend_from_slice(&b.ofs.to_le_bytes());
+        out.extend_from_slice(&b.zlen.to_le_bytes());
+        out.extend_from_slice(&b.raw_len.to_le_bytes());
         out.extend_from_slice(&b.w.to_le_bytes());
         out.extend_from_slice(&b.h.to_le_bytes());
         out.extend_from_slice(&[u8::from(b.rgba), u8::from(b.free), 0, 0]);
-        ofs += p.len() as u64;
     }
     for r in &rows {
         out.extend_from_slice(r);
     }
     let data_ofs = out.len() as u64;
     out[32..40].copy_from_slice(&data_ofs.to_le_bytes());
-    for p in &packed {
-        out.extend_from_slice(p);
+    out.extend_from_slice(&data);
+    drop(data);
+    Encoded {
+        bytes: out,
+        stats,
+        hash: hasher.finish(),
+        block_hashes,
     }
-    (out, stats)
-}
-
-/// zstd every block, spread over the available cores.
-fn compress_all(blocks: &[Block]) -> Vec<Vec<u8>> {
-    let z = |b: &Block| {
-        if b.px.is_empty() {
-            Vec::new()
-        } else {
-            zstd::bulk::compress(&b.px, LEVEL).unwrap_or_default()
-        }
-    };
-    let threads = crate::encode_threads();
-    if threads == 1 || blocks.len() < 16 {
-        return blocks.iter().map(z).collect();
-    }
-    // big blocks first spread evenly: hand out indices from a shared counter
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let mut out: Vec<Vec<u8>> = vec![Vec::new(); blocks.len()];
-    let results = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(b) = blocks.get(i) else { break };
-                        done.push((i, z(b)));
-                    }
-                    done
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().unwrap_or_default())
-            .collect::<Vec<_>>()
-    });
-    for (i, v) in results {
-        out[i] = v;
-    }
-    out
 }
 
 /// The header fields of a section.
@@ -488,6 +622,60 @@ pub fn decode(bytes: Arc<Vec<u8>>, view: View) -> Result<Sff> {
     })
 }
 
+/// Check that every block of a section decompresses to the pixel bytes
+/// the encoder stored (`hashes`: [`Encoded::block_hashes`]): a cheap,
+/// parallel integrity read of a file just written, instead of decoding
+/// the whole SFF again.
+pub fn verify_blocks(b: &[u8], hashes: &[[u8; 32]]) -> Result<()> {
+    read_header(b)?;
+    let bad = || Error::fmt(F, "truncated");
+    let n_slots = le32(b, 12) as usize;
+    let n_pal = le32(b, 16) as usize;
+    let n_keys = le32(b, 20) as usize;
+    let n_blocks = le32(b, 24) as usize;
+    let data_ofs = le64(b, 32) as usize;
+    if n_blocks != hashes.len() {
+        return Err(Error::fmt(
+            F,
+            format!("{n_blocks} blocks, {} expected", hashes.len()),
+        ));
+    }
+    let mut at = HEADER;
+    for _ in 0..n_pal {
+        let n = le16(b.get(at..at + 2).ok_or_else(bad)?, 0) as usize;
+        at += 2 + n * 4;
+    }
+    at += n_slots * 4 + n_keys * 8;
+    let table = b.get(at..at + n_blocks * 24).ok_or_else(bad)?;
+    let check = |i: usize| -> std::result::Result<(), String> {
+        let r = &table[i * 24..i * 24 + 24];
+        let start = data_ofs.checked_add(le64(r, 0) as usize).ok_or("offset")?;
+        let len = le32(r, 8) as usize;
+        let raw = le32(r, 12) as usize;
+        let src = b.get(start..start + len).ok_or("outside the section")?;
+        let px = if raw == 0 {
+            Vec::new()
+        } else {
+            crate::pack::unzstd(src, raw).ok_or("does not decompress")?
+        };
+        use sha2::Digest;
+        let mut hs = sha2::Sha256::new();
+        hs.update([r[20], r[21]]);
+        hs.update(&r[16..20]);
+        hs.update(&px);
+        if <[u8; 32]>::from(hs.finalize()) != hashes[i] {
+            return Err("other pixels".into());
+        }
+        Ok(())
+    };
+    for (i, r) in par_map(n_blocks, check).into_iter().enumerate() {
+        if let Err(e) = r {
+            return Err(Error::fmt(F, format!("block {i}: {e}")));
+        }
+    }
+    Ok(())
+}
+
 /// A copy of `sff` whose pixels are all decoded (`Indexed` / `Rgba`).
 pub fn unpacked(sff: &Sff) -> Sff {
     let mut out = sff.clone();
@@ -585,6 +773,24 @@ mod tests {
         let (sb, _) = encode(&sff, false);
         let st = decode(Arc::new(sb), View::Runtime).unwrap();
         assert_eq!(st.sprites[&(0, 0)].width, 4);
+    }
+
+    #[test]
+    fn blocks_verify_against_their_hashes() {
+        let sff = sample();
+        let e = encode_file(&sff.write_exact(), true).unwrap();
+        assert_eq!(e.hash, sff.canonical_hash(), "hash streamed while encoding");
+        let (plain, _) = encode(&sff, true);
+        assert_eq!(e.bytes, plain, "streamed and in-memory encoders agree");
+        verify_blocks(&e.bytes, &e.block_hashes).unwrap();
+        let mut hs = e.block_hashes.clone();
+        hs[0][0] ^= 1;
+        assert!(verify_blocks(&e.bytes, &hs).is_err());
+        let mut bytes = e.bytes.clone();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        assert!(verify_blocks(&bytes, &e.block_hashes).is_err());
+        assert!(verify_blocks(&e.bytes, &e.block_hashes[1..]).is_err());
     }
 
     #[test]

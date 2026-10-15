@@ -103,6 +103,13 @@ impl Sff {
     /// Parse from bytes. `is_char` enables the legacy palette rule for a
     /// character's `0,0` sprite (MUGEN loads stages and screenpacks without it).
     pub fn parse(bytes: &[u8], is_char: bool) -> Result<Self> {
+        Ok(Self::parse_lazy(bytes, is_char)?.into_sff(bytes))
+    }
+
+    /// [`Sff::parse`] without decoding any pixels: headers, palettes and a
+    /// [`Recipe`] per sprite, so a caller can decode a few sprites at a
+    /// time (the conversion) instead of holding them all.
+    pub fn parse_lazy(bytes: &[u8], is_char: bool) -> Result<LazySff> {
         let mut r = Cursor::new(bytes);
         let mut sig = [0u8; 12];
         r.read_exact(&mut sig)?;
@@ -174,21 +181,237 @@ fn u32_(r: &mut R) -> Result<u32> {
 }
 fn slice<'a>(r: &R<'a>, start: u64, len: u64) -> &'a [u8] {
     let data = *r.get_ref();
-    let s = (start as usize).min(data.len());
-    let e = (start.saturating_add(len) as usize).min(data.len());
+    let (s, e) = clamp_range(data.len(), start, len);
     &data[s..e]
+}
+
+// ---------------------------------------------------------------- canonical hash
+
+/// [`Sff::canonical_hash`] fed one sprite at a time, in map order, so a
+/// streaming encoder hashes the same bytes without holding the sprites.
+pub struct CanonicalHasher(sha2::Sha256);
+
+impl CanonicalHasher {
+    pub fn new(
+        version: Option<Version>,
+        palettes: &[Palette],
+        palette_keys: &BTreeMap<Key, usize>,
+        sprites: usize,
+    ) -> Self {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(b"rugen-spr-1\n");
+        h.update([match version {
+            None => 0u8,
+            Some(Version::V1) => 1,
+            Some(Version::V2 { .. }) => 2,
+        }]);
+        h.update((palettes.len() as u32).to_le_bytes());
+        for p in palettes {
+            h.update((p.len() as u32).to_le_bytes());
+            for c in p {
+                h.update(c);
+            }
+        }
+        h.update((palette_keys.len() as u32).to_le_bytes());
+        for (&(g, n), &i) in palette_keys {
+            h.update(g.to_le_bytes());
+            h.update(n.to_le_bytes());
+            h.update((i as u32).to_le_bytes());
+        }
+        h.update((sprites as u32).to_le_bytes());
+        Self(h)
+    }
+
+    /// One sprite's key, size, axis, palette slot and decoded pixels.
+    pub fn sprite(
+        &mut self,
+        key: Key,
+        width: u16,
+        height: u16,
+        offset: [i16; 2],
+        palette: Option<usize>,
+        px: &Pixels,
+    ) {
+        use sha2::Digest;
+        let h = &mut self.0;
+        h.update(key.0.to_le_bytes());
+        h.update(key.1.to_le_bytes());
+        h.update(width.to_le_bytes());
+        h.update(height.to_le_bytes());
+        h.update(offset[0].to_le_bytes());
+        h.update(offset[1].to_le_bytes());
+        h.update(palette.map_or(u32::MAX, |p| p as u32).to_le_bytes());
+        let (kind, bytes): (u8, &[u8]) = match px {
+            Pixels::Indexed(p) => (0, p),
+            Pixels::Rgba(p) => (1, p),
+            Pixels::Packed(_) => (2, &[]),
+        };
+        h.update([kind]);
+        h.update((bytes.len() as u32).to_le_bytes());
+        h.update(bytes);
+    }
+
+    pub fn finish(self) -> [u8; 32] {
+        use sha2::Digest;
+        self.0.finalize().into()
+    }
+}
+
+// ---------------------------------------------------------------- lazy parse
+
+/// Where one sprite's pixels are in an SFF, so they decode on demand:
+/// the conversion streams sprites a batch at a time and never holds a
+/// whole decoded SFF ([`Sff::parse_lazy`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recipe {
+    /// Nothing to decode (a forward link, a sprite without data).
+    Empty,
+    /// SFFv1: PCX run-length bytes `start..end` of the file.
+    Pcx {
+        start: usize,
+        end: usize,
+        encoding: u8,
+        bpl: u16,
+        w: u16,
+        h: u16,
+    },
+    /// SFFv2: `len` bytes at `ofs`, in `format` / `depth`.
+    V2 {
+        ofs: u64,
+        len: u32,
+        format: u8,
+        depth: u8,
+        w: u16,
+        h: u16,
+    },
+}
+
+impl Recipe {
+    /// Decoded bytes to expect (sizes batches).
+    pub fn size_hint(&self) -> usize {
+        match *self {
+            Recipe::Empty => 0,
+            Recipe::Pcx { w, h, .. } => w as usize * h as usize,
+            Recipe::V2 {
+                w,
+                h,
+                format,
+                depth,
+                ..
+            } => {
+                let rgba = matches!((format, depth), (0, 24) | (0, 32) | (11..=12, _));
+                w as usize * h as usize * if rgba { 4 } else { 1 }
+            }
+        }
+    }
+
+    /// The pixels, exactly as [`Sff::parse`] stores them.
+    pub fn decode(&self, file: &[u8]) -> Pixels {
+        match *self {
+            Recipe::Empty => Pixels::Indexed(Vec::new()),
+            Recipe::Pcx {
+                start,
+                end,
+                encoding,
+                bpl,
+                w,
+                h,
+            } => {
+                let rle = file.get(start..end).unwrap_or(&[]);
+                let px = if encoding == 1 {
+                    pcx_decode(rle, w, h, bpl as usize)
+                } else {
+                    rle.to_vec()
+                };
+                Pixels::Indexed(fit(px, w, h))
+            }
+            Recipe::V2 {
+                ofs,
+                len,
+                format,
+                depth,
+                w,
+                h,
+            } => match read_v2_pixels(file, ofs, len, format, depth, w, h) {
+                Ok(px) => px,
+                Err(e) => {
+                    log::debug!("sff: sprite data at {ofs}: {e}");
+                    Pixels::Indexed(vec![0; w as usize * h as usize])
+                }
+            },
+        }
+    }
+}
+
+/// An SFF parsed without its pixels: every sprite of `sff` has empty
+/// pixels and a [`Recipe`] in `recipes` (same order as `sff.sprites`).
+#[derive(Clone, Debug)]
+pub struct LazySff {
+    pub sff: Sff,
+    /// Recipe of each sprite and whether it links to another sprite's
+    /// data. A linked sprite keeps its palette slot whatever the data is;
+    /// an SFFv2 sprite whose own data is RGBA has none.
+    pub recipes: Vec<(Recipe, bool)>,
+}
+
+impl LazySff {
+    /// Pixels and final palette slot of sprite `i` (index into `sff.sprites`).
+    pub fn materialise(&self, i: usize, file: &[u8]) -> (Pixels, Option<usize>) {
+        let Some((recipe, link)) = self.recipes.get(i).copied() else {
+            return (Pixels::Indexed(Vec::new()), None);
+        };
+        let px = recipe.decode(file);
+        let own_rgba =
+            !link && matches!(recipe, Recipe::V2 { .. }) && matches!(px, Pixels::Rgba(_));
+        let palette = if own_rgba {
+            None
+        } else {
+            self.sff.sprites.get_index(i).and_then(|(_, s)| s.palette)
+        };
+        (px, palette)
+    }
+
+    /// Decode every sprite: what [`Sff::parse`] returns.
+    pub fn into_sff(mut self, file: &[u8]) -> Sff {
+        for i in 0..self.sff.sprites.len() {
+            let (px, palette) = self.materialise(i, file);
+            if let Some((_, s)) = self.sff.sprites.get_index_mut(i) {
+                s.pixels = px;
+                s.palette = palette;
+            }
+        }
+        self.sff
+    }
+}
+
+/// Size, palette slot and recipe of a parsed sprite, by file index (link
+/// targets; duplicates of a key are here but not in the map).
+struct Node {
+    w: u16,
+    h: u16,
+    palette: Option<usize>,
+    recipe: Recipe,
+}
+
+/// `(start, end)` of `len` bytes at `start`, clamped to the file.
+fn clamp_range(data_len: usize, start: u64, len: u64) -> (usize, usize) {
+    let s = (start as usize).min(data_len);
+    let e = (start.saturating_add(len) as usize).min(data_len);
+    (s, e.max(s))
 }
 
 // ---------------------------------------------------------------- v1
 
-fn parse_v1(r: &mut R, is_char: bool) -> Result<Sff> {
+fn parse_v1(r: &mut R, is_char: bool) -> Result<LazySff> {
     let count = u32_(r)?;
     let mut shofs = u32_(r)? as u64;
     let mut sff = Sff {
         version: Some(Version::V1),
         ..Default::default()
     };
-    let mut list: Vec<Sprite> = Vec::with_capacity(count.min(1 << 16) as usize);
+    let mut recipes = Vec::with_capacity(count.min(1 << 16) as usize);
+    let mut list: Vec<Node> = Vec::with_capacity(count.min(1 << 16) as usize);
     let mut prev_pal: Option<usize> = None;
     let mut have_prev = false;
 
@@ -211,19 +434,22 @@ fn parse_v1(r: &mut R, is_char: bool) -> Result<Sff> {
             palette: None,
             pixels: Pixels::Indexed(Vec::new()),
         };
+        let mut recipe = Recipe::Empty;
+        let mut is_link = false;
 
         if len == 0 {
             if link < i {
                 let src = &list[link];
-                spr.width = src.width;
-                spr.height = src.height;
-                spr.pixels = src.pixels.clone();
+                spr.width = src.w;
+                spr.height = src.h;
                 spr.palette = src.palette;
+                recipe = src.recipe;
+                is_link = true;
             }
         } else {
             let pcx = shofs + 32;
             let first = is_char && (!have_prev || (group == 0 && number == 0));
-            read_v1_sprite(
+            recipe = read_v1_sprite(
                 r,
                 &mut sff,
                 &mut spr,
@@ -237,20 +463,28 @@ fn parse_v1(r: &mut R, is_char: bool) -> Result<Sff> {
             have_prev = true;
             prev_pal = spr.palette;
         }
+        list.push(Node {
+            w: spr.width,
+            h: spr.height,
+            palette: spr.palette,
+            recipe,
+        });
         if !sff.sprites.contains_key(&(group, number)) {
-            sff.sprites.insert((group, number), spr.clone());
+            sff.sprites.insert((group, number), spr);
+            recipes.push((recipe, is_link));
         } else {
             log::debug!("sff: duplicate sprite {group},{number} (index {i} ignored)");
         }
-        list.push(spr);
         shofs = next;
         if shofs == 0 {
             break;
         }
     }
-    Ok(sff)
+    Ok(LazySff { sff, recipes })
 }
 
+/// Read a v1 sprite's PCX header and palette into `sff` / `spr`; the
+/// pixels stay in the file (returned recipe).
 #[allow(clippy::too_many_arguments)]
 fn read_v1_sprite(
     r: &mut R,
@@ -262,7 +496,7 @@ fn read_v1_sprite(
     same_pal: bool,
     prev_pal: Option<usize>,
     char_first: bool,
-) -> Result<()> {
+) -> Result<Recipe> {
     // PCX header
     r.seek(SeekFrom::Start(offset + 2))?;
     let encoding = u8_(r)?;
@@ -272,16 +506,17 @@ fn read_v1_sprite(
     }
     let rect = [u16_(r)?, u16_(r)?, u16_(r)?, u16_(r)?];
     r.seek(SeekFrom::Start(offset + 66))?;
-    let bpl = u16_(r)? as usize;
+    let bpl = u16_(r)?;
     spr.width = rect[2].wrapping_sub(rect[0]).wrapping_add(1);
     spr.height = rect[3].wrapping_sub(rect[1]).wrapping_add(1);
     let data_start = offset + 128;
+    let data_len = r.get_ref().len();
 
-    let (rle, pal_ofs): (&[u8], Option<u64>) = if char_first {
+    let ((rle_start, rle_end), pal_ofs): ((usize, usize), Option<u64>) = if char_first {
         if next > offset {
             len = next - offset;
         }
-        let rle = slice(r, data_start, len.saturating_sub(128));
+        let rle = clamp_range(data_len, data_start, len.saturating_sub(128));
         (rle, Some((offset + len).saturating_sub(768)))
     } else {
         let block_end = if next > offset { next } else { offset + len };
@@ -301,7 +536,7 @@ fn read_v1_sprite(
             }
             found.unwrap_or((block_end as i64 - 769).max(0) as u64)
         };
-        let rle = slice(r, data_start, pal_ofs.saturating_sub(data_start));
+        let rle = clamp_range(data_len, data_start, pal_ofs.saturating_sub(data_start));
         (rle, if same_pal { None } else { Some(pal_ofs + 1) })
     };
 
@@ -319,13 +554,14 @@ fn read_v1_sprite(
         (false, None) => None,
     };
 
-    let px = if encoding == 1 {
-        pcx_decode(rle, spr.width, spr.height, bpl)
-    } else {
-        rle.to_vec()
-    };
-    spr.pixels = Pixels::Indexed(fit(px, spr.width, spr.height));
-    Ok(())
+    Ok(Recipe::Pcx {
+        start: rle_start,
+        end: rle_end,
+        encoding,
+        bpl,
+        w: spr.width,
+        h: spr.height,
+    })
 }
 
 fn push_pal(sff: &mut Sff, pal: Palette) -> usize {
@@ -372,7 +608,7 @@ pub(crate) fn pcx_decode(rle: &[u8], w: u16, h: u16, bpl: usize) -> Vec<u8> {
 
 // ---------------------------------------------------------------- v2
 
-fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
+fn parse_v2(r: &mut R, patch: u8) -> Result<LazySff> {
     for _ in 0..4 {
         u32_(r)?;
     }
@@ -415,7 +651,8 @@ fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
     }
 
     // sprites
-    let mut list: Vec<Sprite> = Vec::with_capacity(spr_count.min(1 << 16) as usize);
+    let mut recipes = Vec::with_capacity(spr_count.min(1 << 16) as usize);
+    let mut list: Vec<Node> = Vec::with_capacity(spr_count.min(1 << 16) as usize);
     for i in 0..spr_count as usize {
         r.seek(SeekFrom::Start(spr_ofs + i as u64 * 28))?;
         let group = u16_(r)?;
@@ -445,38 +682,43 @@ fn parse_v2(r: &mut R, patch: u8) -> Result<Sff> {
             palette: Some(palidx),
             pixels: Pixels::Indexed(Vec::new()),
         };
-        if len == 0 {
+        let (recipe, is_link) = if len == 0 {
             if link < i {
                 let src = &list[link];
-                spr.width = src.width;
-                spr.height = src.height;
-                spr.pixels = src.pixels.clone();
-                if spr.palette.is_none() {
-                    spr.palette = src.palette;
-                }
+                spr.width = src.w;
+                spr.height = src.h;
+                (src.recipe, true)
             } else {
                 spr.palette = Some(0);
+                (Recipe::Empty, false)
             }
         } else {
-            match read_v2_pixels(r, data, len, format, depth, width, height) {
-                Ok(px) => spr.pixels = px,
-                Err(e) => {
-                    log::debug!("sff: sprite {group},{number}: {e}");
-                    spr.pixels = Pixels::Indexed(vec![0; width as usize * height as usize]);
-                }
-            }
-            if matches!(spr.pixels, Pixels::Rgba(_)) {
-                spr.palette = None;
-            }
-        }
+            (
+                Recipe::V2 {
+                    ofs: data,
+                    len,
+                    format,
+                    depth,
+                    w: width,
+                    h: height,
+                },
+                false,
+            )
+        };
+        list.push(Node {
+            w: spr.width,
+            h: spr.height,
+            palette: spr.palette,
+            recipe,
+        });
         if !sff.sprites.contains_key(&(group, number)) {
-            sff.sprites.insert((group, number), spr.clone());
+            sff.sprites.insert((group, number), spr);
+            recipes.push((recipe, is_link));
         } else {
             log::debug!("sff: duplicate sprite {group},{number} (index {i} ignored)");
         }
-        list.push(spr);
     }
-    Ok(sff)
+    Ok(LazySff { sff, recipes })
 }
 
 fn read_v2_palette(r: &R, ofs: u64, len: u32, patch: u8) -> Palette {
@@ -502,7 +744,7 @@ fn read_v2_palette(r: &R, ofs: u64, len: u32, patch: u8) -> Palette {
 }
 
 fn read_v2_pixels(
-    r: &R,
+    file: &[u8],
     ofs: u64,
     len: u32,
     format: u8,
@@ -510,7 +752,8 @@ fn read_v2_pixels(
     w: u16,
     h: u16,
 ) -> Result<Pixels> {
-    let data = slice(r, ofs, len as u64);
+    let (s, e) = clamp_range(file.len(), ofs, len as u64);
+    let data = &file[s..e];
     match format {
         0 => match depth {
             8 => Ok(Pixels::Indexed(fit(data.to_vec(), w, h))),
@@ -1376,47 +1619,23 @@ impl Sff {
     /// Independent of how the file was compressed (PCX, RLE, LZ5, PNG, an
     /// `.rgc` section); the content fingerprint uses it for sprites.
     pub fn canonical_hash(&self) -> [u8; 32] {
-        use sha2::Digest;
-        let mut h = sha2::Sha256::new();
-        h.update(b"rugen-spr-1\n");
-        h.update([match self.version {
-            None => 0u8,
-            Some(Version::V1) => 1,
-            Some(Version::V2 { .. }) => 2,
-        }]);
-        h.update((self.palettes.len() as u32).to_le_bytes());
-        for p in &self.palettes {
-            h.update((p.len() as u32).to_le_bytes());
-            for c in p {
-                h.update(c);
-            }
-        }
-        h.update((self.palette_keys.len() as u32).to_le_bytes());
-        for (&(g, n), &i) in &self.palette_keys {
-            h.update(g.to_le_bytes());
-            h.update(n.to_le_bytes());
-            h.update((i as u32).to_le_bytes());
-        }
-        h.update((self.sprites.len() as u32).to_le_bytes());
+        let mut h = CanonicalHasher::new(
+            self.version,
+            &self.palettes,
+            &self.palette_keys,
+            self.sprites.len(),
+        );
         for s in self.sprites.values() {
-            h.update(s.group.to_le_bytes());
-            h.update(s.number.to_le_bytes());
-            h.update(s.width.to_le_bytes());
-            h.update(s.height.to_le_bytes());
-            h.update(s.offset[0].to_le_bytes());
-            h.update(s.offset[1].to_le_bytes());
-            h.update(s.palette.map_or(u32::MAX, |p| p as u32).to_le_bytes());
-            let px = s.decoded();
-            let (kind, bytes): (u8, &[u8]) = match px.as_ref() {
-                Pixels::Indexed(p) => (0, p),
-                Pixels::Rgba(p) => (1, p),
-                Pixels::Packed(_) => (2, &[]),
-            };
-            h.update([kind]);
-            h.update((bytes.len() as u32).to_le_bytes());
-            h.update(bytes);
+            h.sprite(
+                (s.group, s.number),
+                s.width,
+                s.height,
+                s.offset,
+                s.palette,
+                &s.decoded(),
+            );
         }
-        h.finalize().into()
+        h.finish()
     }
 
     /// Add an indexed sprite using palette slot `pal`.

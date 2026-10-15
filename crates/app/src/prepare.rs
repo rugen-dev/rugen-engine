@@ -150,6 +150,14 @@ pub fn start(lib: &Library) -> Arc<Preparer> {
 fn lower_priority() {
     #[cfg(target_os = "linux")]
     nice::lower();
+    #[cfg(windows)]
+    {
+        use thread_priority::{ThreadPriority, WinAPIThreadPriority};
+        let below = ThreadPriority::Os(WinAPIThreadPriority::BelowNormal.into());
+        if thread_priority::set_current_thread_priority(below).is_err() {
+            log::debug!("could not lower the preparation thread's priority");
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -414,18 +422,19 @@ pub fn preload(setup: &crate::play::FightSetup, data_dir: &Path) {
             for c in &chars {
                 rugen_sim::CharData::preload(c, &data_dir);
             }
-            // the stage's files into the page cache (its sprites decode on draw)
+            // the stage's files into the page cache (its sprites decode on
+            // draw): the section bytes as stored, never a rebuilt SFF
             if let Some(def) = stage
                 && let Ok(d) = rugen_formats::def::Def::open(&def)
             {
-                let _ = rugen_formats::vfs::read(&def);
+                rugen_formats::vfs::warm(&def);
                 if let Some(spr) = d.section("bgdef").and_then(|b| b.raw("spr"))
                     && let Ok(p) = rugen_sim::chardata::resolve(
                         def.parent().unwrap_or(Path::new(".")),
                         spr.trim(),
                     )
                 {
-                    let _ = rugen_formats::vfs::read(&p);
+                    rugen_formats::vfs::warm(&p);
                 }
             }
             log::info!(

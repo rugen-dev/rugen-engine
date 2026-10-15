@@ -28,6 +28,23 @@ pub struct Packed {
 thread_local! {
     static DCTX: std::cell::RefCell<Option<zstd::bulk::Decompressor<'static>>> =
         const { std::cell::RefCell::new(None) };
+    static CCTX: std::cell::RefCell<Option<(i32, zstd::bulk::Compressor<'static>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// zstd `src` at `level` into one frame, reusing this thread's context (a
+/// fresh context per block costs more than compressing a small block).
+pub(crate) fn zstd(src: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
+    CCTX.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.as_ref().is_none_or(|(l, _)| *l != level) {
+            *c = Some((level, zstd::bulk::Compressor::new(level)?));
+        }
+        match c.as_mut() {
+            Some((_, z)) => z.compress(src),
+            None => zstd::bulk::compress(src, level),
+        }
+    })
 }
 
 /// Decompress a zstd frame of exactly `n` bytes, reusing this thread's context.

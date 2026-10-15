@@ -42,8 +42,22 @@ pub const HEADER_LEN: usize = 64;
 pub const MAX_ENTRIES: usize = 16_384;
 /// Largest decompressed section a reader accepts.
 pub const MAX_SECTION: u64 = 1 << 30;
-/// zstd level for files, logic and the TOC.
-pub const LEVEL: i32 = 19;
+/// zstd level for files, logic and the TOC (see [`level`]).
+pub const LEVEL: i32 = 6;
+
+/// The zstd level conversions use: [`LEVEL`], or `RUGEN_ZSTD_LEVEL` when
+/// set (benchmarks). Level 19 cost 92 % of a conversion for a few percent
+/// of size; readers do not care which level wrote a frame.
+pub fn level() -> i32 {
+    static L: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *L.get_or_init(|| {
+        std::env::var("RUGEN_ZSTD_LEVEL")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|l| (1..=22).contains(l))
+            .unwrap_or(LEVEL)
+    })
+}
 
 /// What a content file holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,7 +450,7 @@ fn toc_bytes(entries: &[Entry]) -> Vec<u8> {
 /// zstd at `level` when it saves at least 2 %, else stored.
 pub fn compress(raw: &[u8], level: i32) -> (Codec, Vec<u8>) {
     if raw.len() >= 64
-        && let Ok(z) = zstd::bulk::compress(raw, level)
+        && let Ok(z) = crate::pack::zstd(raw, level)
         && z.len() < raw.len() - raw.len() / 50
     {
         return (Codec::Zstd, z);
@@ -508,7 +522,7 @@ impl Writer {
         let json = serde_json::to_vec(meta).map_err(|e| Error::fmt(F, e.to_string()))?;
         let mut e = Entry::new(SectionKind::Meta, "");
         e.hash = sha256(&json);
-        self.add(e, &json, LEVEL)
+        self.add(e, &json, level())
     }
 
     pub fn add_logic(&mut self, schema: &str, payload: &[u8]) -> Result<()> {
@@ -518,7 +532,7 @@ impl Writer {
         raw.extend_from_slice(payload);
         let mut e = Entry::new(SectionKind::Logic, "");
         e.hash = sha256(&raw);
-        self.add(e, &raw, LEVEL)
+        self.add(e, &raw, level())
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -528,7 +542,7 @@ impl Writer {
     /// Write the TOC and header. `fingerprint`: see [`Archive::fingerprint`].
     pub fn finish(mut self, fingerprint: [u8; 32]) -> Result<()> {
         let toc = toc_bytes(&self.entries);
-        let z = zstd::bulk::compress(&toc, LEVEL).map_err(Error::Io)?;
+        let z = crate::pack::zstd(&toc, level()).map_err(Error::Io)?;
         let toc_ofs = self.pos;
         self.out.write_all(&z)?;
         let mut h = [0u8; HEADER_LEN];

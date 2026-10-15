@@ -8,12 +8,72 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use std::sync::Mutex;
+
 use rugen_content::{Entry, Library, Manifest, VerifyInfo};
 use rugen_sim::world::Stage;
-use rugen_sim::{Buttons, CharData, Rng, World};
+use rugen_sim::{Buttons, CharData, FxData, Rng, World};
 
 /// Frames per soak match.
 pub const SOAK_FRAMES: u32 = 3000;
+
+/// The source hash part of [`rugen_sim::chardata::LOGIC_SCHEMA`]
+/// (`<version>-<hash>`): what a verdict depends on.
+pub fn sim_schema() -> &'static str {
+    let s = rugen_sim::chardata::LOGIC_SCHEMA;
+    s.strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "-"))
+        .unwrap_or(s)
+}
+
+/// Whether `v` was made by a simulation this engine still runs.
+pub fn verdict_current(v: &VerifyInfo) -> bool {
+    if v.schema.is_empty() {
+        return v.engine_version == env!("CARGO_PKG_VERSION");
+    }
+    v.schema == sim_schema()
+}
+
+/// With two cores or fewer the mirror soak alone is the verdict: the
+/// sparring soak would double the time of a first launch.
+fn low_end() -> bool {
+    std::thread::available_parallelism().is_ok_and(|n| n.get() <= 2)
+}
+
+/// Loaded once per process: the sparring partner and the fight effects
+/// (the preparation loop verifies every fighter of the library in turn).
+struct Shared {
+    sparring: Option<(PathBuf, Arc<CharData>)>,
+    fx: Option<(PathBuf, Option<Arc<FxData>>)>,
+}
+
+static SHARED: Mutex<Shared> = Mutex::new(Shared {
+    sparring: None,
+    fx: None,
+});
+
+fn sparring_data(def: &Path, data_dir: &Path) -> Option<Arc<CharData>> {
+    let mut s = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, d)) = &s.sparring
+        && p == def
+    {
+        return Some(d.clone());
+    }
+    let d = CharData::load_original(def, data_dir).ok()?;
+    s.sparring = Some((def.to_path_buf(), d.clone()));
+    Some(d)
+}
+
+fn fx_data(data_dir: &Path) -> Option<Arc<FxData>> {
+    let mut s = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, fx)) = &s.fx
+        && p == data_dir
+    {
+        return fx.clone();
+    }
+    let fx = FxData::load(data_dir).ok();
+    s.fx = Some((data_dir.to_path_buf(), fx.clone()));
+    fx
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -65,6 +125,7 @@ impl Report {
             verdict: self.verdict.as_str().to_string(),
             issues: self.issues.clone(),
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema: sim_schema().to_string(),
             when: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -197,8 +258,11 @@ fn soak(
 }
 
 /// Load, inspect and soak a character. `sparring` is a known-good opponent
-/// (KFM) when available; the mirror match always runs.
-pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
+/// (KFM) when available; the mirror match always runs. `precompiled`
+/// takes the logic compiled into the content file when this engine
+/// compiled it (a file just converted: the same compiler ran on the same
+/// text moments ago); `rugen verify` compiles the text again.
+pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>, precompiled: bool) -> Report {
     let mut issues = Vec::new();
     let mut stats = Stats::default();
     let name = def
@@ -206,8 +270,13 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let t = Instant::now();
-    // the verdict is about the text files, never precompiled logic
-    let loaded = catch_unwind(AssertUnwindSafe(|| CharData::load_original(def, data_dir)));
+    let loaded = catch_unwind(AssertUnwindSafe(|| {
+        if precompiled {
+            CharData::load_with_data(def, data_dir)
+        } else {
+            CharData::load_original(def, data_dir)
+        }
+    }));
     stats.load_ms = t.elapsed().as_millis();
     let data = match loaded {
         Ok(Ok(d)) => d,
@@ -291,7 +360,7 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
     }
 
     // fightfx (sparks, dust) as in a real match, so F-anim lookups are meaningful
-    let fx = rugen_sim::FxData::load(data_dir).ok();
+    let fx = fx_data(data_dir);
     let mut ran = soak(
         data.clone(),
         data.clone(),
@@ -301,8 +370,11 @@ pub fn verify(def: &Path, data_dir: &Path, sparring: Option<&Path>) -> Report {
         &mut stats,
         &mut issues,
     );
-    if ran && let Some(sp) = sparring {
-        if let Ok(kfm) = CharData::load_original(sp, data_dir) {
+    if ran
+        && !low_end()
+        && let Some(sp) = sparring
+    {
+        if let Some(kfm) = sparring_data(sp, data_dir) {
             ran = soak(
                 data.clone(),
                 kfm,
@@ -350,23 +422,20 @@ pub fn sparring_partner(lib: &Library) -> Option<PathBuf> {
 }
 
 /// Prepare a character and make sure its manifest carries a verdict from
-/// this engine version, verifying it when needed (first launch per version).
+/// this engine's simulation, verifying it when needed (first launch after
+/// a release that changed the simulation; see [`verdict_current`]).
 pub fn prepare_verified(
     lib: &Library,
     entry: &Entry,
 ) -> rugen_content::Result<(PathBuf, Manifest)> {
     let (dir, mut m) = lib.prepare_char(entry)?;
-    let current = env!("CARGO_PKG_VERSION");
-    if m.verify
-        .as_ref()
-        .is_some_and(|v| v.engine_version == current)
-    {
+    if m.verify.as_ref().is_some_and(verdict_current) {
         return Ok((dir, m));
     }
     log::info!("verifying {} ...", entry.id);
     let sparring = sparring_partner(lib);
     let def = m.def_path(&dir);
-    let report = verify(&def, &lib.data_dir(), sparring.as_deref());
+    let report = verify(&def, &lib.data_dir(), sparring.as_deref(), true);
     log::info!(
         "{}: {} ({} issues)",
         report.name,

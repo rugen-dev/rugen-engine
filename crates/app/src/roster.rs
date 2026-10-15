@@ -293,6 +293,7 @@ impl Roster {
                     // shown as broken: verification never got to run
                     c.manifest.verify = Some(rugen_content::VerifyInfo {
                         engine_version: env!("CARGO_PKG_VERSION").into(),
+                        schema: crate::verify::sim_schema().to_string(),
                         verdict: "broken".into(),
                         issues: vec![e],
                         when: 0,
