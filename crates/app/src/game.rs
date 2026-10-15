@@ -444,6 +444,15 @@ pub struct Shell {
     rematches_left: u32,
     /// The window title last set (the debug HUD's, set only when it changes).
     last_title: Option<String>,
+    /// The next fight, loaded as the versus screen came up so its sprites
+    /// go to the GPU while the screen shows (keyed by the setup it is for).
+    warm_fight: Option<(String, Config, Box<Match>)>,
+}
+
+/// What a fight loaded ahead on the versus screen is good for: this setup
+/// (plain data; its debug form is the key) with the settings it was loaded with.
+fn warm_key(setup: &FightSetup) -> String {
+    format!("{setup:?}")
 }
 
 /// `RUGEN_HARNESS_FAST=n`: ticks per drawn frame instead of the wall clock.
@@ -583,6 +592,7 @@ impl Shell {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
             last_title: None,
+            warm_fight: None,
         }
     }
 
@@ -1264,7 +1274,37 @@ impl Shell {
         }
     }
 
+    /// A fight loaded ahead on the versus screen is not wanted after all
+    /// (back to the select, another pick): its textures go with it.
+    fn drop_warm_fight(&mut self) {
+        if let Some((_, _, mut m)) = self.warm_fight.take() {
+            if let Some(g) = self.gpu.as_mut() {
+                m.release_gpu(&mut g.renderer);
+            }
+            log::debug!("the fight loaded ahead is dropped");
+        }
+    }
+
+    /// The fight `setup` describes, if it was loaded ahead on the versus
+    /// screen (the same setup and settings), else loaded now.
+    fn load_fight(&mut self, setup: &FightSetup, cfg: &Config) -> anyhow::Result<Match> {
+        if setup.net.is_none()
+            && let Some((key, loaded_with, _)) = &self.warm_fight
+            && *key == warm_key(setup)
+            && loaded_with == cfg
+        {
+            let (_, _, m) = self.warm_fight.take().expect("checked");
+            log::info!("the fight was loaded ahead on the versus screen");
+            return Ok(*m);
+        }
+        self.drop_warm_fight();
+        Match::load(setup, &self.motif_dir, &self.data_dir, cfg)
+    }
+
     fn transition(&mut self, t: Transition) {
+        if !matches!(t, Transition::Fight(_)) {
+            self.drop_warm_fight();
+        }
         self.transition_inner(t);
         // no match left (on screen or parked under the options): its fighters'
         // voices stop and their samples go, so nothing carries into the next fight
@@ -1851,6 +1891,23 @@ impl Shell {
                 self.play_system_music("vs");
                 // load both fighters and the stage while the versus screen shows
                 crate::prepare::preload(&setup, &self.data_dir);
+                // a local fight whose content is ready loads now: the versus
+                // screen's idle frames put its sprites on the GPU
+                // (`Match::prefetch`), so the first fight frame uploads nothing
+                if setup.net.is_none() && crate::prepare::waiting_for(&setup).is_empty() {
+                    let mut ready = setup.clone();
+                    if crate::prepare::resolve_pending(&mut ready) {
+                        let t = Instant::now();
+                        match Match::load(&ready, &self.motif_dir, &self.data_dir, &self.config) {
+                            Ok(m) => {
+                                crate::timing::took("loading the fight ahead", t.elapsed());
+                                self.warm_fight =
+                                    Some((warm_key(&ready), self.config.clone(), Box::new(m)));
+                            }
+                            Err(e) => log::warn!("loading the fight ahead: {e:#}"),
+                        }
+                    }
+                }
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Versus) => {
                         match UiScreen::load_versus(
@@ -1912,7 +1969,7 @@ impl Shell {
                 };
                 crate::timing::fight_requested();
                 let load_start = Instant::now();
-                let loaded = Match::load(&setup, &self.motif_dir, &self.data_dir, &cfg);
+                let loaded = self.load_fight(&setup, &cfg);
                 crate::timing::took("loading the fight", load_start.elapsed());
                 match loaded {
                     Ok(mut m) => {
@@ -2774,6 +2831,13 @@ impl Shell {
             && u.kind == UiKind::Options
         {
             r.set_render_scale(u.config.video.render_scale_value(r.lowspec_hint()));
+        }
+        // the versus screen: the next fight's sprites go up meanwhile
+        if let Some((_, _, m)) = self.warm_fight.as_mut()
+            && (matches!(&self.screen, Screen::Versus(_))
+                || matches!(&self.screen, Screen::Ui(u) if u.kind == UiKind::Versus))
+        {
+            m.prefetch(r, crate::play::versus_upload_budget());
         }
         let build_start = Instant::now();
         r.begin();

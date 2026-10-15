@@ -504,14 +504,15 @@ fn main() -> anyhow::Result<()> {
                 debug,
                 window: harness_window(&args),
             };
-            let shell = game::Shell::new(
-                config,
-                lib,
-                game::Transition::Fight(setup),
-                true,
-                harness,
-                None,
-            );
+            // `RUGEN_HARNESS_VERSUS=1`: through the versus screen first (the
+            // fight loaded ahead and its uploads there)
+            let start = if std::env::var_os("RUGEN_HARNESS_VERSUS").is_some() {
+                let sides = [0, 1].map(|i| versus::Portrait::new(setup.ids[i].clone(), None));
+                game::Transition::Versus(setup, sides)
+            } else {
+                game::Transition::Fight(setup)
+            };
+            let shell = game::Shell::new(config, lib, start, true, harness, None);
             shell.run()
         }
         Some("screenpack-gen") => {
