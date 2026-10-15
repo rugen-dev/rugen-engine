@@ -757,11 +757,11 @@ impl Parser<'_> {
             // named constants
             "const" => {
                 let n = self.paren_ident()?;
-                nullary(self, T::Const(n))
+                nullary(self, T::Const(n.into()))
             }
             "gethitvar" => {
                 let n = self.paren_ident()?;
-                nullary(self, T::GetHitVar(n))
+                nullary(self, T::GetHitVar(n.into()))
             }
             "const240p" | "const480p" | "const720p" => {
                 self.paren_expr()?;
@@ -849,7 +849,7 @@ impl Parser<'_> {
             "command" => {
                 let ne = self.eq_or_ne("Command")?;
                 let s = self.string()?;
-                self.emit(Op::Trigger(T::Command(s)));
+                self.emit(Op::Trigger(T::Command(s.into())));
                 if ne {
                     self.emit(Op::LNot);
                 }
@@ -866,7 +866,10 @@ impl Parser<'_> {
                 };
                 let ne = self.eq_or_ne(name)?;
                 let s = self.string()?;
-                self.emit(Op::Trigger(T::NameIs { which, text: s }));
+                self.emit(Op::Trigger(T::NameIs {
+                    which,
+                    text: s.into(),
+                }));
                 if ne {
                     self.emit(Op::LNot);
                 }
@@ -876,7 +879,9 @@ impl Parser<'_> {
                 let n = self.paren_ident()?;
                 let ne = self.eq_or_ne("StageVar")?;
                 let s = self.string()?;
-                self.emit(Op::Trigger(T::StageVarIs { name: n, text: s }));
+                self.emit(Op::Trigger(T::StageVarIs(Box::new(
+                    crate::trigger::StageVar { name: n, text: s },
+                ))));
                 if ne {
                     self.emit(Op::LNot);
                 }
@@ -1247,10 +1252,10 @@ mod tests {
                 Trigger::Time => Value::Int(7),
                 Trigger::Pos(Axis::Y) => Value::Float(-3.0),
                 Trigger::AnimElemTime => Value::Int(args[0].to_i() * 10),
-                Trigger::Command(s) => Value::bool(s == "QCF_x"),
+                Trigger::Command(s) => Value::bool(&**s == "QCF_x"),
                 Trigger::StateTypeIs { p2: false, mask } => Value::bool(mask & flags::ST_S != 0),
                 Trigger::NumHelper => Value::Int(args[0].to_i()),
-                Trigger::Const(n) => Value::bool(n == "velocity.walk.fwd.x"),
+                Trigger::Const(n) => Value::bool(&**n == "velocity.walk.fwd.x"),
                 Trigger::HitDefAttrIs { st, at } => Value::Int((*st | *at) as i32),
                 Trigger::ProjHitTime => Value::Int(3),
                 _ => Value::Bottom,

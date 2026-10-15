@@ -400,10 +400,10 @@ impl Context for Ctx<'_> {
                     None => Self::b(false),
                 }
             }
-            T::StageVarIs { name, text } => Self::b(match name.as_str() {
-                "info.name" => self.w.stage.name.eq_ignore_ascii_case(text),
-                "info.displayname" => self.w.stage.display_name.eq_ignore_ascii_case(text),
-                "info.author" => self.w.stage.author.eq_ignore_ascii_case(text),
+            T::StageVarIs(sv) => Self::b(match sv.name.as_str() {
+                "info.name" => self.w.stage.name.eq_ignore_ascii_case(&sv.text),
+                "info.displayname" => self.w.stage.display_name.eq_ignore_ascii_case(&sv.text),
+                "info.author" => self.w.stage.author.eq_ignore_ascii_case(&sv.text),
                 _ => false,
             }),
             // helpers without keyctrl read no command input (MUGEN Helper doc, Ikemen `command`)
@@ -415,7 +415,7 @@ impl Context for Ctx<'_> {
             T::Const(name) => match p.size.konst(name).or_else(|| data.konst(name)) {
                 Some(v) => {
                     // ints stay ints so `const(data.life)` compares like MUGEN
-                    if name.starts_with("data.") && name != "data.fall.defence_mul"
+                    if name.starts_with("data.") && &**name != "data.fall.defence_mul"
                         || name.starts_with("size.") && !name.contains("scale")
                     {
                         Self::i(v as i32)
@@ -429,9 +429,10 @@ impl Context for Ctx<'_> {
                 }
             },
             T::GetHitVar(name) => {
+                let name: &str = name;
                 let g = &p.ghv;
                 let ht = |t: HitType| Self::i(t as i32);
-                match name.as_str() {
+                match name {
                     "xveladd" => Self::f(g.xveladd),
                     "yveladd" => Self::f(g.yveladd),
                     "type" => ht(g.hit_type),

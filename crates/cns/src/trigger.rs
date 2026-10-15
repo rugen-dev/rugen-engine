@@ -59,6 +59,14 @@ pub enum ProjEvent {
 }
 
 /// `args` = number of values popped from the stack, in order.
+/// `StageVar(name) = "text"`, boxed so the rare variant does not size every
+/// `Op` (the bytecode's footprint matters in the cache of old CPUs).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct StageVar {
+    pub name: String,
+    pub text: String,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum Trigger {
     // --- nullary, player state
@@ -164,16 +172,13 @@ pub enum Trigger {
     // --- string comparisons; the context compares case-insensitively
     NameIs {
         which: NameWhich,
-        text: String,
+        text: Box<str>,
     },
-    StageVarIs {
-        name: String,
-        text: String,
-    },
-    Command(String),
+    StageVarIs(Box<StageVar>),
+    Command(Box<str>),
     // --- one static name
-    Const(String),
-    GetHitVar(String),
+    Const(Box<str>),
+    GetHitVar(Box<str>),
     // --- stack args
     /// args: 1 (element number)
     AnimElemTime,
