@@ -471,6 +471,39 @@ impl CharData {
         self.consts.get(name).copied()
     }
 
+    /// The character's own sounds in the order a fight is likely to need
+    /// them: the constant `PlaySnd` keys of the basic states (0-199), then
+    /// of the hit states (5000-5999), then of every other state, each key
+    /// once; sounds no state names constantly are left out (the audio
+    /// prefetch appends the rest of the `.snd` itself).
+    pub fn sound_order(&self) -> Vec<(i32, i32)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let ranges: [std::ops::Range<i32>; 3] = [0..200, 5000..6000, i32::MIN..i32::MAX];
+        for r in ranges {
+            for state in self.states.range(r.clone()) {
+                for c in &state.1.ctrls {
+                    let Sctrl::PlaySnd {
+                        own: true,
+                        group,
+                        number,
+                        ..
+                    } = &c.op
+                    else {
+                        continue;
+                    };
+                    if let (Some(g), Some(n)) = (group.as_const(), number.as_const()) {
+                        let key = (g.to_i(), n.to_i());
+                        if seen.insert(key) {
+                            out.push(key);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Copy with extra states parsed from `text` (overriding existing numbers). For tests and tools.
     /// Like [`with_states`](Self::with_states) but keeps going on compile
     /// problems (bad controllers become `Null`), as the real loader does.

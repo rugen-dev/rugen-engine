@@ -747,7 +747,7 @@ pub fn resolve_sound<'w>(
     announcer: bool,
     group: i32,
     number: i32,
-) -> (SoundKey, Option<std::borrow::Cow<'w, [u8]>>) {
+) -> (SoundKey, Option<&'w rugen_formats::snd::Sound>) {
     let (bank, bytes) = if announcer {
         (
             banks.announcer,
@@ -755,7 +755,7 @@ pub fn resolve_sound<'w>(
                 .fx
                 .as_ref()
                 .and_then(|f| f.fight_snd.as_ref())
-                .and_then(|s| s.get(group, number)),
+                .and_then(|s| s.sounds.get(&(group, number))),
         )
     } else if own {
         let d = world.players[player].data;
@@ -764,7 +764,7 @@ pub fn resolve_sound<'w>(
             world.data[d]
                 .snd
                 .as_ref()
-                .and_then(|s| s.get(group, number)),
+                .and_then(|s| s.sounds.get(&(group, number))),
         )
     } else {
         (
@@ -773,7 +773,7 @@ pub fn resolve_sound<'w>(
                 .fx
                 .as_ref()
                 .and_then(|f| f.snd.as_ref())
-                .and_then(|s| s.get(group, number)),
+                .and_then(|s| s.sounds.get(&(group, number))),
         )
     };
     (
@@ -790,6 +790,8 @@ pub struct Match {
     pub world: World,
     /// Who owns which sounds (see [`SoundBanks`]).
     banks: SoundBanks,
+    /// The fighters' sounds were handed to the audio decode thread.
+    prefetched: bool,
     /// Draw the fight without its HUD (the pause menu's frozen backdrop).
     pub hud_hidden: bool,
     /// `rugen debug`: the fighter debugger (history, selection, panel data).
@@ -1106,6 +1108,7 @@ impl Match {
             sim_rules,
             world,
             banks: SoundBanks::new(),
+            prefetched: false,
             flee_menu: None,
             early: None,
             ranked: None,
@@ -1336,6 +1339,12 @@ impl Match {
     /// Advance one tick with both players' inputs. Returns false when the
     /// frame did not advance (paused, or netplay waiting on the peer).
     pub fn tick(&mut self, inputs: [Buttons; 2], audio: &mut Option<Audio>) -> bool {
+        if let Some(a) = audio.as_mut()
+            && !self.prefetched
+        {
+            self.prefetched = true;
+            self.prefetch_sounds(a);
+        }
         if self.paused && !self.step {
             return false;
         }
@@ -2214,6 +2223,27 @@ impl Match {
     }
 
     /// Play one sound event through the audio crate.
+    /// Hand the fight's sounds to the audio decode thread, the ones the
+    /// fighters' states play first (see `CharData::sound_order`), so the
+    /// first hits find their samples ready and no decode runs on this thread.
+    fn prefetch_sounds(&mut self, audio: &mut Audio) {
+        for d in 0..self.world.data.len() {
+            let data = &self.world.data[d];
+            if let Some(snd) = &data.snd {
+                let bank = self.banks.char_bank(d);
+                audio.prefetch(bank, snd, data.sound_order());
+            }
+        }
+        if let Some(fx) = &self.world.fx {
+            if let Some(snd) = &fx.snd {
+                audio.prefetch(self.banks.common, snd, []);
+            }
+            if let Some(snd) = &fx.fight_snd {
+                audio.prefetch(self.banks.announcer, snd, []);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn play_sound(
         &mut self,
@@ -2240,8 +2270,9 @@ impl Match {
         );
         if !audio.is_loaded(key) {
             match bytes {
-                Some(b) => {
-                    audio.load(key, &b);
+                // decoded off this thread; the play below waits for it
+                Some(s) => {
+                    audio.load_sound(key, s);
                 }
                 None => return,
             }
@@ -4845,7 +4876,7 @@ mod tests {
         let mut play = |w: &World, banks: &mut SoundBanks| {
             let (key, bytes) = resolve_sound(w, banks, 0, true, false, first.0, first.1);
             if !cache.is_loaded(key) {
-                cache.load(key, &bytes.expect("sound found"));
+                cache.load(key, &bytes.expect("sound found").bytes());
             }
             (key, cache.get(key).expect("decoded").frames.len())
         };

@@ -11,13 +11,20 @@
 //! [`BANK_BUDGET`] bytes of samples; these are the only decoded copy (the
 //! `.snd` side reads or decodes a sound's WAV bytes when asked, see
 //! `rugen_formats::snd`).
+//!
+//! Decoding never runs on the game thread: [`Audio::load_sound`] hands a
+//! sound to a decode thread and [`Audio::play`] of it waits for the frames
+//! (started by [`Audio::gc`] the next frame), and [`Audio::prefetch`] decodes
+//! a fight's likely sounds ahead of time, in the background, within budget.
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+
+use rugen_formats::snd::{Snd, Sound};
 
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
@@ -110,16 +117,32 @@ impl SampleCache {
             e.last.store(self.now(), Ordering::Relaxed);
             return e.data.is_some();
         }
-        let data = decode(wav).map(Arc::new);
+        self.insert(key, decode(wav).map(Arc::new))
+    }
+
+    /// Remember a decoded sample (`None`: known unplayable). Returns whether
+    /// it is playable.
+    pub fn insert(&mut self, key: SoundKey, data: Option<Arc<StaticSoundData>>) -> bool {
+        if let Some(e) = self.map.get(&key) {
+            e.last.store(self.now(), Ordering::Relaxed);
+            return e.data.is_some();
+        }
         let ok = data.is_some();
-        let bytes = data
-            .as_ref()
-            .map_or(0, |d| d.frames.len() * std::mem::size_of::<kira::Frame>());
+        let bytes = data.as_ref().map_or(0, |d| frame_bytes(d));
         *self.held.entry(key.bank).or_default() += bytes;
         let last = AtomicU64::new(self.now());
         self.map.insert(key, Entry { data, bytes, last });
         self.evict(key);
         ok
+    }
+
+    /// Whether `bytes` more fit in `bank` without evicting anything.
+    pub fn fits(&self, bank: BankId, bytes: usize) -> bool {
+        self.held(bank) + bytes <= self.budget
+    }
+
+    pub fn contains(&self, key: SoundKey) -> bool {
+        self.map.contains_key(&key)
     }
 
     /// Drop the least recently used samples of `keep`'s bank until it fits
@@ -172,6 +195,148 @@ impl SampleCache {
     }
 }
 
+fn frame_bytes(d: &StaticSoundData) -> usize {
+    d.frames.len() * std::mem::size_of::<kira::Frame>()
+}
+
+/// Decodes sounds off the main thread: urgent jobs (a sound asked to play
+/// now) before background ones (a fight's prefetch, in the order the
+/// fighter is likely to use them). Results come back through a channel
+/// the main thread drains each frame ([`Audio::poll`]).
+struct Worker {
+    queues: Arc<(Mutex<Queues>, Condvar)>,
+    results: std::sync::mpsc::Receiver<Done>,
+}
+
+#[derive(Default)]
+struct Queues {
+    urgent: VecDeque<Job>,
+    background: VecDeque<Job>,
+    /// Banks whose background decoding was called off (over budget or
+    /// released): their queued jobs are skipped.
+    off: HashSet<BankId>,
+    quit: bool,
+}
+
+struct Job {
+    key: SoundKey,
+    sound: Sound,
+    urgent: bool,
+    generation: u64,
+}
+
+struct Done {
+    key: SoundKey,
+    data: Option<Arc<StaticSoundData>>,
+    urgent: bool,
+    generation: u64,
+}
+
+impl Worker {
+    fn start() -> Self {
+        let queues: Arc<(Mutex<Queues>, Condvar)> = Arc::default();
+        let (tx, results) = std::sync::mpsc::channel();
+        let q = queues.clone();
+        let spawned = std::thread::Builder::new()
+            .name("audio-decode".into())
+            .spawn(move || {
+                let mut seen: HashSet<(u64, SoundKey)> = HashSet::new();
+                loop {
+                    let job = {
+                        let (m, cv) = &*q;
+                        let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+                        loop {
+                            if g.quit {
+                                return;
+                            }
+                            if let Some(j) = g.urgent.pop_front() {
+                                break j;
+                            }
+                            if let Some(j) = g.background.pop_front() {
+                                if g.off.contains(&j.key.bank) {
+                                    continue;
+                                }
+                                break j;
+                            }
+                            g = cv.wait(g).unwrap_or_else(|e| e.into_inner());
+                        }
+                    };
+                    // a sound both prefetched and asked for decodes once
+                    if !seen.insert((job.generation, job.key)) {
+                        continue;
+                    }
+                    let data = decode(&job.sound.bytes()).map(Arc::new);
+                    if tx
+                        .send(Done {
+                            key: job.key,
+                            data,
+                            urgent: job.urgent,
+                            generation: job.generation,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("audio decode thread: {e}; sounds decode on the main thread");
+            let (m, _) = &*queues;
+            m.lock().unwrap_or_else(|e| e.into_inner()).quit = true;
+        }
+        Self { queues, results }
+    }
+
+    fn push(&self, job: Job) -> bool {
+        let (m, cv) = &*self.queues;
+        let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+        if g.quit {
+            return false;
+        }
+        if job.urgent {
+            g.urgent.push_back(job);
+        } else {
+            g.background.push_back(job);
+        }
+        cv.notify_one();
+        true
+    }
+
+    /// Call off the background jobs of `bank`.
+    fn stop_background(&self, bank: BankId) {
+        let (m, _) = &*self.queues;
+        let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+        g.off.insert(bank);
+        g.background.retain(|j| j.key.bank != bank);
+    }
+
+    /// Forget every queued job (a fight ended); `off` is cleared with it.
+    fn clear(&self) {
+        let (m, _) = &*self.queues;
+        let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+        g.urgent.clear();
+        g.background.clear();
+        g.off.clear();
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let (m, cv) = &*self.queues;
+        m.lock().unwrap_or_else(|e| e.into_inner()).quit = true;
+        cv.notify_all();
+    }
+}
+
+/// A play asked for while its sample was still decoding.
+struct Queued {
+    player: usize,
+    channel: i32,
+    volume: i32,
+    pan: f32,
+    looping: bool,
+}
+
 /// WAV bytes to kira frames: plain PCM straight from the samples (what
 /// `.snd` files and decoded Opus hold), anything else through kira's
 /// decoder.
@@ -210,6 +375,13 @@ struct Voice {
 pub struct Audio {
     manager: AudioManager<DefaultBackend>,
     cache: SampleCache,
+    worker: Worker,
+    /// Samples being decoded, with the plays waiting for them.
+    pending: HashMap<SoundKey, Vec<Queued>>,
+    /// Bumped by [`Audio::release_fight`]: results of older jobs are dropped.
+    generation: u64,
+    /// Banks whose prefetch was started.
+    prefetched: HashSet<BankId>,
     /// `channel >= 0` voices by (player, channel).
     channels: HashMap<(usize, i32), Voice>,
     /// `channel -1` voices, kept so a fight change can stop them.
@@ -231,6 +403,10 @@ impl Audio {
         Ok(Self {
             manager,
             cache: SampleCache::default(),
+            worker: Worker::start(),
+            pending: HashMap::new(),
+            generation: 1,
+            prefetched: HashSet::new(),
             channels: HashMap::new(),
             free: Vec::new(),
             master: 1.0,
@@ -315,13 +491,106 @@ impl Audio {
         self.refresh_music();
     }
 
-    /// Decode and remember a sample. Returns false when the bytes are not playable.
+    /// Decode and remember a sample now, on this thread (short menu sounds
+    /// already in memory). Returns false when the bytes are not playable.
     pub fn load(&mut self, key: SoundKey, wav: &[u8]) -> bool {
         self.cache.load(key, wav)
     }
 
+    /// Decode a sound on the decode thread; a [`play`](Self::play) of `key`
+    /// before it is ready starts when it arrives (a frame or so later).
+    /// Returns false only when the sound is known unplayable.
+    pub fn load_sound(&mut self, key: SoundKey, sound: &Sound) -> bool {
+        self.poll();
+        if self.cache.contains(key) {
+            return self.cache.is_loaded(key);
+        }
+        if self.pending.contains_key(&key) {
+            return true;
+        }
+        let job = Job {
+            key,
+            sound: sound.clone(),
+            urgent: true,
+            generation: self.generation,
+        };
+        if self.worker.push(job) {
+            self.pending.insert(key, Vec::new());
+            true
+        } else {
+            // no decode thread: on this thread, as before
+            self.cache.load(key, &sound.bytes())
+        }
+    }
+
+    /// Decode `bank`'s sounds in the background, `order` first (the keys a
+    /// fighter's states play, most used states first), then the rest of
+    /// `snd`, until the bank's budget is reached. Once per bank.
+    pub fn prefetch(
+        &mut self,
+        bank: BankId,
+        snd: &Snd,
+        order: impl IntoIterator<Item = (i32, i32)>,
+    ) {
+        if !self.prefetched.insert(bank) {
+            return;
+        }
+        let mut seen = HashSet::new();
+        let keys = order
+            .into_iter()
+            .chain(snd.sounds.keys().copied())
+            .filter(|k| seen.insert(*k));
+        for (group, number) in keys {
+            let Some(sound) = snd.sounds.get(&(group, number)) else {
+                continue;
+            };
+            let key = SoundKey {
+                bank,
+                group,
+                number,
+            };
+            if self.cache.contains(key) || self.pending.contains_key(&key) {
+                continue;
+            }
+            if !self.worker.push(Job {
+                key,
+                sound: sound.clone(),
+                urgent: false,
+                generation: self.generation,
+            }) {
+                return;
+            }
+        }
+    }
+
+    /// Take the samples the decode thread finished: into the cache (a
+    /// background one only while its bank fits its budget; past that the
+    /// bank's prefetch stops) and start the plays waiting for them.
+    pub fn poll(&mut self) {
+        while let Ok(done) = self.worker.results.try_recv() {
+            if done.generation != self.generation {
+                continue;
+            }
+            let waiting = self.pending.remove(&done.key).unwrap_or_default();
+            if !done.urgent && waiting.is_empty() {
+                let bytes = done.data.as_ref().map_or(0, |d| frame_bytes(d));
+                if !self.cache.fits(done.key.bank, bytes) {
+                    self.worker.stop_background(done.key.bank);
+                    continue;
+                }
+            }
+            if !self.cache.insert(done.key, done.data) {
+                continue;
+            }
+            for q in waiting {
+                self.play(done.key, q.player, q.channel, q.volume, q.pan, q.looping);
+            }
+        }
+    }
+
+    /// Ready to play, or being decoded for a play.
     pub fn is_loaded(&self, key: SoundKey) -> bool {
-        self.cache.is_loaded(key)
+        self.cache.is_loaded(key) || self.pending.contains_key(&key)
     }
 
     /// Play a loaded sample. `volume` 0..=100 like PlaySnd, `pan` -1..=1, `channel` -1 = free voice.
@@ -334,6 +603,20 @@ impl Audio {
         pan: f32,
         looping: bool,
     ) {
+        if let Some(waiting) = self.pending.get_mut(&key) {
+            // a channel holds one sound: the newest queued play wins
+            if channel >= 0 {
+                waiting.retain(|q| !(q.player == player && q.channel == channel));
+            }
+            waiting.push(Queued {
+                player,
+                channel,
+                volume,
+                pan,
+                looping,
+            });
+            return;
+        }
         let Some(data) = self.cache.get(key).cloned() else {
             return;
         };
@@ -372,6 +655,9 @@ impl Audio {
     }
 
     pub fn stop_channel(&mut self, player: usize, channel: i32) {
+        for waiting in self.pending.values_mut() {
+            waiting.retain(|q| !(q.player == player && (channel < 0 || q.channel == channel)));
+        }
         if channel < 0 {
             let keys: Vec<(usize, i32)> = self
                 .channels
@@ -392,6 +678,11 @@ impl Audio {
     /// Stop every voice of a fight bank (anything but [`SYSTEM_BANK`]),
     /// keeping the decoded samples (a restarted round plays them again).
     pub fn stop_fight_voices(&mut self) {
+        for (k, waiting) in self.pending.iter_mut() {
+            if k.bank != SYSTEM_BANK {
+                waiting.clear();
+            }
+        }
         let fight = |v: &Voice| v.bank != SYSTEM_BANK;
         self.channels.retain(|_, v| {
             if fight(v) {
@@ -416,6 +707,11 @@ impl Audio {
     pub fn release_fight(&mut self) {
         self.stop_fight_voices();
         self.cache.release(|b| b != SYSTEM_BANK);
+        self.pending.retain(|k, _| k.bank == SYSTEM_BANK);
+        self.prefetched.retain(|b| *b == SYSTEM_BANK);
+        // results of this fight's jobs still in flight are dropped on arrival
+        self.worker.clear();
+        self.generation += 1;
     }
 
     /// Banks with cached samples (for tests and diagnostics).
@@ -423,8 +719,10 @@ impl Audio {
         self.cache.banks()
     }
 
-    /// Drop handles of finished sounds.
+    /// Start the plays whose samples arrived and drop handles of finished
+    /// sounds. Once per frame.
     pub fn gc(&mut self) {
+        self.poll();
         self.channels
             .retain(|_, v| v.handle.state() != PlaybackState::Stopped);
         self.free
