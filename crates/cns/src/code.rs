@@ -162,9 +162,21 @@ impl Code {
     }
 
     pub fn eval<C: Context>(&self, ctx: &mut C) -> Value {
-        let mut stack: Vec<Value> = Vec::with_capacity(16);
+        // The value stack comes from a per-thread pool, so a frame's
+        // thousands of trigger evaluations allocate nothing; taking one (not
+        // borrowing a single shared stack) keeps re-entrant evaluations
+        // (a trigger that evaluates another expression) independent.
+        let mut stack = STACKS.with(|p| p.borrow_mut().pop()).unwrap_or_default();
+        stack.clear();
         self.run(ctx, &mut stack, 0, self.ops.len());
-        stack.pop().unwrap_or(Value::Bottom)
+        let out = stack.pop().unwrap_or(Value::Bottom);
+        STACKS.with(|p| {
+            let mut p = p.borrow_mut();
+            if p.len() < 8 {
+                p.push(stack);
+            }
+        });
+        out
     }
 
     pub fn eval_b<C: Context>(&self, ctx: &mut C) -> bool {
@@ -289,10 +301,12 @@ impl Code {
                     st.push(ctx.set_var(*k, i.to_i(), v));
                 }
                 Op::Trigger(t) => {
-                    let n = t.arity();
+                    // triggers take at most one argument (`Trigger::arity`)
+                    let n = t.arity().min(1);
                     let at = st.len().saturating_sub(n);
-                    let args: Vec<Value> = st.drain(at..).collect();
-                    st.push(ctx.trigger(t, &args));
+                    let arg = [st.get(at).copied().unwrap_or(Value::Bottom)];
+                    st.truncate(at);
+                    st.push(ctx.trigger(t, &arg[..n]));
                 }
                 Op::Redirect { kind, with_id, len } => {
                     let id = if *with_id { Some(pop!().to_i()) } else { None };
@@ -314,6 +328,11 @@ impl Code {
             }
         }
     }
+}
+
+thread_local! {
+    /// Value stacks kept between evaluations (see [`Code::eval`]).
+    static STACKS: std::cell::RefCell<Vec<Vec<Value>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Context with no simulation behind it: every trigger is bottom.
