@@ -150,6 +150,14 @@ pub fn start(lib: &Library) -> Arc<Preparer> {
 fn lower_priority() {
     #[cfg(target_os = "linux")]
     nice::lower();
+    #[cfg(windows)]
+    {
+        use thread_priority::{ThreadPriority, WinAPIThreadPriority};
+        let below = ThreadPriority::Os(WinAPIThreadPriority::BelowNormal.into());
+        if thread_priority::set_current_thread_priority(below).is_err() {
+            log::debug!("could not lower the preparation thread's priority");
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
