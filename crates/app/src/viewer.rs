@@ -340,8 +340,16 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let size = window.inner_size();
         let mut renderer =
-            pollster::block_on(Renderer::new(window.clone(), size.width, size.height))
-                .expect("renderer");
+            match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = crate::gpu::gpu_error(&e);
+                    log::error!("{msg}");
+                    eprintln!("{msg}");
+                    event_loop.exit();
+                    return;
+                }
+            };
         let palettes = self
             .content
             .sff

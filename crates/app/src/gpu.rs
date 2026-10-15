@@ -18,7 +18,7 @@ impl Gpu {
         size: (u32, u32),
         fullscreen: bool,
         presentation: rugen_render::Presentation,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let mut attrs = Window::default_attributes()
             .with_title("rugen")
             .with_window_icon(window_icon())
@@ -32,7 +32,11 @@ impl Gpu {
         if fullscreen {
             attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
-        let window = Arc::new(event_loop.create_window(attrs).expect("window"));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .map_err(|e| format!("could not open a window: {e}"))?,
+        );
         let s = window.inner_size();
         let renderer = pollster::block_on(Renderer::with_presentation(
             window.clone(),
@@ -40,11 +44,23 @@ impl Gpu {
             s.height,
             presentation,
         ))
-        .expect("renderer");
+        .map_err(|e| gpu_error(&e))?;
         crate::machine::set_gpu(renderer.adapter());
         crate::machine::set_display(s.width, s.height);
-        Self { renderer, window }
+        Ok(Self { renderer, window })
     }
+}
+
+/// What to tell the player when no GPU device could be made (logged and
+/// printed; the shell quits instead of panicking in the event loop).
+pub fn gpu_error(e: &rugen_render::Error) -> String {
+    format!(
+        "rugen could not start the graphics device: {e}.\n\
+         rugen needs OpenGL ES 3.0 / OpenGL 3.3, Vulkan, DirectX 12 or Metal. \
+         Update the graphics driver; on an old or integrated GPU try WGPU_BACKEND=gl \
+         (or WGPU_BACKEND=vulkan) in the environment. Send the log around this line \
+         (RUST_LOG=info) when reporting the problem."
+    )
 }
 
 /// Window / taskbar icon, embedded from `motif/brand/icon.webp`.

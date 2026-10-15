@@ -440,6 +440,10 @@ pub struct Shell {
     waiting_fight: Option<FightSetup>,
     /// Harness: a mid-run screenshot due this frame (RUGEN_HARNESS_SHOTS).
     extra_shot: Option<PathBuf>,
+    /// Harness: fights still to play again once this one ends (RUGEN_HARNESS_REMATCH).
+    rematches_left: u32,
+    /// The window title last set (the debug HUD's, set only when it changes).
+    last_title: Option<String>,
 }
 
 /// `RUGEN_HARNESS_FAST=n`: ticks per drawn frame instead of the wall clock.
@@ -574,6 +578,11 @@ impl Shell {
             last_teams: Vec::new(),
             waiting_fight: None,
             extra_shot: None,
+            rematches_left: std::env::var("RUGEN_HARNESS_REMATCH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            last_title: None,
         }
     }
 
@@ -1281,6 +1290,21 @@ impl Shell {
         if let (Screen::Story(st, _), Some(g)) = (&mut self.screen, self.gpu.as_mut()) {
             st.release_gpu(&mut g.renderer);
         }
+        // a match being left (result, quit, rematch, online screen, the
+        // title) gives back its fighters', stage's and lifebar's textures;
+        // the pause menu's transitions keep it on screen
+        if let (Screen::Match(m), Some(g)) = (&mut self.screen, self.gpu.as_mut())
+            && !matches!(
+                t,
+                Transition::Resume
+                    | Transition::Restart
+                    | Transition::Training(_)
+                    | Transition::Lessons
+                    | Transition::Debugger
+            )
+        {
+            m.release_gpu(&mut g.renderer);
+        }
         // BUTTON CONFIG opened from the pause menu: leaving it goes straight
         // back to the paused match, not through the options
         let t = match t {
@@ -1456,6 +1480,13 @@ impl Shell {
                     info.winner,
                     info.wins
                 );
+                // harness: `RUGEN_HARNESS_REMATCH=n` plays the same fight
+                // again n times in one process (texture / memory checks)
+                if self.quick && self.rematches_left > 0 {
+                    self.rematches_left -= 1;
+                    self.transition(Transition::Fight(info.setup));
+                    return;
+                }
                 self.screen = match self.system.as_ref() {
                     Some(sys) if UiScreen::available(&self.motif_dir, UiKind::Result) => {
                         match UiScreen::load_result(
@@ -1856,7 +1887,11 @@ impl Shell {
                     return;
                 }
                 self.drop_pause();
-                self.parked = None;
+                if let Some(mut parked) = self.parked.take()
+                    && let Some(g) = self.gpu.as_mut()
+                {
+                    parked.release_gpu(&mut g.renderer);
+                }
                 // the fight being replaced (rematch, next arcade stage, online
                 // rematch) takes its voices and samples with it
                 if let Some(a) = self.audio.as_mut() {
@@ -2763,10 +2798,14 @@ impl Shell {
                 [0.0, 0.0, 0.0, 1.0],
             ),
         };
+        // only when it changed: on Wayland a new title redraws the client-side
+        // decoration in software (sampled as the top waste of a debug match)
         if let Screen::Match(m) = &self.screen
             && let Some(t) = m.debug_title()
+            && self.last_title.as_deref() != Some(t.as_str())
         {
             gpu.window.set_title(&t);
+            self.last_title = Some(t);
         }
         if self.fade > 0.0 {
             r.rect(
@@ -3070,6 +3109,16 @@ impl Shell {
 impl Drop for Shell {
     fn drop(&mut self) {
         self.save_replay();
+        // the renderer goes with the shell; released all the same so a
+        // dropped match never counts as a leak
+        if let Some(g) = self.gpu.as_mut() {
+            if let Screen::Match(m) = &mut self.screen {
+                m.release_gpu(&mut g.renderer);
+            }
+            if let Some(m) = self.parked.as_mut() {
+                m.release_gpu(&mut g.renderer);
+            }
+        }
     }
 }
 
@@ -3087,7 +3136,17 @@ impl ApplicationHandler for Shell {
         } else {
             rugen_render::Presentation::Vsync
         };
-        let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen, presentation);
+        let mut gpu =
+            match Gpu::create(event_loop, size, self.config.video.fullscreen, presentation) {
+                Ok(g) => g,
+                Err(msg) => {
+                    log::error!("{msg}");
+                    eprintln!("{msg}");
+                    self.quit = true;
+                    event_loop.exit();
+                    return;
+                }
+            };
         if let Some((w, h)) = self.harness.window {
             gpu.renderer.resize(w, h);
             crate::machine::set_display(w, h);
@@ -3246,6 +3305,18 @@ impl ApplicationHandler for Shell {
                     now + left - Duration::from_millis(1),
                 ));
             } else {
+                // the last two milliseconds: short naps between polls rather
+                // than a hot loop, which a dual-core cannot spare a core for.
+                // Windows' Sleep is a millisecond at best, so it yields there.
+                if left > Duration::from_micros(300) {
+                    if cfg!(windows) {
+                        std::thread::yield_now();
+                    } else {
+                        std::thread::sleep(Duration::from_micros(100));
+                    }
+                } else {
+                    std::thread::yield_now();
+                }
                 event_loop.set_control_flow(ControlFlow::Poll);
             }
         }

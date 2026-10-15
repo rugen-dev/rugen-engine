@@ -37,7 +37,13 @@ struct Vertex {
     color: [f32; 4],
     fx_mul: [f32; 4],
     fx_add: [f32; 4],
+    /// Texel rectangle of an atlas page sampled as if it were the whole
+    /// texture (`[x, y, w, h]`, `w == 0` = the texture itself); see [`Draw::rect`].
+    rect: [u16; 4],
 }
+
+/// No atlas rectangle: sample the texture itself.
+const WHOLE: [u16; 4] = [0; 4];
 
 /// How a draw combines with what is already on screen. Alphas are MUGEN
 /// style 0..=255: `Add { src, dst }` gives `dst*dst/255 + src*src/255`,
@@ -106,9 +112,9 @@ impl Tint {
     }
 }
 
-/// Clip one quad (`[c0, c1, c2, c0, c2, c3]`) to `r`: an axis-aligned quad
-/// is trimmed with its texture coordinates, one wholly outside collapses to
-/// nothing, a rotated one partly outside is kept whole.
+/// Clip one quad (`[c0, c1, c2, c3]`, corners in order) to `r`: an
+/// axis-aligned quad is trimmed with its texture coordinates, one wholly
+/// outside collapses to nothing, a rotated one partly outside is kept whole.
 fn clip_quad(q: &mut [Vertex], r: [f32; 4]) {
     let xs = q.iter().map(|v| v.pos[0]);
     let ys = q.iter().map(|v| v.pos[1]);
@@ -129,7 +135,7 @@ fn clip_quad(q: &mut [Vertex], r: [f32; 4]) {
         }
         return;
     }
-    let (c0, c1, c3) = (q[0], q[1], q[5]);
+    let (c0, c1, c3) = (q[0], q[1], q[3]);
     let aligned = c0.pos[1] == c1.pos[1] && c0.pos[0] == c3.pos[0] && c0.pos[0] < c1.pos[0];
     if !aligned || c3.pos[1] <= c0.pos[1] {
         return;
@@ -149,11 +155,27 @@ fn clip_quad(q: &mut [Vertex], r: [f32; 4]) {
     }
 }
 
+/// Quads the vertex / index buffers start with (a fight draws 60–150, a
+/// text-heavy menu a few hundred); they double when a frame needs more.
+const INITIAL_QUADS: u32 = 1024;
+
 struct Run {
     tex: usize,
     pal: Option<usize>,
     blend: Blend,
+    /// First quad of the run (4 vertices, 6 indices each).
     start: u32,
+}
+
+/// Vertices per quad in the vertex buffer (two triangles share two corners
+/// through the index buffer).
+const QUAD_VERTS: usize = 4;
+const QUAD_INDICES: usize = 6;
+
+/// Index pattern of quad `q`: two triangles over its four corners.
+fn quad_indices(q: u32) -> [u32; QUAD_INDICES] {
+    let b = q * QUAD_VERTS as u32;
+    [b, b + 1, b + 2, b, b + 2, b + 3]
 }
 
 /// Camera over the logical space. `screen` is the logical viewport
@@ -214,6 +236,12 @@ pub struct Draw {
     /// Apply `clip` before `angle` (clip in the draw's unrotated frame), so
     /// rotated UI subtrees keep their clipping.
     pub clip_local: bool,
+    /// Draw this texel rectangle `[x, y, w, h]` of an indexed atlas page as
+    /// if it were a texture of its own (a glyph of a font page): the quad
+    /// takes its size, `uv` runs 0..1 over it and the shader clamps inside
+    /// it, so the pixels match a standalone texture exactly while every
+    /// glyph of a page shares one draw call. Unlike `src`, which trims `uv`.
+    pub rect: Option<[u32; 4]>,
 }
 
 impl Draw {
@@ -234,6 +262,7 @@ impl Draw {
             clip: None,
             skew: 0.0,
             clip_local: false,
+            rect: None,
         }
     }
 }
@@ -257,9 +286,40 @@ pub struct Quad {
     pub strips: u32,
 }
 
+/// A position with its texture coordinate.
+type Pt = ([f32; 2], [f32; 2]);
+
+/// A small convex polygon on the stack: a quad clipped by four planes has
+/// at most eight corners, so no strip of a trapezoid allocates.
+#[derive(Clone, Copy)]
+struct Poly {
+    pts: [Pt; 8],
+    n: usize,
+}
+
+impl Poly {
+    fn quad(pts: [Pt; 4]) -> Self {
+        let mut p = Self {
+            pts: [([0.0; 2], [0.0; 2]); 8],
+            n: 4,
+        };
+        p.pts[..4].copy_from_slice(&pts);
+        p
+    }
+    fn push(&mut self, p: Pt) {
+        if self.n < self.pts.len() {
+            self.pts[self.n] = p;
+            self.n += 1;
+        }
+    }
+    fn as_slice(&self) -> &[Pt] {
+        &self.pts[..self.n]
+    }
+}
+
 /// Clip a convex polygon (positions with texture coordinates) to a
 /// rectangle (Sutherland-Hodgman, coordinates interpolated along edges).
-fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [f32; 2])> {
+fn clip_polygon(pts: Poly, r: [f32; 4]) -> Poly {
     let mut out = pts;
     // (axis, bound, keep below the bound)
     for (axis, bound, below) in [
@@ -268,7 +328,7 @@ fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [
         (1, r[1], false),
         (1, r[3], true),
     ] {
-        if out.is_empty() {
+        if out.n == 0 {
             break;
         }
         let inside = |p: &([f32; 2], [f32; 2])| {
@@ -286,7 +346,9 @@ fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [
                 [l(a.1[0], b.1[0]), l(a.1[1], b.1[1])],
             )
         };
-        let input = std::mem::take(&mut out);
+        let input = out;
+        out.n = 0;
+        let input = input.as_slice();
         for i in 0..input.len() {
             let (a, b) = (&input[i], &input[(i + 1) % input.len()]);
             match (inside(a), inside(b)) {
@@ -304,6 +366,11 @@ fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [
 }
 
 pub struct Renderer {
+    /// Swapchain image acquired ahead of drawing ([`Renderer::acquire`]).
+    /// Declared before `surface`: fields drop in order, and a frame still in
+    /// hand when the renderer goes (a screenshot run quitting) must go before
+    /// its surface, or the GL backend panics on "Surface does not exist".
+    acquired: Option<wgpu::SurfaceTexture>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -319,14 +386,22 @@ pub struct Renderer {
     textures: Vec<Tex>,
     /// Palette views; freed slots ([`Renderer::free_palette`]) are reused.
     palettes: Slots<wgpu::TextureView>,
-    /// (tex, pal) → bind group, built lazily.
-    indexed_binds: std::collections::HashMap<(usize, usize), wgpu::BindGroup>,
+    /// Per indexed texture, its (palette, bind group) pairs, built lazily
+    /// (a fighter's sprite is drawn with one or two palettes), so freeing a
+    /// texture drops its bind groups in one lookup.
+    indexed_binds: std::collections::HashMap<usize, Vec<(usize, wgpu::BindGroup)>>,
     white: TextureId,
     verts: Vec<Vertex>,
     runs: Vec<Run>,
+    /// The frame's vertices, kept from frame to frame and rewritten in place
+    /// (grown when a frame needs more), instead of a new buffer per frame.
+    vbuf: wgpu::Buffer,
+    /// Quads `vbuf` has room for.
+    vbuf_quads: u32,
+    /// Two triangles per quad over `vbuf`, written once per growth.
+    ibuf: wgpu::Buffer,
+    ibuf_quads: u32,
     timing: FrameTiming,
-    /// Swapchain image acquired ahead of drawing ([`Renderer::acquire`]).
-    acquired: Option<wgpu::SurfaceTexture>,
     /// Texture uploads (count, bytes) since the last [`Renderer::take_stats`].
     uploads: std::cell::Cell<(u64, u64)>,
     /// Draw calls and quads of the last frame sent to the GPU.
@@ -335,6 +410,8 @@ pub struct Renderer {
     free_slots: Vec<usize>,
     /// The GPU this renderer draws with (replays record it).
     adapter: AdapterSummary,
+    /// Largest texture side the device accepts (sprites beyond it are skipped).
+    max_texture: u32,
 }
 
 /// The GPU adapter in words: its name, the wgpu backend and the driver.
@@ -447,7 +524,9 @@ impl Renderer {
         height: u32,
         presentation: Presentation,
     ) -> Result<Self, Error> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        // `WGPU_BACKEND=gl|vulkan|dx12|metal` picks the backend (old
+        // integrated GPUs without a working Vulkan driver, and testing them)
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
         let surface = instance.create_surface(target)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -456,9 +535,6 @@ impl Renderer {
             })
             .await
             .map_err(|_| Error::NoAdapter)?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await?;
         let info = adapter.get_info();
         let adapter_summary = AdapterSummary {
             name: info.name.trim().to_string(),
@@ -469,6 +545,45 @@ impl Renderer {
                 .collect::<Vec<_>>()
                 .join(" "),
         };
+        let caps = adapter.get_downlevel_capabilities();
+        let adapter_limits = adapter.limits();
+        log::info!(
+            "render: adapter {:?} ({} {:?}, {}), max texture {}, downlevel {}",
+            adapter_summary.name,
+            adapter_summary.backend,
+            info.device_type,
+            adapter_summary.driver,
+            adapter_limits.max_texture_dimension_2d,
+            if caps.is_webgpu_compliant() {
+                "no".to_string()
+            } else {
+                format!("yes (missing {:?})", !caps.flags)
+            }
+        );
+        // The sprite pipeline needs nothing beyond the WebGL2-level
+        // baseline: ask for that (raised to the adapter's texture sizes) so
+        // a GL-only adapter (Intel HD 4000, old laptops) gets a device
+        // instead of failing `Limits::default()`'s Vulkan-level numbers; a
+        // stranger adapter falls back to exactly what it offers.
+        let wanted =
+            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter_limits.clone());
+        let descriptor = |limits| wgpu::DeviceDescriptor {
+            label: Some("rugen"),
+            required_limits: limits,
+            ..Default::default()
+        };
+        let (device, queue) = match adapter.request_device(&descriptor(wanted)).await {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!(
+                    "render: device with WebGL2-level limits refused ({e}); asking for the adapter's own"
+                );
+                adapter
+                    .request_device(&descriptor(adapter_limits.clone()))
+                    .await?
+            }
+        };
+        let max_texture = device.limits().max_texture_dimension_2d.max(1);
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or(Error::SurfaceConfig)?;
@@ -575,7 +690,7 @@ impl Renderer {
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Uint16x4],
         };
         // The shader emits premultiplied colour and an alpha that already
         // encodes the destination scale, so Alpha and Add share one state.
@@ -636,7 +751,9 @@ impl Renderer {
             ..Default::default()
         });
 
+        let (vbuf, ibuf) = Self::make_buffers(&device, &queue, INITIAL_QUADS);
         let mut r = Self {
+            acquired: None,
             surface,
             device,
             queue,
@@ -654,20 +771,65 @@ impl Renderer {
             white: TextureId(0),
             verts: Vec::new(),
             runs: Vec::new(),
+            vbuf,
+            vbuf_quads: INITIAL_QUADS,
+            ibuf,
+            ibuf_quads: INITIAL_QUADS,
             timing: FrameTiming::default(),
-            acquired: None,
             uploads: std::cell::Cell::new((0, 0)),
             last_frame: (0, 0),
             free_slots: Vec::new(),
             adapter: adapter_summary,
+            max_texture,
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
     }
 
+    /// Vertex and index buffers for `quads` quads, the indices filled in.
+    fn make_buffers(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        quads: u32,
+    ) -> (wgpu::Buffer, wgpu::Buffer) {
+        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("verts"),
+            size: quads as u64 * (QUAD_VERTS * std::mem::size_of::<Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let indices: Vec<u32> = (0..quads).flat_map(quad_indices).collect();
+        let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("indices"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let _ = queue;
+        (vbuf, ibuf)
+    }
+
     /// The GPU adapter, backend and driver this renderer draws with.
     pub fn adapter(&self) -> &AdapterSummary {
         &self.adapter
+    }
+
+    /// Largest texture side (pixels) the device accepts.
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_texture
+    }
+
+    /// True when a `w x h` texture fits the device; else say so once per
+    /// size (the sprite is drawn as the white texture instead of failing
+    /// device validation, which would end the process).
+    fn fits(&self, w: u32, h: u32) -> bool {
+        if w <= self.max_texture && h <= self.max_texture {
+            return true;
+        }
+        log::error!(
+            "render: a {w}x{h} sprite exceeds this GPU's {} px texture limit and is skipped",
+            self.max_texture
+        );
+        false
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -768,6 +930,9 @@ impl Renderer {
 
     /// Upload 8-bit indices (`w*h` bytes).
     pub fn add_indexed(&mut self, w: u32, h: u32, indices: &[u8]) -> TextureId {
+        if !self.fits(w, h) {
+            return self.white;
+        }
         let tex = self.make_texture(w, h, wgpu::TextureFormat::R8Uint, 1, indices);
         let view = tex.create_view(&Default::default());
         self.store(Tex {
@@ -807,12 +972,23 @@ impl Renderer {
             width: 1,
             height: 1,
         };
-        self.indexed_binds.retain(|&(t, _), _| t != id.0);
+        self.indexed_binds.remove(&id.0);
         self.free_slots.push(id.0);
+    }
+
+    /// [`free_texture`](Self::free_texture) for many at once (a screen or a
+    /// match going away).
+    pub fn free_textures(&mut self, ids: impl IntoIterator<Item = TextureId>) {
+        for id in ids {
+            self.free_texture(id);
+        }
     }
 
     /// Upload straight RGBA8 (`w*h*4` bytes).
     pub fn add_rgba(&mut self, w: u32, h: u32, rgba: &[u8]) -> TextureId {
+        if !self.fits(w, h) {
+            return self.white;
+        }
         let tex = self.make_texture(w, h, wgpu::TextureFormat::Rgba8Unorm, 4, rgba);
         let view = tex.create_view(&Default::default());
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -851,8 +1027,38 @@ impl Renderer {
     /// must forget it. Draws still naming it are skipped.
     pub fn free_palette(&mut self, id: PaletteId) {
         if self.palettes.remove(id.0) {
-            self.indexed_binds.retain(|&(_, p), _| p != id.0);
+            self.drop_palette_binds(|p| p == id.0);
         }
+    }
+
+    /// [`free_palette`](Self::free_palette) for many at once: one pass over
+    /// the bind groups instead of one per palette.
+    pub fn free_palettes(&mut self, ids: impl IntoIterator<Item = PaletteId>) {
+        let gone: std::collections::HashSet<usize> = ids
+            .into_iter()
+            .filter(|id| self.palettes.remove(id.0))
+            .map(|id| id.0)
+            .collect();
+        if !gone.is_empty() {
+            self.drop_palette_binds(|p| gone.contains(&p));
+        }
+    }
+
+    /// Forget the bind groups made with palettes `gone` says are freed.
+    fn drop_palette_binds(&mut self, gone: impl Fn(usize) -> bool) {
+        self.indexed_binds.retain(|_, binds| {
+            binds.retain(|(p, _)| !gone(*p));
+            !binds.is_empty()
+        });
+    }
+
+    /// The bind group of an indexed texture with a palette, if built.
+    fn indexed_bind(&self, tex: usize, pal: usize) -> Option<&wgpu::BindGroup> {
+        self.indexed_binds
+            .get(&tex)?
+            .iter()
+            .find(|(p, _)| *p == pal)
+            .map(|(_, b)| b)
     }
 
     /// Profiling counters; resets the upload count.
@@ -883,7 +1089,10 @@ impl Renderer {
     }
 
     pub fn draw(&mut self, d: Draw) {
-        let (tw, th) = self.texture_size(d.tex);
+        let (tw, th) = match d.rect {
+            Some(rc) => (rc[2], rc[3]),
+            None => self.texture_size(d.tex),
+        };
         let src = d.src.unwrap_or([0, 0, tw, th]);
         let (w, h) = (src[2] as f32 * d.scale[0], src[3] as f32 * d.scale[1]);
         if w <= 0.0 || h <= 0.0 {
@@ -945,6 +1154,9 @@ impl Renderer {
         }
         let mut color = d.color;
         color[3] *= d.blend.src_scale();
+        let rect = d
+            .rect
+            .map_or(WHOLE, |rc| rc.map(|v| v.min(u16::MAX as u32) as u16));
         self.push_quad(
             corners,
             [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
@@ -953,6 +1165,7 @@ impl Renderer {
             d.tex,
             d.pal,
             d.blend,
+            rect,
         );
     }
 
@@ -966,15 +1179,16 @@ impl Renderer {
         color[3] *= q.blend.src_scale();
         for k in 0..n {
             let (t0, t1) = (k as f32 / n as f32, (k + 1) as f32 / n as f32);
-            let mut poly = vec![
+            let mut poly = Poly::quad([
                 (lerp(tl, bl, t0), [0.0, t0]),
                 (lerp(tr, br, t0), [1.0, t0]),
                 (lerp(tr, br, t1), [1.0, t1]),
                 (lerp(tl, bl, t1), [0.0, t1]),
-            ];
+            ]);
             if let Some(c) = q.clip {
                 poly = clip_polygon(poly, c);
             }
+            let poly = poly.as_slice();
             if poly.len() < 3 {
                 continue;
             }
@@ -994,6 +1208,7 @@ impl Renderer {
                     q.tex,
                     q.pal,
                     q.blend,
+                    WHOLE,
                 );
                 k2 += 2;
             }
@@ -1023,9 +1238,8 @@ impl Renderer {
                 mid[1] + (p[1] - from.center[1]) * k,
             ]
         };
-        let start = mark.min(self.verts.len()) / 6 * 6;
-        for q in self.verts[start..].chunks_exact_mut(6) {
-            // a quad is [c0, c1, c2, c0, c2, c3]
+        let start = mark.min(self.verts.len()) / QUAD_VERTS * QUAD_VERTS;
+        for q in self.verts[start..].chunks_exact_mut(QUAD_VERTS) {
             for v in q.iter_mut() {
                 v.pos = map(v.pos);
             }
@@ -1071,6 +1285,7 @@ impl Renderer {
             tex,
             pal,
             Blend::Alpha,
+            WHOLE,
         );
     }
 
@@ -1085,9 +1300,10 @@ impl Renderer {
         tex: TextureId,
         pal: Option<PaletteId>,
         blend: Blend,
+        rect: [u16; 4],
     ) {
         let pal = pal.map(|p| p.0);
-        let start = self.verts.len() as u32;
+        let start = (self.verts.len() / QUAD_VERTS) as u32;
         match self.runs.last_mut() {
             Some(r) if r.tex == tex.0 && r.pal == pal && r.blend == blend => {}
             _ => self.runs.push(Run {
@@ -1110,37 +1326,46 @@ impl Renderer {
             color,
             fx_mul,
             fx_add,
+            rect,
         };
-        self.verts
-            .extend_from_slice(&[v(0), v(1), v(2), v(0), v(2), v(3)]);
+        self.verts.extend_from_slice(&[v(0), v(1), v(2), v(3)]);
     }
 
-    /// Build bind groups for this frame's runs, upload camera, build vertex buffer.
-    fn prepare(&mut self, cam: &Camera) -> wgpu::Buffer {
-        self.last_frame = (self.runs.len(), self.verts.len() / 6);
+    /// Build bind groups for this frame's runs, upload the camera and the
+    /// vertices (into the persistent buffer, grown when a frame outgrows it).
+    fn prepare(&mut self, cam: &Camera) {
+        let quads = (self.verts.len() / QUAD_VERTS) as u32;
+        self.last_frame = (self.runs.len(), quads as usize);
+        if quads > self.vbuf_quads {
+            let want = quads.next_power_of_two().max(INITIAL_QUADS);
+            let (v, i) = Self::make_buffers(&self.device, &self.queue, want);
+            self.vbuf = v;
+            self.ibuf = i;
+            self.vbuf_quads = want;
+            self.ibuf_quads = want;
+            log::debug!("render: vertex buffer grown to {want} quads");
+        }
         for r in &self.runs {
             let (t, p) = (r.tex, r.pal);
             if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p)
                 && let Some(pal) = self.palettes.get(p)
+                && self.indexed_bind(t, p).is_none()
             {
-                let key = (t, p);
-                if !self.indexed_binds.contains_key(&key) {
-                    let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: None,
-                        layout: &self.indexed_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(pal),
-                            },
-                        ],
-                    });
-                    self.indexed_binds.insert(key, bind);
-                }
+                let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.indexed_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(pal),
+                        },
+                    ],
+                });
+                self.indexed_binds.entry(t).or_default().push((p, bind));
             }
         }
         self.queue.write_buffer(
@@ -1154,23 +1379,16 @@ impl Renderer {
                 _pad2: [0.0; 2],
             }),
         );
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("verts"),
-                contents: if self.verts.is_empty() {
-                    &[0u8; 32]
-                } else {
-                    bytemuck::cast_slice(&self.verts)
-                },
-                usage: wgpu::BufferUsages::VERTEX,
-            })
+        if !self.verts.is_empty() {
+            self.queue
+                .write_buffer(&self.vbuf, 0, bytemuck::cast_slice(&self.verts));
+        }
     }
 
     fn encode_pass(
         &self,
         enc: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        vbuf: &wgpu::Buffer,
         clear: [f64; 4],
     ) {
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1194,34 +1412,42 @@ impl Renderer {
             occlusion_query_set: None,
         });
         pass.set_bind_group(0, &self.cam_bind, &[]);
-        pass.set_vertex_buffer(0, vbuf.slice(..));
-        let total = self.verts.len() as u32;
+        pass.set_vertex_buffer(0, self.vbuf.slice(..));
+        pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+        let total = (self.verts.len() / QUAD_VERTS) as u32;
+        // the pipeline rarely changes between runs (indexed sprites, alpha
+        // blend): set it only when it does
+        let mut pipe: Option<(bool, usize)> = None;
         for (i, r) in self.runs.iter().enumerate() {
             let (t, p, start) = (r.tex, r.pal, r.start);
             let end = self.runs.get(i + 1).map_or(total, |r| r.start);
             let bi = r.blend.pipe_index();
-            match (&self.textures[t].kind, p) {
-                (Kind::Indexed { .. }, Some(p)) => {
-                    // a freed palette has no bind group: skip the draw
-                    let Some(bind) = self.indexed_binds.get(&(t, p)) else {
-                        continue;
-                    };
-                    pass.set_pipeline(&self.indexed_pipes[bi]);
-                    pass.set_bind_group(1, bind, &[]);
-                }
-                (Kind::Rgba { bind }, _) => {
-                    pass.set_pipeline(&self.rgba_pipes[bi]);
-                    pass.set_bind_group(1, bind, &[]);
-                }
+            let (indexed, bind) = match (&self.textures[t].kind, p) {
+                // a freed palette has no bind group: skip the draw
+                (Kind::Indexed { .. }, Some(p)) => match self.indexed_bind(t, p) {
+                    Some(b) => (true, b),
+                    None => continue,
+                },
+                (Kind::Rgba { bind }, _) => (false, bind),
                 (Kind::Indexed { .. }, None) | (Kind::Free, _) => continue,
+            };
+            if pipe != Some((indexed, bi)) {
+                pipe = Some((indexed, bi));
+                pass.set_pipeline(if indexed {
+                    &self.indexed_pipes[bi]
+                } else {
+                    &self.rgba_pipes[bi]
+                });
             }
-            pass.draw(start..end, 0..1);
+            pass.set_bind_group(1, bind, &[]);
+            let n = QUAD_INDICES as u32;
+            pass.draw_indexed(start * n..end * n, 0, 0..1);
         }
     }
 
     /// Present the frame queued since [`begin`](Self::begin).
     pub fn end(&mut self, cam: &Camera, clear: [f64; 4]) -> Result<(), wgpu::SurfaceError> {
-        let vbuf = self.prepare(cam);
+        self.prepare(cam);
         let frame = match self.acquired.take() {
             Some(f) => f,
             None => {
@@ -1234,7 +1460,7 @@ impl Renderer {
         };
         let view = frame.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
-        self.encode_pass(&mut enc, &view, &vbuf, clear);
+        self.encode_pass(&mut enc, &view, clear);
         self.queue.submit([enc.finish()]);
         frame.present();
         self.timing.presented = Some(std::time::Instant::now());
@@ -1244,7 +1470,7 @@ impl Renderer {
     /// Render the queued frame into an offscreen `w x h` image and read it
     /// back as straight RGBA8. For screenshots and tests.
     pub fn end_to_image(&mut self, cam: &Camera, clear: [f64; 4], w: u32, h: u32) -> Vec<u8> {
-        let vbuf = self.prepare(cam);
+        self.prepare(cam);
         let size = wgpu::Extent3d {
             width: w,
             height: h,
@@ -1269,7 +1495,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
         let mut enc = self.device.create_command_encoder(&Default::default());
-        self.encode_pass(&mut enc, &view, &vbuf, clear);
+        self.encode_pass(&mut enc, &view, clear);
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &tex,
@@ -1349,21 +1575,28 @@ mod tests {
 mod remap_tests {
     use super::*;
 
-    fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> [Vertex; 6] {
+    fn quad(x0: f32, y0: f32, x1: f32, y1: f32) -> [Vertex; QUAD_VERTS] {
         let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
             pos: [x, y],
             uv: [u, w],
             color: [1.0; 4],
             fx_mul: [1.0; 4],
             fx_add: [0.0; 4],
+            rect: WHOLE,
         };
-        let c = [
+        [
             v(x0, y0, 0.0, 0.0),
             v(x1, y0, 1.0, 0.0),
             v(x1, y1, 1.0, 1.0),
             v(x0, y1, 0.0, 1.0),
-        ];
-        [c[0], c[1], c[2], c[0], c[2], c[3]]
+        ]
+    }
+
+    /// Two triangles per quad, over its four corners, in vertex order.
+    #[test]
+    fn quads_are_indexed() {
+        assert_eq!(quad_indices(0), [0, 1, 2, 0, 2, 3]);
+        assert_eq!(quad_indices(2), [8, 9, 10, 8, 10, 11]);
     }
 
     /// A quad half outside the window is cut at its edge with the texture

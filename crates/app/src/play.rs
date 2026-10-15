@@ -452,6 +452,77 @@ struct CharGpu {
     palettes: Vec<Option<PaletteId>>,
 }
 
+impl CharGpu {
+    /// Free the uploaded textures and palettes and forget them.
+    fn free_gpu(&mut self, r: &mut Renderer) {
+        crate::sprites::free_uploads(r, &mut self.textures, &mut self.shared);
+        r.free_palettes(self.palettes.iter_mut().filter_map(Option::take));
+    }
+}
+
+impl Drop for Match {
+    fn drop(&mut self) {
+        if let Some((_, stop)) = &self.reload {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // every exit path of the shell calls `release_gpu`; a new one that
+        // forgets is a texture leak per match, so say so
+        if !self.chars.is_empty() {
+            log::warn!("match dropped with its GPU textures still uploaded (leak)");
+        }
+    }
+}
+
+/// What a draw needs of an AIR frame, copied out: the draw build then
+/// clones no frame (its collision boxes are two Vecs each).
+#[derive(Clone, Copy, Debug)]
+struct FrameView {
+    group: i32,
+    number: i32,
+    x: i32,
+    y: i32,
+    hflip: bool,
+    vflip: bool,
+    blend: rugen_formats::air::Blend,
+    src_alpha: u8,
+    dst_alpha: u8,
+    xscale: f32,
+    yscale: f32,
+}
+
+impl From<&rugen_formats::air::Frame> for FrameView {
+    fn from(f: &rugen_formats::air::Frame) -> Self {
+        Self {
+            group: f.group,
+            number: f.number,
+            x: f.x,
+            y: f.y,
+            hflip: f.hflip,
+            vflip: f.vflip,
+            blend: f.blend,
+            src_alpha: f.src_alpha,
+            dst_alpha: f.dst_alpha,
+            xscale: f.xscale,
+            yscale: f.yscale,
+        }
+    }
+}
+
+/// The blend an AIR frame asks for (see [`crate::sprites::air_blend`]).
+fn view_blend(f: &FrameView) -> Blend {
+    match f.blend {
+        rugen_formats::air::Blend::None => Blend::Alpha,
+        rugen_formats::air::Blend::Add => Blend::Add {
+            src: f.src_alpha,
+            dst: f.dst_alpha,
+        },
+        rugen_formats::air::Blend::Sub | rugen_formats::air::Blend::SubAdd => Blend::Sub {
+            src: f.src_alpha,
+            dst: f.dst_alpha,
+        },
+    }
+}
+
 /// One sprite to draw this frame, in stage coordinates.
 struct Item {
     spr: Option<(TextureId, Option<PaletteId>, [f32; 2])>,
@@ -459,8 +530,10 @@ struct Item {
     facing: f32,
     vfacing: f32,
     scale: [f32; 2],
-    frame: rugen_formats::air::Frame,
-    boxes: bool,
+    frame: FrameView,
+    /// Draw its collision boxes when boxes are shown: the frame to read
+    /// them from as (data slot, action, element).
+    boxes: Option<(usize, i32, usize)>,
     layer: i32,
     prio: i32,
     seq: usize,
@@ -478,10 +551,10 @@ struct Item {
 }
 
 /// Final blend for a sprite: the `Trans` controller wins over the AIR frame.
-fn resolve_blend(frame: &rugen_formats::air::Frame, trans: Trans, alpha: [i32; 2]) -> Blend {
+fn resolve_blend(frame: &FrameView, trans: Trans, alpha: [i32; 2]) -> Blend {
     let a = |v: i32, def: u8| if v < 0 { def } else { v.min(255) as u8 };
     match trans {
-        Trans::Default => crate::sprites::air_blend(frame),
+        Trans::Default => view_blend(frame),
         Trans::None => Blend::Alpha,
         Trans::Add => Blend::Add { src: 255, dst: 255 },
         Trans::Add1 => Blend::Add { src: 255, dst: 128 },
@@ -762,10 +835,10 @@ pub struct Match {
     overlay: bool,
     input_history: [Vec<Buttons>; 2],
     setup: FightSetup,
-    data_dir: PathBuf,
-    /// Hot reload: data slot and what to watch for it.
-    watch: Vec<(usize, Watch)>,
-    reload_tick: u32,
+    /// Hot reload (creator workflow, folder fighters only): a watcher thread
+    /// sends the reloaded data of a slot whose source files changed; the
+    /// flag stops it when the match goes.
+    reload: Option<ReloadWatcher>,
     /// Data slots whose textures must be re-uploaded (after a reload).
     gpu_dirty: Vec<usize>,
     /// Stage music file, if any.
@@ -1065,14 +1138,25 @@ impl Match {
             catching: false,
             overlay: std::env::var_os("RUGEN_OVERLAY").is_some(),
             input_history: [Vec::new(), Vec::new()],
-            watch: [(0usize, &setup.p1), (1, &setup.p2)]
-                .into_iter()
-                .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
-                .filter_map(|(i, p)| Watch::of(p).map(|w| (i, w)))
-                .collect(),
+            reload: match setup.net {
+                // online: both sides must keep the data they agreed on
+                Some(_) => None,
+                None => {
+                    let watch: Vec<(usize, Watch)> = [(0usize, &setup.p1), (1, &setup.p2)]
+                        .into_iter()
+                        .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
+                        .filter_map(|(i, p)| Watch::of(p).map(|w| (i, w)))
+                        .collect();
+                    (!watch.is_empty()).then(|| {
+                        spawn_reload_watcher(
+                            watch,
+                            [setup.p1.clone(), setup.p2.clone()],
+                            data_dir.to_path_buf(),
+                        )
+                    })
+                }
+            },
             setup: setup.clone(),
-            data_dir: data_dir.to_path_buf(),
-            reload_tick: 0,
             gpu_dirty: Vec::new(),
             bgm,
             bgm_volume,
@@ -1176,50 +1260,39 @@ impl Match {
             };
             let palettes = vec![None; d.sff.palettes.len().max(1)];
             if let Some(cg) = self.chars.get_mut(i) {
-                cg.textures.clear();
-                cg.shared.clear();
+                cg.free_gpu(r);
                 cg.palettes = palettes;
             }
         }
     }
 
-    /// Reload a character whose source files changed on disk (creator workflow).
-    fn check_reload(&mut self) {
-        self.reload_tick += 1;
-        if self.reload_tick % 60 != 0 || self.net.is_some() {
-            return;
+    /// Give back everything the match uploaded: the fighters' and fightfx
+    /// sprites and palettes, the stage's, the lifebar's sheet and fonts.
+    /// Drawing again after this uploads again (`init_gpu`), so a match left
+    /// by any path frees its GPU memory and none of it outlives the fight.
+    pub fn release_gpu(&mut self, r: &mut Renderer) {
+        for cg in self.chars.iter_mut() {
+            cg.free_gpu(r);
         }
-        for k in 0..self.watch.len() {
-            let slot = self.watch[k].0;
-            let def = if slot == 0 {
-                &self.setup.p1
-            } else {
-                &self.setup.p2
-            };
-            let def = def.clone();
-            let changed = match &mut self.watch[k].1 {
-                // a folder in chars/: its working copy is converted again first
-                Watch::WorkingCopy => {
-                    match rugen_content::refresh_working_copy(&def, &self.data_dir) {
-                        Some(Ok(changed)) => changed,
-                        Some(Err(e)) => {
-                            log::error!("reload failed: {e}");
-                            false
-                        }
-                        None => false,
-                    }
-                }
-                Watch::Folder(dir, seen) => {
-                    let now = newest_mtime(dir);
-                    let changed = now > *seen;
-                    *seen = now;
-                    changed
-                }
-            };
-            if !changed {
-                continue;
-            }
-            match CharData::load_with_data(&def, &self.data_dir) {
+        self.chars.clear();
+        self.gpu_dirty.clear();
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.free_gpu(r);
+        }
+        if let Some(lb) = self.lifebar.as_mut() {
+            lb.release_gpu(r);
+        }
+    }
+
+    /// Take in a character the watcher thread reloaded because its source
+    /// files changed on disk (creator workflow); the main thread never
+    /// walks or hashes a folder itself.
+    fn check_reload(&mut self) {
+        let Some((rx, _)) = &self.reload else {
+            return;
+        };
+        while let Ok((slot, loaded)) = rx.try_recv() {
+            match loaded {
                 Ok(d) => {
                     for w in &d.warnings {
                         log::debug!("{}: {w}", d.name);
@@ -1449,8 +1522,7 @@ impl Match {
         if self.banner.as_ref().is_some_and(|(_, t)| *t <= 0) {
             self.banner = None;
         }
-        // harness: `RUGEN_HARNESS_LOWLIFE=1` makes P2 drop in one hit so matches end fast
-        if std::env::var_os("RUGEN_HARNESS_LOWLIFE").is_some()
+        if harness_lowlife()
             && self.world.round.round_state() == 2
             && let Some(p2) = self.world.side_leader(1)
             && self.world.players[p2].life > 1
@@ -2242,6 +2314,15 @@ impl Match {
         }
     }
 
+    /// The AIR frame an item's collision boxes come from (see [`Item::boxes`]).
+    fn boxes_frame(
+        &self,
+        (slot, action, elem): (usize, i32, usize),
+    ) -> Option<&rugen_formats::air::Frame> {
+        let a = self.world.data.get(slot)?.air.get(action)?;
+        a.frames.get(elem.min(a.frames.len().saturating_sub(1)))
+    }
+
     /// GPU sprite from a data slot (`None` = fightfx).
     fn sprite_from(
         &mut self,
@@ -2287,10 +2368,11 @@ impl Match {
                 .air
                 .get(p.anim.action)
                 .and_then(|a| p.anim.frame(a))
-                .cloned()
+                .map(FrameView::from)
             else {
                 continue;
             };
+            let p_boxes = Some((p.anim_owner, p.anim.action, p.anim.elem));
             let sprite_data = p.data;
             let invisible = p.asserted(rugen_sim::player::assert::INVISIBLE);
             let p_action = p.anim.action;
@@ -2328,7 +2410,7 @@ impl Match {
                         .air
                         .get(img.action)
                         .and_then(|a| a.frames.get(img.elem))
-                        .cloned()
+                        .map(FrameView::from)
                     else {
                         continue;
                     };
@@ -2341,7 +2423,7 @@ impl Match {
                         vfacing: 1.0,
                         scale: [scale * img.scale[0], scale * img.scale[1]],
                         frame: f,
-                        boxes: false,
+                        boxes: None,
                         layer: 0,
                         prio: img_prio,
                         seq: items.len(),
@@ -2366,7 +2448,7 @@ impl Match {
                 vfacing: 1.0,
                 scale: [scale * ascale[0], scale * ascale[1]],
                 frame,
-                boxes: true,
+                boxes: p_boxes,
                 layer: 0,
                 prio,
                 seq: items.len(),
@@ -2377,14 +2459,13 @@ impl Match {
                 who: ('P', i, p_action, p_owner),
             });
         }
-        let explods: Vec<rugen_sim::explod::Explod> = self
-            .world
-            .explods
-            .iter()
-            .filter(|e| !e.removed)
-            .cloned()
-            .collect();
-        for e in explods {
+        // by index: `sprite_from` needs the whole match mutably, so what an
+        // explod contributes is copied out first instead of cloning the list
+        for ei in 0..self.world.explods.len() {
+            let e = &self.world.explods[ei];
+            if e.removed {
+                continue;
+            }
             // screen-space explods: the owner's localcoord without its
             // FIGHTER SIZE, like their positions (World::screen_scale)
             let screen = e.on_screen().then_some(match e.postype {
@@ -2406,11 +2487,10 @@ impl Match {
                 .air(&self.world)
                 .and_then(|a| a.get(e.anim.action))
                 .and_then(|a| e.anim.frame(a))
-                .cloned()
+                .map(FrameView::from)
             else {
                 continue;
             };
-            let spr = self.sprite_from(r, src, frame.group, frame.number);
             let blend = resolve_blend(&frame, e.trans, e.alpha);
             // ownpal: the explod's own PalFX; else its owner's, as it is now
             // (MUGEN: "affected by subsequent execution of the player's PalFX")
@@ -2421,40 +2501,48 @@ impl Match {
             } else {
                 PalFxOut::default()
             };
-            items.push(Item {
-                spr,
-                pos: e.draw_pos(),
-                facing: e.facing,
-                vfacing: e.vfacing,
-                scale: [scale * e.scale[0], scale * e.scale[1]],
-                frame,
-                boxes: false,
-                layer: if e.ontop {
+            let (pos, facing, vfacing, escale, layer, prio, angle, owner, action) = (
+                e.draw_pos(),
+                e.facing,
+                e.vfacing,
+                e.scale,
+                if e.ontop {
                     1
                 } else if e.under {
                     -1
                 } else {
                     0
                 },
-                prio: e.sprpriority,
+                e.sprpriority,
+                e.angle * e.facing,
+                e.owner,
+                e.anim.action,
+            );
+            let spr = self.sprite_from(r, src, frame.group, frame.number);
+            items.push(Item {
+                spr,
+                pos,
+                facing,
+                vfacing,
+                scale: [scale * escale[0], scale * escale[1]],
+                frame,
+                boxes: None,
+                layer,
+                prio,
                 seq: items.len(),
                 blend,
-                angle: e.angle * e.facing,
+                angle,
                 tint: tint(owner_pfx.stacked(all_pfx)),
                 screen,
-                who: ('E', e.owner, e.anim.action, src.unwrap_or(usize::MAX)),
+                who: ('E', owner, action, src.unwrap_or(usize::MAX)),
             });
         }
         let keys = crate::smooth::proj_keys(&self.world);
-        let projs: Vec<(rugen_sim::projectile::Projectile, crate::smooth::Key)> = self
-            .world
-            .projs
-            .iter()
-            .zip(keys)
-            .filter(|(p, _)| !p.removed && p.anim_no >= 0)
-            .map(|(p, k)| (p.clone(), k))
-            .collect();
-        for (pr, key) in projs {
+        for (pi, key) in keys.into_iter().enumerate() {
+            let pr = &self.world.projs[pi];
+            if pr.removed || pr.anim_no < 0 {
+                continue;
+            }
             let off = self.smooth.offset(key);
             let d = self.world.players[pr.owner].data;
             let scale = self.world.data_scale(d);
@@ -2462,29 +2550,38 @@ impl Match {
                 .air
                 .get(pr.anim_no)
                 .and_then(|a| pr.anim.frame(a))
-                .cloned()
+                .map(FrameView::from)
             else {
                 continue;
             };
-            let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
             let blend = resolve_blend(&frame, Trans::Default, [255, 0]);
             let owner_pfx = self.world.drawn_palfx(pr.owner).sample();
+            let (pos, facing, pscale, prio, owner, anim_no, elem) = (
+                [pr.pos[0] + off[0], pr.pos[1] + off[1]],
+                pr.facing,
+                pr.scale,
+                pr.sprpriority,
+                pr.owner,
+                pr.anim_no,
+                pr.anim.elem,
+            );
+            let spr = self.sprite_from(r, Some(d), frame.group, frame.number);
             items.push(Item {
                 spr,
-                pos: [pr.pos[0] + off[0], pr.pos[1] + off[1]],
-                facing: pr.facing,
+                pos,
+                facing,
                 vfacing: 1.0,
-                scale: [scale * pr.scale[0], scale * pr.scale[1]],
+                scale: [scale * pscale[0], scale * pscale[1]],
                 frame,
-                boxes: true,
+                boxes: Some((d, anim_no, elem)),
                 layer: 0,
-                prio: pr.sprpriority,
+                prio,
                 seq: items.len(),
                 blend,
                 angle: 0.0,
                 tint: tint(owner_pfx.stacked(all_pfx)),
                 screen: None,
-                who: ('J', pr.owner, pr.anim_no, d),
+                who: ('J', owner, anim_no, d),
             });
         }
         // equal sprpriority: what is queued later is drawn behind (Ikemen
@@ -2501,13 +2598,7 @@ impl Match {
                 it.tint.mul = sub_mul(it.tint.mul);
             }
         }
-        // harness: `RUGEN_HARNESS_DRAWLOG=120` dumps what frame 120 draws
-        // (`120-180`: every frame of the range)
-        let logged = std::env::var("RUGEN_HARNESS_DRAWLOG").ok().and_then(|v| {
-            let (a, b) = v.split_once('-').unwrap_or((&v, &v));
-            Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))
-        });
-        if logged.is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
+        if harness_drawlog().is_some_and(|(a, b)| (a..=b).contains(&self.world.frame)) {
             for it in &items {
                 log::info!(
                     "draw f{} {}{} d{} st {} action {} spr {},{} pos {:?} fac {} scale {:?} screen {:?} blend {:?} tint {:?} prio {} layer {}",
@@ -2650,8 +2741,11 @@ impl Match {
 
     /// Queue this frame's draws; the shell calls `begin` before and `end` after.
     pub fn render(&mut self, r: &mut Renderer) -> (Camera, [f64; 4]) {
-        let stage = self.world.stage.clone();
-        let ground = stage.zoffset;
+        let (ground, stage_w, stage_h) = (
+            self.world.stage.zoffset,
+            self.world.stage.width,
+            self.world.stage.height,
+        );
         let items = self.collect_items(r);
         let show_boxes = self.show_boxes || self.training.as_ref().is_some_and(|t| t.cfg.hitboxes);
         let brightness = self.world.superbrightness;
@@ -2688,14 +2782,14 @@ impl Match {
         let (screen_w, screen_h) = if arena {
             // rugen's [Arena] stages have no walls and need the whole
             // height: the window's width at the stage's height
-            (stage.height * aspect, stage.height)
+            (stage_h * aspect, stage_h)
         } else {
-            (stage.width, stage.width / aspect.max(0.1))
+            (stage_w, stage_w / aspect.max(0.1))
         };
         let framing = stage_visual.as_ref().map_or(
             crate::stage::Framing {
                 zoffset: ground,
-                height: stage.height,
+                height: stage_h,
                 ..Default::default()
             },
             |sv| sv.framing,
@@ -2703,7 +2797,7 @@ impl Match {
         // arena stages lift the ground toward two thirds of the screen as
         // the camera pulls back, so the pit below shows as well as the sky
         let ground_level = if arena {
-            arena_ground_frac(ground / stage.height, zoom) * stage.height
+            arena_ground_frac(ground / stage_h, zoom) * stage_h
         } else {
             framing.ground_level(screen_h)
         };
@@ -2801,8 +2895,9 @@ impl Match {
                 }
                 r.draw(d);
             }
-            if show_boxes && it.boxes {
-                for pl in stage.platforms.iter().filter(|p| !p.gone) {
+            if show_boxes && let Some(boxes) = it.boxes.and_then(|b| self.boxes_frame(b)) {
+                let frame = boxes;
+                for pl in self.world.stage.platforms.iter().filter(|p| !p.gone) {
                     r.rect(
                         [pl.x1, ground + pl.y - cam_y - 1.0],
                         [pl.x2, ground + pl.y - cam_y + 1.0],
@@ -3440,18 +3535,37 @@ fn glyph(c: char) -> [u8; 5] {
     }
 }
 
+/// Harness: `RUGEN_HARNESS_LOWLIFE=1` makes P2 drop in one hit so matches end fast.
+fn harness_lowlife() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var_os("RUGEN_HARNESS_LOWLIFE").is_some())
+}
+
+/// Harness: `RUGEN_HARNESS_DRAWLOG=120` dumps what frame 120 draws
+/// (`120-180`: every frame of the range).
+fn harness_drawlog() -> Option<(u32, u32)> {
+    static V: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        let v = std::env::var("RUGEN_HARNESS_DRAWLOG").ok()?;
+        let (a, b) = v.split_once('-').unwrap_or((&v, &v));
+        Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))
+    })
+}
+
 /// Harness: `RUGEN_HARNESS_STATE=1:1300@120,2:200@150` puts player 1 into
 /// state 1300 at the first fight frame from world frame 120 on (and P2 into
 /// 200 from 150) with full power,
 /// so a super can be shot without its command; `RUGEN_HARNESS_POWER=1`
 /// keeps both root players' power full.
 fn harness_states(w: &mut World) {
-    if std::env::var_os("RUGEN_HARNESS_POWER").is_some() {
+    static POWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static STATE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    if *POWER.get_or_init(|| std::env::var_os("RUGEN_HARNESS_POWER").is_some()) {
         for p in w.players.iter_mut().filter(|p| p.helper_index == 0) {
             p.power = p.power_max;
         }
     }
-    let Some(spec) = std::env::var("RUGEN_HARNESS_STATE").ok() else {
+    let Some(spec) = STATE.get_or_init(|| std::env::var("RUGEN_HARNESS_STATE").ok()) else {
         return;
     };
     for tok in spec.split(',') {
@@ -3593,6 +3707,75 @@ impl Watch {
             }
         }
     }
+}
+
+/// A hot-reload watcher thread: where its reloaded fighters arrive (data
+/// slot, the data or the error) and the flag that stops it.
+type ReloadWatcher = (
+    std::sync::mpsc::Receiver<(usize, Result<std::sync::Arc<CharData>, String>)>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+
+/// Hot reload off the main thread: once a second, see whether a watched
+/// fighter's source files changed (a working copy is converted again; a
+/// folder's newest mtime is compared), load the changed one and send it;
+/// `stop` ends the thread when the match is gone.
+fn spawn_reload_watcher(
+    mut watch: Vec<(usize, Watch)>,
+    defs: [PathBuf; 2],
+    data_dir: PathBuf,
+) -> ReloadWatcher {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let spawned = std::thread::Builder::new()
+        .name("hot-reload".into())
+        .spawn(move || {
+            loop {
+                // ten short naps: the thread leaves within 100 ms of the match
+                for _ in 0..10 {
+                    if flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                for (slot, w) in watch.iter_mut() {
+                    let def = &defs[(*slot).min(1)];
+                    let changed = match w {
+                        // a folder in chars/: its working copy is converted again first
+                        Watch::WorkingCopy => {
+                            match rugen_content::refresh_working_copy(def, &data_dir) {
+                                Some(Ok(changed)) => changed,
+                                Some(Err(e)) => {
+                                    log::error!("reload failed: {e}");
+                                    false
+                                }
+                                None => false,
+                            }
+                        }
+                        Watch::Folder(dir, seen) => {
+                            let now = newest_mtime(dir);
+                            let changed = now > *seen;
+                            *seen = now;
+                            changed
+                        }
+                    };
+                    if !changed {
+                        continue;
+                    }
+                    let loaded =
+                        CharData::load_with_data(def, &data_dir).map_err(|e| format!("{e:#}"));
+                    if tx.send((*slot, loaded)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("hot reload is off: could not start its thread ({e})");
+    }
+    (rx, stop)
 }
 
 /// Newest modification time (seconds) of any state/anim/command file under `dir`.
@@ -4532,7 +4715,7 @@ mod tests {
             "[Begin Action 410]\n411,0, 0,0, 2, , A\n411,1, 0,0, 2,, A1\n\
              420,8, 0,0, 2,, S\n450,2, 0,0, 3,, AS200D256\n415,0, 0,0, 1\n",
         );
-        let f = |i: usize| air.get(410).expect("action 410").frames[i].clone();
+        let f = |i: usize| FrameView::from(&air.get(410).expect("action 410").frames[i]);
         let none = [-1, 0];
         assert_eq!(
             resolve_blend(&f(0), Trans::Default, none),
