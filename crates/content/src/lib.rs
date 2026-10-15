@@ -109,6 +109,10 @@ pub struct Manifest {
     pub portrait_small: Option<PortraitInfo>,
     #[serde(default)]
     pub portrait_big: Option<PortraitInfo>,
+    /// The stance (first frame of action 0, else sprite 0,0) cropped to its
+    /// pixels, as `stand.png`: the catalogue card on rugen.dev.
+    #[serde(default)]
+    pub stand: Option<PortraitInfo>,
     /// Identity of the content file this entry describes.
     pub source_hash: String,
     /// Result of `rugen verify` (headless soak); `None` until it has run.
@@ -1006,6 +1010,7 @@ impl Library {
             author,
             portrait_small: None,
             portrait_big: None,
+            stand: None,
             source_hash: String::new(),
             verify: None,
             art: None,
@@ -1041,6 +1046,7 @@ impl Library {
                         let (a, b) = portraits_of(dir, &def_path, d, sff);
                         m.portrait_small = a;
                         m.portrait_big = b;
+                        m.stand = stand_of(dir, &def_path, d, sff);
                     }
                     (Some(sff), true) => m.thumb = extract_stage_thumb(dir, d, sff),
                     _ => {}
@@ -1480,6 +1486,7 @@ fn read_any_manifest(dir: &Path) -> Option<Manifest> {
             author: String::new(),
             portrait_small: None,
             portrait_big: None,
+            stand: None,
             source_hash: String::new(),
             verify: None,
             art: None,
@@ -1528,6 +1535,113 @@ fn write_card(png_path: &Path, out: &Path) -> Result<String> {
         .unwrap_or_default())
 }
 
+/// `pal1` of a v1 char (replaces the shared palette), if any.
+fn pal1_of(def_path: &Path, parsed: &rugen_formats::def::Def) -> Option<Vec<[u8; 4]>> {
+    let def_dir = def_path.parent().unwrap_or(Path::new("."));
+    parsed
+        .section("files")?
+        .raw("pal1")
+        .and_then(|p| vfs::resolve(def_dir, p.trim()))
+        .and_then(|p| rugen_formats::act::open(p).ok())
+}
+
+/// A sprite as RGBA (index 0 transparent), or `None` for packed pixels.
+fn sprite_rgba(
+    sff: &rugen_formats::sff::Sff,
+    act: Option<&Vec<[u8; 4]>>,
+    s: &rugen_formats::sff::Sprite,
+) -> Option<Vec<u8>> {
+    let v1 = matches!(sff.version, Some(rugen_formats::sff::Version::V1));
+    match s.decoded().as_ref() {
+        rugen_formats::sff::Pixels::Packed(_) => None,
+        rugen_formats::sff::Pixels::Rgba(px) => Some(px.clone()),
+        rugen_formats::sff::Pixels::Indexed(px) => {
+            // pal1 replaces the shared (first) palette; sprites with their own palette keep it
+            let pal = match (act, v1, s.palette) {
+                (Some(a), true, Some(0)) => a.clone(),
+                (_, _, Some(i)) => sff.palettes.get(i).cloned().unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            Some(
+                px.iter()
+                    .flat_map(|&i| {
+                        let c = pal.get(i as usize).copied().unwrap_or([0, 0, 0, 0]);
+                        if i == 0 { [0, 0, 0, 0] } else { c }
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// The stance sprite (action 0's first frame, else 0,0) cropped to its
+/// opaque pixels, written as `stand.png`.
+fn stand_of(
+    dir: &Path,
+    def_path: &Path,
+    parsed: &rugen_formats::def::Def,
+    sff: &rugen_formats::sff::Sff,
+) -> Option<PortraitInfo> {
+    let def_dir = def_path.parent().unwrap_or(Path::new("."));
+    let frame = parsed
+        .section("files")
+        .and_then(|f| f.raw("anim"))
+        .and_then(|a| vfs::resolve(def_dir, a.trim()))
+        .and_then(|p| vfs::read(&p).ok())
+        .map(|b| rugen_formats::air::Air::parse(&String::from_utf8_lossy(&b)))
+        .and_then(|air| {
+            air.get(0)?
+                .frames
+                .iter()
+                .find(|f| f.group >= 0)
+                .map(|f| (f.group, f.number))
+        })
+        .unwrap_or((0, 0));
+    let (g, n) = (u16::try_from(frame.0).ok()?, u16::try_from(frame.1).ok()?);
+    let s = sff.get(g, n).or_else(|| sff.get(0, 0))?;
+    let act = pal1_of(def_path, parsed);
+    let rgba = sprite_rgba(sff, act.as_ref(), s)?;
+    let (w, h) = (s.width as usize, s.height as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    // crop to the opaque box
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
+    for y in 0..h {
+        for x in 0..w {
+            if rgba[(y * w + x) * 4 + 3] != 0 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let (cw, ch) = (x1 - x0, y1 - y0);
+    let mut out = Vec::with_capacity(cw * ch * 4);
+    for y in y0..y1 {
+        out.extend_from_slice(&rgba[(y * w + x0) * 4..(y * w + x1) * 4]);
+    }
+    let file = "stand.png".to_string();
+    let path = dir.join(&file);
+    if let Err(e) = write_png(&path, cw as u32, ch as u32, &out) {
+        log::warn!("{}: {e}", path.display());
+        return None;
+    }
+    Some(PortraitInfo {
+        file,
+        width: cw as u32,
+        height: ch as u32,
+        axis: [
+            s.offset[0] as i32 - x0 as i32,
+            s.offset[1] as i32 - y0 as i32,
+        ],
+    })
+}
+
 /// Convert the select-screen portraits (9000,0 / 9000,1) to PNG in `dir`.
 fn portraits_of(
     dir: &Path,
@@ -1535,38 +1649,17 @@ fn portraits_of(
     parsed: &rugen_formats::def::Def,
     sff: &rugen_formats::sff::Sff,
 ) -> (Option<PortraitInfo>, Option<PortraitInfo>) {
-    let def_dir = def_path.parent().unwrap_or(Path::new("."));
-    let Some(files) = parsed.section("files") else {
+    if parsed.section("files").is_none() {
         return (None, None);
-    };
-    // SFF v1 chars take their colours from pal1 (.act)
-    let act = files
-        .raw("pal1")
-        .and_then(|p| vfs::resolve(def_dir, p.trim()))
-        .and_then(|p| rugen_formats::act::open(p).ok());
-    let v1 = matches!(sff.version, Some(rugen_formats::sff::Version::V1));
+    }
+    let act = pal1_of(def_path, parsed);
     let mut out = [None, None];
     for (k, number) in [0u16, 1].into_iter().enumerate() {
         let Some(s) = sff.get(9000, number) else {
             continue;
         };
-        let rgba: Vec<u8> = match s.decoded().as_ref() {
-            rugen_formats::sff::Pixels::Packed(_) => continue,
-            rugen_formats::sff::Pixels::Rgba(px) => px.clone(),
-            rugen_formats::sff::Pixels::Indexed(px) => {
-                // pal1 replaces the shared (first) palette; sprites with their own palette keep it
-                let pal = match (&act, v1, s.palette) {
-                    (Some(a), true, Some(0)) => a.clone(),
-                    (_, _, Some(i)) => sff.palettes.get(i).cloned().unwrap_or_default(),
-                    _ => Vec::new(),
-                };
-                px.iter()
-                    .flat_map(|&i| {
-                        let c = pal.get(i as usize).copied().unwrap_or([0, 0, 0, 0]);
-                        if i == 0 { [0, 0, 0, 0] } else { c }
-                    })
-                    .collect()
-            }
+        let Some(rgba) = sprite_rgba(sff, act.as_ref(), s) else {
+            continue;
         };
         let file = format!("portrait_{}.png", if number == 0 { "small" } else { "big" });
         let path = dir.join(&file);

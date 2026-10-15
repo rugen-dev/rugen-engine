@@ -455,6 +455,7 @@ pub fn placeholder(entry: &Entry, stage: bool) -> Manifest {
         author: String::new(),
         portrait_small: None,
         portrait_big: None,
+        stand: None,
         source_hash: String::new(),
         verify: None,
         art: None,
