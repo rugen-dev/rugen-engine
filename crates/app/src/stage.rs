@@ -308,6 +308,8 @@ pub struct StageVisual {
     round: i32,
     /// Offsets (stage units) of the hazard platforms, by platform index.
     platform_offsets: Vec<(usize, [f32; 2])>,
+    /// Every sprite the elements show is on the GPU ([`StageVisual::warm`]).
+    warm_done: bool,
 }
 
 fn pair(s: &Section, k: &str, d: [f32; 2]) -> [f32; 2] {
@@ -456,6 +458,7 @@ impl StageVisual {
             palettes: Vec::new(),
             opaque: Vec::new(),
             quad_buf: Vec::new(),
+            warm_done: false,
             time: 0,
             resetbg: info.and_then(|s| flag(s, "resetbg")).unwrap_or(true),
             round: 0,
@@ -1060,8 +1063,58 @@ impl StageVisual {
         self.draw_bg(r, layer, &bg, Tint::default());
     }
 
+    /// Upload the sprites the elements show (still sprites and every frame
+    /// of their animations) that are not on the GPU yet, as far as `budget`
+    /// goes this call: the first fight frame then has no stage uploads.
+    pub fn warm(&mut self, r: &mut Renderer, budget: &mut crate::sprites::Budget) {
+        if self.warm_done {
+            return;
+        }
+        if self.palettes.is_empty() {
+            self.init_gpu(r);
+        }
+        let mut keys: Vec<(u16, u16)> = Vec::new();
+        let mut push = |g: i32, n: i32| {
+            if let (Ok(g), Ok(n)) = (u16::try_from(g), u16::try_from(n))
+                && !keys.contains(&(g, n))
+            {
+                keys.push((g, n));
+            }
+        };
+        for e in &self.elems {
+            if e.action >= 0 {
+                if let Some(a) = self.air.get(e.action) {
+                    for f in &a.frames {
+                        push(f.group, f.number);
+                    }
+                }
+            } else {
+                push(e.sprite[0], e.sprite[1]);
+            }
+        }
+        let mut left = false;
+        for key in keys {
+            if self.textures.contains_key(&key) {
+                continue;
+            }
+            let Some(spr) = self.sff.get(key.0, key.1) else {
+                continue;
+            };
+            if !budget.left() {
+                left = true;
+                break;
+            }
+            let shared = &mut self.shared;
+            let up = crate::sprites::upload_sprite(r, spr, shared);
+            self.textures.insert(key, Some(up));
+            budget.spent(crate::sprites::texture_bytes(spr));
+        }
+        self.warm_done = !left;
+    }
+
     /// Release the uploaded sprites and palettes (a preview that is replaced).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
+        self.warm_done = false;
         crate::sprites::free_uploads(r, &mut self.textures, &mut self.shared);
         let opaque = self.opaque.drain(..).flatten();
         r.free_palettes(self.palettes.drain(..).chain(opaque));
@@ -1600,6 +1653,7 @@ mod tests {
             palettes: Vec::new(),
             opaque: Vec::new(),
             quad_buf: Vec::new(),
+            warm_done: false,
             time: 0,
             resetbg: true,
             round: 0,

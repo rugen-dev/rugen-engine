@@ -534,6 +534,12 @@ pub struct Lifebar {
 }
 
 impl Lifebar {
+    /// Upload the HUD's sprites ahead of the first fight frame, as far as
+    /// `budget` goes this call.
+    pub fn warm(&mut self, r: &mut Renderer, budget: &mut crate::sprites::Budget) {
+        self.sheet.warm(r, budget)
+    }
+
     /// Give back the sheet's textures and the fonts' glyphs (the match is over).
     pub fn release_gpu(&mut self, r: &mut Renderer) {
         self.sheet.free_gpu(r);

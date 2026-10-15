@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use rugen_audio::{Audio, BankId, SoundKey};
+use rugen_formats::sff::Pixels;
 use rugen_net::{Netplay, Options as NetOptions};
 use rugen_render::{Blend, Camera, Draw, PaletteId, Renderer, TextureId, Tint};
 use rugen_sim::explod::{AnimSrc, PosType, Trans};
@@ -445,6 +446,27 @@ mod team_modes {
 /// GPU texture for a sprite plus the SFF palette index it was authored with.
 type Loaded = (TextureId, Option<usize>);
 
+/// The sheet behind a sprite key's slot (a fighter's data, or the fightfx).
+fn sff_of(world: &World, slot: usize) -> Option<&rugen_formats::sff::Sff> {
+    match world.data.get(slot) {
+        Some(d) => Some(&d.sff),
+        None if slot == world.data.len() => world.fx.as_ref().map(|f| &f.sff),
+        None => None,
+    }
+}
+
+/// What [`Match::prefetch`] may upload per fight frame at most (the GL
+/// driver pays for each texture at submit, outside the time cap: the
+/// texture count is what keeps a fight at 60 fps there).
+pub fn fight_upload_budget() -> crate::sprites::Budget {
+    crate::sprites::Budget::new(2 << 20, 3, std::time::Duration::from_micros(1500))
+}
+
+/// ... and per frame of the versus screen (nothing else to do there).
+pub fn versus_upload_budget() -> crate::sprites::Budget {
+    crate::sprites::Budget::new(8 << 20, 48, std::time::Duration::from_millis(8))
+}
+
 struct CharGpu {
     textures: HashMap<(u16, u16), Option<Loaded>>,
     shared: crate::sprites::Shared,
@@ -802,6 +824,11 @@ pub struct Match {
     pub ranked: Option<bool>,
     /// One per `world.data`, plus one for fightfx at the end (filled by `init_gpu`).
     chars: Vec<CharGpu>,
+    /// Sprites decoding off the main thread ([`Match::prefetch`]).
+    decoder: crate::sprites::Decoder,
+    /// Sprites to put on the GPU ahead of their first draw (common actions
+    /// of every fighter, the fightfx), consumed a budget per frame.
+    warm_queue: std::collections::VecDeque<crate::sprites::SpriteKey>,
     net: Option<Netplay>,
     net_status: String,
     /// Eases rollback corrections on screen (display only).
@@ -1114,6 +1141,8 @@ impl Match {
             early: None,
             ranked: None,
             chars: Vec::new(),
+            decoder: Default::default(),
+            warm_queue: Default::default(),
             net,
             net_status: String::new(),
             smooth: Default::default(),
@@ -1263,6 +1292,7 @@ impl Match {
                 cg.free_gpu(r);
                 cg.palettes = palettes;
             }
+            self.decoder.forget(i);
         }
     }
 
@@ -1335,7 +1365,213 @@ impl Match {
         if let Some(sv) = self.stage_visual.as_mut() {
             sv.init_gpu(r);
         }
+        self.warm_queue = self.common_sprites();
     }
+
+    /// AIR actions every fight is likely to show: the standard ones (0–199:
+    /// stand, walk, jump, guard, hit...), 5000–5999 (hit, fall, lie,
+    /// dizzy...), 9000–9999 (portraits, win poses, taunt).
+    fn is_common_action(no: i32) -> bool {
+        matches!(no, 0..=199 | 5000..=5999 | 9000..=9999)
+    }
+
+    /// The sprites of each fighter's common actions, then the whole fightfx
+    /// (hit sparks come with the first hit), in action order, each once.
+    fn common_sprites(&self) -> std::collections::VecDeque<crate::sprites::SpriteKey> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = std::collections::VecDeque::new();
+        let mut push = |slot: usize, sff: &rugen_formats::sff::Sff, g: i32, n: i32| {
+            if let (Ok(g), Ok(n)) = (u16::try_from(g), u16::try_from(n))
+                && sff.get(g, n).is_some()
+                && seen.insert((slot, g, n))
+            {
+                out.push_back((slot, g, n));
+            }
+        };
+        for (slot, d) in self.world.data.iter().enumerate() {
+            for (no, a) in &d.air.actions {
+                if !Self::is_common_action(*no) {
+                    continue;
+                }
+                for f in &a.frames {
+                    push(slot, &d.sff, f.group, f.number);
+                }
+            }
+        }
+        if let Some(fx) = &self.world.fx {
+            let slot = self.world.data.len();
+            for a in fx.air.actions.values() {
+                for f in &a.frames {
+                    push(slot, &fx.sff, f.group, f.number);
+                }
+            }
+        }
+        out
+    }
+
+    /// Put decoded pixels of `key` on the GPU unless its sprite is there
+    /// already (needed and decoded on the spot meanwhile).
+    fn adopt(
+        &mut self,
+        r: &mut Renderer,
+        key: crate::sprites::SpriteKey,
+        px: &Pixels,
+        budget: &mut crate::sprites::Budget,
+    ) {
+        let (slot, g, n) = key;
+        let Some(cg) = self.chars.get(slot) else {
+            return;
+        };
+        if cg.textures.contains_key(&(g, n)) {
+            return;
+        }
+        let Some(spr) = sff_of(&self.world, slot).and_then(|s| s.get(g, n)) else {
+            return;
+        };
+        let cg = &mut self.chars[slot];
+        let up = match crate::sprites::shared_upload(spr, &cg.shared) {
+            Some(up) => up,
+            None => {
+                budget.spent(crate::sprites::texture_bytes(spr));
+                crate::sprites::upload_pixels(r, spr, px, &mut cg.shared)
+            }
+        };
+        cg.textures.insert((g, n), Some(up));
+    }
+
+    /// Get `key` onto the GPU ahead of its draw: packed sprites go to the
+    /// decoder thread (uploaded later by [`Match::prefetch`]), the rest
+    /// (shared data, folder fighters' decoded pixels) go up now when
+    /// `budget` allows.
+    fn request(
+        &mut self,
+        r: &mut Renderer,
+        key: crate::sprites::SpriteKey,
+        budget: &mut crate::sprites::Budget,
+    ) {
+        let (slot, g, n) = key;
+        let Some(cg) = self.chars.get(slot) else {
+            return;
+        };
+        if cg.textures.contains_key(&(g, n)) || self.decoder.knows(key) {
+            return;
+        }
+        let Some(spr) = sff_of(&self.world, slot).and_then(|s| s.get(g, n)) else {
+            return;
+        };
+        if let Some(up) = crate::sprites::shared_upload(spr, &cg.shared) {
+            self.chars[slot].textures.insert((g, n), Some(up));
+            return;
+        }
+        if matches!(spr.pixels, Pixels::Packed(_)) {
+            self.decoder.request(key, spr);
+            return;
+        }
+        if !budget.left() {
+            return;
+        }
+        budget.spent(crate::sprites::texture_bytes(spr));
+        let cg = &mut self.chars[slot];
+        let up = crate::sprites::upload_pixels(r, spr, &spr.pixels, &mut cg.shared);
+        cg.textures.insert((g, n), Some(up));
+    }
+
+    /// Ask for every sprite of `action` (from `air_slot`'s AIR, drawn with
+    /// `slot`'s sheet): what a fighter, explod or projectile shows next.
+    fn request_action(
+        &mut self,
+        r: &mut Renderer,
+        slot: usize,
+        air_slot: usize,
+        action: i32,
+        budget: &mut crate::sprites::Budget,
+    ) {
+        let air = match self.world.data.get(air_slot) {
+            Some(d) => &d.air,
+            None => match &self.world.fx {
+                Some(fx) if air_slot == self.world.data.len() => &fx.air,
+                _ => return,
+            },
+        };
+        let Some(a) = air.get(action) else {
+            return;
+        };
+        let keys: Vec<crate::sprites::SpriteKey> = a
+            .frames
+            .iter()
+            .filter_map(|f| {
+                Some((
+                    slot,
+                    u16::try_from(f.group).ok()?,
+                    u16::try_from(f.number).ok()?,
+                ))
+            })
+            .collect();
+        for key in keys {
+            self.request(r, key, budget);
+        }
+    }
+
+    /// Sprite uploads ahead of their draw, as far as `budget` goes this
+    /// frame: what the decoder thread finished, then the rest of the
+    /// animations on screen (the next frames of a super are decoded while
+    /// its first ones show), the stage and HUD, then the common actions.
+    /// A sprite drawn before its pixels are back is decoded on the spot
+    /// (`sprite_from`), as before: nothing is ever skipped.
+    pub fn prefetch(&mut self, r: &mut Renderer, mut budget: crate::sprites::Budget) {
+        self.init_gpu(r);
+        while budget.left() {
+            let Some((key, px)) = self.decoder.take() else {
+                break;
+            };
+            self.adopt(r, key, &px, &mut budget);
+        }
+        // look ahead: the whole action of everything on screen
+        let mut wanted: Vec<(usize, usize, i32)> = Vec::new();
+        for p in &self.world.players {
+            if !p.removed && !p.anim_none {
+                wanted.push((p.data, p.anim_owner, p.anim.action));
+            }
+        }
+        let fx_slot = self.world.data.len();
+        for e in &self.world.explods {
+            if !e.removed {
+                let slot = match e.src {
+                    AnimSrc::Player(d) => d,
+                    AnimSrc::Fx => fx_slot,
+                };
+                wanted.push((slot, slot, e.anim.action));
+            }
+        }
+        for pr in &self.world.projs {
+            if !pr.removed && pr.anim_no >= 0 {
+                let d = self.world.players[pr.owner].data;
+                wanted.push((d, d, pr.anim_no));
+            }
+        }
+        wanted.dedup();
+        for (slot, air_slot, action) in wanted {
+            self.request_action(r, slot, air_slot, action, &mut budget);
+        }
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.warm(r, &mut budget);
+        }
+        if let Some(lb) = self.lifebar.as_mut() {
+            lb.warm(r, &mut budget);
+        }
+        // the common actions trickle behind: the decoder keeps a little
+        // ahead of the uploads so a sprite needed now is not queued behind
+        // a long list
+        while budget.left() && self.decoder.in_flight() < Self::WARM_AHEAD {
+            let Some(key) = self.warm_queue.pop_front() else {
+                break;
+            };
+            self.request(r, key, &mut budget);
+        }
+    }
+
+    /// Decoded bytes the common-action trickle keeps in flight at most.
+    const WARM_AHEAD: usize = 4 << 20;
 
     /// Advance one tick with both players' inputs. Returns false when the
     /// frame did not advance (paused, or netplay waiting on the peer).
@@ -2339,10 +2575,14 @@ impl Match {
         let cg = self.chars.get_mut(slot)?;
         let spr = sff.get(key.0, key.1)?;
         let shared = &mut cg.shared;
-        let entry = cg
-            .textures
-            .entry(key)
-            .or_insert_with(|| Some(crate::sprites::upload_sprite(r, spr, shared)));
+        let decoder = &mut self.decoder;
+        let entry = cg.textures.entry(key).or_insert_with(|| {
+            // decoded on the worker already: no decode on this frame
+            Some(match decoder.take_ready((slot, key.0, key.1)) {
+                Some(px) => crate::sprites::upload_pixels(r, spr, &px, shared),
+                None => crate::sprites::upload_sprite(r, spr, shared),
+            })
+        });
         let (tex, pal) = (*entry)?;
         let pal = pal.map(|p| {
             let k = p.min(cg.palettes.len() - 1);
@@ -2741,6 +2981,7 @@ impl Match {
 
     /// Queue this frame's draws; the shell calls `begin` before and `end` after.
     pub fn render(&mut self, r: &mut Renderer) -> (Camera, [f64; 4]) {
+        self.prefetch(r, fight_upload_budget());
         let (ground, stage_w, stage_h) = (
             self.world.stage.zoffset,
             self.world.stage.width,

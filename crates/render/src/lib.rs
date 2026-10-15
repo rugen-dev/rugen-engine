@@ -922,8 +922,9 @@ impl Renderer {
     /// The offscreen target for a `w x h` frame at the current scale, made
     /// (or remade after a resize / scale change) on demand.
     fn ensure_offscreen(&mut self, w: u32, h: u32) {
-        let sw = ((w as f32 * self.scale).round() as u32).clamp(1, w.max(1));
-        let sh = ((h as f32 * self.scale).round() as u32).clamp(1, h.max(1));
+        // + 0.5 then truncate: rounds without `f32::round` (no libm here)
+        let sw = ((w as f32 * self.scale + 0.5) as u32).clamp(1, w.max(1));
+        let sh = ((h as f32 * self.scale + 0.5) as u32).clamp(1, h.max(1));
         if self
             .offscreen
             .as_ref()
