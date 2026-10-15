@@ -657,6 +657,18 @@ copyrighted fighters).
   `~/.cache/rugen-work/creators/shots/debugger-{ink,dojo}.png`.
 
 ### Reach
+- [ ] **Website link (rugen.dev).** PROFILE › LINK WEBSITE: `POST /v1/account/link_code
+  {key}` on the current server, show the 6-character code large (room-code
+  alphabet), a countdown from `expires_in` (600 s), REFRESH re-requests (the
+  new code replaces the old), hint "type it at rugen.dev/settings/link".
+- [ ] **`rugen://` protocol.** Installers register `rugen://watch/<code>` (Windows
+  registry, macOS Info.plist, Linux .desktop `x-scheme-handler/rugen`; the
+  portable build offers REGISTER in OPTIONS): the game opens straight to
+  WATCH of that room on the official server; missing fighters go through the
+  usual consent + package download first.
+- [ ] **Server-hosted tournament rooms.** Rooms with `server_hosted: true`
+  have no host: hide START THE BRACKET / KICK, show "called by the server",
+  join by code from the ONLINE lobby works as today.
 - [ ] **Translations (i18n).** Move every UI string into `motif/lang/en.toml`
   keyed by id; add `pt-BR`, `es`, `fr`, `it`, `de`, `pl`, `tr`, `id`, `fil`
   and `ja`. Accented Latin glyphs are in every generated text font (a24f1ef:
