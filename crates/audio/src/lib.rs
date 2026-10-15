@@ -7,14 +7,17 @@
 //! common and announcer sounds) gets a fresh [`BankId`] from [`new_bank`], so
 //! a group/number never resolves to the `.snd` of a fighter from an earlier
 //! fight. [`Audio::release_fight`] stops every fight voice and forgets those
-//! banks when a fight ends or is replaced.
+//! banks when a fight ends or is replaced. Each bank holds at most
+//! [`BANK_BUDGET`] bytes of samples; these are the only decoded copy (the
+//! `.snd` side reads or decodes a sound's WAV bytes when asked, see
+//! `rugen_formats::snd`).
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
@@ -57,37 +60,102 @@ pub struct SoundKey {
     pub number: i32,
 }
 
-/// Decoded samples by bank / group / number. Needs no audio device.
-#[derive(Default)]
+/// Resident samples a bank may hold before its least recently played
+/// ones go (kira keeps 8 bytes per frame: a 44.1 kHz mono second is
+/// 350 KB). A fighter rarely plays this much in one fight; a long session
+/// of one fight never grows past it.
+pub const BANK_BUDGET: usize = 32 << 20;
+
+struct Entry {
+    data: Option<Arc<StaticSoundData>>,
+    bytes: usize,
+    /// Tick of the last `get` / `load`, for eviction.
+    last: AtomicU64,
+}
+
+/// Decoded samples by bank / group / number, each bank bounded by
+/// [`BANK_BUDGET`] (least recently played out first). Needs no audio device.
 pub struct SampleCache {
-    map: HashMap<SoundKey, Option<Arc<StaticSoundData>>>,
+    map: HashMap<SoundKey, Entry>,
+    /// Resident bytes per bank.
+    held: HashMap<BankId, usize>,
+    budget: usize,
+    tick: AtomicU64,
+}
+
+impl Default for SampleCache {
+    fn default() -> Self {
+        Self::with_budget(BANK_BUDGET)
+    }
 }
 
 impl SampleCache {
+    /// A cache allowing `budget` bytes of samples per bank.
+    pub fn with_budget(budget: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            held: HashMap::new(),
+            budget,
+            tick: AtomicU64::new(1),
+        }
+    }
+
+    fn now(&self) -> u64 {
+        self.tick.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Decode and remember a sample. Returns false when the bytes are not playable.
     pub fn load(&mut self, key: SoundKey, wav: &[u8]) -> bool {
         if let Some(e) = self.map.get(&key) {
-            return e.is_some();
+            e.last.store(self.now(), Ordering::Relaxed);
+            return e.data.is_some();
         }
-        let data = StaticSoundData::from_cursor(Cursor::new(wav.to_vec()))
-            .ok()
-            .map(Arc::new);
+        let data = decode(wav).map(Arc::new);
         let ok = data.is_some();
-        self.map.insert(key, data);
+        let bytes = data
+            .as_ref()
+            .map_or(0, |d| d.frames.len() * std::mem::size_of::<kira::Frame>());
+        *self.held.entry(key.bank).or_default() += bytes;
+        let last = AtomicU64::new(self.now());
+        self.map.insert(key, Entry { data, bytes, last });
+        self.evict(key);
         ok
     }
 
+    /// Drop the least recently used samples of `keep`'s bank until it fits
+    /// its budget; `keep` itself stays.
+    fn evict(&mut self, keep: SoundKey) {
+        while self.held.get(&keep.bank).copied().unwrap_or(0) > self.budget {
+            let Some((&victim, e)) = self
+                .map
+                .iter()
+                .filter(|(k, e)| k.bank == keep.bank && **k != keep && e.bytes > 0)
+                .min_by_key(|(_, e)| e.last.load(Ordering::Relaxed))
+            else {
+                break;
+            };
+            let bytes = e.bytes;
+            self.map.remove(&victim);
+            if let Some(h) = self.held.get_mut(&keep.bank) {
+                *h = h.saturating_sub(bytes);
+            }
+        }
+    }
+
     pub fn is_loaded(&self, key: SoundKey) -> bool {
-        self.map.get(&key).is_some_and(|d| d.is_some())
+        self.map.get(&key).is_some_and(|d| d.data.is_some())
     }
 
     pub fn get(&self, key: SoundKey) -> Option<&Arc<StaticSoundData>> {
-        self.map.get(&key).and_then(|d| d.as_ref())
+        let e = self.map.get(&key)?;
+        e.last.store(self.now(), Ordering::Relaxed);
+        e.data.as_ref()
     }
 
     /// Forget every sample of the banks `drop` picks.
     pub fn release(&mut self, drop: impl Fn(BankId) -> bool) {
         self.map.retain(|k, _| !drop(k.bank));
+        self.held.retain(|b, _| !drop(*b));
     }
 
     /// Banks with at least one cached entry.
@@ -97,6 +165,40 @@ impl SampleCache {
         v.dedup();
         v
     }
+
+    /// Resident sample bytes of one bank.
+    pub fn held(&self, bank: BankId) -> usize {
+        self.held.get(&bank).copied().unwrap_or(0)
+    }
+}
+
+/// WAV bytes to kira frames: plain PCM straight from the samples (what
+/// `.snd` files and decoded Opus hold), anything else through kira's
+/// decoder.
+fn decode(wav: &[u8]) -> Option<StaticSoundData> {
+    if let Ok(pcm) = rugen_formats::wav::parse(wav)
+        && pcm.rate > 0
+        && (1..=2).contains(&pcm.channels)
+    {
+        let frames: Arc<[kira::Frame]> = if pcm.channels == 1 {
+            pcm.samples
+                .iter()
+                .map(|&s| kira::Frame::from_mono(s))
+                .collect()
+        } else {
+            pcm.samples
+                .chunks_exact(2)
+                .map(|c| kira::Frame::new(c[0], c[1]))
+                .collect()
+        };
+        return Some(StaticSoundData {
+            sample_rate: pcm.rate,
+            frames,
+            settings: StaticSoundSettings::default(),
+            slice: None,
+        });
+    }
+    StaticSoundData::from_cursor(Cursor::new(wav.to_vec())).ok()
 }
 
 /// A playing sound and the bank it came from.
@@ -400,5 +502,55 @@ mod tests {
         c.release(|bank| bank != SYSTEM_BANK);
         assert!(!c.is_loaded(ka) && !c.is_loaded(kb));
         assert_eq!(c.banks(), vec![SYSTEM_BANK]);
+    }
+
+    /// A bank over its budget loses its least recently played sample, never
+    /// the one just loaded; other banks are untouched.
+    #[test]
+    fn bank_budget_evicts_least_recently_played() {
+        let frame = std::mem::size_of::<kira::Frame>();
+        let mut c = SampleCache::with_budget(250 * frame);
+        let bank = new_bank();
+        let key = |n| SoundKey {
+            bank,
+            group: 0,
+            number: n,
+        };
+        assert!(c.load(key(0), &wav(100, 1)));
+        assert!(c.load(key(1), &wav(100, 2)));
+        assert_eq!(c.held(bank), 200 * frame);
+        // play 0 again: 1 is now the oldest
+        assert!(c.get(key(0)).is_some());
+        assert!(c.load(key(2), &wav(100, 3)));
+        assert!(c.is_loaded(key(0)) && c.is_loaded(key(2)));
+        assert!(
+            !c.is_loaded(key(1)),
+            "the least recently played sample goes"
+        );
+        assert_eq!(c.held(bank), 200 * frame);
+        // a sample bigger than the budget still loads (alone)
+        assert!(c.load(key(3), &wav(300, 4)));
+        assert!(c.is_loaded(key(3)));
+        assert_eq!(c.held(bank), 300 * frame);
+        let other = SoundKey {
+            bank: new_bank(),
+            group: 0,
+            number: 0,
+        };
+        assert!(c.load(other, &wav(100, 5)));
+        assert!(c.is_loaded(other) && c.is_loaded(key(3)));
+    }
+
+    /// PCM WAVs decode without kira's decoder, to the same frames.
+    #[test]
+    fn pcm_fast_path_matches_kira() {
+        let w = wav(100, 200);
+        let fast = decode(&w).unwrap();
+        let slow = StaticSoundData::from_cursor(Cursor::new(w.clone())).unwrap();
+        assert_eq!(fast.sample_rate, slow.sample_rate);
+        assert_eq!(fast.frames.len(), slow.frames.len());
+        for (a, b) in fast.frames.iter().zip(slow.frames.iter()) {
+            assert!((a.left - b.left).abs() < 1e-3 && (a.right - b.right).abs() < 1e-3);
+        }
     }
 }
