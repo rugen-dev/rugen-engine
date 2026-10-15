@@ -113,6 +113,16 @@ pub fn read(path: &Path) -> Result<Vec<u8>> {
     }
 }
 
+/// Read a file's bytes into the page cache and drop them: a plain file as
+/// it is, a content-file section in its stored form (no rebuild of an SFF
+/// or SND like [`read`] does). `false` when there is nothing to read.
+pub fn warm(path: &Path) -> bool {
+    match entry(path) {
+        None => std::fs::read(path).is_ok(),
+        Some(r) => r.and_then(|(a, e)| a.read_raw(&e)).is_ok(),
+    }
+}
+
 /// A WebP image as PNG bytes (RGBA8).
 pub fn webp_to_png(webp: &[u8]) -> Result<Vec<u8>> {
     let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(webp))
