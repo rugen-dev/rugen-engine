@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use rugen_cns::cmd::Cmd;
 use rugen_cns::state::{Controller, StateDef};
 use rugen_formats::air::Air;
