@@ -3129,7 +3129,17 @@ impl ApplicationHandler for Shell {
         } else {
             rugen_render::Presentation::Vsync
         };
-        let mut gpu = Gpu::create(event_loop, size, self.config.video.fullscreen, presentation);
+        let mut gpu =
+            match Gpu::create(event_loop, size, self.config.video.fullscreen, presentation) {
+                Ok(g) => g,
+                Err(msg) => {
+                    log::error!("{msg}");
+                    eprintln!("{msg}");
+                    self.quit = true;
+                    event_loop.exit();
+                    return;
+                }
+            };
         if let Some((w, h)) = self.harness.window {
             gpu.renderer.resize(w, h);
             crate::machine::set_display(w, h);
