@@ -102,7 +102,7 @@ fn encode_opus(pcm: &wav::Pcm) -> rugen_opus::Result<(u32, u32, u32, Vec<u8>)> {
 
 fn encode_one(key: (i32, i32), bytes: &[u8]) -> Encoded {
     let raw = |bytes: &[u8]| {
-        let (codec, data) = super::compress(bytes, super::LEVEL);
+        let (codec, data) = super::compress(bytes, super::level());
         Encoded {
             key,
             codec: 0,
@@ -123,9 +123,14 @@ fn encode_one(key: (i32, i32), bytes: &[u8]) -> Encoded {
     }
     match encode_opus(&pcm) {
         Ok((rate, frames, preskip, data)) => {
-            let kept = raw(bytes);
-            if kept.data.len() <= data.len() {
-                return kept;
+            // only a tiny or near-silent WAV zstd-compresses below its Opus:
+            // when Opus did not even reach 4:1, compare; otherwise skip the
+            // compression (zstd of every WAV at level 19 cost more than Opus)
+            if data.len() * 4 >= bytes.len() {
+                let kept = raw(bytes);
+                if kept.data.len() <= data.len() {
+                    return kept;
+                }
             }
             Encoded {
                 key,
