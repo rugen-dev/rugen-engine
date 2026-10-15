@@ -157,7 +157,7 @@ fn main() {
                 })
                 .sum();
         println!(
-            "part sff: {} sprites, {:.1} MB pixel bytes held, rss +{} MB",
+            "part sff: {} sprites, {:.1} MB of packed pixels, rss +{} MB",
             sff.sprites.len(),
             packed as f64 / 1e6,
             (rss1 - rss0) / 1024

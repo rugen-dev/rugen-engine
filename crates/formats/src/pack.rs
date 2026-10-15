@@ -1,9 +1,11 @@
 //! Compressed sprite pixels ([`Packed`]) as loaded from an `.rgc` / `.rgs`
 //! sprite section ([`crate::rgc::sprites`]), and source file stamps.
 //!
-//! Pixels stay zstd-compressed in memory, sharing the section's buffer,
-//! until a sprite is first drawn.
+//! Pixels stay zstd-compressed until a sprite is first drawn, as a range of
+//! the section ([`Blob`]: held in memory, or read from the content file
+//! when the sprite decodes).
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ use crate::sff::Pixels;
 /// says where it sits inside the zero-filled `w x h` image the sprite shows.
 #[derive(Clone)]
 pub struct Packed {
-    buf: Arc<Vec<u8>>,
+    buf: Arc<Blob>,
     start: usize,
     len: usize,
     /// Bytes of the stored block once decompressed.
@@ -23,6 +25,109 @@ pub struct Packed {
     rgba: bool,
     /// `[w, h, x, y, block w, block h]` when the block is padded on decode.
     pad: Option<[u16; 6]>,
+}
+
+/// Where a section's bytes live: in memory, or in the content file they
+/// are stored in, read when a block is asked for. A fighter's sprite
+/// section is 25-70 MB and only the sprites that draw are ever decoded,
+/// so holding it resident was the biggest part of a loaded fighter.
+pub enum Blob {
+    Mem(Vec<u8>),
+    /// `len` bytes of `file` from `offset` (a stored section). The handle
+    /// stays open (shared for delete on Windows), so a converter that
+    /// replaces the content file underneath does not change what it reads.
+    File {
+        file: std::fs::File,
+        offset: u64,
+        len: u64,
+    },
+}
+
+impl Blob {
+    pub fn mem(bytes: Vec<u8>) -> Arc<Self> {
+        Arc::new(Self::Mem(bytes))
+    }
+
+    /// `len` bytes of `path` from `offset`, read when asked.
+    pub fn file(path: &Path, offset: u64, len: u64) -> std::io::Result<Arc<Self>> {
+        let file = open_shared(path)?;
+        Ok(Arc::new(Self::File { file, offset, len }))
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Mem(b) => b.len(),
+            Self::File { len, .. } => *len as usize,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// `len` bytes from `start`; `None` outside the blob or when the file
+    /// cannot be read.
+    pub fn slice(&self, start: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        if start.checked_add(len)? > self.len() {
+            return None;
+        }
+        match self {
+            Self::Mem(b) => Some(Cow::Borrowed(&b[start..start + len])),
+            Self::File { file, offset, .. } => {
+                let mut out = vec![0u8; len];
+                pread(file, offset + start as u64, &mut out)
+                    .map_err(|e| log::warn!("content file: read at {start}: {e}"))
+                    .ok()?;
+                Some(Cow::Owned(out))
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for Blob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mem(b) => write!(f, "Blob::Mem({} bytes)", b.len()),
+            Self::File { offset, len, .. } => write!(f, "Blob::File({len} bytes at {offset})"),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn open_shared(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE: others may
+    // still replace the file while this handle reads the old one
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2 | 0x4)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_shared(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+/// Fill `buf` from `file` at `offset` without moving a shared cursor.
+#[cfg(unix)]
+fn pread(file: &std::fs::File, offset: u64, buf: &mut [u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn pread(file: &std::fs::File, mut offset: u64, mut buf: &mut [u8]) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        let n = file.seek_read(buf, offset)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        offset += n as u64;
+        buf = &mut buf[n..];
+    }
+    Ok(())
 }
 
 thread_local! {
@@ -61,7 +166,7 @@ pub(crate) fn unzstd(src: &[u8], n: usize) -> Option<Vec<u8>> {
 
 impl Packed {
     pub(crate) fn new(
-        buf: Arc<Vec<u8>>,
+        buf: Arc<Blob>,
         start: usize,
         len: usize,
         block_len: usize,
@@ -80,14 +185,13 @@ impl Packed {
 
     /// Decompress into `Indexed` / `Rgba`. Corrupt data decodes to transparent pixels.
     pub fn decode(&self) -> Pixels {
-        let src = self
-            .buf
-            .get(self.start..self.start + self.len)
-            .unwrap_or(&[]);
         let block = if self.block_len == 0 {
             Vec::new()
         } else {
-            unzstd(src, self.block_len).unwrap_or_else(|| vec![0; self.block_len])
+            self.buf
+                .slice(self.start, self.len)
+                .and_then(|src| unzstd(&src, self.block_len))
+                .unwrap_or_else(|| vec![0; self.block_len])
         };
         let px = match self.pad {
             None => block,
@@ -129,7 +233,11 @@ impl Packed {
                 ^ (u64::from(p[2]) << 33)
                 ^ (u64::from(p[3]) << 47)
         });
-        (Arc::as_ptr(&self.buf) as usize, self.start, pad)
+        (
+            Arc::as_ptr(&self.buf) as *const u8 as usize,
+            self.start,
+            pad,
+        )
     }
 
     pub fn is_rgba(&self) -> bool {

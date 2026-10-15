@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use crate::pack::Stamp;
+use crate::pack::{Blob, Stamp};
 use crate::rgc::{self, Archive, SectionKind};
 use crate::sff::Sff;
 use crate::snd::Snd;
@@ -297,7 +297,16 @@ fn open_sff_view(path: &Path, is_char: bool, view: rgc::sprites::View) -> Result
         Some(r) => {
             let (a, e) = r?;
             match e.kind {
-                SectionKind::Sprites => rgc::sprites::decode(Arc::new(a.read(&e)?), view),
+                // a stored section stays in the file: sprites read their
+                // block when they first draw (a compressed one is read whole)
+                SectionKind::Sprites => {
+                    let blob = if e.codec == rgc::Codec::Stored {
+                        Blob::file(&a.path, e.offset, e.len)?
+                    } else {
+                        Blob::mem(a.read(&e)?)
+                    };
+                    rgc::sprites::decode(blob, view)
+                }
                 SectionKind::File => Sff::parse(&a.read(&e)?, is_char),
                 _ => Err(Error::fmt(
                     "sff",

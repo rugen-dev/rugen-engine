@@ -1,6 +1,5 @@
 //! Check that `Sff::write_exact` and the `.rgc` sprite section give back
 //! every sprite of SFF files: `cargo run -p rugen-formats --release --example sffcheck -- a.sff [b.sff ..] [--char]`
-use std::sync::Arc;
 
 use rugen_formats::rgc::sprites;
 use rugen_formats::sff::Sff;
@@ -53,7 +52,11 @@ fn main() {
         let enc = t.elapsed();
         let t = std::time::Instant::now();
         let exact = sprites::unpacked(
-            &sprites::decode(Arc::new(sec.clone()), sprites::View::Exact).unwrap(),
+            &sprites::decode(
+                rugen_formats::pack::Blob::mem(sec.clone()),
+                sprites::View::Exact,
+            )
+            .unwrap(),
         );
         let dec = t.elapsed();
         let same = exact.canonical_hash() == sff.canonical_hash();

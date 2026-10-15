@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::pack::Packed;
+use crate::pack::{Blob, Packed};
 use crate::sff::{CanonicalHasher, Key, Palette, Pixels, Sff, Sprite, Version};
 use crate::{Error, Result};
 
@@ -476,18 +476,26 @@ pub fn read_header(b: &[u8]) -> Result<Header> {
     })
 }
 
-/// Load a section. Pixels stay compressed in `bytes` (shared, not copied).
-pub fn decode(bytes: Arc<Vec<u8>>, view: View) -> Result<Sff> {
-    let header = read_header(&bytes)?;
-    let b: &[u8] = &bytes;
+/// Load a section. Pixels stay compressed in `blob` (shared, not copied;
+/// read from the file when it is a [`Blob::File`]): only the tables up to
+/// the pixel data are read here.
+pub fn decode(blob: Arc<Blob>, view: View) -> Result<Sff> {
     let bad = || Error::fmt(F, "truncated");
+    let head = blob.slice(0, HEADER).ok_or_else(bad)?;
+    let header = read_header(&head)?;
+    let data_ofs = le64(&head, 32) as usize;
+    let total = blob.len();
+    if data_ofs > total {
+        return Err(bad());
+    }
+    let tables = blob.slice(0, data_ofs).ok_or_else(bad)?;
+    let b: &[u8] = &tables;
     let n_slots = le32(b, 12) as usize;
     let n_pal = le32(b, 16) as usize;
     let n_keys = le32(b, 20) as usize;
     let n_blocks = le32(b, 24) as usize;
     let n_spr = le32(b, 28) as usize;
-    let data_ofs = le64(b, 32) as usize;
-    if data_ofs > b.len() || n_slots > 1 << 20 || n_spr > 1 << 20 || n_blocks > n_spr.max(1) {
+    if n_slots > 1 << 20 || n_spr > 1 << 20 || n_blocks > n_spr.max(1) {
         return Err(bad());
     }
     let mut at = HEADER;
@@ -529,7 +537,7 @@ pub fn decode(bytes: Arc<Vec<u8>>, view: View) -> Result<Sff> {
         let r = b.get(at..at + 24).ok_or_else(bad)?;
         let start = data_ofs.checked_add(le64(r, 0) as usize).ok_or_else(bad)?;
         let len = le32(r, 8) as usize;
-        if start.checked_add(len).is_none_or(|e| e > b.len()) {
+        if start.checked_add(len).is_none_or(|e| e > total) {
             return Err(bad());
         }
         let (w, h, rgba, free) = (le16(r, 16), le16(r, 18), r[20] != 0, r[21] != 0);
@@ -601,7 +609,7 @@ pub fn decode(bytes: Arc<Vec<u8>>, view: View) -> Result<Sff> {
                 spr.offset = [ax as i16, ay as i16];
             }
             spr.pixels = Pixels::Packed(Packed::new(
-                bytes.clone(),
+                blob.clone(),
                 bl.start,
                 bl.len,
                 bl.raw,
@@ -742,7 +750,7 @@ mod tests {
         let sff = sample();
         let (bytes, st) = encode(&sff, true);
         assert_eq!(st.palettes_out, 2, "duplicate palettes stored once");
-        let back = unpacked(&decode(Arc::new(bytes), View::Exact).unwrap());
+        let back = unpacked(&decode(Blob::mem(bytes), View::Exact).unwrap());
         assert_eq!(back.version, sff.version);
         assert_eq!(back.palettes, sff.palettes);
         assert_eq!(back.palette_keys, sff.palette_keys);
@@ -754,7 +762,7 @@ mod tests {
     fn runtime_view_trims_like_the_pack() {
         let sff = sample();
         let (bytes, _) = encode(&sff, true);
-        let rt = decode(Arc::new(bytes.clone()), View::Runtime).unwrap();
+        let rt = decode(Blob::mem(bytes.clone()), View::Runtime).unwrap();
         let a = &rt.sprites[&(0, 0)];
         assert_eq!((a.width, a.height, a.offset), (2, 2, [1, 2]));
         assert_eq!(a.share_key(), rt.sprites[&(0, 1)].share_key(), "one block");
@@ -771,7 +779,7 @@ mod tests {
         assert_eq!((o.width, o.height), (3, 1), "visible index 0: whole");
         // stages never trim
         let (sb, _) = encode(&sff, false);
-        let st = decode(Arc::new(sb), View::Runtime).unwrap();
+        let st = decode(Blob::mem(sb), View::Runtime).unwrap();
         assert_eq!(st.sprites[&(0, 0)].width, 4);
     }
 
@@ -795,10 +803,10 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error() {
-        assert!(decode(Arc::new(b"RSPR".to_vec()), View::Exact).is_err());
+        assert!(decode(Blob::mem(b"RSPR".to_vec()), View::Exact).is_err());
         let (mut bytes, _) = encode(&sample(), true);
         bytes.truncate(bytes.len() - 3);
-        assert!(decode(Arc::new(bytes), View::Exact).is_err());
+        assert!(decode(Blob::mem(bytes), View::Exact).is_err());
     }
 
     #[test]
@@ -818,7 +826,7 @@ mod tests {
                 continue;
             };
             let (bytes, _) = encode(&sff, is_char);
-            let back = unpacked(&decode(Arc::new(bytes), View::Exact).unwrap());
+            let back = unpacked(&decode(Blob::mem(bytes), View::Exact).unwrap());
             assert_eq!(back.sprites, sff.sprites, "{rel}");
             assert_eq!(back.canonical_hash(), sff.canonical_hash(), "{rel}");
         }

@@ -585,8 +585,11 @@ fn verify_written(
                 Some(h) => rgc::sprites::verify_blocks(&stored, h)
                     .map_err(|err| read_back(&format!("{}: {err}", e.path)))?,
                 None => {
-                    let sff = rgc::sprites::decode(Arc::new(stored), rgc::sprites::View::Exact)
-                        .map_err(|err| read_back(&format!("{}: {err}", e.path)))?;
+                    let sff = rgc::sprites::decode(
+                        rugen_formats::pack::Blob::mem(stored),
+                        rgc::sprites::View::Exact,
+                    )
+                    .map_err(|err| read_back(&format!("{}: {err}", e.path)))?;
                     if sff.canonical_hash() != e.hash {
                         return Err(read_back(&format!("{}: other sprites", e.path)));
                     }
