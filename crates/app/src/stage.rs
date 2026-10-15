@@ -298,6 +298,8 @@ pub struct StageVisual {
     palettes: Vec<PaletteId>,
     /// The same palettes with colour 0 opaque (`mask = 0`).
     opaque: Vec<Option<PaletteId>>,
+    /// Scratch for [`layout`] (one element's quads), reused every frame.
+    quad_buf: Vec<ScreenQuad>,
     /// Ticks since the round started (`[BGCtrl] time`).
     time: i32,
     /// `[StageInfo] resetbg` (default on): back to the start each round.
@@ -453,6 +455,7 @@ impl StageVisual {
             shared: Default::default(),
             palettes: Vec::new(),
             opaque: Vec::new(),
+            quad_buf: Vec::new(),
             time: 0,
             resetbg: info.and_then(|s| flag(s, "resetbg")).unwrap_or(true),
             round: 0,
@@ -1064,37 +1067,43 @@ impl StageVisual {
         r.free_palettes(self.palettes.drain(..).chain(opaque));
     }
 
+    /// The picture an element shows now: its animation's frame, or none
+    /// for a still sprite (`None` outside when the action has no frame).
+    fn elem_frame(&self, e: &Elem) -> Option<Option<&rugen_formats::air::Frame>> {
+        if e.action < 0 {
+            return Some(None);
+        }
+        self.air
+            .get(e.action)
+            .and_then(|a| e.anim.frame(a))
+            .map(Some)
+    }
+
     /// Draw the elements of `layer` as seen through `view`.
     pub fn draw_bg(&mut self, r: &mut Renderer, layer: i32, view: &BgView, tint: Tint) {
+        let mut quads = std::mem::take(&mut self.quad_buf);
         for idx in 0..self.elems.len() {
             let e = &self.elems[idx];
             if e.layer != layer || !e.visible || !e.enabled {
                 continue;
             }
             // the element's current picture: its sprite or animation frame
-            let frame = if e.action >= 0 {
-                let Some(f) = self
-                    .air
-                    .get(e.action)
-                    .and_then(|a| e.anim.frame(a))
-                    .cloned()
-                else {
-                    continue;
-                };
-                Some(f)
-            } else {
-                None
+            let Some(frame) = self.elem_frame(e) else {
+                continue;
             };
-            let (group, number) = match &frame {
+            let (group, number) = match frame {
                 Some(f) => (f.group, f.number),
                 None => (e.sprite[0], e.sprite[1]),
             };
             let opaque = !e.mask;
+            // uploading borrows the visual mutably: the element and its
+            // frame are looked up again after, rather than cloned before
             let Some((tex, pal, off, size)) = self.sprite(r, group, number, opaque) else {
                 continue;
             };
-            let e = self.elems[idx].clone();
-            let blend = match (e.blend, &frame) {
+            let e = &self.elems[idx];
+            let frame = self.elem_frame(e).flatten();
+            let blend = match (e.blend, frame) {
                 (Some(b), _) => b,
                 (None, Some(f)) => crate::sprites::air_blend(f),
                 (None, None) => Blend::Alpha,
@@ -1103,9 +1112,10 @@ impl StageVisual {
                 .platform
                 .and_then(|k| self.platform_offsets.iter().find(|o| o.0 == k))
                 .map_or([0.0, 0.0], |o| o.1);
-            let quads = layout(&e, frame.as_ref(), off, size, view, self, follow);
+            quads.clear();
+            layout(e, frame, off, size, view, self, follow, &mut quads);
             let tint = combine_tint(tint, &e.palfx, self.time);
-            for q in quads {
+            for q in quads.iter().copied() {
                 let corners = q.corners.map(|c| {
                     [
                         view.origin[0] + c[0] * view.k,
@@ -1161,6 +1171,8 @@ impl StageVisual {
                 });
             }
         }
+        quads.clear();
+        self.quad_buf = quads;
     }
 }
 
@@ -1197,6 +1209,7 @@ fn combine_tint(base: Tint, fx: &BgPalFx, time: i32) -> Tint {
 /// Ikemen GO's `drawTransformed` + `Animation.Draw` + `renderSpriteQuad`
 /// for one element, in screen units (stage units at zoom 1, top-left
 /// origin): every tile's corners.
+#[allow(clippy::too_many_arguments)]
 fn layout(
     e: &Elem,
     frame: Option<&rugen_formats::air::Frame>,
@@ -1205,7 +1218,8 @@ fn layout(
     view: &BgView,
     sv: &StageVisual,
     follow: [f32; 2],
-) -> Vec<ScreenQuad> {
+    out: &mut Vec<ScreenQuad>,
+) {
     let bgscl = if sv.hires { 0.5 } else { 1.0 };
     let stgscl = sv.scale;
     let lscl = stgscl;
@@ -1390,7 +1404,6 @@ fn layout(
     let x3 = rx + xts * w;
     let y3 = ry;
     let x4 = rx;
-    let mut out = Vec::new();
     let screen_h = view.screen[1];
     let emit_row =
         |x1: f32, y1: f32, x2: f32, x3: f32, y3: f32, x4: f32, out: &mut Vec<ScreenQuad>| {
@@ -1418,8 +1431,8 @@ fn layout(
             x1 += rxadd * ysf * h;
             x2 = x1 + xbs * w;
         }
-        emit_row(x1, y1, x2, x3, y3, x4, &mut out);
-        return out;
+        emit_row(x1, y1, x2, x3, y3, x4, out);
+        return;
     }
     let row_step = ysf * ((spacing[1] + h) / vf - h);
     // rows above (infinite y tiling): each starts at the previous row's top
@@ -1441,7 +1454,7 @@ fn layout(
             if ny1 >= 0.0 && ny3 >= 0.0 {
                 break;
             }
-            emit_row(nx1, ny1, nx2, nx3, ny3, nx4, &mut out);
+            emit_row(nx1, ny1, nx2, nx3, ny3, nx4, out);
         }
     }
     if e.tile[1] == 0 || xts != 0.0 {
@@ -1452,7 +1465,7 @@ fn layout(
             if y1 <= -screen_h && y3 <= -screen_h && ysf * ((spacing[1] + h) / vf) > 0.0 {
                 break;
             }
-            emit_row(x1, y1, x2, x3, y3, x4, &mut out);
+            emit_row(x1, y1, x2, x3, y3, x4, out);
             if e.tile[1] != 1 && n != 0 {
                 n -= 1;
             }
@@ -1471,7 +1484,6 @@ fn layout(
             (x1, y1, x2, x3, y3, x4) = (nx1, ny1, nx2, nx3, ny3, nx4);
         }
     }
-    out
 }
 
 /// Ikemen `emitHTiles`: one row of tiles (corners in y-up screen space,
@@ -1587,6 +1599,7 @@ mod tests {
             shared: Default::default(),
             palettes: Vec::new(),
             opaque: Vec::new(),
+            quad_buf: Vec::new(),
             time: 0,
             resetbg: true,
             round: 0,
@@ -1611,7 +1624,9 @@ mod tests {
         size: [f32; 2],
         off: [f32; 2],
     ) -> Vec<ScreenQuad> {
-        layout(&sv.elems[i], None, off, size, v, sv, [0.0, 0.0])
+        let mut out = Vec::new();
+        layout(&sv.elems[i], None, off, size, v, sv, [0.0, 0.0], &mut out);
+        out
     }
 
     /// A plain element: `start` is from the top-centre of the screen, it

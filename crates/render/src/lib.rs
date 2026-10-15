@@ -286,9 +286,40 @@ pub struct Quad {
     pub strips: u32,
 }
 
+/// A position with its texture coordinate.
+type Pt = ([f32; 2], [f32; 2]);
+
+/// A small convex polygon on the stack: a quad clipped by four planes has
+/// at most eight corners, so no strip of a trapezoid allocates.
+#[derive(Clone, Copy)]
+struct Poly {
+    pts: [Pt; 8],
+    n: usize,
+}
+
+impl Poly {
+    fn quad(pts: [Pt; 4]) -> Self {
+        let mut p = Self {
+            pts: [([0.0; 2], [0.0; 2]); 8],
+            n: 4,
+        };
+        p.pts[..4].copy_from_slice(&pts);
+        p
+    }
+    fn push(&mut self, p: Pt) {
+        if self.n < self.pts.len() {
+            self.pts[self.n] = p;
+            self.n += 1;
+        }
+    }
+    fn as_slice(&self) -> &[Pt] {
+        &self.pts[..self.n]
+    }
+}
+
 /// Clip a convex polygon (positions with texture coordinates) to a
 /// rectangle (Sutherland-Hodgman, coordinates interpolated along edges).
-fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [f32; 2])> {
+fn clip_polygon(pts: Poly, r: [f32; 4]) -> Poly {
     let mut out = pts;
     // (axis, bound, keep below the bound)
     for (axis, bound, below) in [
@@ -297,7 +328,7 @@ fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [
         (1, r[1], false),
         (1, r[3], true),
     ] {
-        if out.is_empty() {
+        if out.n == 0 {
             break;
         }
         let inside = |p: &([f32; 2], [f32; 2])| {
@@ -315,7 +346,9 @@ fn clip_polygon(pts: Vec<([f32; 2], [f32; 2])>, r: [f32; 4]) -> Vec<([f32; 2], [
                 [l(a.1[0], b.1[0]), l(a.1[1], b.1[1])],
             )
         };
-        let input = std::mem::take(&mut out);
+        let input = out;
+        out.n = 0;
+        let input = input.as_slice();
         for i in 0..input.len() {
             let (a, b) = (&input[i], &input[(i + 1) % input.len()]);
             match (inside(a), inside(b)) {
@@ -1146,15 +1179,16 @@ impl Renderer {
         color[3] *= q.blend.src_scale();
         for k in 0..n {
             let (t0, t1) = (k as f32 / n as f32, (k + 1) as f32 / n as f32);
-            let mut poly = vec![
+            let mut poly = Poly::quad([
                 (lerp(tl, bl, t0), [0.0, t0]),
                 (lerp(tr, br, t0), [1.0, t0]),
                 (lerp(tr, br, t1), [1.0, t1]),
                 (lerp(tl, bl, t1), [0.0, t1]),
-            ];
+            ]);
             if let Some(c) = q.clip {
                 poly = clip_polygon(poly, c);
             }
+            let poly = poly.as_slice();
             if poly.len() < 3 {
                 continue;
             }
