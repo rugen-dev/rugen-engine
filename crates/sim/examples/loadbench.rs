@@ -82,7 +82,7 @@ fn main() {
         if let Some(p) = find("sound") {
             let t = Instant::now();
             let snd = rugen_formats::snd::Snd::open(&p).unwrap();
-            let total: usize = snd.sounds.values().map(|s| s.len()).sum();
+            let total: usize = snd.sounds.values().map(|s| s.bytes().len()).sum();
             println!(
                 "snd: {} sounds, {:.1} MB, {:.1} ms",
                 snd.sounds.len(),
@@ -184,7 +184,7 @@ fn main() {
             let t = Instant::now();
             let mut total = 0usize;
             for s in snd.sounds.values() {
-                let w: &[u8] = s;
+                let w = s.bytes();
                 total += w.len();
             }
             let rss4 = vm("VmRSS:");

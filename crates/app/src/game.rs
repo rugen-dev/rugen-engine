@@ -1243,7 +1243,7 @@ impl Shell {
             let Some(bytes) = sys.snd.as_ref().and_then(|s| s.get(g, n)) else {
                 return;
             };
-            audio.load(key, bytes);
+            audio.load(key, &bytes);
         }
         audio.play(key, 0, -1, 100, 0.0, false);
     }

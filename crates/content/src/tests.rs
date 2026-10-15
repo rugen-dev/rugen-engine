@@ -289,7 +289,7 @@ fn export_gives_back_a_folder_with_the_same_fingerprint() {
     assert!(out.join("readme.txt").is_file() && out.join("Big Art.png").is_file());
     // the sound came back as a WAV of the same length
     let back = rugen_formats::snd::Snd::open(out.join("tiny.snd")).unwrap();
-    let w = rugen_formats::wav::parse(back.get(5, 0).unwrap()).unwrap();
+    let w = rugen_formats::wav::parse(&back.get(5, 0).unwrap()).unwrap();
     assert_eq!((w.rate, w.frames()), (24000, 2400));
     // the image is the same picture
     let (iw, ih, px) = read_png(&out.join("Big Art.png")).unwrap();

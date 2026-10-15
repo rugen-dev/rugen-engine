@@ -747,7 +747,7 @@ pub fn resolve_sound<'w>(
     announcer: bool,
     group: i32,
     number: i32,
-) -> (SoundKey, Option<&'w [u8]>) {
+) -> (SoundKey, Option<std::borrow::Cow<'w, [u8]>>) {
     let (bank, bytes) = if announcer {
         (
             banks.announcer,
@@ -1054,10 +1054,6 @@ impl Match {
         for d in &world.data {
             for w in &d.warnings {
                 log::debug!("{}: {w}", d.name);
-            }
-            // Opus sounds of .rgc fighters decode in the background, ready before they play
-            if let Some(snd) = &d.snd {
-                snd.prefetch();
             }
         }
         if setup.tutorial {
@@ -2245,7 +2241,7 @@ impl Match {
         if !audio.is_loaded(key) {
             match bytes {
                 Some(b) => {
-                    audio.load(key, b);
+                    audio.load(key, &b);
                 }
                 None => return,
             }
@@ -4829,7 +4825,7 @@ mod tests {
         // two sounds of different lengths: C plays the second under the first's number
         let mut keys = snd.sounds.keys().copied();
         let first = keys.next().expect("a sound");
-        let len = |k: (i32, i32)| snd.get(k.0, k.1).map(<[u8]>::len);
+        let len = |k: (i32, i32)| snd.get(k.0, k.1).map(|b| b.len());
         let second = keys
             .find(|k| len(*k) != len(first))
             .expect("two sounds of different sizes");
@@ -4849,7 +4845,7 @@ mod tests {
         let mut play = |w: &World, banks: &mut SoundBanks| {
             let (key, bytes) = resolve_sound(w, banks, 0, true, false, first.0, first.1);
             if !cache.is_loaded(key) {
-                cache.load(key, bytes.expect("sound found"));
+                cache.load(key, &bytes.expect("sound found"));
             }
             (key, cache.get(key).expect("decoded").frames.len())
         };
@@ -4860,7 +4856,7 @@ mod tests {
                 group: k.0,
                 number: k.1,
             };
-            c.load(key, snd.get(k.0, k.1).unwrap());
+            c.load(key, &snd.get(k.0, k.1).unwrap());
             c.get(key).unwrap().frames.len()
         };
         assert_ne!(frames_of(first), frames_of(second));

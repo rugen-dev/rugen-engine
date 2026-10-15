@@ -311,7 +311,7 @@ fn open_sff_view(path: &Path, is_char: bool, view: rgc::sprites::View) -> Result
 /// An SND, from disk or from its sound section.
 pub fn open_snd(path: &Path) -> Result<Snd> {
     match entry(path) {
-        None => Snd::parse_shared(Arc::new(std::fs::read(path)?)),
+        None => Snd::open_file(path),
         Some(r) => {
             let (a, e) = r?;
             match e.kind {

@@ -153,7 +153,7 @@ fn encode_one(key: (i32, i32), bytes: &[u8]) -> Encoded {
 
 /// Encode every sound of `snd` (in parallel).
 pub fn encode(snd: &Snd) -> (Vec<u8>, Stats) {
-    let items: Vec<((i32, i32), &[u8])> = snd.sounds.iter().map(|(k, s)| (*k, &**s)).collect();
+    let items: Vec<_> = snd.sounds.iter().map(|(k, s)| (*k, s.bytes())).collect();
     let threads = crate::encode_threads();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut done: Vec<Option<Encoded>> = (0..items.len()).map(|_| None).collect();
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(back.version, (0, 1));
         assert_eq!(back.get(9, 9).unwrap(), &odd[..]);
         for (i, (rate, ch, secs, _)) in src.iter().enumerate() {
-            let w = wav::parse(back.get(i as i32, 0).unwrap()).unwrap();
+            let w = wav::parse(&back.get(i as i32, 0).unwrap()).unwrap();
             assert_eq!(w.rate, opus_rate(*rate));
             assert_eq!(w.channels, *ch);
             let want =
@@ -371,7 +371,7 @@ mod tests {
             assert_eq!(w.frames() as u64, want, "sound {i}: same duration");
         }
         // the tone survives: check correlation in the middle of the first sound
-        let w = wav::parse(back.get(0, 0).unwrap()).unwrap();
+        let w = wav::parse(&back.get(0, 0).unwrap()).unwrap();
         let mid = w.frames() / 2;
         let mut err = 0f32;
         for k in mid..mid + 200 {

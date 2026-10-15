@@ -598,7 +598,7 @@ impl StoryScreen {
             let Some(bytes) = snd.get(c.group, c.number) else {
                 return;
             };
-            a.load(key, bytes);
+            a.load(key, &bytes);
         }
         a.play(key, 0, -1, c.volume, c.pan as f32 / 127.0, false);
     }
