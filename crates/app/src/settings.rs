@@ -31,6 +31,8 @@ pub const INTERFACE_TAB: usize = 5;
 
 const ROUND_TIMES: [i32; 4] = [30, 60, 99, 0];
 const RESOLUTIONS: [(u32, u32); 4] = [(1280, 720), (1280, 800), (1600, 900), (1920, 1080)];
+/// RENDER SCALE row labels, in [`crate::config::RENDER_SCALES`] order.
+const RENDER_SCALE_LABELS: [&str; 4] = ["AUTO", "100%", "75%", "50%"];
 
 enum Widget {
     /// `max` squares, `on` filled.
@@ -196,6 +198,16 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 ),
                 String::new(),
                 "Steam Deck: hints name the Deck's buttons. Auto picks it on a Steam Deck.",
+            ),
+            row(
+                "render_scale",
+                "RENDER SCALE",
+                Widget::Choice(
+                    RENDER_SCALE_LABELS.iter().map(|s| s.to_string()).collect(),
+                    Some(c.video.render_scale_index()),
+                ),
+                String::new(),
+                "Draw the game smaller and scale it up: smoother on old or integrated GPUs. Auto lowers it on those.",
             ),
             row(
                 "mouse",
@@ -549,6 +561,11 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
                 .unwrap_or(0);
             c.video.profile = crate::deck::PROFILES[cycle(cur, 3)].into();
         }
+        "render_scale" => {
+            let n = crate::config::RENDER_SCALES.len();
+            c.video.render_scale =
+                crate::config::RENDER_SCALES[cycle(c.video.render_scale_index(), n)].into();
+        }
         "resolution" => {
             let cur = RESOLUTIONS
                 .iter()
@@ -611,6 +628,10 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
         "air_jumps" => c.game.air_jumps = i.min(3) as i32,
         "round_time" => c.game.round_time = ROUND_TIMES[i.min(ROUND_TIMES.len() - 1)],
         "profile" => c.video.profile = crate::deck::PROFILES[i.min(2)].into(),
+        "render_scale" => {
+            let n = crate::config::RENDER_SCALES.len();
+            c.video.render_scale = crate::config::RENDER_SCALES[i.min(n - 1)].into();
+        }
         "resolution" => {
             let (w, h) = RESOLUTIONS[i.min(RESOLUTIONS.len() - 1)];
             c.video.width = w;
@@ -1071,6 +1092,11 @@ mod tests {
         assert_eq!(m.net.input_delay.0, Some(2));
         assert!(pick(&mut m, "delay", "0"));
         assert_eq!(m.net.input_delay.0, None, "AUTO");
+        assert!(pick(&mut m, "render_scale", "3"));
+        assert_eq!(m.video.render_scale, "0.5");
+        assert!(!pick(&mut m, "render_scale", "3"), "same pick, no change");
+        assert!(adjust(&mut m, "render_scale", 1, true));
+        assert_eq!(m.video.render_scale, "auto", "wraps past 50%");
         assert!(!pick(&mut m, "server", "1"), "not a widget row");
         assert!(!pick(&mut m, "ai", "x"));
         adjust(&mut c, "fighter_size", 1, false);

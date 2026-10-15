@@ -412,6 +412,29 @@ pub struct Renderer {
     adapter: AdapterSummary,
     /// Largest texture side the device accepts (sprites beyond it are skipped).
     max_texture: u32,
+    /// True when this GPU looks like a low-spec one (a downlevel adapter, or
+    /// an integrated GPU reached over GL): the shell's `render_scale = auto`
+    /// picks a lower internal resolution.
+    lowspec_hint: bool,
+    /// Internal render scale (1 = the window's pixels). Below 1 the frame is
+    /// drawn into `offscreen` at `window × scale` and copied up with
+    /// `blit_pipe`; the draw list is logical, nothing else changes.
+    scale: f32,
+    offscreen: Option<Offscreen>,
+    /// Full-window copy of the offscreen frame: no blending, nearest sampling.
+    blit_pipe: wgpu::RenderPipeline,
+    /// Camera mapping `blit_vbuf`'s `[-1, 1]` quad straight onto the target.
+    blit_cam_bind: wgpu::BindGroup,
+    blit_vbuf: wgpu::Buffer,
+}
+
+/// The low-resolution frame of low-spec mode (see [`Renderer::set_render_scale`]).
+struct Offscreen {
+    _tex: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind: wgpu::BindGroup,
+    width: u32,
+    height: u32,
 }
 
 /// The GPU adapter in words: its name, the wgpu backend and the driver.
@@ -551,6 +574,9 @@ impl Renderer {
         };
         let caps = adapter.get_downlevel_capabilities();
         let adapter_limits = adapter.limits();
+        let lowspec_hint = !caps.is_webgpu_compliant()
+            || (info.backend == wgpu::Backend::Gl
+                && info.device_type == wgpu::DeviceType::IntegratedGpu);
         log::info!(
             "render: adapter {:?} ({} {:?}, {}), max texture {}, downlevel {}",
             adapter_summary.name,
@@ -748,6 +774,45 @@ impl Renderer {
         };
         let indexed_pipes = blends.map(|b| make_pipe("indexed", &indexed_layout, "fs_indexed", b));
         let rgba_pipes = blends.map(|b| make_pipe("rgba", &rgba_layout, "fs_rgba", b));
+        let blit_pipe = make_pipe("blit", &rgba_layout, "fs_blit", wgpu::BlendState::REPLACE);
+        // the blit's camera: a [-1, 1] quad lands on the whole target
+        let blit_cam_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blit camera"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                screen: [2.0, 2.0],
+                center: [0.0, 0.0],
+                zoom: 1.0,
+                _pad: 0.0,
+                _pad2: [0.0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let blit_cam_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blit camera"),
+            layout: &cam_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: blit_cam_buf.as_entire_binding(),
+            }],
+        });
+        let blit_vertex = |x: f32, y: f32| Vertex {
+            pos: [x, y],
+            uv: [(x + 1.0) / 2.0, (y + 1.0) / 2.0],
+            color: [1.0; 4],
+            fx_mul: [1.0; 4],
+            fx_add: [0.0, 0.0, 0.0, -1.0],
+            rect: WHOLE,
+        };
+        let blit_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blit quad"),
+            contents: bytemuck::cast_slice(&[
+                blit_vertex(-1.0, -1.0),
+                blit_vertex(1.0, -1.0),
+                blit_vertex(1.0, 1.0),
+                blit_vertex(-1.0, 1.0),
+            ]),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
@@ -785,6 +850,12 @@ impl Renderer {
             free_slots: Vec::new(),
             adapter: adapter_summary,
             max_texture,
+            lowspec_hint,
+            scale: 1.0,
+            offscreen: None,
+            blit_pipe,
+            blit_cam_bind,
+            blit_vbuf,
         };
         r.white = r.add_rgba(1, 1, &[255, 255, 255, 255]);
         Ok(r)
@@ -820,6 +891,126 @@ impl Renderer {
     /// Largest texture side (pixels) the device accepts.
     pub fn max_texture_size(&self) -> u32 {
         self.max_texture
+    }
+
+    /// True when the GPU looks low-spec: a downlevel adapter (not WebGPU
+    /// compliant), or an integrated GPU reached over GL.
+    pub fn lowspec_hint(&self) -> bool {
+        self.lowspec_hint
+    }
+
+    /// Internal render scale: 1 draws straight into the window; below 1 the
+    /// frame is drawn at `window × scale` and copied up with nearest
+    /// sampling (low-spec mode: fragment work falls with the square of the
+    /// scale). Clamped to `[0.25, 1]`; screenshots show the copied result.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() {
+            scale.clamp(0.25, 1.0)
+        } else {
+            1.0
+        };
+        if (scale - self.scale).abs() > 1e-6 {
+            self.scale = scale;
+            self.offscreen = None;
+        }
+    }
+
+    pub fn render_scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// The offscreen target for a `w x h` frame at the current scale, made
+    /// (or remade after a resize / scale change) on demand.
+    fn ensure_offscreen(&mut self, w: u32, h: u32) {
+        let sw = ((w as f32 * self.scale).round() as u32).clamp(1, w.max(1));
+        let sh = ((h as f32 * self.scale).round() as u32).clamp(1, h.max(1));
+        if self
+            .offscreen
+            .as_ref()
+            .is_none_or(|o| o.width != sw || o.height != sh)
+        {
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("lowspec frame"),
+                size: wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&Default::default());
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("lowspec frame"),
+                layout: &self.rgba_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            log::info!(
+                "render: low-spec frame {sw}x{sh} for a {w}x{h} window (scale {:.2})",
+                self.scale
+            );
+            self.offscreen = Some(Offscreen {
+                _tex: tex,
+                view,
+                bind,
+                width: sw,
+                height: sh,
+            });
+        }
+    }
+
+    /// Encode the frame into `target` (`w x h`): straight at scale 1, else
+    /// through the offscreen frame and a full-target copy.
+    fn encode_frame(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        w: u32,
+        h: u32,
+        clear: [f64; 4],
+    ) {
+        if self.scale >= 1.0 {
+            self.encode_pass(enc, target, clear);
+            return;
+        }
+        self.ensure_offscreen(w, h);
+        let off = self.offscreen.as_ref().expect("just made");
+        self.encode_pass(enc, &off.view, clear);
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("blit"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&self.blit_pipe);
+        pass.set_bind_group(0, &self.blit_cam_bind, &[]);
+        pass.set_bind_group(1, &off.bind, &[]);
+        pass.set_vertex_buffer(0, self.blit_vbuf.slice(..));
+        pass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..QUAD_INDICES as u32, 0, 0..1);
     }
 
     /// True when a `w x h` texture fits the device; else say so once per
@@ -1466,7 +1657,8 @@ impl Renderer {
         };
         let view = frame.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
-        self.encode_pass(&mut enc, &view, clear);
+        let (w, h) = (frame.texture.width(), frame.texture.height());
+        self.encode_frame(&mut enc, &view, w, h, clear);
         self.queue.submit([enc.finish()]);
         let t = std::time::Instant::now();
         frame.present();
@@ -1477,7 +1669,9 @@ impl Renderer {
     }
 
     /// Render the queued frame into an offscreen `w x h` image and read it
-    /// back as straight RGBA8. For screenshots and tests.
+    /// back as straight RGBA8 (through the low-spec frame when the render
+    /// scale is below 1, so a screenshot shows what the window shows). For
+    /// screenshots and tests.
     pub fn end_to_image(&mut self, cam: &Camera, clear: [f64; 4], w: u32, h: u32) -> Vec<u8> {
         self.prepare(cam);
         let size = wgpu::Extent3d {
@@ -1504,7 +1698,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
         let mut enc = self.device.create_command_encoder(&Default::default());
-        self.encode_pass(&mut enc, &view, clear);
+        self.encode_frame(&mut enc, &view, w, h, clear);
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &tex,

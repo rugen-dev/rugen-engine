@@ -149,6 +149,48 @@ pub struct Video {
     pub low_latency: bool,
     /// `auto` (a Steam Deck is detected), `deck` or `desktop`: see `deck.rs`.
     pub profile: String,
+    /// Internal render scale: `auto`, `1.0`, `0.75` or `0.5`. Below 1 the
+    /// fight is drawn at that fraction of the window and scaled up (low-spec
+    /// mode); `auto` is 0.75 on a downlevel or GL-only integrated GPU, else 1.
+    pub render_scale: String,
+}
+
+/// `[video] render_scale` choices, as written in rugen.toml.
+pub const RENDER_SCALES: [&str; 4] = ["auto", "1.0", "0.75", "0.5"];
+
+impl Video {
+    /// Index into [`RENDER_SCALES`] of the configured render scale (unknown
+    /// values read as `auto`).
+    pub fn render_scale_index(&self) -> usize {
+        let v = self.render_scale.trim();
+        RENDER_SCALES
+            .iter()
+            .position(|s| s.eq_ignore_ascii_case(v))
+            .or_else(|| {
+                let x: f32 = v.parse().ok()?;
+                RENDER_SCALES
+                    .iter()
+                    .skip(1)
+                    .position(|s| s.parse::<f32>().is_ok_and(|v| (v - x).abs() < 1e-3))
+                    .map(|i| i + 1)
+            })
+            .unwrap_or(0)
+    }
+
+    /// The render scale to draw with: `auto` resolves with the renderer's
+    /// low-spec hint (0.75 on such a GPU, else 1).
+    pub fn render_scale_value(&self, lowspec_gpu: bool) -> f32 {
+        match self.render_scale_index() {
+            0 => {
+                if lowspec_gpu {
+                    0.75
+                } else {
+                    1.0
+                }
+            }
+            i => RENDER_SCALES[i].parse().unwrap_or(1.0),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -417,6 +459,7 @@ impl Default for Video {
             theme: "ink".into(),
             low_latency: true,
             profile: "auto".into(),
+            render_scale: "auto".into(),
         }
     }
 }
@@ -763,6 +806,26 @@ mod tests {
         let back: Config = toml::from_str("[net]\nport = 9000\n").unwrap();
         assert_eq!(back.net.port, 9000);
         assert_eq!(back.video.width, 1280);
+    }
+
+    #[test]
+    fn render_scale_resolves() {
+        let mut v = Video::default();
+        assert_eq!(v.render_scale_index(), 0, "auto by default");
+        assert_eq!(v.render_scale_value(false), 1.0);
+        assert_eq!(
+            v.render_scale_value(true),
+            0.75,
+            "auto lowers on a low-spec GPU"
+        );
+        v.render_scale = "0.5".into();
+        assert_eq!(v.render_scale_value(true), 0.5);
+        v.render_scale = ".75".into();
+        assert_eq!(v.render_scale_index(), 2, "a number is matched by value");
+        v.render_scale = "nonsense".into();
+        assert_eq!(v.render_scale_value(false), 1.0, "unknown reads as auto");
+        let back: Config = toml::from_str("[video]\nrender_scale = \"0.75\"\n").unwrap();
+        assert_eq!(back.video.render_scale_value(false), 0.75);
     }
 
     const OFFICIAL: &str = "https://play.rugen.dev";

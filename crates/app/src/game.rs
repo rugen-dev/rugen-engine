@@ -919,6 +919,13 @@ impl Shell {
                 }
             }
         }
+        if let Some(g) = self.gpu.as_mut() {
+            let scale = self
+                .config
+                .video
+                .render_scale_value(g.renderer.lowspec_hint());
+            g.renderer.set_render_scale(scale);
+        }
         if self.fullscreen != self.config.video.fullscreen {
             self.fullscreen = self.config.video.fullscreen;
             if let Some(g) = &self.gpu {
@@ -2762,6 +2769,12 @@ impl Shell {
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let r = &mut gpu.renderer;
+        // the options' RENDER SCALE shows at once (SAVE / DISCARD settle it)
+        if let Screen::Ui(u) = &self.screen
+            && u.kind == UiKind::Options
+        {
+            r.set_render_scale(u.config.video.render_scale_value(r.lowspec_hint()));
+        }
         let build_start = Instant::now();
         r.begin();
         let (cam, clear) = match (&mut self.screen, self.system.as_mut()) {
@@ -3158,6 +3171,20 @@ impl ApplicationHandler for Shell {
             gpu.renderer.resize(w, h);
             crate::machine::set_display(w, h);
         }
+        let scale = self
+            .config
+            .video
+            .render_scale_value(gpu.renderer.lowspec_hint());
+        gpu.renderer.set_render_scale(scale);
+        log::info!(
+            "render: render scale {scale} ({}, low-spec GPU: {})",
+            self.config.video.render_scale.trim(),
+            if gpu.renderer.lowspec_hint() {
+                "yes"
+            } else {
+                "no"
+            }
+        );
         self.latency.set_mode(
             format!("{:?}", gpu.renderer.present_mode()),
             gpu.renderer.frame_latency(),
