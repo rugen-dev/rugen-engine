@@ -8,7 +8,9 @@
 //! per process so the peak belongs to it.
 //!
 //! Flags: `--phases` (step-by-step breakdown of the original loader),
-//! `--original` (compile the logic instead of using the precompiled one).
+//! `--parts` (resident memory per part: sprites, sounds, animations, logic,
+//! and the WAV bytes every sound decodes to), `--original` (compile the
+//! logic instead of using the precompiled one).
 //! Works on a folder's def or on one inside an `.rgc` (`chars/x.rgc/x.def`).
 
 use std::path::{Path, PathBuf};
@@ -134,7 +136,70 @@ fn main() {
         println!("rss after phases: {} MB", vm("VmRSS:") / 1024);
     }
 
+    let parts = args.iter().any(|a| a == "--parts");
+    // what each part costs resident, opened alone through the real loaders
+    // (the logic is what the full load adds on top of these)
+    let mut assets_kb = 0;
+    if parts {
+        let def = Def::open(&def_path).unwrap();
+        let files = def.section("files").unwrap();
+        let find = |k: &str| files.raw(k).and_then(|n| resolve(&dir, n).ok());
+        let rss0 = vm("VmRSS:");
+        let sff = rugen_formats::sff::Sff::open(find("sprite").unwrap(), true).unwrap();
+        let rss1 = vm("VmRSS:");
+        let packed: usize =
+            sff.sprites
+                .values()
+                .map(|s| match &s.pixels {
+                    rugen_formats::sff::Pixels::Packed(p) => p.packed_len(),
+                    rugen_formats::sff::Pixels::Indexed(p)
+                    | rugen_formats::sff::Pixels::Rgba(p) => p.len(),
+                })
+                .sum();
+        println!(
+            "part sff: {} sprites, {:.1} MB pixel bytes held, rss +{} MB",
+            sff.sprites.len(),
+            packed as f64 / 1e6,
+            (rss1 - rss0) / 1024
+        );
+        let snd = find("sound").map(|p| rugen_formats::snd::Snd::open(p).unwrap());
+        let rss2 = vm("VmRSS:");
+        if let Some(snd) = &snd {
+            println!(
+                "part snd: {} sounds, rss +{} MB",
+                snd.sounds.len(),
+                (rss2 - rss1) / 1024
+            );
+        }
+        let air = rugen_formats::air::Air::open(find("anim").unwrap()).unwrap();
+        let rss3 = vm("VmRSS:");
+        println!(
+            "part air: {} actions, rss +{} MB",
+            air.actions.len(),
+            (rss3 - rss2) / 1024
+        );
+        assets_kb = rss3 - rss0;
+        // every sound decoded to WAV, as a fight's prefetch did
+        if let Some(snd) = &snd {
+            let t = Instant::now();
+            let mut total = 0usize;
+            for s in snd.sounds.values() {
+                let w: &[u8] = s;
+                total += w.len();
+            }
+            let rss4 = vm("VmRSS:");
+            println!(
+                "part snd decoded: {:.1} MB of WAV in {:.0} ms, rss +{} MB",
+                total as f64 / 1e6,
+                ms(t),
+                (rss4 - rss3) / 1024
+            );
+        }
+        drop((sff, snd, air));
+    }
+
     let original = args.iter().any(|a| a == "--original");
+    let rss_before = vm("VmRSS:");
     let t = Instant::now();
     let data = if original {
         rugen_sim::CharData::load_original(&def_path, &data_dir).unwrap()
@@ -147,6 +212,19 @@ fn main() {
         data.states.len(),
         data.sff.sprites.len()
     );
+    if parts {
+        let rss = vm("VmRSS:") - rss_before;
+        let ctrls: usize = data.states.values().map(|s| s.ctrls.len()).sum();
+        let raw: usize = data.states.values().map(|s| s.def.controllers.len()).sum();
+        let states_bytes = bincode::serialized_size(&data.states).unwrap_or(0);
+        println!(
+            "part logic: {} states, {ctrls} controllers ({raw} raw kept), states serialize to {:.1} MB; full load rss +{} MB, so logic + overhead about {} MB",
+            data.states.len(),
+            states_bytes as f64 / 1e6,
+            rss / 1024,
+            rss.saturating_sub(assets_kb) / 1024
+        );
+    }
     // texture memory if every sprite gets uploaded (shared pixels upload once)
     let mut seen = std::collections::HashSet::new();
     let mut vram = 0usize;
