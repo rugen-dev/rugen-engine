@@ -503,6 +503,10 @@ pub enum Presentation {
 pub struct FrameTiming {
     /// Time spent waiting for a swapchain image (vsync back-pressure).
     pub acquire: std::time::Duration,
+    /// Time the last [`Renderer::end`] spent in the swapchain: acquiring an
+    /// image when none was in hand, and `present` (on GL, `eglSwapBuffers`
+    /// blocks here until vblank: not render cost).
+    pub present: std::time::Duration,
     /// When `present` returned.
     pub presented: Option<std::time::Instant>,
     /// When the swapchain image was acquired.
@@ -1448,12 +1452,14 @@ impl Renderer {
     /// Present the frame queued since [`begin`](Self::begin).
     pub fn end(&mut self, cam: &Camera, clear: [f64; 4]) -> Result<(), wgpu::SurfaceError> {
         self.prepare(cam);
+        let mut swapchain = std::time::Duration::ZERO;
         let frame = match self.acquired.take() {
             Some(f) => f,
             None => {
                 let t = std::time::Instant::now();
                 let f = self.surface.get_current_texture()?;
                 self.timing.acquire = t.elapsed();
+                swapchain += self.timing.acquire;
                 self.timing.acquired = Some(std::time::Instant::now());
                 f
             }
@@ -1462,8 +1468,11 @@ impl Renderer {
         let mut enc = self.device.create_command_encoder(&Default::default());
         self.encode_pass(&mut enc, &view, clear);
         self.queue.submit([enc.finish()]);
+        let t = std::time::Instant::now();
         frame.present();
-        self.timing.presented = Some(std::time::Instant::now());
+        let now = std::time::Instant::now();
+        self.timing.present = swapchain + (now - t);
+        self.timing.presented = Some(now);
         Ok(())
     }
 

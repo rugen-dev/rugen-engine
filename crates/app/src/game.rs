@@ -2842,7 +2842,14 @@ impl Shell {
         let submit_start = Instant::now();
         let ended = r.end(&cam, clear);
         if profiling {
-            crate::framestats::add(crate::framestats::Phase::Submit, submit_start.elapsed());
+            // the swapchain wait (acquire + present) is its own phase, so a
+            // vsync block on GL is not read as encode / submit cost
+            let present = r.timing().present;
+            crate::framestats::add(
+                crate::framestats::Phase::Submit,
+                submit_start.elapsed().saturating_sub(present),
+            );
+            crate::framestats::add(crate::framestats::Phase::Present, present);
             let name = match &self.screen {
                 Screen::Blank => "blank".to_string(),
                 Screen::Title(_) => "title(legacy)".into(),

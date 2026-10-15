@@ -1,6 +1,6 @@
 //! Frame profiling behind `RUGEN_FRAMESTATS=1`: CPU time per phase (update,
-//! data rebuild, UI layout, draw building, GPU submit) plus the renderer's
-//! draw calls and texture uploads, logged once a second.
+//! data rebuild, UI layout, draw building, GPU submit, swapchain present)
+//! plus the renderer's draw calls and texture uploads, logged once a second.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,12 +16,15 @@ pub enum Phase {
     Layout,
     /// Building the frame's draw list.
     Build,
-    /// Vertex upload, encode, submit, present.
+    /// Vertex upload, bind groups, encode, submit (CPU render cost).
     Submit,
+    /// Swapchain acquire and present: the vsync wait when the driver blocks
+    /// there (GL's `eglSwapBuffers`), not render cost.
+    Present,
 }
 
-const PHASES: usize = 5;
-const NAMES: [&str; PHASES] = ["update", "data", "layout", "build", "submit"];
+const PHASES: usize = 6;
+const NAMES: [&str; PHASES] = ["update", "data", "layout", "build", "submit", "present"];
 
 static SUM: [AtomicU64; PHASES] = [const { AtomicU64::new(0) }; PHASES];
 static MAX: [AtomicU64; PHASES] = [const { AtomicU64::new(0) }; PHASES];
