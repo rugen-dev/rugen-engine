@@ -1546,7 +1546,13 @@ impl World {
         h.player_type = player_type;
         h.keyctrl = keyctrl;
         h.life = parent.life_max;
-        h.cmds = parent.cmds.clone();
+        // only keyctrl helpers read commands (`Command` is false for the
+        // others), so the others carry no command state to snapshot
+        h.cmds = if keyctrl {
+            parent.cmds.clone()
+        } else {
+            CommandList::default()
+        };
         h.input = parent.input.clone();
         h.ctrl = false;
         let roots = self.players.iter().filter(|p| p.helper_index == 0).count();

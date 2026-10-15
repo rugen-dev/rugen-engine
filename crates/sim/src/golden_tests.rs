@@ -201,12 +201,14 @@ fn community_matches_are_bit_identical() {
     assert_eq!(got, GOLDEN_COMMUNITY);
 }
 
+// deep checksums re-recorded when helpers without keyctrl stopped carrying
+// a copy of their root's command state (fast checksums unchanged)
 const GOLDEN_COMMUNITY: [(u64, u32, [u8; 2], u64); 3] = [
     // re-recorded with the camera's centre held inside its bounds (see
     // GOLDEN_KFM)
-    (0x3895c0df60c847ee, 12000, [1, 0], 0x1c88345c16ce1295),
-    (0x9003bb5a90445e68, 20000, [2, 1], 0x304c4ecb1f2fdc7d),
-    (0x5d545012b91f4cbd, 12000, [0, 1], 0xe97fb35f83d73d47),
+    (0x3895c0df60c847ee, 12000, [1, 0], 0x528b46849a2e2c2f),
+    (0x9003bb5a90445e68, 20000, [2, 1], 0xadf47bcc9b9e132e),
+    (0x5d545012b91f4cbd, 12000, [0, 1], 0x12b2631232fe8267),
 ];
 
 /// The fighter debugger's trace records what the state machine did, never

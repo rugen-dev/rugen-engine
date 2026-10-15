@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! rugen bench [--root dir] [--chars A,B[,C,D]] [--frames n] [--out file.md]
-//!             [--convert <zip|folder>] [--no-render] [--no-teams] [--backend gl|vulkan|...]
+//!             [--convert <zip|folder>] [--no-render] [--no-teams] [--only sim|teams|arena]
+//!             [--backend gl|vulkan|...]
 //! ```
 //!
 //! Sections:
@@ -275,21 +276,26 @@ pub fn run(args: &[String]) -> Result<()> {
         table.row("load", "peak RSS MB after loads", format!("{mb:.0}"));
     }
 
+    let only = opt(args, "--only");
+    let wanted = |s: &str| only.as_deref().is_none_or(|o| o == s);
+
     // sim 1v1
-    let title = format!("{} vs {}", want[0], want[1]);
-    let w = build_world(&spec(
-        &defs[0],
-        &defs[1],
-        stage.as_deref(),
-        7,
-        &data_dir,
-        &motif,
-    ))?;
-    let r = drive(w, &noise(frames, 2, 0x9E37_79B9));
-    sim_rows(&mut table, "sim", &title, &r);
+    if wanted("sim") {
+        let title = format!("{} vs {}", want[0], want[1]);
+        let w = build_world(&spec(
+            &defs[0],
+            &defs[1],
+            stage.as_deref(),
+            7,
+            &data_dir,
+            &motif,
+        ))?;
+        let r = drive(w, &noise(frames, 2, 0x9E37_79B9));
+        sim_rows(&mut table, "sim", &title, &r);
+    }
 
     // teams: Simul 4v4
-    if !args.iter().any(|a| a == "--no-teams") {
+    if wanted("teams") && !args.iter().any(|a| a == "--no-teams") {
         let pick = |i: usize| defs[i % defs.len()].as_path();
         let teams = TeamSpec {
             mode: [TeamMode::Simul, TeamMode::Simul],
@@ -314,7 +320,7 @@ pub fn run(args: &[String]) -> Result<()> {
     ]
     .into_iter()
     .find(|p| p.exists());
-    if let Some(arena) = arena {
+    if let Some(arena) = arena.filter(|_| wanted("arena")) {
         let mut w = build_world(&spec(
             &defs[0],
             &defs[1],
@@ -332,7 +338,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     // render (child process with a window)
-    if !args.iter().any(|a| a == "--no-render") {
+    if only.is_none() && !args.iter().any(|a| a == "--no-render") {
         match render_child(
             &lib.root,
             &want[0],
