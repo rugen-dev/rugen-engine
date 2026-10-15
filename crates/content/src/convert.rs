@@ -134,6 +134,20 @@ fn ext_is(path: &str, ext: &str) -> bool {
 struct Section {
     entry: Entry,
     data: Vec<u8>,
+    /// Sprite sections encoded here: the hash of every block's pixels, so
+    /// the written file is checked block by block ([`verify_written`]).
+    /// `None` (reused or raw sections) means a full decode check.
+    block_hashes: Option<Vec<[u8; 32]>>,
+}
+
+impl Section {
+    fn new(entry: Entry, data: Vec<u8>) -> Self {
+        Self {
+            entry,
+            data,
+            block_hashes: None,
+        }
+    }
 }
 
 /// A PNG as lossless WebP, when every pixel survives (8-bit RGB / RGBA /
@@ -192,11 +206,11 @@ fn raw_section(path: &str, bytes: &[u8], stamp: Option<Stamp>) -> Section {
     let (codec, data) = if incompressible(path) {
         (rgc::Codec::Stored, bytes.to_vec())
     } else {
-        rgc::compress(bytes, rgc::LEVEL)
+        rgc::compress(bytes, rgc::level())
     };
     e.codec = codec;
     e.raw_len = bytes.len() as u64;
-    Section { entry: e, data }
+    Section::new(e, data)
 }
 
 fn stamp_entry(e: &mut Entry, stamp: Option<Stamp>) {
@@ -283,10 +297,7 @@ pub fn convert(src: &Source, out: &Path, data_dir: &Path, prev: Option<&Path>) -
         {
             return None;
         }
-        Some(Section {
-            entry: e.clone(),
-            data: a.read_raw(e).ok()?,
-        })
+        Some(Section::new(e.clone(), a.read_raw(e).ok()?))
     };
 
     let all = crate::extract::files_under(&src.root);
@@ -310,131 +321,134 @@ pub fn convert(src: &Source, out: &Path, data_dir: &Path, prev: Option<&Path>) -
     let mut kept_raw: Vec<String> = Vec::new();
     let mut reused = 0usize;
     let next = std::sync::atomic::AtomicUsize::new(0);
-    // sprites, sounds and the rest on their own threads (each spreads over the cores)
-    let (spr, snd, rest, logic) = std::thread::scope(|s| {
-        let spr = s.spawn(|| {
-            let mut out = Vec::new();
-            for (rel, p) in &sffs {
-                let stamp = Stamp::of(p);
-                if let Some(sec) = reusable(rel, stamp, &[SectionKind::Sprites, SectionKind::File])
-                {
-                    out.push((sec, true, None));
-                    continue;
+    // sprites, sounds and the rest on their own threads (each spreads over
+    // the cores); with one encoder thread allowed (a game converting in
+    // the background on a small machine) the phases run one after another
+    let threads = rugen_formats::encode_threads().clamp(1, 8);
+    let do_spr = || {
+        let mut out = Vec::new();
+        for (rel, p) in &sffs {
+            let stamp = Stamp::of(p);
+            if let Some(sec) = reusable(rel, stamp, &[SectionKind::Sprites, SectionKind::File]) {
+                out.push((sec, true, None));
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(p) else {
+                continue;
+            };
+            let is_char =
+                kind == rgc::Kind::Char && sprite_file.as_deref() == Some(&rgc::canon(rel));
+            // streamed: a batch of sprites at a time, never the decoded file
+            match rgc::sprites::encode_file(&bytes, is_char) {
+                Ok(enc) => {
+                    let mut e = Entry::new(SectionKind::Sprites, rel);
+                    e.flags = if is_char { rgc::SPRITES_CHAR } else { 0 };
+                    e.hash = enc.hash;
+                    e.raw_len = enc.bytes.len() as u64;
+                    stamp_entry(&mut e, stamp);
+                    out.push((
+                        Section {
+                            entry: e,
+                            data: enc.bytes,
+                            block_hashes: Some(enc.block_hashes),
+                        },
+                        false,
+                        None,
+                    ));
                 }
-                let Ok(bytes) = std::fs::read(p) else {
-                    continue;
-                };
-                let is_char =
-                    kind == rgc::Kind::Char && sprite_file.as_deref() == Some(&rgc::canon(rel));
-                match rugen_formats::sff::Sff::parse(&bytes, is_char) {
-                    Ok(sff) => {
-                        let (data, _) = rgc::sprites::encode(&sff, is_char);
-                        let mut e = Entry::new(SectionKind::Sprites, rel);
-                        e.flags = if is_char { rgc::SPRITES_CHAR } else { 0 };
-                        e.hash = sff.canonical_hash();
-                        e.raw_len = data.len() as u64;
-                        stamp_entry(&mut e, stamp);
-                        out.push((Section { entry: e, data }, false, None));
-                    }
-                    Err(err) => {
-                        log::warn!("{rel}: {err}; kept as it is");
-                        out.push((raw_section(rel, &bytes, stamp), false, Some(rel.clone())));
-                    }
+                Err(err) => {
+                    log::warn!("{rel}: {err}; kept as it is");
+                    out.push((raw_section(rel, &bytes, stamp), false, Some(rel.clone())));
                 }
             }
-            out
-        });
-        let snd = s.spawn(|| {
-            let mut out = Vec::new();
-            for (rel, p) in &snds {
-                let stamp = Stamp::of(p);
-                if let Some(sec) = reusable(rel, stamp, &[SectionKind::Sounds, SectionKind::File]) {
-                    out.push((sec, true, None));
-                    continue;
+        }
+        out
+    };
+    let do_snd = || {
+        let mut out = Vec::new();
+        for (rel, p) in &snds {
+            let stamp = Stamp::of(p);
+            if let Some(sec) = reusable(rel, stamp, &[SectionKind::Sounds, SectionKind::File]) {
+                out.push((sec, true, None));
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(p) else {
+                continue;
+            };
+            match rugen_formats::snd::Snd::parse(&bytes) {
+                Ok(snd) => {
+                    let (data, _) = rgc::sounds::encode(&snd);
+                    let mut e = Entry::new(SectionKind::Sounds, rel);
+                    e.hash = rgc::sha256(&bytes);
+                    e.raw_len = data.len() as u64;
+                    stamp_entry(&mut e, stamp);
+                    out.push((Section::new(e, data), false, None));
                 }
-                let Ok(bytes) = std::fs::read(p) else {
-                    continue;
-                };
-                match rugen_formats::snd::Snd::parse(&bytes) {
-                    Ok(snd) => {
-                        let (data, _) = rgc::sounds::encode(&snd);
-                        let mut e = Entry::new(SectionKind::Sounds, rel);
-                        e.hash = rgc::sha256(&bytes);
-                        e.raw_len = data.len() as u64;
-                        stamp_entry(&mut e, stamp);
-                        out.push((Section { entry: e, data }, false, None));
-                    }
-                    Err(err) => {
-                        log::warn!("{rel}: {err}; kept as it is");
-                        out.push((raw_section(rel, &bytes, stamp), false, Some(rel.clone())));
-                    }
+                Err(err) => {
+                    log::warn!("{rel}: {err}; kept as it is");
+                    out.push((raw_section(rel, &bytes, stamp), false, Some(rel.clone())));
                 }
             }
-            out
-        });
-        let logic = s.spawn(|| {
-            (kind == rgc::Kind::Char)
-                .then(|| rugen_sim::chardata::compile_logic(&def_path, data_dir))
-                .and_then(|r| {
-                    r.map_err(|e| log::warn!("{}: logic not compiled: {e}", src.def))
-                        .ok()
-                })
-        });
-        // the rest, a few files per thread
-
-        let threads = rugen_formats::encode_threads().clamp(1, 8);
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
-                    let mut out = Vec::new();
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some((rel, p)) = others.get(i) else { break };
-                        let stamp = Stamp::of(p);
-                        if let Some(sec) =
-                            reusable(rel, stamp, &[SectionKind::Image, SectionKind::File])
-                        {
-                            out.push((sec, true, None));
-                            continue;
-                        }
-                        let Ok(bytes) = std::fs::read(p) else {
-                            continue;
-                        };
-                        if ext_is(rel, "png")
-                            && let Some(webp) = png_to_webp(&bytes)
-                        {
-                            let mut e = Entry::new(SectionKind::Image, rel);
-                            e.flags = rgc::IMAGE_PNG;
-                            e.hash = rgc::sha256(&bytes);
-                            e.raw_len = webp.len() as u64;
-                            stamp_entry(&mut e, stamp);
-                            out.push((
-                                Section {
-                                    entry: e,
-                                    data: webp,
-                                },
-                                false,
-                                None,
-                            ));
-                            continue;
-                        }
-                        out.push((raw_section(rel, &bytes, stamp), false, None));
-                    }
-                    out
-                })
+        }
+        out
+    };
+    let do_logic = || {
+        (kind == rgc::Kind::Char)
+            .then(|| rugen_sim::chardata::compile_logic(&def_path, data_dir))
+            .and_then(|r| {
+                r.map_err(|e| log::warn!("{}: logic not compiled: {e}", src.def))
+                    .ok()
             })
-            .collect();
-        let rest: Vec<_> = workers
-            .into_iter()
-            .flat_map(|w| w.join().unwrap_or_default())
-            .collect();
-        (
-            spr.join().unwrap_or_default(),
-            snd.join().unwrap_or_default(),
-            rest,
-            logic.join().ok().flatten(),
-        )
-    });
+    };
+    // the rest, a few files per thread
+    let do_rest = || {
+        let mut out = Vec::new();
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some((rel, p)) = others.get(i) else { break };
+            let stamp = Stamp::of(p);
+            if let Some(sec) = reusable(rel, stamp, &[SectionKind::Image, SectionKind::File]) {
+                out.push((sec, true, None));
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(p) else {
+                continue;
+            };
+            if ext_is(rel, "png")
+                && let Some(webp) = png_to_webp(&bytes)
+            {
+                let mut e = Entry::new(SectionKind::Image, rel);
+                e.flags = rgc::IMAGE_PNG;
+                e.hash = rgc::sha256(&bytes);
+                e.raw_len = webp.len() as u64;
+                stamp_entry(&mut e, stamp);
+                out.push((Section::new(e, webp), false, None));
+                continue;
+            }
+            out.push((raw_section(rel, &bytes, stamp), false, None));
+        }
+        out
+    };
+    let (spr, snd, rest, logic) = if threads == 1 {
+        (do_spr(), do_snd(), do_rest(), do_logic())
+    } else {
+        std::thread::scope(|s| {
+            let spr = s.spawn(do_spr);
+            let snd = s.spawn(do_snd);
+            let logic = s.spawn(do_logic);
+            let workers: Vec<_> = (0..threads).map(|_| s.spawn(do_rest)).collect();
+            let rest: Vec<_> = workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap_or_default())
+                .collect();
+            (
+                spr.join().unwrap_or_default(),
+                snd.join().unwrap_or_default(),
+                rest,
+                logic.join().ok().flatten(),
+            )
+        })
+    };
 
     // fingerprint of the folder: sprite rows from the hashes just computed
     let mut sections: Vec<Section> = Vec::new();
@@ -515,25 +529,9 @@ pub fn convert(src: &Source, out: &Path, data_dir: &Path, prev: Option<&Path>) -
             .unwrap_or([0; 32]);
         w.finish(raw)?;
     }
-    // re-read the written file and recompute its fingerprint from its content
-    let check = match &fingerprint {
-        Some(fp) => match rugen_fair::package::verify(&tmp, u64::MAX) {
-            Ok(v) if &v.fingerprint == fp => Ok(()),
-            Ok(v) => Err(format!(
-                "reads back as {} instead of {}",
-                rugen_fair::short(&v.fingerprint),
-                rugen_fair::short(fp)
-            )),
-            Err(e) => Err(format!("does not read back: {e}")),
-        },
-        // nothing to compare: at least the file and its def must read back
-        None => def_in(&tmp)
-            .and_then(|(_, def)| {
-                rugen_formats::vfs::read(&def).map_err(|e| Error::Other(e.to_string()))
-            })
-            .map(|_| ())
-            .map_err(|e| format!("does not read back: {e}")),
-    };
+    // re-read the written file: every section as built, every sprite block
+    // decoding to the pixels that were hashed, the fingerprint from its TOC
+    let check = verify_written(&tmp, kind, &sections, fingerprint.as_deref());
     if let Err(e) = check {
         let _ = std::fs::remove_file(&tmp);
         rugen_formats::vfs::forget(&tmp);
@@ -545,6 +543,97 @@ pub fn convert(src: &Source, out: &Path, data_dir: &Path, prev: Option<&Path>) -
     report.bytes = std::fs::metadata(out).map_or(0, |m| m.len());
     report.millis = t.elapsed().as_millis();
     Ok(report)
+}
+
+/// Check the file just written at `tmp` against what was built, without
+/// decoding the SFFs a second time:
+///
+/// - the archive opens (header, TOC, meta, main def) and every section's
+///   stored bytes are the ones built in memory;
+/// - every sprite block decompresses to the pixel bytes the encoder cropped
+///   and hashed ([`rgc::sprites::verify_blocks`]); sections without block
+///   hashes (reused, raw) are decoded whole and their canonical hash compared;
+/// - the fingerprint recomputed from the canonical file set *inside* the
+///   file (its common states included) is the one claimed.
+fn verify_written(
+    tmp: &Path,
+    kind: rgc::Kind,
+    sections: &[Section],
+    fingerprint: Option<&str>,
+) -> std::result::Result<(), String> {
+    let read_back = |e: &str| format!("does not read back: {e}");
+    let a = Archive::open(tmp).map_err(|e| read_back(&e.to_string()))?;
+    if a.kind != kind {
+        return Err(read_back("other kind"));
+    }
+    let meta = a.meta().map_err(|e| read_back(&e.to_string()))?;
+    if !rugen_fair::files::safe_rel(&meta.def) || a.find(&meta.def).is_none() {
+        return Err(read_back(&format!("bad main def {:?}", meta.def)));
+    }
+    for s in sections {
+        let e = a
+            .entries
+            .iter()
+            .find(|e| e.kind == s.entry.kind && rgc::canon(&e.path) == rgc::canon(&s.entry.path))
+            .ok_or_else(|| read_back(&format!("{} missing", s.entry.path)))?;
+        let stored = a.read_raw(e).map_err(|e| read_back(&e.to_string()))?;
+        if stored != s.data || e.hash != s.entry.hash || e.raw_len != s.entry.raw_len {
+            return Err(read_back(&format!("{} differs", s.entry.path)));
+        }
+        if e.kind == SectionKind::Sprites {
+            match &s.block_hashes {
+                Some(h) => rgc::sprites::verify_blocks(&stored, h)
+                    .map_err(|err| read_back(&format!("{}: {err}", e.path)))?,
+                None => {
+                    let sff = rgc::sprites::decode(Arc::new(stored), rgc::sprites::View::Exact)
+                        .map_err(|err| read_back(&format!("{}: {err}", e.path)))?;
+                    if sff.canonical_hash() != e.hash {
+                        return Err(read_back(&format!("{}: other sprites", e.path)));
+                    }
+                }
+            }
+        }
+    }
+    let Some(fp) = fingerprint else {
+        // nothing to compare: at least the def must read back
+        return rugen_formats::vfs::read(&tmp.join(&meta.def))
+            .map(|_| ())
+            .map_err(|e| read_back(&e.to_string()));
+    };
+    let files = rugen_fair::files::content_files(fair_kind(kind), &tmp.join(&meta.def), None)
+        .map_err(|e| read_back(&e.to_string()))?;
+    let mut rows = Vec::new();
+    for e in &files.entries {
+        let known = (e.role == rugen_fair::Role::Sprite)
+            .then(|| {
+                let rel = e
+                    .source
+                    .strip_prefix(tmp)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                a.entries.iter().find(|s| {
+                    s.kind == SectionKind::Sprites && rgc::canon(&s.path) == rgc::canon(&rel)
+                })
+            })
+            .flatten();
+        let row = match known {
+            Some(s) => Some(format!("spr:{}", rugen_fair::hex(&s.hash))),
+            None => rugen_fair::row_of(files.kind, e).map_err(|e| read_back(&e.to_string()))?,
+        };
+        if let Some(r) = row {
+            rows.push((e.canon.clone(), r));
+        }
+    }
+    let got = rugen_fair::fingerprint_of(files.kind, &files.def, rows);
+    if got != fp {
+        return Err(format!(
+            "reads back as {} instead of {}",
+            rugen_fair::short(&got),
+            rugen_fair::short(fp)
+        ));
+    }
+    Ok(())
 }
 
 /// Convert a folder, `.zip` or `.rar` (`rugen convert`) into `out`.
