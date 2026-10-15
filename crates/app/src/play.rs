@@ -462,6 +462,9 @@ impl CharGpu {
 
 impl Drop for Match {
     fn drop(&mut self) {
+        if let Some((_, stop)) = &self.reload {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         // every exit path of the shell calls `release_gpu`; a new one that
         // forgets is a texture leak per match, so say so
         if !self.chars.is_empty() {
@@ -832,10 +835,10 @@ pub struct Match {
     overlay: bool,
     input_history: [Vec<Buttons>; 2],
     setup: FightSetup,
-    data_dir: PathBuf,
-    /// Hot reload: data slot and what to watch for it.
-    watch: Vec<(usize, Watch)>,
-    reload_tick: u32,
+    /// Hot reload (creator workflow, folder fighters only): a watcher thread
+    /// sends the reloaded data of a slot whose source files changed; the
+    /// flag stops it when the match goes.
+    reload: Option<ReloadWatcher>,
     /// Data slots whose textures must be re-uploaded (after a reload).
     gpu_dirty: Vec<usize>,
     /// Stage music file, if any.
@@ -1135,14 +1138,25 @@ impl Match {
             catching: false,
             overlay: std::env::var_os("RUGEN_OVERLAY").is_some(),
             input_history: [Vec::new(), Vec::new()],
-            watch: [(0usize, &setup.p1), (1, &setup.p2)]
-                .into_iter()
-                .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
-                .filter_map(|(i, p)| Watch::of(p).map(|w| (i, w)))
-                .collect(),
+            reload: match setup.net {
+                // online: both sides must keep the data they agreed on
+                Some(_) => None,
+                None => {
+                    let watch: Vec<(usize, Watch)> = [(0usize, &setup.p1), (1, &setup.p2)]
+                        .into_iter()
+                        .filter(|(i, _)| *i == 0 || setup.p2 != setup.p1)
+                        .filter_map(|(i, p)| Watch::of(p).map(|w| (i, w)))
+                        .collect();
+                    (!watch.is_empty()).then(|| {
+                        spawn_reload_watcher(
+                            watch,
+                            [setup.p1.clone(), setup.p2.clone()],
+                            data_dir.to_path_buf(),
+                        )
+                    })
+                }
+            },
             setup: setup.clone(),
-            data_dir: data_dir.to_path_buf(),
-            reload_tick: 0,
             gpu_dirty: Vec::new(),
             bgm,
             bgm_volume,
@@ -1270,43 +1284,15 @@ impl Match {
         }
     }
 
-    /// Reload a character whose source files changed on disk (creator workflow).
+    /// Take in a character the watcher thread reloaded because its source
+    /// files changed on disk (creator workflow); the main thread never
+    /// walks or hashes a folder itself.
     fn check_reload(&mut self) {
-        self.reload_tick += 1;
-        if self.reload_tick % 60 != 0 || self.net.is_some() {
+        let Some((rx, _)) = &self.reload else {
             return;
-        }
-        for k in 0..self.watch.len() {
-            let slot = self.watch[k].0;
-            let def = if slot == 0 {
-                &self.setup.p1
-            } else {
-                &self.setup.p2
-            };
-            let def = def.clone();
-            let changed = match &mut self.watch[k].1 {
-                // a folder in chars/: its working copy is converted again first
-                Watch::WorkingCopy => {
-                    match rugen_content::refresh_working_copy(&def, &self.data_dir) {
-                        Some(Ok(changed)) => changed,
-                        Some(Err(e)) => {
-                            log::error!("reload failed: {e}");
-                            false
-                        }
-                        None => false,
-                    }
-                }
-                Watch::Folder(dir, seen) => {
-                    let now = newest_mtime(dir);
-                    let changed = now > *seen;
-                    *seen = now;
-                    changed
-                }
-            };
-            if !changed {
-                continue;
-            }
-            match CharData::load_with_data(&def, &self.data_dir) {
+        };
+        while let Ok((slot, loaded)) = rx.try_recv() {
+            match loaded {
                 Ok(d) => {
                     for w in &d.warnings {
                         log::debug!("{}: {w}", d.name);
@@ -3721,6 +3707,75 @@ impl Watch {
             }
         }
     }
+}
+
+/// A hot-reload watcher thread: where its reloaded fighters arrive (data
+/// slot, the data or the error) and the flag that stops it.
+type ReloadWatcher = (
+    std::sync::mpsc::Receiver<(usize, Result<std::sync::Arc<CharData>, String>)>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+
+/// Hot reload off the main thread: once a second, see whether a watched
+/// fighter's source files changed (a working copy is converted again; a
+/// folder's newest mtime is compared), load the changed one and send it;
+/// `stop` ends the thread when the match is gone.
+fn spawn_reload_watcher(
+    mut watch: Vec<(usize, Watch)>,
+    defs: [PathBuf; 2],
+    data_dir: PathBuf,
+) -> ReloadWatcher {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let spawned = std::thread::Builder::new()
+        .name("hot-reload".into())
+        .spawn(move || {
+            loop {
+                // ten short naps: the thread leaves within 100 ms of the match
+                for _ in 0..10 {
+                    if flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                for (slot, w) in watch.iter_mut() {
+                    let def = &defs[(*slot).min(1)];
+                    let changed = match w {
+                        // a folder in chars/: its working copy is converted again first
+                        Watch::WorkingCopy => {
+                            match rugen_content::refresh_working_copy(def, &data_dir) {
+                                Some(Ok(changed)) => changed,
+                                Some(Err(e)) => {
+                                    log::error!("reload failed: {e}");
+                                    false
+                                }
+                                None => false,
+                            }
+                        }
+                        Watch::Folder(dir, seen) => {
+                            let now = newest_mtime(dir);
+                            let changed = now > *seen;
+                            *seen = now;
+                            changed
+                        }
+                    };
+                    if !changed {
+                        continue;
+                    }
+                    let loaded =
+                        CharData::load_with_data(def, &data_dir).map_err(|e| format!("{e:#}"));
+                    if tx.send((*slot, loaded)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("hot reload is off: could not start its thread ({e})");
+    }
+    (rx, stop)
 }
 
 /// Newest modification time (seconds) of any state/anim/command file under `dir`.

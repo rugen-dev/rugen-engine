@@ -442,6 +442,8 @@ pub struct Shell {
     extra_shot: Option<PathBuf>,
     /// Harness: fights still to play again once this one ends (RUGEN_HARNESS_REMATCH).
     rematches_left: u32,
+    /// The window title last set (the debug HUD's, set only when it changes).
+    last_title: Option<String>,
 }
 
 /// `RUGEN_HARNESS_FAST=n`: ticks per drawn frame instead of the wall clock.
@@ -580,6 +582,7 @@ impl Shell {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            last_title: None,
         }
     }
 
@@ -2795,10 +2798,14 @@ impl Shell {
                 [0.0, 0.0, 0.0, 1.0],
             ),
         };
+        // only when it changed: on Wayland a new title redraws the client-side
+        // decoration in software (sampled as the top waste of a debug match)
         if let Screen::Match(m) = &self.screen
             && let Some(t) = m.debug_title()
+            && self.last_title.as_deref() != Some(t.as_str())
         {
             gpu.window.set_title(&t);
+            self.last_title = Some(t);
         }
         if self.fade > 0.0 {
             r.rect(
@@ -3298,6 +3305,18 @@ impl ApplicationHandler for Shell {
                     now + left - Duration::from_millis(1),
                 ));
             } else {
+                // the last two milliseconds: short naps between polls rather
+                // than a hot loop, which a dual-core cannot spare a core for.
+                // Windows' Sleep is a millisecond at best, so it yields there.
+                if left > Duration::from_micros(300) {
+                    if cfg!(windows) {
+                        std::thread::yield_now();
+                    } else {
+                        std::thread::sleep(Duration::from_micros(100));
+                    }
+                } else {
+                    std::thread::yield_now();
+                }
                 event_loop.set_control_flow(ControlFlow::Poll);
             }
         }
