@@ -186,8 +186,14 @@ pub struct VerifyInfo {
     /// `verified`, `warn` or `broken`.
     pub verdict: String,
     pub issues: Vec<String>,
-    /// Engine version that produced the verdict; a different engine re-verifies.
+    /// Engine version that produced the verdict.
     pub engine_version: String,
+    /// Hash of the simulation sources the verdict was made with (the
+    /// source part of `rugen_sim::chardata::LOGIC_SCHEMA`): a release that
+    /// did not touch the simulation keeps the verdict, one that did
+    /// re-verifies. Empty in manifests of rugen 0.6 and earlier.
+    #[serde(default)]
+    pub schema: String,
     /// Unix seconds.
     pub when: u64,
 }
