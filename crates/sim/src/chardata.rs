@@ -368,21 +368,31 @@ impl CharData {
 
     /// Load a character ahead of time (a versus screen before the fight):
     /// the next [`CharData::load_with_data`] of the same files takes it
-    /// instead of reading them again. Kept for a minute, a few at a time.
+    /// instead of reading them again, waiting for this load when it is
+    /// still running rather than loading a second copy. Kept for a minute,
+    /// a few at a time.
     pub fn preload(def_path: &Path, data_dir: &Path) {
-        if let Ok(d) = Self::load_opts(def_path, data_dir, LoadOptions::default()) {
+        {
             let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
-            p.retain(|e| e.3.elapsed() < PRELOAD_KEEP && e.0 != def_path);
-            p.push((
-                def_path.to_path_buf(),
-                data_dir.to_path_buf(),
-                d,
-                std::time::Instant::now(),
-            ));
-            while p.len() > 4 {
-                p.remove(0);
+            p.retain(|e| !e.stale());
+            if p.iter().any(|e| e.is(def_path, data_dir)) {
+                return; // being loaded, or fresh
             }
+            p.push(Preloaded {
+                def: def_path.to_path_buf(),
+                data_dir: data_dir.to_path_buf(),
+                slot: Slot::Loading,
+            });
         }
+        // the slot is filled or removed even if the load panics, so a fight
+        // waiting on it never hangs
+        let guard = LoadingGuard {
+            def: def_path,
+            data_dir,
+            result: None,
+        };
+        let d = Self::load_opts(def_path, data_dir, LoadOptions::default()).ok();
+        guard.finish(d);
     }
 
     /// Load compiling the text files, ignoring any precompiled logic
@@ -806,23 +816,188 @@ pub fn load_consts(def: &Def, localcoord_w: f32) -> rugen_cns::fnv::FnvIndexMap<
     m
 }
 
-/// Characters loaded ahead of a fight ([`CharData::preload`]): def, data
-/// dir, data, when.
-type Preloaded = (
-    std::path::PathBuf,
-    std::path::PathBuf,
-    Arc<CharData>,
-    std::time::Instant,
-);
-static PRELOADED: std::sync::Mutex<Vec<Preloaded>> = std::sync::Mutex::new(Vec::new());
-const PRELOAD_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+/// A character loaded (or loading) ahead of a fight ([`CharData::preload`]).
+struct Preloaded {
+    def: PathBuf,
+    data_dir: PathBuf,
+    slot: Slot,
+}
 
-/// Take a fresh preloaded copy of `def_path` (identical to loading it now).
+enum Slot {
+    /// A preload thread is reading it.
+    Loading,
+    Ready(Arc<CharData>, std::time::Instant),
+}
+
+impl Preloaded {
+    fn is(&self, def: &Path, data_dir: &Path) -> bool {
+        self.def == def && self.data_dir == data_dir
+    }
+    fn stale(&self) -> bool {
+        matches!(&self.slot, Slot::Ready(_, at) if at.elapsed() >= PRELOAD_KEEP)
+    }
+}
+
+static PRELOADED: std::sync::Mutex<Vec<Preloaded>> = std::sync::Mutex::new(Vec::new());
+static PRELOAD_DONE: std::sync::Condvar = std::sync::Condvar::new();
+const PRELOAD_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+const PRELOAD_MAX: usize = 4;
+
+/// Fills (or on failure removes) a `Loading` slot when dropped, so a panic
+/// in the load wakes the waiters too.
+struct LoadingGuard<'a> {
+    def: &'a Path,
+    data_dir: &'a Path,
+    result: Option<Arc<CharData>>,
+}
+
+impl LoadingGuard<'_> {
+    fn finish(mut self, d: Option<Arc<CharData>>) {
+        self.result = d;
+    }
+}
+
+impl Drop for LoadingGuard<'_> {
+    fn drop(&mut self) {
+        let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = p.iter().position(|e| e.is(self.def, self.data_dir)) {
+            match self.result.take() {
+                Some(d) => p[i].slot = Slot::Ready(d, std::time::Instant::now()),
+                None => {
+                    p.remove(i);
+                }
+            }
+        }
+        // oldest ready ones go first; loads in flight are never dropped
+        while p
+            .iter()
+            .filter(|e| matches!(e.slot, Slot::Ready(..)))
+            .count()
+            > PRELOAD_MAX
+        {
+            if let Some(i) = p.iter().position(|e| matches!(e.slot, Slot::Ready(..))) {
+                p.remove(i);
+            }
+        }
+        PRELOAD_DONE.notify_all();
+    }
+}
+
+/// Take a fresh preloaded copy of `def_path` (identical to loading it now),
+/// waiting for a preload of it still in flight.
 fn take_preloaded(def_path: &Path, data_dir: &Path) -> Option<Arc<CharData>> {
     let mut p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
-    p.retain(|e| e.3.elapsed() < PRELOAD_KEEP);
-    let i = p.iter().position(|e| e.0 == def_path && e.1 == data_dir)?;
-    Some(p.remove(i).2)
+    loop {
+        p.retain(|e| !e.stale());
+        let i = p.iter().position(|e| e.is(def_path, data_dir))?;
+        match &p[i].slot {
+            Slot::Ready(..) => {
+                let Slot::Ready(d, _) = p.remove(i).slot else {
+                    unreachable!()
+                };
+                return Some(d);
+            }
+            Slot::Loading => {
+                log::debug!("waiting for the preload of {}", def_path.display());
+                p = PRELOAD_DONE.wait(p).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod preload_tests {
+    use super::*;
+
+    fn kfm() -> Option<PathBuf> {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/mugen-1.1b1/chars/kfm/kfm.def");
+        if !p.exists() {
+            eprintln!("reference tree missing; skipping");
+            return None;
+        }
+        Some(p)
+    }
+
+    /// A fight starting during the preload gets that load's data (one
+    /// load, one copy), and the slot is gone once taken.
+    #[test]
+    fn fight_waits_for_the_preload_in_flight() {
+        let Some(def) = kfm() else { return };
+        let data = PathBuf::from("preload-test-data-dir");
+        let (def2, data2) = (def.clone(), data.clone());
+        let t = std::thread::spawn(move || CharData::preload(&def2, &data2));
+        // the loader may or may not have registered yet: either way at
+        // most one load happens and the fight gets a copy
+        let got = CharData::load_with_data(&def, &data).expect("kfm loads");
+        t.join().unwrap();
+        assert!(!got.states.is_empty());
+        let left = {
+            let p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+            p.iter().filter(|e| e.is(&def, &data)).count()
+        };
+        // taken while in flight: 0 left; raced ahead of the registration:
+        // the preload's own copy is still there, fresh, for the next load
+        assert!(left <= 1);
+        if left == 1 {
+            let again = take_preloaded(&def, &data);
+            assert!(again.is_some());
+        }
+        assert!(take_preloaded(&def, &data).is_none());
+    }
+
+    /// Nothing in the sim keeps a fighter alive once its fight's World is
+    /// gone: no preload entry, no clone in a static, no cycle through the
+    /// players (a leaked Arc<CharData> is a leaked sprite table and logic).
+    #[test]
+    fn fight_data_is_released_when_the_world_drops() {
+        let Some(def) = kfm() else { return };
+        let root = def.parent().unwrap().join("../..");
+        let spec = crate::headless::MatchSpec {
+            life: None,
+            p1: &def,
+            p2: &def,
+            stage: None,
+            data_dir: &root.join("data"),
+            motif: &root.join("data/system.def"),
+            zoom: crate::headless::ONLINE_ZOOM,
+            movement: Default::default(),
+            round_time: None,
+            ai: [4, 4],
+            fighter_size: Default::default(),
+            seed: crate::headless::LEGACY_SEED,
+        };
+        let mut w = crate::headless::build_world(&spec).expect("world");
+        let weak: Vec<std::sync::Weak<CharData>> = w.data.iter().map(Arc::downgrade).collect();
+        assert!(!weak.is_empty());
+        let inputs: Vec<u8> = (0..240u32).flat_map(|f| (f % 7).to_le_bytes()).collect();
+        crate::headless::replay(&mut w, &inputs, None);
+        drop(w);
+        for (i, d) in weak.iter().enumerate() {
+            assert_eq!(
+                d.strong_count(),
+                0,
+                "fighter {i} still has {} owner(s) after the fight",
+                d.strong_count()
+            );
+        }
+    }
+
+    /// Preloading what is already in flight or fresh does nothing more.
+    #[test]
+    fn repeated_preload_keeps_one_copy() {
+        let Some(def) = kfm() else { return };
+        let data = PathBuf::from("preload-test-data-dir-2");
+        CharData::preload(&def, &data);
+        CharData::preload(&def, &data);
+        let n = {
+            let p = PRELOADED.lock().unwrap_or_else(|e| e.into_inner());
+            p.iter().filter(|e| e.is(&def, &data)).count()
+        };
+        assert_eq!(n, 1);
+        assert!(take_preloaded(&def, &data).is_some());
+        assert!(take_preloaded(&def, &data).is_none());
+    }
 }
 
 #[cfg(test)]
