@@ -319,8 +319,10 @@ pub struct Renderer {
     textures: Vec<Tex>,
     /// Palette views; freed slots ([`Renderer::free_palette`]) are reused.
     palettes: Slots<wgpu::TextureView>,
-    /// (tex, pal) → bind group, built lazily.
-    indexed_binds: std::collections::HashMap<(usize, usize), wgpu::BindGroup>,
+    /// Per indexed texture, its (palette, bind group) pairs, built lazily
+    /// (a fighter's sprite is drawn with one or two palettes), so freeing a
+    /// texture drops its bind groups in one lookup.
+    indexed_binds: std::collections::HashMap<usize, Vec<(usize, wgpu::BindGroup)>>,
     white: TextureId,
     verts: Vec<Vertex>,
     runs: Vec<Run>,
@@ -807,8 +809,16 @@ impl Renderer {
             width: 1,
             height: 1,
         };
-        self.indexed_binds.retain(|&(t, _), _| t != id.0);
+        self.indexed_binds.remove(&id.0);
         self.free_slots.push(id.0);
+    }
+
+    /// [`free_texture`](Self::free_texture) for many at once (a screen or a
+    /// match going away).
+    pub fn free_textures(&mut self, ids: impl IntoIterator<Item = TextureId>) {
+        for id in ids {
+            self.free_texture(id);
+        }
     }
 
     /// Upload straight RGBA8 (`w*h*4` bytes).
@@ -851,8 +861,38 @@ impl Renderer {
     /// must forget it. Draws still naming it are skipped.
     pub fn free_palette(&mut self, id: PaletteId) {
         if self.palettes.remove(id.0) {
-            self.indexed_binds.retain(|&(_, p), _| p != id.0);
+            self.drop_palette_binds(|p| p == id.0);
         }
+    }
+
+    /// [`free_palette`](Self::free_palette) for many at once: one pass over
+    /// the bind groups instead of one per palette.
+    pub fn free_palettes(&mut self, ids: impl IntoIterator<Item = PaletteId>) {
+        let gone: std::collections::HashSet<usize> = ids
+            .into_iter()
+            .filter(|id| self.palettes.remove(id.0))
+            .map(|id| id.0)
+            .collect();
+        if !gone.is_empty() {
+            self.drop_palette_binds(|p| gone.contains(&p));
+        }
+    }
+
+    /// Forget the bind groups made with palettes `gone` says are freed.
+    fn drop_palette_binds(&mut self, gone: impl Fn(usize) -> bool) {
+        self.indexed_binds.retain(|_, binds| {
+            binds.retain(|(p, _)| !gone(*p));
+            !binds.is_empty()
+        });
+    }
+
+    /// The bind group of an indexed texture with a palette, if built.
+    fn indexed_bind(&self, tex: usize, pal: usize) -> Option<&wgpu::BindGroup> {
+        self.indexed_binds
+            .get(&tex)?
+            .iter()
+            .find(|(p, _)| *p == pal)
+            .map(|(_, b)| b)
     }
 
     /// Profiling counters; resets the upload count.
@@ -1123,8 +1163,7 @@ impl Renderer {
             if let (Kind::Indexed { view }, Some(p)) = (&self.textures[t].kind, p)
                 && let Some(pal) = self.palettes.get(p)
             {
-                let key = (t, p);
-                if !self.indexed_binds.contains_key(&key) {
+                if self.indexed_bind(t, p).is_none() {
                     let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &self.indexed_layout,
@@ -1139,7 +1178,7 @@ impl Renderer {
                             },
                         ],
                     });
-                    self.indexed_binds.insert(key, bind);
+                    self.indexed_binds.entry(t).or_default().push((p, bind));
                 }
             }
         }
@@ -1203,7 +1242,7 @@ impl Renderer {
             match (&self.textures[t].kind, p) {
                 (Kind::Indexed { .. }, Some(p)) => {
                     // a freed palette has no bind group: skip the draw
-                    let Some(bind) = self.indexed_binds.get(&(t, p)) else {
+                    let Some(bind) = self.indexed_bind(t, p) else {
                         continue;
                     };
                     pass.set_pipeline(&self.indexed_pipes[bi]);

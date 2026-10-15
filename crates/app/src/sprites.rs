@@ -42,6 +42,22 @@ pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Upl
     (tex, pal)
 }
 
+/// Free every texture a sheet uploaded (`textures` plus the linked sprites
+/// in `shared`, each once) and forget them; the renderer's white texture
+/// (a packed sprite's stand-in) stays.
+pub fn free_uploads(
+    r: &mut Renderer,
+    textures: &mut HashMap<(u16, u16), Option<Uploaded>>,
+    shared: &mut Shared,
+) {
+    let white = r.white();
+    let mut ids: std::collections::HashSet<TextureId> =
+        textures.drain().flat_map(|(_, t)| t).map(|t| t.0).collect();
+    ids.extend(shared.drain().map(|(_, t)| t));
+    ids.remove(&white);
+    r.free_textures(ids);
+}
+
 /// The blend an AIR frame asks for (`A`, `A1`, `S`, `AS<n>D<n>`).
 pub fn air_blend(f: &Frame) -> Blend {
     match f.blend {
@@ -114,18 +130,8 @@ impl SpriteSheet {
 
     /// Give back the uploaded textures and palettes (the sheet goes away).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
-        let white = r.white();
-        let mut ids: std::collections::HashSet<TextureId> =
-            self.textures.values().flatten().map(|t| t.0).collect();
-        ids.extend(self.shared.values().copied());
-        for id in ids.into_iter().filter(|id| *id != white) {
-            r.free_texture(id);
-        }
-        for p in self.palettes.drain(..) {
-            r.free_palette(p);
-        }
-        self.textures.clear();
-        self.shared.clear();
+        free_uploads(r, &mut self.textures, &mut self.shared);
+        r.free_palettes(self.palettes.drain(..));
     }
 
     /// Draw one AIR frame (sprite + frame offset/flip/blend/scale).
@@ -257,12 +263,8 @@ impl FontGpu {
 
     /// Give back the glyph textures and bank palettes (the font goes away).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
-        for (_, t) in self.glyphs.drain() {
-            r.free_texture(t);
-        }
-        for p in self.banks.drain(..) {
-            r.free_palette(p);
-        }
+        r.free_textures(self.glyphs.drain().map(|(_, t)| t));
+        r.free_palettes(self.banks.drain(..));
     }
 
     /// Draw `text` with its bottom line at `pos.y` (MUGEN convention). `align`: 1 left, 0 centred, -1 right.

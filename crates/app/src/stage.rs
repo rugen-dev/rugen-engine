@@ -1059,20 +1059,9 @@ impl StageVisual {
 
     /// Release the uploaded sprites and palettes (a preview that is replaced).
     pub fn free_gpu(&mut self, r: &mut Renderer) {
-        let mut ids: std::collections::HashSet<TextureId> =
-            self.textures.values().flatten().map(|t| t.0).collect();
-        ids.extend(self.shared.values().copied());
-        for id in ids {
-            r.free_texture(id);
-        }
-        for p in self.palettes.drain(..) {
-            r.free_palette(p);
-        }
-        for p in self.opaque.drain(..).flatten() {
-            r.free_palette(p);
-        }
-        self.textures.clear();
-        self.shared.clear();
+        crate::sprites::free_uploads(r, &mut self.textures, &mut self.shared);
+        let opaque = self.opaque.drain(..).flatten();
+        r.free_palettes(self.palettes.drain(..).chain(opaque));
     }
 
     /// Draw the elements of `layer` as seen through `view`.

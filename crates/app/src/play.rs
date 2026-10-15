@@ -452,6 +452,24 @@ struct CharGpu {
     palettes: Vec<Option<PaletteId>>,
 }
 
+impl CharGpu {
+    /// Free the uploaded textures and palettes and forget them.
+    fn free_gpu(&mut self, r: &mut Renderer) {
+        crate::sprites::free_uploads(r, &mut self.textures, &mut self.shared);
+        r.free_palettes(self.palettes.iter_mut().filter_map(Option::take));
+    }
+}
+
+impl Drop for Match {
+    fn drop(&mut self) {
+        // every exit path of the shell calls `release_gpu`; a new one that
+        // forgets is a texture leak per match, so say so
+        if !self.chars.is_empty() {
+            log::warn!("match dropped with its GPU textures still uploaded (leak)");
+        }
+    }
+}
+
 /// One sprite to draw this frame, in stage coordinates.
 struct Item {
     spr: Option<(TextureId, Option<PaletteId>, [f32; 2])>,
@@ -1176,10 +1194,27 @@ impl Match {
             };
             let palettes = vec![None; d.sff.palettes.len().max(1)];
             if let Some(cg) = self.chars.get_mut(i) {
-                cg.textures.clear();
-                cg.shared.clear();
+                cg.free_gpu(r);
                 cg.palettes = palettes;
             }
+        }
+    }
+
+    /// Give back everything the match uploaded: the fighters' and fightfx
+    /// sprites and palettes, the stage's, the lifebar's sheet and fonts.
+    /// Drawing again after this uploads again (`init_gpu`), so a match left
+    /// by any path frees its GPU memory and none of it outlives the fight.
+    pub fn release_gpu(&mut self, r: &mut Renderer) {
+        for cg in self.chars.iter_mut() {
+            cg.free_gpu(r);
+        }
+        self.chars.clear();
+        self.gpu_dirty.clear();
+        if let Some(sv) = self.stage_visual.as_mut() {
+            sv.free_gpu(r);
+        }
+        if let Some(lb) = self.lifebar.as_mut() {
+            lb.release_gpu(r);
         }
     }
 

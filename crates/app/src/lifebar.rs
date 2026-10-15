@@ -534,6 +534,14 @@ pub struct Lifebar {
 }
 
 impl Lifebar {
+    /// Give back the sheet's textures and the fonts' glyphs (the match is over).
+    pub fn release_gpu(&mut self, r: &mut Renderer) {
+        self.sheet.free_gpu(r);
+        for f in self.fonts.values_mut() {
+            f.free_gpu(r);
+        }
+    }
+
     /// `motif` holds the screenpack (fight.def, fight.sff, fonts); anything
     /// missing there is looked up in `data_dir`.
     pub fn load(motif: &Path, data_dir: &Path) -> anyhow::Result<Self> {
