@@ -87,3 +87,10 @@ fn fs_indexed(in: VsOut) -> @location(0) vec4<f32> {
 fn fs_rgba(in: VsOut) -> @location(0) vec4<f32> {
     return finish(textureSample(rgba_tex, rgba_samp, in.uv), in);
 }
+
+// low-spec mode: the frame rendered at a lower resolution, copied to the
+// window as it is (no tint, no premultiply; the pipeline does not blend)
+@fragment
+fn fs_blit(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(rgba_tex, rgba_samp, in.uv);
+}

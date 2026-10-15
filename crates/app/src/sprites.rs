@@ -19,19 +19,29 @@ pub type Shared = HashMap<(usize, usize, u64), TextureId>;
 /// Upload a sprite (decompressing it if it comes from a content file).
 /// Returns the texture and, for indexed sprites, the SFF palette slot.
 pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Uploaded {
-    let (w, h) = (spr.width as u32, spr.height as u32);
-    let indexed = match &spr.pixels {
-        Pixels::Indexed(_) => true,
-        Pixels::Rgba(_) => false,
-        Pixels::Packed(p) => !p.is_rgba(),
-    };
-    let pal = if indexed { spr.palette } else { None };
-    if let Some(k) = spr.share_key()
-        && let Some(&tex) = shared.get(&k)
-    {
-        return (tex, pal);
+    if let Some(u) = shared_upload(spr, shared) {
+        return u;
     }
-    let tex = match spr.decoded().as_ref() {
+    upload_pixels(r, spr, &spr.decoded(), shared)
+}
+
+/// The sprite's texture when its pixels were uploaded already (a linked or
+/// duplicate sprite of a content file).
+pub fn shared_upload(spr: &Sprite, shared: &Shared) -> Option<Uploaded> {
+    let k = spr.share_key()?;
+    shared.get(&k).map(|&tex| (tex, palette_slot(spr)))
+}
+
+/// Upload `pixels`, the decoded form of `spr` (decoded elsewhere: on the
+/// decoder thread), and remember it for the sprites sharing its data.
+pub fn upload_pixels(
+    r: &mut Renderer,
+    spr: &Sprite,
+    pixels: &Pixels,
+    shared: &mut Shared,
+) -> Uploaded {
+    let (w, h) = (spr.width as u32, spr.height as u32);
+    let tex = match pixels {
         Pixels::Indexed(px) => r.add_indexed(w, h, px),
         Pixels::Rgba(px) => r.add_rgba(w, h, px),
         Pixels::Packed(_) => r.white(),
@@ -39,7 +49,190 @@ pub fn upload_sprite(r: &mut Renderer, spr: &Sprite, shared: &mut Shared) -> Upl
     if let Some(k) = spr.share_key() {
         shared.insert(k, tex);
     }
-    (tex, pal)
+    (tex, palette_slot(spr))
+}
+
+/// The SFF palette slot an indexed sprite is drawn with (`None`: RGBA).
+fn palette_slot(spr: &Sprite) -> Option<usize> {
+    let indexed = match &spr.pixels {
+        Pixels::Indexed(_) => true,
+        Pixels::Rgba(_) => false,
+        Pixels::Packed(p) => !p.is_rgba(),
+    };
+    if indexed { spr.palette } else { None }
+}
+
+/// Bytes a sprite's texture takes (what an upload costs).
+pub fn texture_bytes(spr: &Sprite) -> usize {
+    let rgba = match &spr.pixels {
+        Pixels::Indexed(_) => false,
+        Pixels::Rgba(_) => true,
+        Pixels::Packed(p) => p.is_rgba(),
+    };
+    spr.width as usize * spr.height as usize * if rgba { 4 } else { 1 }
+}
+
+/// A sprite of one sheet: `(sheet slot, group, number)`.
+pub type SpriteKey = (usize, u16, u16);
+
+/// What one frame may spend on sprite uploads ahead of their draw: bytes,
+/// textures (a texture costs ~0.7 ms of driver time on GL whatever its
+/// size, ~0.05 ms on Vulkan) and main-thread time.
+#[derive(Clone, Copy, Debug)]
+pub struct Budget {
+    pub bytes: usize,
+    pub textures: usize,
+    pub deadline: std::time::Instant,
+}
+
+impl Budget {
+    pub fn new(bytes: usize, textures: usize, time: std::time::Duration) -> Self {
+        Self {
+            bytes,
+            textures,
+            deadline: std::time::Instant::now() + time,
+        }
+    }
+
+    /// Room for one more upload.
+    pub fn left(&self) -> bool {
+        self.bytes > 0 && self.textures > 0 && std::time::Instant::now() < self.deadline
+    }
+
+    /// One texture of `bytes` went up.
+    pub fn spent(&mut self, bytes: usize) {
+        self.bytes = self.bytes.saturating_sub(bytes);
+        self.textures = self.textures.saturating_sub(1);
+    }
+}
+
+/// Sprites decoded off the main thread: packed sprites (content files) go
+/// to a worker, their pixels come back for the main thread to upload under
+/// a per-frame budget ([`Decoder::take`]). A sprite needed before its
+/// pixels are back is decoded on the spot as before; the late result is
+/// then dropped.
+pub struct Decoder {
+    jobs: std::sync::mpsc::Sender<(SpriteKey, rugen_formats::pack::Packed)>,
+    done: std::sync::mpsc::Receiver<(SpriteKey, Pixels)>,
+    /// Sent to the worker, not back yet.
+    pending: std::collections::HashSet<SpriteKey>,
+    /// Back from the worker, not uploaded yet (the budget ran out).
+    ready: Vec<(SpriteKey, Pixels)>,
+    /// Decoded bytes in flight (bounded so a long queue does not pile up
+    /// memory ahead of the uploads).
+    in_flight: usize,
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Decoder {
+    /// Decoded bytes the worker may hold ahead of the uploads.
+    pub const MAX_IN_FLIGHT: usize = 16 << 20;
+
+    pub fn new() -> Self {
+        let (jobs, job_rx) = std::sync::mpsc::channel::<(SpriteKey, rugen_formats::pack::Packed)>();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        // the worker ends with the match (its sender goes); a receiver gone
+        // first (the match dropped mid-decode) just ends the loop
+        let _ = std::thread::Builder::new()
+            .name("sprite decode".into())
+            .spawn(move || {
+                for (key, packed) in job_rx {
+                    if done_tx.send((key, packed.decode())).is_err() {
+                        break;
+                    }
+                }
+            });
+        Self {
+            jobs,
+            done,
+            pending: Default::default(),
+            ready: Vec::new(),
+            in_flight: 0,
+        }
+    }
+
+    /// True when `key` is being decoded or waits for its upload.
+    pub fn knows(&self, key: SpriteKey) -> bool {
+        self.pending.contains(&key) || self.ready.iter().any(|(k, _)| *k == key)
+    }
+
+    /// Decoded (or decoding) bytes not uploaded yet.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight
+    }
+
+    /// Hand a packed sprite to the worker. False when it is known already,
+    /// the worker is gone or the sprite is not packed (nothing to decode:
+    /// the caller uploads it as it is).
+    pub fn request(&mut self, key: SpriteKey, spr: &Sprite) -> bool {
+        let Pixels::Packed(p) = &spr.pixels else {
+            return false;
+        };
+        if self.knows(key) {
+            return true;
+        }
+        if self.in_flight >= Self::MAX_IN_FLIGHT || self.jobs.send((key, p.clone())).is_err() {
+            return false;
+        }
+        self.in_flight += texture_bytes(spr);
+        self.pending.insert(key);
+        true
+    }
+
+    /// Pull what the worker finished into the ready list.
+    fn poll(&mut self) {
+        while let Ok((key, px)) = self.done.try_recv() {
+            self.pending.remove(&key);
+            self.ready.push((key, px));
+        }
+    }
+
+    /// The decoded pixels of `key` when they are back (a sprite needed
+    /// right now takes them out of turn).
+    pub fn take_ready(&mut self, key: SpriteKey) -> Option<Pixels> {
+        self.poll();
+        let i = self.ready.iter().position(|(k, _)| *k == key)?;
+        let (_, px) = self.ready.swap_remove(i);
+        self.in_flight = self.in_flight.saturating_sub(px.len());
+        Some(px)
+    }
+
+    /// The next decoded sprite waiting for its upload, oldest first.
+    pub fn take(&mut self) -> Option<(SpriteKey, Pixels)> {
+        self.poll();
+        if self.ready.is_empty() {
+            return None;
+        }
+        let (key, px) = self.ready.remove(0);
+        self.in_flight = self.in_flight.saturating_sub(px.len());
+        Some((key, px))
+    }
+
+    /// Forget what was decoded for sheet `slot` (its textures were freed:
+    /// a hot reload replaced the data).
+    pub fn forget(&mut self, slot: usize) {
+        self.ready.retain(|(k, _)| k.0 != slot);
+        self.pending.retain(|k| k.0 != slot);
+    }
+}
+
+/// Byte length of decoded pixels.
+trait PixelLen {
+    fn len(&self) -> usize;
+}
+
+impl PixelLen for Pixels {
+    fn len(&self) -> usize {
+        match self {
+            Pixels::Indexed(v) | Pixels::Rgba(v) => v.len(),
+            Pixels::Packed(_) => 0,
+        }
+    }
 }
 
 /// Free every texture a sheet uploaded (`textures` plus the linked sprites
@@ -132,6 +325,24 @@ impl SpriteSheet {
     pub fn free_gpu(&mut self, r: &mut Renderer) {
         free_uploads(r, &mut self.textures, &mut self.shared);
         r.free_palettes(self.palettes.drain(..));
+    }
+
+    /// Upload sprites not on the GPU yet, in file order, as far as `budget`
+    /// goes this call.
+    pub fn warm(&mut self, r: &mut Renderer, budget: &mut Budget) {
+        self.init_gpu(r);
+        for (key, spr) in &self.sff.sprites {
+            if !budget.left() {
+                break;
+            }
+            if self.textures.contains_key(key) {
+                continue;
+            }
+            let shared = &mut self.shared;
+            let up = upload_sprite(r, spr, shared);
+            self.textures.insert(*key, Some(up));
+            budget.spent(texture_bytes(spr));
+        }
     }
 
     /// Draw one AIR frame (sprite + frame offset/flip/blend/scale).

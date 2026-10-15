@@ -20,7 +20,8 @@
 //! - **load**: `CharData::load_with_data` per fighter and the process peak
 //!   RSS (Linux `VmHWM`).
 //! - **render**: a child `rugen play … --frames 900` with `RUGEN_FRAMESTATS=1`
-//!   (needs a display): update / build / submit CPU ms, draw calls, live
+//!   (needs a display): update / build / submit CPU ms, the swapchain
+//!   present wait, draw calls, live
 //!   textures at the end, startup and first-frame timings.
 //! - **convert**: a child `rugen convert` of `--convert` (its own process, so
 //!   the peak RSS belongs to it).
@@ -476,8 +477,12 @@ fn render_child(
         return Err(text.lines().last().unwrap_or("harness failed").to_string());
     }
     let mut rows = Vec::new();
-    let (mut update, mut build, mut submit) =
-        (Series::default(), Series::default(), Series::default());
+    let (mut update, mut build, mut submit, mut present) = (
+        Series::default(),
+        Series::default(),
+        Series::default(),
+        Series::default(),
+    );
     let (mut draws, mut textures, mut uploads_kib) = (Vec::new(), 0u64, 0u64);
     let mut backend_used = String::new();
     for l in text.lines() {
@@ -498,6 +503,7 @@ fn render_child(
                     Some("update") => update.0.push(num(1)),
                     Some("build") => build.0.push(num(1)),
                     Some("submit") => submit.0.push(num(1)),
+                    Some("present") => present.0.push(num(1)),
                     Some("draws") => draws.push(num(1)),
                     Some("uploads") => {
                         uploads_kib += num(2) as u64;
@@ -526,6 +532,10 @@ fn render_child(
     rows.push((
         "submit ms mean / max".into(),
         format!("{:.2} / {:.2}", submit.mean(), submit.max()),
+    ));
+    rows.push((
+        "present ms mean / max".into(),
+        format!("{:.2} / {:.2}", present.mean(), present.max()),
     ));
     let draws_mean = draws.iter().sum::<f64>() / draws.len().max(1) as f64;
     rows.push(("draw calls per frame".into(), format!("{draws_mean:.0}")));
