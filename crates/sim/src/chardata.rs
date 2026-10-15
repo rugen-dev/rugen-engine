@@ -38,10 +38,30 @@ pub struct Ctrl {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct State {
+    /// The `[Statedef]` header. Its `controllers` are compiled into
+    /// [`ctrls`](Self::ctrls) and left empty: the raw parameter text and a
+    /// second copy of every trigger would otherwise be held for nothing
+    /// (the debugger reads controller text from the files, by line).
     pub def: StateDef,
     pub ctrls: Vec<Ctrl>,
     /// Which file defined it, for messages.
     pub file: String,
+}
+
+/// Compile a parsed state: its controllers become [`Ctrl`]s and the raw
+/// ones are dropped.
+fn compile_state(mut s: StateDef, file: &str, warnings: &mut Vec<String>) -> State {
+    let ctrls = s
+        .controllers
+        .iter()
+        .map(|c| compile_ctrl(c, warnings, file))
+        .collect();
+    s.controllers = Vec::new();
+    State {
+        ctrls,
+        def: s,
+        file: file.to_string(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -230,19 +250,7 @@ impl Logic {
                 if states.contains_key(&s.no) {
                     continue;
                 }
-                let ctrls = s
-                    .controllers
-                    .iter()
-                    .map(|c| compile_ctrl(c, warnings, file))
-                    .collect();
-                states.insert(
-                    s.no,
-                    State {
-                        ctrls,
-                        def: s,
-                        file: file.to_string(),
-                    },
-                );
+                states.insert(s.no, compile_state(s, file, warnings));
             }
         };
         add(
@@ -462,20 +470,9 @@ impl CharData {
         d.warnings.extend(parsed.errors);
         for st in parsed.states {
             let mut warnings = Vec::new();
-            let ctrls = st
-                .controllers
-                .iter()
-                .map(|c| compile_ctrl(c, &mut warnings, file))
-                .collect();
+            let state = compile_state(st, file, &mut warnings);
             d.warnings.extend(warnings);
-            d.states.insert(
-                st.no,
-                State {
-                    ctrls,
-                    def: st,
-                    file: file.to_string(),
-                },
-            );
+            d.states.insert(state.def.no, state);
         }
         Arc::new(d)
     }
@@ -488,22 +485,11 @@ impl CharData {
         }
         for st in parsed.states {
             let mut warnings = Vec::new();
-            let ctrls = st
-                .controllers
-                .iter()
-                .map(|c| compile_ctrl(c, &mut warnings, file))
-                .collect();
+            let state = compile_state(st, file, &mut warnings);
             if !warnings.is_empty() {
                 return Err(Error::Load(warnings.join("\n")));
             }
-            d.states.insert(
-                st.no,
-                State {
-                    ctrls,
-                    def: st,
-                    file: file.to_string(),
-                },
-            );
+            d.states.insert(state.def.no, state);
         }
         Ok(Arc::new(d))
     }
