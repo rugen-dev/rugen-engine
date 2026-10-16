@@ -657,18 +657,22 @@ copyrighted fighters).
   `~/.cache/rugen-work/creators/shots/debugger-{ink,dojo}.png`.
 
 ### Reach
-- [ ] **Website link (rugen.dev).** PROFILE › LINK WEBSITE: `POST /v1/account/link_code
+- [x] **Website link (rugen.dev).** (a3c809d) PROFILE › LINK WEBSITE: `POST /v1/account/link_code
   {key}` on the current server, show the 6-character code large (room-code
   alphabet), a countdown from `expires_in` (600 s), REFRESH re-requests (the
   new code replaces the old), hint "type it at rugen.dev/settings/link".
-- [ ] **`rugen://` protocol.** Installers register `rugen://watch/<code>` (Windows
-  registry, macOS Info.plist, Linux .desktop `x-scheme-handler/rugen`; the
-  portable build offers REGISTER in OPTIONS): the game opens straight to
-  WATCH of that room on the official server; missing fighters go through the
-  usual consent + package download first.
-- [ ] **Server-hosted tournament rooms.** Rooms with `server_hosted: true`
-  have no host: hide START THE BRACKET / KICK, show "called by the server",
-  join by code from the ONLINE lobby works as today.
+- [x] **`rugen://` protocol.** (75c0f8f) `rugen rugen://watch/<code>` / `--url`
+  opens straight to WATCH of that room on the official server (consent and
+  account steps first, missing fighters through the usual package download).
+  OPTIONS › ONLINE › REGISTER RUGEN:// LINKS: Windows `HKCU\Software\Classes\rugen`
+  (`reg add`, no admin), Linux `~/.local/share/applications/rugen-url.desktop`
+  + `xdg-mime default`; `packaging/rugen.desktop` carries `x-scheme-handler/rugen`.
+  macOS still needs an application bundle (`CFBundleURLTypes` in its
+  Info.plist): the tarball ships a bare binary, so the row is hidden there.
+- [x] **Server-hosted tournament rooms.** (6a09e78) Rooms with `server_hosted: true`
+  (or a bracket without a host member, for servers on the 0.7.2 proto) have
+  no host: no START THE BRACKET / KICK, a CALLED BY THE SERVER plaque, join
+  by code from the ONLINE lobby works as today.
 - [ ] **Translations (i18n).** Move every UI string into `motif/lang/en.toml`
   keyed by id; add `pt-BR`, `es`, `fr`, `it`, `de`, `pl`, `tr`, `id`, `fil`
   and `ja`. Accented Latin glyphs are in every generated text font (a24f1ef:

@@ -21,7 +21,8 @@
 # tag_amber status side side_ok side_plain on off selected action), acct.*
 # (server on_server details form note has_note name rating devices hint enter
 # tab0/tab1 (show label action on off) has_user has_again has_new pass_label
-# user_rule rule guest has_guest masked show_label submit error has_error),
+# user_rule rule guest has_guest masked show_label submit error has_error
+# link (show on_server code has_code cells[].c line expired busy error refresh_label hint)),
 # board.* (rows[] (pos top name verified rating record last.*) empty loading me.*
 # scope season.* finished note), queue.* (time count found searching found_line rule), direct.* (sides
 # side mine fighters netplay), toast.* (show title body retry error), dialog.*
@@ -2595,7 +2596,7 @@ nine = [12, 12, 12, 12]
 # Data: is_bracket, bk.* (status live calm open drawn heads[] (label x w)
 # boxes[] (x y w h a/b (text score win plain tbd named) line has_line live
 # calm wait match_id action) champ (x y w h has none name) entrants[] (n name
-# verified rating you) count can_start start_label wait_line note)
+# verified rating you) count hosted can_start start_label wait_line note)
 [[node]]
 kind = "text"
 visible = "bk.live"
@@ -3026,6 +3027,38 @@ shadow_focus = [6, 6]
   bank = 14
   font = 2
   text = "{bk.start_label}"
+
+# a server-hosted bracket: no host, no START (the server calls each match)
+[[node]]
+kind = "panel"
+visible = "bk.hosted"
+x = 860
+y = 576
+w = 372
+h = 64
+border = 4
+border_color = [0.706, 0.188, 0.102, 1.0]
+color = [0.976, 0.949, 0.886, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 14
+  w = 372
+  align = "center"
+  bank = 13
+  font = 2
+  text = "CALLED BY THE SERVER"
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 38
+  w = 372
+  align = "center"
+  bank = 16
+  font = 2
+  text = "NOBODY HOSTS THIS ROOM"
 
 [[node]]
 kind = "text"
@@ -3984,6 +4017,42 @@ nine = [12, 12, 12, 12]
       border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
     [[node.children.children]]
+    kind = "hbox"
+    x = 30
+    y = 262
+    w = 592
+    h = 44
+    deck = { y = 292 }
+    gap = 10
+
+      [[node.children.children.children]]
+      kind = "button"
+      id = "acct_btn3"
+      w = 200
+      h = 44
+      bank = 14
+      bank_focus = 14
+      font = 2
+      on_press = "acct:link"
+      text = "LINK WEBSITE"
+      deck = { w = 222 }
+      shadow_focus = [6, 6]
+      image = "ui/plaque9.webp"
+      image_focus = "ui/plaque9_lit.webp"
+      nine = [8, 8, 8, 10]
+      border = 3
+      border_color = [0.0, 0.0, 0.0, 0.0]
+      border_color_focus = [0.89, 0.702, 0.298, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      h = 44
+      align = "center"
+      bank = 17
+      font = 2
+      text = "SHOW YOUR PROFILE ON RUGEN.DEV"
+
+    [[node.children.children]]
     kind = "button"
     id = "acct_enter"
     visible = "acct.enter"
@@ -4002,6 +4071,276 @@ nine = [12, 12, 12, 12]
     nine = [8, 8, 8, 10]
     border = 3
     border_color = [0.706, 0.188, 0.102, 1.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
+
+  # LINK WEBSITE: a six-character code for rugen.dev/settings/link
+  [[node.children]]
+  kind = "panel"
+  visible = "acct.link.show"
+  x = 0
+  y = 0
+  w = 652
+  h = 542
+  color = [0.0, 0.0, 0.0, 0.0]
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 28
+    h = 34
+    bank = 12
+    font = 3
+    text = "LINK WEBSITE"
+
+    [[node.children.children]]
+    kind = "text"
+    anchor = "tr"
+    x = 30
+    y = 36
+    bank = 17
+    font = 2
+    text = "{acct.link.on_server}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 80
+    w = 592
+    bank = 12
+    font = 2
+    text = "YOUR CODE"
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 62
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.0.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 152
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.1.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 242
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.2.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 332
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.3.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 422
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.4.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "panel"
+    visible = "acct.link.has_code"
+    x = 512
+    y = 120
+    w = 78
+    h = 96
+    border = 4
+    border_color = [0.341, 0.2, 0.122, 1.0]
+    color = [0.933, 0.882, 0.769, 1.0]
+
+      [[node.children.children.children]]
+      kind = "text"
+      x = 0
+      y = 0
+      w = 78
+      h = 96
+      align = "center"
+      bank = 13
+      font = 5
+      scale = 2
+      text = "{acct.link.cells.5.c}"
+      text_dy = 2
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "!acct.link.error"
+    x = 30
+    y = 238
+    w = 592
+    align = "center"
+    bank = 12
+    font = 2
+    text = "{acct.link.line}"
+
+    [[node.children.children]]
+    kind = "text"
+    visible = "acct.link.error"
+    x = 30
+    y = 238
+    w = 592
+    align = "center"
+    bank = 13
+    font = 2
+    text = "{acct.link.line}"
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 290
+    w = 592
+    h = 80
+    bank = 17
+    font = 2
+    line_gap = 8
+    max_lines = 4
+    text = "{acct.link.hint}"
+    deck = { h = 110, line_gap = 1 }
+    wrap = true
+
+    [[node.children.children]]
+    kind = "text"
+    x = 30
+    y = 376
+    w = 592
+    h = 50
+    bank = 17
+    font = 2
+    line_gap = 8
+    max_lines = 2
+    text = "THE CODE WORKS ONCE AND ONLY FOR TEN MINUTES. REFRESH REPLACES IT."
+    wrap = true
+
+    [[node.children.children]]
+    kind = "button"
+    id = "acct_link_refresh"
+    x = 30
+    y = 440
+    w = 280
+    h = 52
+    bank = 14
+    bank_focus = 14
+    font = 2
+    on_press = "acct:link_refresh"
+    text = "{acct.link.refresh_label}"
+    shadow_focus = [6, 6]
+    image = "ui/plaque9.webp"
+    image_focus = "ui/plaque9_lit.webp"
+    nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.0, 0.0, 0.0, 0.0]
+    border_color_focus = [0.89, 0.702, 0.298, 1.0]
+
+    [[node.children.children]]
+    kind = "button"
+    id = "acct_link_back"
+    x = 322
+    y = 440
+    w = 300
+    h = 52
+    bank = 14
+    bank_focus = 14
+    font = 2
+    on_press = "acct:link_back"
+    text = "BACK TO THE ACCOUNT"
+    shadow_focus = [6, 6]
+    image = "ui/plaque9_dark.webp"
+    image_focus = "ui/plaque9_lit.webp"
+    nine = [8, 8, 8, 10]
+    border = 3
+    border_color = [0.0, 0.0, 0.0, 0.0]
     border_color_focus = [0.89, 0.702, 0.298, 1.0]
 
   [[node.children]]

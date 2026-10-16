@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
+//! rugen rugen://watch/CODE  |  rugen --url rugen://watch/CODE   straight to WATCH of that room (official server)
 //!   --open online|profile|options|controls|practice|challenge   harness: start on that screen
 //!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 //!   --window 1280x800                                           harness: window size (logical px), not fullscreen
@@ -73,6 +74,7 @@ mod keylabel;
 mod kit;
 mod latency;
 mod lifebar;
+mod link;
 mod machine;
 mod matchup;
 mod mouse;
@@ -120,6 +122,7 @@ fn library(root: Option<&str>) -> rugen_content::Library {
 /// `rugen --help` (the usage above).
 const USAGE: &str = "\
 rugen [--root dir]                                            full game: title, select, fight
+rugen rugen://watch/CODE  |  rugen --url rugen://watch/CODE   straight to WATCH of that room (official server)
   --open online|profile|options|controls|practice|challenge   harness: start on that screen
   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
   --window 1280x800                                           harness: window size (logical px), not fullscreen
@@ -219,6 +222,15 @@ fn main() -> anyhow::Result<()> {
     let debug = args.first().is_some_and(|a| a == "debug");
     if debug {
         args[0] = "play".into();
+    }
+    // a `rugen://` link from the desktop (the registered scheme hands it
+    // over as the only argument) is the full game opened on that link
+    if args
+        .first()
+        .is_some_and(|a| a.len() > 6 && a[..6].eq_ignore_ascii_case("rugen:"))
+    {
+        args.insert(0, "--url".into());
+        args.insert(0, "game".into());
     }
     // a leading option (`rugen --frames 30`) means the full game
     let first = args.first().map(String::as_str);
@@ -1091,14 +1103,19 @@ fn main() -> anyhow::Result<()> {
                 debug: false,
                 window: harness_window(&args),
             };
-            // harness: start on another screen (`--open online|profile`)
-            let start = match opt("--open").as_deref() {
-                Some("online") => game::Transition::Online,
-                Some("profile") => game::Transition::Profile,
-                Some("practice") => game::Transition::Practice,
-                Some("challenge") => game::Transition::Challenge,
-                Some("options") => game::Transition::Options,
-                Some("controls") => game::Transition::Controls(0),
+            // harness: start on another screen (`--open online|profile`);
+            // a link: straight to WATCH of that room
+            let start = match (opt("--url"), opt("--open").as_deref()) {
+                (Some(url), _) => match link::parse(&url) {
+                    Ok(link::Link::Watch(code)) => game::Transition::OnlineWatch(code),
+                    Err(e) => anyhow::bail!("{e}"),
+                },
+                (None, Some("online")) => game::Transition::Online,
+                (None, Some("profile")) => game::Transition::Profile,
+                (None, Some("practice")) => game::Transition::Practice,
+                (None, Some("challenge")) => game::Transition::Challenge,
+                (None, Some("options")) => game::Transition::Options,
+                (None, Some("controls")) => game::Transition::Controls(0),
                 _ => game::Transition::Title,
             };
             game::Shell::new(config, lib, start, false, harness, None).run()

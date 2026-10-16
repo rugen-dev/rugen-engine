@@ -257,7 +257,7 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                     s.trim().to_uppercase()
                 }
             };
-            vec![
+            let mut rows = vec![
                 row(
                     "delay",
                     "INPUT DELAY",
@@ -289,7 +289,17 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                     String::new(),
                     "Quick match and ranked only pair you with opponents under 80 ms.",
                 ),
-            ]
+            ];
+            if crate::link::supported() {
+                rows.push(row(
+                    "links",
+                    "REGISTER RUGEN:// LINKS",
+                    Widget::Link,
+                    crate::link::status(),
+                    "Links on rugen.dev (rugen://watch/CODE) open this game on that match. Per user, no administrator.",
+                ));
+            }
+            rows
         }
         _ => Vec::new(),
     }

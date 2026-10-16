@@ -2,7 +2,8 @@
 Type=Application
 Name=rugen
 Comment=MUGEN-compatible 2D fighting game engine
-Exec=rugen
+Exec=rugen %u
 Icon=rugen
 Terminal=false
 Categories=Game;ActionGame;
+MimeType=x-scheme-handler/rugen;

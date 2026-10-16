@@ -253,6 +253,13 @@ impl OnlineClient {
         Ok(s)
     }
 
+    /// A code for the website (`POST /v1/account/link_code`): six
+    /// characters, valid ten minutes; asking again replaces the old one.
+    pub fn link_code(&self) -> OnlineResult<rugen_proto::LinkCode> {
+        let b = self.with_key(json!({}))?;
+        Self::decode(self.call("POST", "/v1/account/link_code", Some(b))?)
+    }
+
     /// Revoke this device's key (`everywhere`: every key of the account).
     pub fn logout(&self, everywhere: bool) -> OnlineResult<()> {
         let path = if everywhere {
