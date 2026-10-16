@@ -3,6 +3,7 @@
 //! ```text
 //! rugen [--root dir]                                            full game: title, select, fight
 //! rugen rugen://watch/CODE  |  rugen --url rugen://watch/CODE   straight to WATCH of that room (official server)
+//!   --no-update-check                                           skip this run's release check ([update] check = false: always)
 //!   --open online|profile|options|controls|practice|challenge   harness: start on that screen
 //!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 //!   --window 1280x800                                           harness: window size (logical px), not fullscreen
@@ -39,6 +40,7 @@
 //! rugen storyboard <file.def>                                 play a MUGEN storyboard (cutscene)
 //! rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 //! rugen theme new <name> [--from ink|dojo] [--root dir]        start a user theme in themes/<name>
+//! rugen update [--check] [--root dir]                           install the latest release (--check: only say)
 //! rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
 //! rugen replay --list [--root dir]                              saved replays, newest first
 //!   (quick play records to --record file.json, menu matches to
@@ -107,6 +109,7 @@ mod title;
 mod training;
 mod tutorial;
 mod uiscreen;
+mod update;
 mod verify;
 mod versus;
 mod viewer;
@@ -159,6 +162,7 @@ rugen bench [--root dir] [--chars A,B] [--convert src] [--out f.md]  sim / rollb
 rugen storyboard <file.def>                                   play a MUGEN storyboard (cutscene)
 rugen debug <char> [char2] [--stage s] [--ai n]               fighter debugger: step frames, states, vars, controllers
 rugen theme new <name> [--from ink|dojo] [--root dir]         start a user theme in themes/<name>
+rugen update [--check] [--root dir]                           install the latest release (--check: only say)
 rugen replay <file.json> [--info]                             play back a recorded match (--info: its header)
 rugen replay --list [--root dir]                              saved replays, newest first
   (quick play records to --record file.json, menu matches to
@@ -1057,6 +1061,14 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Some("update") => {
+            let root = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1).cloned());
+            let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
+            update::cli(&lib, &args[1..])
+        }
         Some("list") => {
             let root = args
                 .iter()
@@ -1083,6 +1095,7 @@ fn main() -> anyhow::Result<()> {
             let root = opt("--root");
             let lib = rugen_content::Library::discover(root.as_deref().map(std::path::Path::new));
             let config = window_override(config::Config::load(&lib.root), &args)?;
+            update::launch(&lib, &config, &args);
             let harness = game::Harness {
                 shot: opt("--shot").map(std::path::PathBuf::from),
                 frames: opt("--frames")

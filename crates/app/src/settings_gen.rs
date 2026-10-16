@@ -216,7 +216,10 @@ focused row) and `keys` (`left right left_glyph right_glyph`: P1's change
 keys). A row has `id label help widget` plus, per widget: `is_pips max on`,
 `is_choice options sel`, `is_slider frac`, `is_text`, `is_link`, and `text`
 / `has_text` (value shown next to it), `adjustable`, `press left right`
-actions (`cycle:<id>`, `adjust:<id>:<±1>`, `open:keys1|keys2`); a row's
+actions (`cycle:<id>`, `adjust:<id>:<±1>`, `open:keys1|keys2`,
+`open:update_check|update_now|update_package|update_notes` on the UPDATE
+tab, whose rows come from the updater: `is_slider` with `adjustable` false
+is a download's progress); a row's
 `on_pick = "pick:{item.id}:{value}"` lets the mouse click (or drag) its
 pips, choice or slider (`{value}` = pips filled up to the cursor, the
 choice index, the slider fraction). Keep the
@@ -2105,12 +2108,12 @@ pub fn screens() -> [(&'static str, String, String); 2] {
     [
         (
             "ink",
-            options(INK_OPTIONS, &INK_SAVE, 520),
+            options(INK_OPTIONS, &INK_SAVE, 552),
             controls(INK_CONTROLS, &INK_SAVE, &ink_buttons),
         ),
         (
             "dojo",
-            options(DOJO_OPTIONS, &DOJO_SAVE, 500),
+            options(DOJO_OPTIONS, &DOJO_SAVE, 532),
             controls(DOJO_CONTROLS, &DOJO_SAVE, &dojo_buttons),
         ),
     ]

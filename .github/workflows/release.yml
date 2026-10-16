@@ -172,6 +172,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      # one line per asset, `sha256sum` format: the in-game updater refuses
+      # an archive that does not match (crates/update)
+      - name: SHA256SUMS
+        run: sha256sum rugen-*.zip rugen-*.tar.gz *.deb *.rpm > SHA256SUMS && cat SHA256SUMS
       - name: Release notes
         run: |
           v=${TAG#v}
@@ -211,6 +215,9 @@ jobs:
 
           Unsigned: the first time, right-click \`rugen\` → Open (or \`xattr -dr com.apple.quarantine <folder>\`).
 
+          \`SHA256SUMS\` lists every file's checksum. OPTIONS › UPDATE in the game
+          (or \`rugen update\`) installs a portable folder from here and checks it.
+
           Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server) ·
           Docs: https://rugen.dev
           NOTES
@@ -226,3 +233,4 @@ jobs:
             rugen-*.tar.gz
             *.deb
             *.rpm
+            SHA256SUMS

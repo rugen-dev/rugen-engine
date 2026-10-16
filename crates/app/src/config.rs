@@ -14,6 +14,22 @@ pub struct Config {
     pub net: Net,
     pub game: GameCfg,
     pub content: ContentCfg,
+    pub update: UpdateCfg,
+}
+
+/// `[update]`: the in-game updater (OPTIONS › UPDATE, `rugen update`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateCfg {
+    /// Ask GitHub for the latest release when the game starts, at most
+    /// every six hours. `--no-update-check` skips it for one run.
+    pub check: bool,
+}
+
+impl Default for UpdateCfg {
+    fn default() -> Self {
+        Self { check: true }
+    }
 }
 
 /// `[content]`: how `chars/` and `stages/` are imported.
@@ -746,6 +762,15 @@ mod tests {
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.input.p1.up, "z");
         assert_eq!(back.net.port, 7000);
+        assert!(back.update.check);
+    }
+
+    #[test]
+    fn update_check_can_be_turned_off() {
+        let c: Config = toml::from_str("[update]\ncheck = false\n").unwrap();
+        assert!(!c.update.check);
+        let c: Config = toml::from_str("[video]\nfullscreen = true\n").unwrap();
+        assert!(c.update.check, "missing section keeps the default");
     }
 
     #[test]
