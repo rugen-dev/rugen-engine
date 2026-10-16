@@ -6,7 +6,7 @@
 //!   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
 //!   --window 1280x800                                           harness: window size (logical px), not fullscreen
 //! rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
-//! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena, ink_stadium, night_festival)
+//! rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena, night_festival)
 //! rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
 //!   --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
 //!   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (direct peer
@@ -124,7 +124,7 @@ rugen [--root dir]                                            full game: title, 
   --mouse 60:640,360,90:click,120:wheel=-1                    harness: cursor (window px), clicks, wheel
   --window 1280x800                                           harness: window size (logical px), not fullscreen
 rugen view <char.def | file.sff> [action] [--shot out.png]   sprite / animation viewer
-rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena, ink_stadium, night_festival)
+rugen stage-gen [--out motif/stages]                    built-in stages (training, ink_dojo, ink_arena, night_festival)
 rugen play <char> [char2] [--stage s] [--root dir]           local match (keyboard / gamepads)
   --net ip:port [--port n] [--p2]                             LAN / direct-IP rollback match against a peer
   --server url --room CODE|new [--spectate] [--guest]         online through rugen-server (direct peer

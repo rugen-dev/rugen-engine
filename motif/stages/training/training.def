@@ -78,17 +78,6 @@ delta = .3, .3
 tile = 1, 0
 scalestart = .5, .5
 
-[BG scan]
-type = normal
-spriteno = 1, 0
-start = 0, -40
-delta = .3, .3
-velocity = 0, -0.25
-tile = 1, 1
-tilespacing = 0, 300
-trans = add
-scalestart = .5, .5
-
 [BG wall]
 type = normal
 spriteno = 2, 0
