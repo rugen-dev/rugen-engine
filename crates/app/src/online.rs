@@ -3456,6 +3456,8 @@ impl OnlineScreen {
             _ => "NEXT MATCH SOON".into(),
         };
         let host = r.members.iter().any(|m| m.role == 0 && m.profile.id == me);
+        // an admin's bracket: the server draws it and calls every match
+        let hosted = r.is_server_hosted();
         let entrants: Vec<Value> = t
             .entrants
             .iter()
@@ -3487,16 +3489,20 @@ impl OnlineScreen {
             },
             "entrants": entrants,
             "count": format!("{} / {}", t.entrants.len(), t.size),
-            "can_start": host && t.state != "running" && t.entrants.len() >= 2,
+            "hosted": hosted,
+            "can_start": host && !hosted && t.state != "running" && t.entrants.len() >= 2,
             "start_label": if t.state == "done" { "START AGAIN" } else { "START THE BRACKET" },
-            "wait_line": if host {
+            "wait_line": if hosted {
+                "THIS BRACKET IS RUN BY THE SERVER: NOBODY HOSTS IT, EACH MATCH IS CALLED BY THE SERVER. WAIT HERE: YOUR MATCH OPENS WHEN IT IS CALLED."
+            } else if host {
                 "EMPTY PLACES ARE BYES FOR THE TOP SEEDS. START WHEN EVERYONE IS IN."
             } else {
                 "THE HOST STARTS THE BRACKET. WAIT HERE: YOUR MATCH OPENS WHEN THE SERVER CALLS IT."
             },
             "note": format!(
-                "CODE {} · SEEDED BY RATING · THE SERVER CALLS EACH MATCH · FIRST TO {} {}",
+                "CODE {} · {} · THE SERVER CALLS EACH MATCH · FIRST TO {} {}",
                 r.code,
+                if hosted { "HOSTED BY THE SERVER" } else { "SEEDED BY RATING" },
                 r.rules.rounds,
                 if r.rules.rounds == 1 { "ROUND" } else { "ROUNDS" }
             ),
@@ -4183,7 +4189,12 @@ impl OnlineScreen {
                     None => return false,
                 }
             }
-            ("kick", State::Room) if self.room.as_ref().is_some_and(|r| r.side == 1) => {
+            ("kick", State::Room)
+                if self
+                    .room
+                    .as_ref()
+                    .is_some_and(|r| r.side == 1 && !r.is_server_hosted()) =>
+            {
                 "room:kick".into()
             }
             ("copy", State::Room) if self.clipboard => "room:copy".into(),

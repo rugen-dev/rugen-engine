@@ -496,6 +496,20 @@ pub struct RoomInfo {
     /// play the called match have `side` 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tournament: Option<Box<TournamentView>>,
+    /// The server runs this (tournament) room itself: no host member, the
+    /// bracket is drawn by an admin and every match is called by the server.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub server_hosted: bool,
+}
+
+impl RoomInfo {
+    /// A room nobody hosts: the server says so, or (older servers) a
+    /// tournament room without a host member (a player-hosted room closes
+    /// the moment its host leaves).
+    pub fn is_server_hosted(&self) -> bool {
+        self.server_hosted
+            || (self.tournament.is_some() && !self.members.iter().any(|m| m.role == 0))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

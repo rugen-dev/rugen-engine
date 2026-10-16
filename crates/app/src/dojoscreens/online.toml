@@ -2595,7 +2595,7 @@ nine = [12, 12, 12, 12]
 # Data: is_bracket, bk.* (status live calm open drawn heads[] (label x w)
 # boxes[] (x y w h a/b (text score win plain tbd named) line has_line live
 # calm wait match_id action) champ (x y w h has none name) entrants[] (n name
-# verified rating you) count can_start start_label wait_line note)
+# verified rating you) count hosted can_start start_label wait_line note)
 [[node]]
 kind = "text"
 visible = "bk.live"
@@ -3026,6 +3026,38 @@ shadow_focus = [6, 6]
   bank = 14
   font = 2
   text = "{bk.start_label}"
+
+# a server-hosted bracket: no host, no START (the server calls each match)
+[[node]]
+kind = "panel"
+visible = "bk.hosted"
+x = 860
+y = 576
+w = 372
+h = 64
+border = 4
+border_color = [0.706, 0.188, 0.102, 1.0]
+color = [0.976, 0.949, 0.886, 1.0]
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 14
+  w = 372
+  align = "center"
+  bank = 13
+  font = 2
+  text = "CALLED BY THE SERVER"
+
+  [[node.children]]
+  kind = "text"
+  x = 0
+  y = 38
+  w = 372
+  align = "center"
+  bank = 16
+  font = 2
+  text = "NOBODY HOSTS THIS ROOM"
 
 [[node]]
 kind = "text"
