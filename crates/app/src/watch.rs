@@ -19,6 +19,8 @@ use rugen_content::Library;
 use rugen_net::online::{OnlineClient, Transfer};
 use rugen_proto::stream::{Chunk, MatchHeader};
 
+use crate::lang::{t, tf};
+
 /// How far behind the players a viewer follows (3 s): network jitter
 /// never shows as a stall.
 pub const LIVE_DELAY: usize = 180;
@@ -188,7 +190,7 @@ impl Prep {
                     header.fighters[1].name.to_uppercase(),
                     header.fighters[1].clone(),
                 ),
-                ("STAGE".to_string(), header.stage.clone()),
+                (t("stages.stage").to_string(), header.stage.clone()),
             ];
             if let Ok(mut s) = st.lock() {
                 s.progress = items.iter().map(|(l, _)| (l.clone(), 0.0)).collect();
@@ -232,7 +234,10 @@ impl Prep {
                     let _ = watch.join();
                     if let Err(e) = r {
                         if let Ok(mut s) = st.lock() {
-                            s.error = Some(format!("could not download {label}: {e}"));
+                            s.error = Some(tf(
+                                "matchup.could_not_download",
+                                &[("what", &label), ("error", &e)],
+                            ));
                         }
                         return;
                     }
@@ -242,7 +247,10 @@ impl Prep {
                     Some(d) => defs.push(d),
                     None => {
                         if let Ok(mut s) = st.lock() {
-                            s.error = Some(format!("{label} is missing after the download"));
+                            s.error = Some(tf(
+                                "watch.is_missing_after_the_download",
+                                &[("what", &label)],
+                            ));
                         }
                         return;
                     }

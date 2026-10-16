@@ -21,6 +21,8 @@ use rugen_sim::World;
 use rugen_sim::world::CtrlOutcome;
 use serde_json::{Value, json};
 
+use crate::lang::{t, tf};
+
 /// Frames kept for STEP BACK (10 s).
 pub const HISTORY: usize = 600;
 
@@ -106,10 +108,7 @@ impl Debugger {
     }
 
     pub fn speed_label(&self) -> String {
-        match SPEEDS[self.speed] {
-            1 => "SPEED 1/1".into(),
-            n => format!("SPEED 1/{n}"),
-        }
+        tf("debug.speed_1_n", &[("n", &SPEEDS[self.speed])])
     }
 
     /// Tab: the next player still in the match (helpers included).
@@ -137,9 +136,9 @@ impl Debugger {
         let p = &world.players[i];
         let side = world.players.get(p.root).map_or(p.team, |r| r.team) + 1;
         if p.helper_index == 0 {
-            format!("P{side} ROOT")
+            tf("debug.pn_root", &[("p", &side)])
         } else {
-            format!("P{side} HELPER {}", p.helper_id)
+            tf("debug.pn_helper_id", &[("p", &side), ("id", &p.helper_id)])
         }
     }
 
@@ -186,7 +185,7 @@ impl Debugger {
     /// `KFM.CNS · STAND`: the state's file and the comment that names it.
     fn state_where(&mut self, world: &World, data: usize, state: i32) -> String {
         let Some(st) = world.data.get(data).and_then(|d| d.states.get(&state)) else {
-            return "NO SUCH STATE".into();
+            return t("debug.no_such_state").into();
         };
         let file = Path::new(&st.file.replace('\\', "/"))
             .file_name()
@@ -244,27 +243,33 @@ impl Debugger {
         let state = p.state_no;
         let owner = p.state_owner;
         json!({
-            "title": format!("RUGEN DEBUG · {name}"),
-            "status": format!("{} · FRAME {}", if paused { "PAUSED" } else { "RUNNING" }, world.frame),
+            "title": tf("debug.rugen_debug_name", &[("name", &name)]),
+            "status": tf(
+                "debug.status_frame_n",
+                &[
+                    ("status", &t(if paused { "debug.paused" } else { "debug.running" })),
+                    ("frame", &world.frame),
+                ],
+            ),
             "paused": paused,
             "running": !paused,
-            "play": if paused { "PLAY" } else { "PAUSE" },
+            "play": t(if paused { "pause.play" } else { "pause.pause" }),
             "speed": self.speed_label(),
-            "boxes": if boxes { "BOXES ON" } else { "BOXES OFF" },
-            "back": format!("STEP BACK ({})", self.depth()),
+            "boxes": t(if boxes { "debug.boxes_on" } else { "debug.boxes_off" }),
+            "back": tf("debug.step_back_n", &[("n", &self.depth())]),
             "can_back": self.depth() > 0,
-            "who": format!("SELECTED · {}", Self::who(world, i)),
-            "state": format!("STATE {state}"),
+            "who": tf("debug.selected_who", &[("who", &Self::who(world, i))]),
+            "state": tf("debug.state_n", &[("state", &state)]),
             "where": self.state_where(world, owner, state),
             "kv": kv.iter().map(|t| json!({ "t": t })).collect::<Vec<_>>(),
             "vars": vars,
             "has_vars": vars.as_array().is_some_and(|v| !v.is_empty()),
             "no_vars": vars.as_array().is_none_or(Vec::is_empty),
-            "ctrls_title": format!("CONTROLLERS THIS FRAME · {}", ctrls.len()),
+            "ctrls_title": tf("debug.controllers_this_frame_n", &[("n", &ctrls.len())]),
             "has_ctrls": !ctrls.is_empty(),
             "no_ctrls": ctrls.is_empty(),
             "ctrls": ctrls,
-            "keys": "SPACE PLAY · . STEP · , BACK · TAB PLAYER · F2 BOXES · F4 SPEED",
+            "keys": t("debug.keys_help"),
         })
     }
 

@@ -17,6 +17,7 @@ use winit::window::WindowId;
 use crate::config::Config;
 use crate::gpu::Gpu;
 use crate::input::InputState;
+use crate::lang::t;
 use crate::online::{OnlineAuto, OnlineMatch, OnlineScreen};
 use crate::options::OptionsScreen;
 use crate::play::{FightSetup, Match};
@@ -29,12 +30,14 @@ use crate::versus::{Portrait, VersusScreen};
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// Win lines for characters without `[Quotes]`.
-const STOCK_QUOTES: [&str; 4] = [
-    "Is that all you've got?",
-    "Train harder and come back!",
-    "Next chapter, same result.",
-    "Victory is written in ink!",
-];
+fn stock_quotes() -> [&'static str; 4] {
+    [
+        t("result.quote_1"),
+        t("result.quote_2"),
+        t("result.quote_3"),
+        t("result.quote_4"),
+    ]
+}
 const SYSTEM_SND: u32 = rugen_audio::SYSTEM_BANK;
 /// Ticks between the last options change and writing rugen.toml.
 
@@ -69,17 +72,17 @@ impl Mode {
     /// Screen title of the mode (`""` for entries that are not modes).
     pub fn label(self) -> &'static str {
         match self {
-            Mode::Arcade => "ARCADE",
-            Mode::Versus => "VS MODE",
-            Mode::Training => "TRAINING",
-            Mode::Tutorial => "TUTORIAL",
-            Mode::Watch => "WATCH",
-            Mode::Arena => "ARENA",
-            Mode::Online => "ONLINE",
-            Mode::Survival => "SURVIVAL",
-            Mode::BossRush => "BOSS RUSH",
-            Mode::TimeAttack => "TIME ATTACK",
-            Mode::Debugger => "DEBUGGER",
+            Mode::Arcade => t("common.arcade"),
+            Mode::Versus => t("common.vs_mode"),
+            Mode::Training => t("practice.training"),
+            Mode::Tutorial => t("common.tutorial"),
+            Mode::Watch => t("practice.watch"),
+            Mode::Arena => t("common.arena"),
+            Mode::Online => t("online.online"),
+            Mode::Survival => t("common.survival"),
+            Mode::BossRush => t("common.boss_rush"),
+            Mode::TimeAttack => t("common.time_attack"),
+            Mode::Debugger => t("practice.debugger"),
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         }
     }
@@ -2783,8 +2786,7 @@ impl Shell {
                 let def = if side == 0 { &setup.p1 } else { &setup.p2 };
                 let quotes = crate::screeninfo::victory_quotes(def);
                 match quotes.len() {
-                    0 => STOCK_QUOTES[self.match_stats.ticks as usize % STOCK_QUOTES.len()]
-                        .to_string(),
+                    0 => stock_quotes()[self.match_stats.ticks as usize % 4].to_string(),
                     n => quotes[self.match_stats.ticks as usize % n].clone(),
                 }
             };

@@ -15,6 +15,7 @@ use winit::keyboard::{Key, NamedKey};
 
 use crate::config::Config;
 use crate::game::{Mode, ResultInfo, Transition};
+use crate::lang::{t, tf, tn};
 use crate::play::FightSetup;
 use crate::roster::{Outcome, Roster};
 use crate::sprites::{FontGpu, SpriteSheet};
@@ -238,7 +239,7 @@ impl Profile {
     /// Placeholder until ranked exists: a rating derived from wins.
     pub fn rating_text(&self) -> String {
         if self.wins + self.losses == 0 {
-            "UNRANKED".into()
+            t("title.unranked").into()
         } else {
             format!("{}", 1000 + self.wins as i64 * 25 - self.losses as i64 * 15)
         }
@@ -255,12 +256,15 @@ impl Profile {
             .max_by_key(|r| r.rating);
         match (official, community) {
             (Some(r), _) => (
-                "RANKED · OFFICIAL".into(),
+                t("title.ranked_official").into(),
                 r.rating.to_string(),
-                format!("{} · {}W {}L", r.rank, r.wins, r.losses),
+                tf(
+                    "title.rank_w_l",
+                    &[("rank", &r.rank), ("w", &r.wins), ("l", &r.losses)],
+                ),
             ),
             (None, Some(r)) => (
-                "RANKED · COMMUNITY".into(),
+                t("title.ranked_community").into(),
                 r.rating.to_string(),
                 format!(
                     "{} · {}",
@@ -269,21 +273,26 @@ impl Profile {
                 ),
             ),
             (None, None) => (
-                "RANKED · LOCAL".into(),
+                t("title.ranked_local").into(),
                 if self.wins + self.losses == 0 {
                     "1500".into()
                 } else {
                     self.rating_text()
                 },
-                format!(
-                    "{} · {}W {}L",
-                    if self.wins + self.losses == 0 {
-                        "UNRANKED"
-                    } else {
-                        "LOCAL"
-                    },
-                    self.wins,
-                    self.losses
+                tf(
+                    "title.rank_w_l",
+                    &[
+                        (
+                            "rank",
+                            &t(if self.wins + self.losses == 0 {
+                                "title.unranked"
+                            } else {
+                                "common.local"
+                            }),
+                        ),
+                        ("w", &self.wins),
+                        ("l", &self.losses),
+                    ],
                 ),
             ),
         }
@@ -430,17 +439,20 @@ impl TrainingInfo {
         let slot = self.cfg.slot.min(SLOTS - 1);
         let n = self.slots[slot];
         let line = if n == 0 {
-            "EMPTY · UP TO 10 S".to_string()
+            t("training.empty_up_to_10_s").to_string()
         } else {
-            format!("{:.1} S OF 10 S · {n} FRAMES", n as f32 / 60.0)
+            tf(
+                "training.secs_of_10_s_n_frames",
+                &[("secs", &format!("{:.1}", n as f32 / 60.0)), ("n", &n)],
+            )
         };
         json!({
-            "title": format!("RECORDING · SLOT {} OF {SLOTS}", slot + 1),
+            "title": tf("training.recording_slot_i_of_n", &[("i", &(slot + 1)), ("n", &SLOTS)]),
             "pct": format!("{:.1}", n as f32 * 100.0 / RECORD_FRAMES as f32),
             "line": line,
-            "help": format!(
-                "RECORD GIVES YOU CONTROL OF THE DUMMY. PRESS {} TO STOP.",
-                self.start.to_uppercase()
+            "help": tf(
+                "training.record_gives_you_control_press_key",
+                &[("key", &self.start.to_uppercase())]
             ),
             "has": n > 0,
         })
@@ -526,7 +538,7 @@ fn layout_moves(
             let label = if new_group {
                 m.group.label().to_string()
             } else {
-                format!("{} (CONT.)", m.group.label())
+                tf("pause.group_cont", &[("group", &m.group.label())])
             };
             col.push(json!({ "group": true, "label": label, "cont": !new_group }));
             used += MOVE_GROUP_H;
@@ -575,22 +587,22 @@ fn menu_hints(device: crate::input::Device) -> (String, String) {
 /// One-line description of a title menu entry.
 fn menu_desc(id: &str) -> &'static str {
     match id {
-        "arcade" => "Climb the ladder vs the CPU",
-        "challenge" => "Runs against the CPU, best scores kept",
-        "survival" => "One life bar, endless opponents",
-        "bossrush" => "The toughest fighters back to back",
-        "timeattack" => "Clear the ladder against the clock",
-        "versus" => "Two players, one keyboard",
-        "arena" => "Platforms and stocks: knock them off the stage",
-        "practice" => "Training, lessons, watch and the debugger",
-        "training" => "Free practice, no clock",
-        "tutorial" => "Learn the basics step by step",
-        "watch" => "Sit back: CPU vs CPU",
-        "online" => "Room codes, ranked and LAN play",
-        "profile" => "Your online accounts: username and password",
-        "netplay" => "Direct match over the network",
-        "options" => "Video, audio and controls",
-        "exit" => "See you next chapter",
+        "arcade" => t("title.desc_arcade"),
+        "challenge" => t("title.desc_challenge"),
+        "survival" => t("title.desc_survival"),
+        "bossrush" => t("title.desc_bossrush"),
+        "timeattack" => t("title.desc_timeattack"),
+        "versus" => t("title.desc_versus"),
+        "arena" => t("title.desc_arena"),
+        "practice" => t("title.desc_practice"),
+        "training" => t("title.desc_training"),
+        "tutorial" => t("title.desc_tutorial"),
+        "watch" => t("title.desc_watch"),
+        "online" => t("title.desc_online"),
+        "profile" => t("title.desc_profile"),
+        "netplay" => t("title.desc_netplay"),
+        "options" => t("title.desc_options"),
+        "exit" => t("title.desc_exit"),
         _ => "",
     }
 }
@@ -624,9 +636,6 @@ fn team_exit(mode: Mode, motif: &Path) -> Transition {
 }
 
 /// `1 ROOM`, `2 ROOMS`: a count with its noun in the right number.
-pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
 
 /// State of the options tabs and the controls page.
 #[derive(Default)]
@@ -987,8 +996,8 @@ impl UiScreen {
         };
         let (count, name) = match first {
             Some((_, m)) => (stages.len(), m.display_name.to_uppercase()),
-            None if self.try_stage.is_some() => (1, "TRAINING ROOM".to_string()),
-            None => (0, "NO ARENAS YET".to_string()),
+            None if self.try_stage.is_some() => (1, t("title.training_room").to_string()),
+            None => (0, t("title.no_arenas_yet").to_string()),
         };
         self.arenas = json!({
             "count": count,
@@ -1006,12 +1015,12 @@ impl UiScreen {
                 None => format!("{}/", dir.display()),
             }
         };
-        self.arenas["drop"] = Value::from(format!("DROP .ZIP OR .RAR FIGHTERS INTO {chars}"));
+        self.arenas["drop"] = Value::from(tf("title.drop_fighters_into", &[("chars", &chars)]));
         let fighters = lib.chars().len();
         self.arenas["counts"] = Value::from(format!(
             "{} · {}",
-            plural(fighters, "FIGHTER", "FIGHTERS"),
-            plural(count, "ARENA", "ARENAS")
+            tn(fighters, "online.fighter", "online.fighters"),
+            tn(count, "common.arena", "title.arenas")
         ));
     }
 
@@ -1021,10 +1030,15 @@ impl UiScreen {
         if let Value::Object(m) = &mut v {
             m.insert(
                 "record".into(),
-                Value::from(format!(
-                    "LV {} · {}",
-                    self.profile.level,
-                    plural(self.profile.wins as usize, "WIN", "WINS")
+                Value::from(tf(
+                    "title.lv_n_record",
+                    &[
+                        ("lv", &self.profile.level),
+                        (
+                            "wins",
+                            &tn(self.profile.wins as usize, "common.win", "common.wins"),
+                        ),
+                    ],
                 )),
             );
         }
@@ -1165,9 +1179,9 @@ impl UiScreen {
             stage_wheel: 0.0,
             devices: [crate::input::Device::Keyboard; 2],
             room: if kind == UiKind::Select(Mode::Online) {
-                "ONLINE".into()
+                t("online.online").into()
             } else {
-                "LOCAL".into()
+                t("common.local").into()
             },
             versus: None,
             result: None,
@@ -1276,8 +1290,8 @@ impl UiScreen {
                     let cpu =
                         setup.is_some_and(|s| s.mode == Some(Mode::Versus) && s.ai[i - 1] > 0);
                     match (cpu, line.is_empty()) {
-                        (true, true) => "CPU".to_string(),
-                        (true, false) => format!("CPU · {line}"),
+                        (true, true) => t("common.cpu").to_string(),
+                        (true, false) => tf("fight.cpu_line", &[("line", &line)]),
                         (false, _) => line,
                     }
                 };
@@ -1303,13 +1317,13 @@ impl UiScreen {
                     let winner_name = w.map(|i| r.names[i].clone()).unwrap_or_default();
                     let has_art = w.is_some_and(|i| r.arts[i].is_some());
                     let headline = match w {
-                        Some(_) => "WINNER",
-                        None => "DRAW",
+                        Some(_) => t("result.winner"),
+                        None => t("result.draw"),
                     };
                     json!({
                         "headline": headline,
                         "winner_up": winner_name.to_uppercase(),
-                        "winner_line": format!("{} WINS", winner_name.to_uppercase()),
+                        "winner_line": tf("fight.name_wins", &[("name", &winner_name.to_uppercase())]),
                         "winner_big": w.is_some() && winner_name.chars().count() <= 12,
                         "winner_small": w.is_some() && winner_name.chars().count() > 12,
                         "winner": winner_name,
@@ -1358,15 +1372,15 @@ impl UiScreen {
                 let [col1, col2] = pages.into_iter().nth(page).unwrap_or_default();
                 let training = info.and_then(|p| p.training.as_ref());
                 let mut menu = vec![
-                    json!({ "id": "resume", "label": "RESUME", "action": "resume" }),
-                    json!({ "id": "moves", "label": "MOVE LIST", "action": "moves" }),
-                    json!({ "id": "restart", "label": "RESTART ROUND", "action": "restart" }),
-                    json!({ "id": "controls", "label": "BUTTON CONFIG", "action": "controls" }),
+                    json!({ "id": "resume", "label": t("pause.resume"), "action": "resume" }),
+                    json!({ "id": "moves", "label": t("pause.move_list"), "action": "moves" }),
+                    json!({ "id": "restart", "label": t("pause.restart_round"), "action": "restart" }),
+                    json!({ "id": "controls", "label": t("pause.button_config"), "action": "controls" }),
                 ];
                 if training.is_some() {
                     // the training lab: its panels after RESUME, a reset that says what it does
                     for (k, id) in TRAINING_PANELS.iter().enumerate() {
-                        let label = id.to_uppercase();
+                        let label = t(&format!("pause.{id}"));
                         let go = format!("panel:{id}");
                         menu.insert(
                             1 + k,
@@ -1374,18 +1388,18 @@ impl UiScreen {
                         );
                     }
                     if let Some(m) = menu.iter_mut().find(|m| m["id"] == "restart") {
-                        m["label"] = json!("RESET POSITIONS");
+                        m["label"] = json!(t("pause.reset_positions"));
                     }
                     // the tutorial's lessons, with this fighter against the dummy
                     menu.insert(
                         1,
-                        json!({ "id": "lessons", "label": "LESSONS", "action": "lessons" }),
+                        json!({ "id": "lessons", "label": t("practice.lessons"), "action": "lessons" }),
                     );
                     // the fighter debugger on this match (F12 too)
                     let label = if training.is_some_and(|t| t.debugger) {
-                        "CLOSE DEBUGGER"
+                        t("pause.close_debugger")
                     } else {
-                        "DEBUGGER"
+                        t("practice.debugger")
                     };
                     let at = menu
                         .iter()
@@ -1403,10 +1417,12 @@ impl UiScreen {
                 }
                 if info.is_some_and(|p| p.mode.is_some()) {
                     menu.push(
-                        json!({ "id": "select", "label": "CHARACTER SELECT", "action": "select" }),
+                        json!({ "id": "select", "label": t("common.character_select"), "action": "select" }),
                     );
                 }
-                menu.push(json!({ "id": "quit", "label": "QUIT TO MENU", "action": "quit" }));
+                menu.push(
+                    json!({ "id": "quit", "label": t("pause.quit_to_menu"), "action": "quit" }),
+                );
                 // left / right page the move list, except on an entry with its own panel
                 for m in &mut menu {
                     if m.get("right").is_none() {
@@ -1416,17 +1432,19 @@ impl UiScreen {
                 }
                 let cmd = info.map(|p| p.cmd.to_uppercase()).unwrap_or_default();
                 let name = info.map(|p| p.name.to_uppercase()).unwrap_or_default();
-                let title = format!("{name} · MOVE LIST");
+                let title = tf("pause.name_move_list", &[("name", &name)]);
                 let empty = if cmd.is_empty() {
-                    "THIS FIGHTER HAS NO COMMAND FILE".to_string()
+                    t("pause.this_fighter_has_no_command_file").to_string()
                 } else {
-                    format!("NO SPECIAL MOVES FOUND IN {cmd}")
+                    tf("pause.no_special_moves_found_in_cmd", &[("cmd", &cmd)])
                 };
                 let who = match training {
-                    Some(t) => format!(
-                        "P1 · {} VS DUMMY · {}",
-                        t.fighters[0].to_uppercase(),
-                        t.fighters[1].to_uppercase()
+                    Some(tr) => tf(
+                        "pause.p1_vs_dummy",
+                        &[
+                            ("p1", &tr.fighters[0].to_uppercase()),
+                            ("dummy", &tr.fighters[1].to_uppercase()),
+                        ],
                     ),
                     None => format!("P{} · {name}", info.map_or(1, |p| p.side + 1)),
                 };
@@ -1461,12 +1479,12 @@ impl UiScreen {
                     "no_moves": moves.is_empty(),
                     "empty": empty,
                     "source": if cmd.is_empty() || moves.is_empty() { String::new() } else {
-                        format!("READ FROM {cmd} · COSTS FROM THE MOVE'S POWER CHECK")
+                        tf("pause.read_from_cmd_costs_from_power_check", &[("cmd", &cmd)])
                     },
                     "facing": if count > 1 {
-                        format!("FACING RIGHT · PAGE {} / {count}", page + 1)
+                        tf("pause.facing_right_page_i_of_n", &[("page", &(page + 1)), ("count", &count)])
                     } else {
-                        "FACING RIGHT".to_string()
+                        t("pause.facing_right").to_string()
                     },
                     "paged": count > 1 && panel == "moves",
                     "panel_open": panel != "moves",
@@ -1504,14 +1522,14 @@ impl UiScreen {
                     let at = at.unwrap_or_else(|| pos(&menu, "versus"));
                     menu.insert(
                         at,
-                        json!({ "id": "practice", "label": "PRACTICE", "action": "practice" }),
+                        json!({ "id": "practice", "label": t("practice.practice"), "action": "practice" }),
                     );
                 } else if !UiScreen::available(&self.motif, UiKind::Pause) {
                     // no pause menu to hold the LESSONS: the tutorial keeps its entry
                     let at = pos(&menu, "training");
                     menu.insert(
                         at,
-                        json!({ "id": "tutorial", "label": "TUTORIAL", "action": "mode:tutorial" }),
+                        json!({ "id": "tutorial", "label": t("common.tutorial"), "action": "mode:tutorial" }),
                     );
                 }
                 // CHALLENGE (the runs against the CPU) right after arcade
@@ -1519,14 +1537,14 @@ impl UiScreen {
                     let at = pos(&menu, "arcade");
                     menu.insert(
                         at,
-                        json!({ "id": "challenge", "label": "CHALLENGE", "action": "challenge" }),
+                        json!({ "id": "challenge", "label": t("challenge.challenge"), "action": "challenge" }),
                     );
                 }
                 // ARENA (platform fighter rules) right after the two-player mode
                 let at = pos(&menu, "versus");
                 menu.insert(
                     at,
-                    json!({ "id": "arena", "label": "ARENA", "action": "mode:arena" }),
+                    json!({ "id": "arena", "label": t("common.arena"), "action": "mode:arena" }),
                 );
                 if !menu.iter().any(|m| m["id"] == "options") {
                     let at = menu
@@ -1535,7 +1553,7 @@ impl UiScreen {
                         .unwrap_or(menu.len());
                     menu.insert(
                         at,
-                        json!({ "id": "options", "label": "OPTIONS", "action": "mode:options" }),
+                        json!({ "id": "options", "label": t("options.options"), "action": "mode:options" }),
                     );
                 }
                 // always listed: the online screen explains what it needs when no server is set
@@ -1546,11 +1564,11 @@ impl UiScreen {
                         .unwrap_or(menu.len());
                     menu.insert(
                         at,
-                        json!({ "id": "online", "label": "ONLINE", "action": "online" }),
+                        json!({ "id": "online", "label": t("online.online"), "action": "online" }),
                     );
                     menu.insert(
                         at + 1,
-                        json!({ "id": "profile", "label": "PROFILE", "action": "profile" }),
+                        json!({ "id": "profile", "label": t("title.profile"), "action": "profile" }),
                     );
                 }
                 let can_try = !self.featured.is_empty();
@@ -1570,7 +1588,7 @@ impl UiScreen {
                 json!({
                     "featured": self.featured_json(),
                     "arenas": self.arenas,
-                    "vol": format!("VOL. {}", short.join(".")),
+                    "vol": tf("title.vol_n", &[("n", &short.join("."))]),
                     "ranked": { "title": rank.0, "rating": rank.1, "line": rank.2 },
                     "keys": self.keys_json(),
                     "menu": menu,
@@ -1624,16 +1642,16 @@ impl UiScreen {
                             "clean": !st.unsaved,
                             "toast": st.toast > 0,
                             "confirm": st.confirm.is_some(),
-                            "status": if st.unsaved { "UNSAVED CHANGES" } else { "ALL SAVED" },
+                            "status": t(if st.unsaved { "options.unsaved_changes" } else { "options.all_saved" }),
                         }),
                     );
                     m.insert("profile".into(), self.profile_json());
                     m.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
                     // where Esc goes: opened from the pause menu it resumes the match
                     let back = if self.from_pause {
-                        "BACK TO THE MATCH"
+                        t("options.back_to_the_match")
                     } else {
-                        "BACK TO OPTIONS"
+                        t("options.back_to_options")
                     };
                     m.insert("back_to".into(), json!(back));
                 }
@@ -1654,7 +1672,7 @@ impl UiScreen {
                 match prep {
                     Some((r, t)) if r < t => json!({
                         "on": true,
-                        "line": format!("PREPARING {r} / {t}"),
+                        "line": tf("common.preparing_r_of_t", &[("r", &r), ("t", &t)]),
                         "progress": r as f32 / t.max(1) as f32,
                     }),
                     _ => json!({ "on": false, "line": "", "progress": 1.0 }),
@@ -1709,11 +1727,19 @@ impl UiScreen {
                     "on": true,
                     "name": name,
                     "progress": progress,
-                    "line": format!(
-                        "PREPARING {}{} · {}%",
-                        if *stage { "STAGE " } else { "" },
-                        name,
-                        libm::roundf(progress * 100.0) as i32
+                    "line": tf(
+                        "common.preparing_name_pct",
+                        &[
+                            (
+                                "name",
+                                &if *stage {
+                                    format!("{} {name}", t("stages.stage"))
+                                } else {
+                                    name.clone()
+                                },
+                            ),
+                            ("pct", &(libm::roundf(progress * 100.0) as i32)),
+                        ],
                     ),
                 })
             }
@@ -2763,7 +2789,7 @@ impl UiScreen {
 /// A user theme's broken file, in a strip over the top of the screen.
 pub(crate) fn theme_error_strip(p: &mut dyn rugen_ui::Painter, error: &str, width: f32) {
     let first = error.lines().next().unwrap_or(error);
-    let line = format!("THEME ERROR · {first}");
+    let line = tf("common.theme_error", &[("error", &first)]);
     let rect = rugen_ui::Rect {
         x: 0.0,
         y: 0.0,
@@ -2782,19 +2808,19 @@ fn result_menu(r: &ResultInfo) -> Vec<Value> {
         menu.push(json!({ "id": id, "label": label, "action": id, "style": "main" }));
     };
     if r.arcade {
-        add("continue", "CONTINUE");
+        add("continue", t("result.continue"));
     }
     if !r.arcade {
-        add("rematch", "REMATCH");
+        add("rematch", t("online.rematch"));
     }
     if !r.quick && !r.arcade && r.setup.mode.is_some() {
-        add("select", "CHARACTER SELECT");
+        add("select", t("common.character_select"));
     }
     if !r.quick {
-        add("title", "MAIN MENU");
+        add("title", t("result.main_menu"));
     }
     if r.quick {
-        add("quit", "QUIT");
+        add("quit", t("result.quit"));
     }
     menu
 }
@@ -3266,12 +3292,5 @@ mod tests {
             assert_eq!(ui.take_request(), Some(SaveRequest::Save));
         }
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn plural_counts_one_and_many() {
-        assert_eq!(plural(1, "ROOM", "ROOMS"), "1 ROOM");
-        assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
-        assert_eq!(plural(2, "ISSUE", "ISSUES"), "2 ISSUES");
     }
 }

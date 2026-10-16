@@ -27,7 +27,7 @@ dock = "right top"
 anchor = "tr"
 x = 40
 y = 38
-text = "ALL SAVED"
+text = "@options.all_saved"
 font = 2
 bank = 14
 visible = "save.clean"
@@ -56,7 +56,7 @@ visible = "save.unsaved"
 
   [[node.children]]
   kind = "text"
-  text = "UNSAVED CHANGES"
+  text = "@options.unsaved_changes"
   anchor = "left"
   x = 36
   font = 2
@@ -189,7 +189,7 @@ group = "tabs"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -199,7 +199,7 @@ group = "tabs"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -208,7 +208,7 @@ group = "tabs"
   visible = "save.unsaved"
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -271,7 +271,8 @@ enter_time = 14
   x = 22
   y = 66
   w = 848
-  h = 404
+  # INTERFACE: one row (LANGUAGE) above the theme cards
+  h = "{rows_h}"
   items = "rows"
   group = "rows"
   visible = "show_rows"
@@ -425,7 +426,7 @@ enter_time = 14
   kind = "text"
   text = "@options.ui_theme"
   x = 30
-  y = 74
+  y = "{themes_y_dojo}"
   font = 2
   bank = 13
   visible = "show_themes"
@@ -435,7 +436,7 @@ enter_time = 14
   text = "@options.add_your_own_in_themes_next"
   anchor = "tr"
   x = 26
-  y = 74
+  y = "{themes_y_dojo}"
   font = 2
   bank = 17
   visible = "show_themes"
@@ -444,13 +445,13 @@ enter_time = 14
   kind = "grid"
   id = "themes"
   x = 30
-  y = 100
+  y = "{themes_grid_y_dojo}"
   w = 840
   h = 308
   columns = 4
   cell_w = 198
   cell_h = 146
-  deck = { h = 340, cell_h = 162 }
+  deck = { h = 324, cell_h = 162 }
   gap = 16
   bleed = 12
   items = "themes"
@@ -911,7 +912,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -919,7 +920,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -972,7 +973,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "DISCARD"
+  text = "@options.discard"
   anchor = "center"
   font = 6
   scale = 1
@@ -980,7 +981,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "DISCARD"
+  text = "@options.discard"
   anchor = "center"
   font = 6
   scale = 1
@@ -1033,7 +1034,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "CANCEL"
+  text = "@online.cancel"
   anchor = "center"
   font = 6
   scale = 1
@@ -1041,7 +1042,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "CANCEL"
+  text = "@online.cancel"
   anchor = "center"
   font = 6
   scale = 1

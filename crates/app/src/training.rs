@@ -10,6 +10,8 @@
 use rugen_render::Renderer;
 use serde_json::{Value, json};
 
+use crate::lang::{t, tf};
+
 /// What the training tools show and do. Edited from the pause menu.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrainingCfg {
@@ -62,30 +64,42 @@ pub const RECORD_FRAMES: usize = 600;
 /// One adjustable row of a training panel: `(id, label, options, selected)`.
 type Row = (&'static str, &'static str, Vec<&'static str>, usize);
 
-const ON_OFF: [&str; 2] = ["OFF", "ON"];
+fn on_off() -> Vec<&'static str> {
+    vec![t("training.off"), t("training.on")]
+}
 
 impl TrainingCfg {
     fn dummy_rows(&self) -> Vec<Row> {
         vec![
             (
                 "stance",
-                "STANCE",
-                vec!["STAND", "CROUCH", "JUMP"],
+                t("training.stance"),
+                vec![t("training.stand"), t("lessons.crouch"), t("common.jump")],
                 self.stance as usize,
             ),
             (
                 "block",
-                "BLOCK",
-                vec!["NONE", "ALL", "AFTER FIRST HIT", "RANDOM"],
+                t("training.block"),
+                vec![
+                    t("training.none"),
+                    t("training.all"),
+                    t("training.after_first_hit"),
+                    t("training.random"),
+                ],
                 self.block as usize,
             ),
             (
                 "reversal",
-                "AFTER BLOCK / HIT",
-                vec!["NOTHING", "REVERSAL SLOT"],
+                t("training.after_block_hit"),
+                vec![t("training.nothing"), t("training.reversal_slot")],
                 usize::from(self.reversal),
             ),
-            ("slot", "RECORDING SLOT", vec!["1", "2", "3"], self.slot),
+            (
+                "slot",
+                t("training.recording_slot"),
+                vec!["1", "2", "3"],
+                self.slot,
+            ),
         ]
     }
 
@@ -93,32 +107,32 @@ impl TrainingCfg {
         vec![
             (
                 "hitboxes",
-                "HITBOXES",
-                ON_OFF.to_vec(),
+                t("training.hitboxes"),
+                on_off(),
                 usize::from(self.hitboxes),
             ),
             (
                 "frame_data",
-                "FRAME DATA",
-                ON_OFF.to_vec(),
+                t("training.frame_data"),
+                on_off(),
                 usize::from(self.frame_data),
             ),
             (
                 "inputs",
-                "INPUT DISPLAY",
-                ON_OFF.to_vec(),
+                t("training.input_display"),
+                on_off(),
                 usize::from(self.inputs),
             ),
             (
                 "life_refill",
-                "LIFE REFILL",
-                vec!["OFF", "AFTER COMBO"],
+                t("training.life_refill"),
+                vec![t("training.off"), t("training.after_combo")],
                 usize::from(self.life_refill),
             ),
             (
                 "power_full",
-                "POWER",
-                vec!["NORMAL", "ALWAYS FULL"],
+                t("online.power"),
+                vec![t("training.normal"), t("training.always_full")],
                 usize::from(self.power_full),
             ),
         ]
@@ -882,23 +896,36 @@ impl Training {
         let (text, color) = match self.rec {
             Rec::Idle => return,
             Rec::Recording => (
-                format!(
-                    "REC SLOT {}  {:.1} S / 10 S  {} STOPS",
-                    slot + 1,
-                    self.slots[slot].len() as f32 / 60.0,
-                    if self.start.is_empty() {
-                        "START"
-                    } else {
-                        &self.start
-                    }
+                tf(
+                    "training.rec_slot_secs_key_stops",
+                    &[
+                        ("slot", &(slot + 1)),
+                        (
+                            "secs",
+                            &format!("{:.1}", self.slots[slot].len() as f32 / 60.0),
+                        ),
+                        (
+                            "key",
+                            &if self.start.is_empty() {
+                                t("common.start")
+                            } else {
+                                self.start.as_str()
+                            },
+                        ),
+                    ],
                 ),
                 [1.0, 0.25, 0.25, 1.0],
             ),
             Rec::Playing { looping, .. } => (
-                format!(
-                    "{} SLOT {}",
-                    if looping { "LOOP" } else { "PLAY" },
-                    slot + 1
+                tf(
+                    "training.mode_slot_n",
+                    &[
+                        (
+                            "mode",
+                            &t(if looping { "pause.loop" } else { "pause.play" }),
+                        ),
+                        ("slot", &(slot + 1)),
+                    ],
                 ),
                 [0.5, 1.0, 0.6, 1.0],
             ),
@@ -988,10 +1015,19 @@ impl Training {
         for side in 0..2 {
             let m = &self.meters[side];
             let (title, lines) = match &m.last {
-                Some(fd) => (format!("P{} STATE {}", side + 1, fd.state), fd.lines()),
+                Some(fd) => (
+                    tf(
+                        "training.pn_state_n",
+                        &[("p", &(side + 1)), ("state", &fd.state)],
+                    ),
+                    fd.lines(),
+                ),
                 None => (
-                    format!("P{} FRAME DATA", side + 1),
-                    ["ATTACK TO MEASURE A MOVE".to_string(), String::new()],
+                    tf("training.pn_frame_data", &[("p", &(side + 1))]),
+                    [
+                        t("training.attack_to_measure_a_move").to_string(),
+                        String::new(),
+                    ],
                 ),
             };
             let chars = lines
@@ -1036,13 +1072,18 @@ impl FrameData {
         let n = |v: Option<u32>| v.map_or("-".to_string(), |v| v.to_string());
         let a = |v: Option<i32>| v.map_or("-".to_string(), signed);
         [
-            format!(
-                "STARTUP {}  ACTIVE {}  RECOVERY {}",
-                n(self.startup),
-                n(self.active),
-                n(self.recovery)
+            tf(
+                "training.startup_active_recovery",
+                &[
+                    ("startup", &n(self.startup)),
+                    ("active", &n(self.active)),
+                    ("recovery", &n(self.recovery)),
+                ],
             ),
-            format!("ON HIT {}  ON BLOCK {}", a(self.on_hit), a(self.on_block)),
+            tf(
+                "training.on_hit_on_block",
+                &[("hit", &a(self.on_hit)), ("block", &a(self.on_block))],
+            ),
         ]
     }
 }

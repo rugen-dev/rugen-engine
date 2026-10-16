@@ -142,7 +142,7 @@ deck = { w = 190 }
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -152,7 +152,7 @@ deck = { w = 190 }
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -161,7 +161,7 @@ deck = { w = 190 }
   visible = "save.unsaved"
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -183,7 +183,7 @@ dock = "top"
 x = 866
 y = 36
 deck = { x = 842 }
-text = "ALL SAVED"
+text = "@options.all_saved"
 font = 2
 bank = 14
 visible = "save.clean"
@@ -212,7 +212,7 @@ visible = "save.unsaved"
 
   [[node.children]]
   kind = "text"
-  text = "UNSAVED"
+  text = "@options.unsaved"
   anchor = "left"
   x = 36
   font = 2
@@ -1246,7 +1246,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -1254,7 +1254,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "SAVE"
+  text = "@options.save"
   anchor = "center"
   font = 6
   scale = 1
@@ -1307,7 +1307,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "DISCARD"
+  text = "@options.discard"
   anchor = "center"
   font = 6
   scale = 1
@@ -1315,7 +1315,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "DISCARD"
+  text = "@options.discard"
   anchor = "center"
   font = 6
   scale = 1
@@ -1368,7 +1368,7 @@ group = "dialog"
 
   [[node.children]]
   kind = "text"
-  text = "CANCEL"
+  text = "@online.cancel"
   anchor = "center"
   font = 6
   scale = 1
@@ -1376,7 +1376,7 @@ group = "dialog"
   when = "blur"
   [[node.children]]
   kind = "text"
-  text = "CANCEL"
+  text = "@online.cancel"
   anchor = "center"
   font = 6
   scale = 1

@@ -20,6 +20,7 @@ use rugen_ui::Rect;
 use serde_json::{Value, json};
 
 use crate::game::{Mode, Transition};
+use crate::lang::{t, tf};
 use crate::play::FightSetup;
 use crate::stage::{StageVisual, View};
 use crate::versus::Portrait;
@@ -283,9 +284,13 @@ fn stage_info(def: &Path, stage: &rugen_sim::Stage, item_arena: bool, bundled: b
             }
         }
     }
-    let mut tags = vec![if item_arena { "ARENA RULES" } else { "CLASSIC" }];
+    let mut tags = vec![if item_arena {
+        t("stages.arena_rules")
+    } else {
+        t("stages.classic")
+    }];
     if bundled {
-        tags.push("BUNDLED");
+        tags.push(t("common.bundled"));
     }
     // the camera travels between the bounds over one screen of stage
     let width = libm::roundf(stage.bound_right - stage.bound_left + stage.width);
@@ -884,13 +889,13 @@ impl StageSel {
         let n = self.items.len();
         let cur = match self.sel.checked_sub(1).and_then(|i| self.items.get(i)) {
             None => json!({
-                "name": "RANDOM",
-                "author": "ANY INSTALLED STAGE",
+                "name": t("stages.random"),
+                "author": t("stages.any_installed_stage"),
                 "has_author": true,
-                "tags": [{ "t": "SURPRISE" }],
+                "tags": [{ "t": t("stages.surprise") }],
                 "music": "", "has_music": false, "width": "", "has_width": false,
                 "random": true,
-                "note": if online { "A STAGE IS DRAWN AT RANDOM FOR THE MATCH." } else { "A STAGE IS DRAWN AT RANDOM WHEN THE FIGHT STARTS." },
+                "note": if online { t("stages.random_note_online") } else { t("stages.random_note") },
             }),
             Some(s) => {
                 let author = s.author();
@@ -914,7 +919,7 @@ impl StageSel {
                         m.insert(k.clone(), val.clone());
                     }
                 } else if s.bundled {
-                    v["tags"] = json!([{ "t": "BUNDLED" }]);
+                    v["tags"] = json!([{ "t": t("common.bundled") }]);
                 }
                 v
             }
@@ -928,7 +933,7 @@ impl StageSel {
             .iter()
             .map(|t| {
                 let (name, thumb) = match t.index.checked_sub(1) {
-                    None => ("RANDOM".to_string(), String::new()),
+                    None => (crate::lang::t("stages.random").to_string(), String::new()),
                     Some(i) => (
                         self.items[i].name(),
                         if self.thumbs.contains_key(&i) {
@@ -971,16 +976,16 @@ impl StageSel {
             0.0
         };
         json!({
-            "title": "STAGE",
-            "go": if online { "PICK" } else { "FIGHT!" },
-            "sub": if online { "YOU PICK FOR THE MATCH · ONLINE".to_string() } else { format!("P1 PICKS · {mode_name}") },
+            "title": t("stages.stage"),
+            "go": if online { t("select.pick") } else { t("stages.fight") },
+            "sub": if online { t("stages.you_pick_for_the_match_online").to_string() } else { tf("stages.p1_picks_mode", &[("mode", &mode_name)]) },
             "p1": names[0].to_uppercase(),
             "p2": names[1].to_uppercase(),
             "cur": cur,
             "preview_ready": preview_ready,
             "preview_wait": self.sel > 0 && !preview_ready,
             "strip": strip,
-            "pos": if self.sel == 0 { "RANDOM".to_string() } else { format!("STAGE {} / {n}", self.sel) },
+            "pos": if self.sel == 0 { t("stages.random").to_string() } else { tf("stages.stage_i_of_n", &[("i", &self.sel), ("n", &n)]) },
             "track": { "x": libm::roundf(bar_x), "w": libm::roundf(bar_w), "scrolls": span > 0.0 },
         })
     }

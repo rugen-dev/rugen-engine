@@ -5,6 +5,7 @@ use rugen_cns::cmd::Key as CmdKey;
 use rugen_sim::{CharData, World};
 
 use crate::keylabel::Labels;
+use crate::lang::{t, tf};
 
 enum Check {
     WalkFwd,
@@ -64,41 +65,43 @@ impl Tutorial {
         let start = keys.start();
         let mut steps = vec![
             Step {
-                title: "WALK FORWARD".into(),
-                hint: "HOLD →".into(),
+                title: t("lessons.walk_forward").into(),
+                hint: t("lessons.hold_forward").into(),
                 check: Check::WalkFwd,
             },
             Step {
-                title: "WALK BACK".into(),
-                hint: "HOLD ←".into(),
+                title: t("lessons.walk_back").into(),
+                hint: t("lessons.hold_back").into(),
                 check: Check::WalkBack,
             },
             Step {
-                title: "JUMP".into(),
-                hint: "PRESS ↑".into(),
+                title: t("common.jump").into(),
+                hint: t("lessons.press_up").into(),
                 check: Check::Jump,
             },
             Step {
-                title: "CROUCH".into(),
-                hint: "HOLD ↓".into(),
+                title: t("lessons.crouch").into(),
+                hint: t("lessons.hold_down").into(),
                 check: Check::Crouch,
             },
             Step {
-                title: "ATTACK".into(),
-                hint: format!(
-                    "PRESS {} {} {} OR {} {} {}",
-                    b("a"),
-                    b("b"),
-                    b("c"),
-                    b("x"),
-                    b("y"),
-                    b("z")
+                title: t("online.attack").into(),
+                hint: tf(
+                    "lessons.press_abc_or_xyz",
+                    &[
+                        ("a", &b("a")),
+                        ("b", &b("b")),
+                        ("c", &b("c")),
+                        ("x", &b("x")),
+                        ("y", &b("y")),
+                        ("z", &b("z")),
+                    ],
                 ),
                 check: Check::Attack,
             },
             Step {
-                title: "GUARD".into(),
-                hint: "HOLD ← AWAY FROM THE ENEMY".into(),
+                title: t("lessons.guard").into(),
+                hint: t("lessons.hold_back_away_from_the_enemy").into(),
                 check: Check::Guard,
             },
         ];
@@ -132,7 +135,7 @@ impl Tutorial {
                 .collect::<Vec<_>>()
                 .join(" , ");
             steps.push(Step {
-                title: format!("SPECIAL: {}", c.name.to_uppercase()),
+                title: tf("lessons.special_name", &[("name", &c.name.to_uppercase())]),
                 hint,
                 check: Check::Command(c.name.clone()),
             });
@@ -152,37 +155,44 @@ impl Tutorial {
     pub fn text(&self) -> [String; 3] {
         if self.finished && self.lessons {
             return [
-                "LESSONS COMPLETE".into(),
-                format!("FREE TRAINING NEXT · {} NOW", self.start),
+                t("lessons.lessons_complete").into(),
+                tf(
+                    "lessons.free_training_next_key_now",
+                    &[("key", &self.start)],
+                ),
                 String::new(),
             ];
         }
         if self.finished {
             return [
-                "TUTORIAL COMPLETE".into(),
-                format!("PRESS {} TO LEAVE", self.start),
+                t("lessons.tutorial_complete").into(),
+                tf("lessons.press_key_to_leave", &[("key", &self.start)]),
                 String::new(),
             ];
         }
         let s = &self.steps[self.idx];
         let title = if self.celebrate > 0 {
-            "GOOD!".to_string()
+            t("lessons.good").to_string()
         } else {
             s.title.clone()
         };
         let progress = if self.lessons {
-            format!(
-                "LESSON {} OF {}   {} SKIPS · ESC LEAVES",
-                self.idx + 1,
-                self.steps.len(),
-                self.start
+            tf(
+                "lessons.lesson_i_of_n_key_skips_esc_leaves",
+                &[
+                    ("i", &(self.idx + 1)),
+                    ("n", &self.steps.len()),
+                    ("key", &self.start),
+                ],
             )
         } else {
-            format!(
-                "STEP {} OF {}   {} SKIPS",
-                self.idx + 1,
-                self.steps.len(),
-                self.start
+            tf(
+                "lessons.step_i_of_n_key_skips",
+                &[
+                    ("i", &(self.idx + 1)),
+                    ("n", &self.steps.len()),
+                    ("key", &self.start),
+                ],
             )
         };
         [title, s.hint.clone(), progress]

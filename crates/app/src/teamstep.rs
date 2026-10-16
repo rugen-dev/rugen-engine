@@ -13,6 +13,7 @@ use rugen_sim::team::{MAX_MEMBERS, TeamMode};
 use serde_json::{Value, json};
 
 use crate::game::Mode;
+use crate::lang::{t, tf, tn};
 use crate::roster::Team;
 
 /// What the step chose: each side's team and whether the computer plays it.
@@ -62,12 +63,12 @@ pub struct TeamStep {
     tag_keys: [String; 2],
 }
 
-/// Card texts per mode: name, description lines.
+/// Card texts per mode: keys of the name and the description line.
 const CARDS: [(&str, &str); 4] = [
-    ("SINGLE", "ONE FIGHTER, CLASSIC 1-ON-1"),
-    ("TURNS", "ONE AFTER ANOTHER, WINNER STAYS IN"),
-    ("SIMUL", "ALL ON SCREEN AT ONCE"),
-    ("TAG", "SWAP PARTNERS MID-FIGHT"),
+    ("teams.single", "teams.single_desc"),
+    ("teams.turns", "teams.turns_desc"),
+    ("teams.simul", "teams.simul_desc"),
+    ("common.tag", "teams.tag_desc"),
 ];
 
 /// Pictogram rectangles on a 56 x 56 grid: (x, y, w, h, partner). A
@@ -329,19 +330,15 @@ impl TeamStep {
     fn rules(&self, side: usize) -> String {
         let human = self.human(side);
         match TeamMode::ALL[self.sides[side].mode] {
-            TeamMode::Single => "ONE FIGHTER EACH: THE CLASSIC 1 ON 1.".into(),
-            TeamMode::Turns => {
-                "ONE FIGHTER AT A TIME. THE WINNER STAYS AND KEEPS ITS LIFE; THE NEXT ONE COMES IN WITH THE FALLEN ONE'S POWER.".into()
-            }
-            TeamMode::Simul if human => {
-                "YOUR TEAM FIGHTS TOGETHER. YOUR PARTNERS ARE CPU. THE ROUND IS LOST IF YOUR OWN FIGHTER FALLS.".into()
-            }
-            TeamMode::Simul => "THE WHOLE TEAM FIGHTS AT ONCE, SIDE BY SIDE.".into(),
-            TeamMode::Tag if human => format!(
-                "PRESS TAG ({}) TO SWAP. THE WAITING PARTNER GETS RED LIFE BACK.",
-                self.tag_keys[side].to_uppercase()
+            TeamMode::Single => t("teams.rules_single").into(),
+            TeamMode::Turns => t("teams.rules_turns").into(),
+            TeamMode::Simul if human => t("teams.rules_simul_human").into(),
+            TeamMode::Simul => t("teams.rules_simul").into(),
+            TeamMode::Tag if human => tf(
+                "teams.rules_tag_human",
+                &[("key", &self.tag_keys[side].to_uppercase())],
             ),
-            TeamMode::Tag => "THE CPU SWAPS PARTNERS. THE WAITING ONE GETS RED LIFE BACK.".into(),
+            TeamMode::Tag => t("teams.rules_tag").into(),
         }
     }
 
@@ -381,8 +378,8 @@ impl TeamStep {
                     })
                     .collect();
                 json!({
-                    "name": CARDS[i].0,
-                    "desc": CARDS[i].1,
+                    "name": t(CARDS[i].0),
+                    "desc": t(CARDS[i].1),
                     "press": format!("tm:{side}:{i}"),
                     "plain": !lit && !chosen && !dim,
                     "lit": lit,
@@ -397,14 +394,14 @@ impl TeamStep {
         let other = 1 - side;
         let slots: Vec<Value> = (0..size).map(|_| json!({})).collect();
         let next = if s.ready && !self.sides[other].ready {
-            format!("WAITING FOR {}P", other + 1)
+            tf("teams.waiting_for_np", &[("p", &(other + 1))])
         } else if s.ready {
-            "READY: PICK THE FIGHTERS NEXT".to_string()
+            t("teams.ready_pick_the_fighters_next").to_string()
         } else {
-            crate::uiscreen::plural(
+            tn(
                 size,
-                "SLOT TO FILL ON THE GRID",
-                "SLOTS TO FILL ON THE GRID",
+                "teams.slot_to_fill_on_the_grid",
+                "teams.slots_to_fill_on_the_grid",
             )
         };
         let tag = format!("{}P", side + 1);
@@ -413,20 +410,23 @@ impl TeamStep {
             "tag": tag,
             "toggle": self.mode == Mode::Versus,
             "fixed": self.mode != Mode::Versus,
-            "control": if cpu { "CPU" } else { "HUMAN" },
+            "control": if cpu { t("common.cpu") } else { t("teams.human") },
             "human": !cpu,
             "cpu": cpu,
             "flip": format!("cpu:{side}:0"),
-            "status": if s.ready { "READY ✓" } else if active { "CHOOSING..." } else { "" },
+            "status": if s.ready { t("teams.ready_check") } else if active { t("teams.choosing") } else { "" },
             "ready": s.ready,
             "choosing": !s.ready,
             "active": active,
             "idle": !active,
             "cards": cards,
             "title": if size > 1 {
-                format!("{} · {} FIGHTERS", mode.as_str().to_uppercase(), size)
+                tf(
+                    "teams.mode_n_fighters",
+                    &[("mode", &mode.as_str().to_uppercase()), ("n", &size)],
+                )
             } else {
-                "SINGLE · 1 FIGHTER".to_string()
+                t("teams.single_1_fighter").to_string()
             },
             "rules": self.rules(side),
             "slots": slots,
@@ -440,7 +440,7 @@ impl TeamStep {
             "title": self.mode.label(),
             "p1": self.side_json(0),
             "p2": self.side_json(1),
-            "note": if self.dual() { "EACH SIDE PICKS ITS OWN MODE" } else { "1P FIRST, THEN 2P" },
+            "note": if self.dual() { t("teams.each_side_picks_its_own_mode") } else { t("teams.p1_first_then_2p") },
             "toggle": self.mode == Mode::Versus,
         })
     }

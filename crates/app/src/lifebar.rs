@@ -69,6 +69,7 @@ use rugen_sim::World;
 use rugen_sim::round::Finish;
 use rugen_sim::world::Event;
 
+use crate::lang::{t, tf};
 use crate::sprites::{Anim, FontGpu, FontRef, SpriteSheet};
 
 /// Uploaded player portrait: texture, palette, axis.
@@ -1168,13 +1169,13 @@ impl Lifebar {
             }
             // caption under the bar: NAME · STATE
             let state = if fallen {
-                "DOWN"
+                t("fight.down")
             } else {
                 match mode {
-                    TeamMode::Turns if p.member == active_member + 1 => "NEXT",
-                    TeamMode::Turns => "WAITING",
-                    TeamMode::Tag if red > life => "RECOVERING",
-                    TeamMode::Tag => "READY",
+                    TeamMode::Turns if p.member == active_member + 1 => t("common.next"),
+                    TeamMode::Turns => t("fight.waiting"),
+                    TeamMode::Tag if red > life => t("fight.recovering"),
+                    TeamMode::Tag => t("teams.ready"),
                     _ => "",
                 }
             };
@@ -1226,7 +1227,7 @@ impl Lifebar {
             [b.pos[0] + b.range[1] + dir * 12.0, b.pos[1]]
         });
         font.f.align = if side == 0 { 1 } else { -1 };
-        let line = format!("TAG {key}");
+        let line = tf("fight.tag_key", &[("key", &key)]);
         let tw = self.text_width(Some(font), &line);
         let (pad, h) = (6.0, st.face * 0.7);
         let rect = |r: &mut Renderer, x0: f32, y0: f32, x1: f32, y1: f32, c: [f32; 4]| {
@@ -1314,7 +1315,10 @@ impl Lifebar {
             }
             // a carried item: a tab on the card's top edge, at the right
             if let Some(it) = w.items.held_by(pi) {
-                let tw = self.fonts.get(&1).map_or(30.0, |f| f.width("ITEM", 1.0));
+                let tw = self
+                    .fonts
+                    .get(&1)
+                    .map_or(30.0, |f| f.width(t("fight.item"), 1.0));
                 let (bw, bh) = (tw + 44.0, 24.0);
                 let (bx1, by0) = (x1 - 18.0, top - 14.0);
                 let bx0 = bx1 - bw;
@@ -1324,7 +1328,7 @@ impl Lifebar {
                 if let Some(f) = self.fonts.get_mut(&1) {
                     f.draw(
                         r,
-                        "ITEM",
+                        t("fight.item"),
                         at(bx0 + 8.0, by0 + bh / 2.0 + mid),
                         st.clock_bank,
                         1,
@@ -1430,10 +1434,20 @@ impl Lifebar {
             }
             // power: one pip per bar, filling as power builds
             if let Some(f) = self.fonts.get_mut(&1) {
-                f.draw(r, "POWER", at(sx0, top + 98.0), st.label_bank, 1, us);
+                f.draw(
+                    r,
+                    t("online.power"),
+                    at(sx0, top + 98.0),
+                    st.label_bank,
+                    1,
+                    us,
+                );
             }
             let bars = (p.power_max / 1000).max(1);
-            let label_w = self.fonts.get(&1).map_or(40.0, |f| f.width("POWER", 1.0));
+            let label_w = self
+                .fonts
+                .get(&1)
+                .map_or(40.0, |f| f.width(t("online.power"), 1.0));
             let px0 = sx0 + label_w + 10.0;
             for i in 0..bars {
                 let a = px0 + i as f32 * 46.0;
@@ -1845,7 +1859,7 @@ impl Lifebar {
                 match modes.len() {
                     0 => {}
                     1 => line = format!("{} · {line}", modes[0]),
-                    _ => line = format!("TEAMS · {line}"),
+                    _ => line = tf("fight.teams_line", &[("line", &line)]),
                 }
             }
             let pos = hud(

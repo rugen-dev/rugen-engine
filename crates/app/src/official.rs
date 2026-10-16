@@ -23,6 +23,8 @@ use rugen_proto::{
     VerdictStatement, purpose,
 };
 
+use crate::lang::tf;
+
 /// Address of the official server (build-time setting).
 pub fn server() -> &'static str {
     trust::OFFICIAL_SERVER
@@ -119,13 +121,16 @@ pub enum Stamp {
 impl Stamp {
     pub fn label(&self, what: &str) -> String {
         match self {
-            Stamp::Official => format!("OFFICIAL {what} (SIGNED)"),
-            Stamp::Community(fp) => format!(
-                "COMMUNITY {what} · {}",
-                fp.get(..9).unwrap_or(fp).to_uppercase()
+            Stamp::Official => tf("online.official_what_signed", &[("what", &what)]),
+            Stamp::Community(fp) => tf(
+                "online.community_what_key",
+                &[
+                    ("what", &what),
+                    ("key", &fp.get(..9).unwrap_or(fp).to_uppercase()),
+                ],
             ),
-            Stamp::Unsigned => format!("UNSIGNED {what}"),
-            Stamp::Forged(_) => format!("{what}: BAD SIGNATURE"),
+            Stamp::Unsigned => tf("online.unsigned_what", &[("what", &what)]),
+            Stamp::Forged(_) => tf("online.what_bad_signature", &[("what", &what)]),
         }
     }
 

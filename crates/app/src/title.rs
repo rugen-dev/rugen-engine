@@ -4,6 +4,7 @@ use rugen_render::{Camera, Renderer};
 use rugen_sim::Buttons;
 
 use crate::game::{Mode, Transition};
+use crate::lang::t;
 use crate::stage::StageVisual;
 use crate::system::SystemData;
 
@@ -64,21 +65,21 @@ impl TitleScreen {
             .map_or(out.len(), |i| i + 1);
         // no pause menu to hold the LESSONS: the tutorial keeps its entry
         if !lessons {
-            out.insert(after_training, (Mode::Tutorial, "TUTORIAL".into()));
+            out.insert(after_training, (Mode::Tutorial, t("title.tutorial").into()));
         }
         if !out.iter().any(|(m, _)| *m == Mode::Options) {
             let at = out
                 .iter()
                 .position(|(m, _)| *m == Mode::Exit)
                 .unwrap_or(out.len());
-            out.insert(at, (Mode::Options, "OPTIONS".into()));
+            out.insert(at, (Mode::Options, t("options.options").into()));
         }
         if netplay {
             let at = out
                 .iter()
                 .position(|(m, _)| *m == Mode::Exit)
                 .unwrap_or(out.len());
-            out.insert(at, (Mode::Netplay, "NETPLAY".into()));
+            out.insert(at, (Mode::Netplay, t("title.netplay").into()));
         }
         out
     }

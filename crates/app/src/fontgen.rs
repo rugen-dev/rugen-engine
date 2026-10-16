@@ -1262,7 +1262,10 @@ mod tests {
             for e in std::fs::read_dir(&dir).unwrap() {
                 let p = e.unwrap().path();
                 let name = p.file_stem().unwrap().to_string_lossy().to_string();
-                if p.extension().is_none_or(|x| x != "def") || name == CODE_FONT {
+                if p.extension().is_none_or(|x| x != "def")
+                    || name == CODE_FONT
+                    || name.starts_with(JA_FONT)
+                {
                     continue;
                 }
                 let f = rugen_formats::fnt::Font::open(&p).unwrap();

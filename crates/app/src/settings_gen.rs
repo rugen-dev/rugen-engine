@@ -404,7 +404,8 @@ enter_time = 14
   x = 20
   y = 62
   w = 830
-  h = 414
+  # INTERFACE: one row (LANGUAGE) above the theme cards
+  h = "{rows_h}"
   items = "rows"
   group = "rows"
   visible = "show_rows"
@@ -546,7 +547,7 @@ enter_time = 14
   kind = "text"
   text = "@options.ui_theme"
   x = 28
-  y = 62
+  y = "{themes_y}"
   font = 2
   bank = 10
   visible = "show_themes"
@@ -556,7 +557,7 @@ enter_time = 14
   text = "@options.add_your_own_in_themes_next"
   anchor = "tr"
   x = 24
-  y = 62
+  y = "{themes_y}"
   font = 2
   bank = 9
   visible = "show_themes"
@@ -565,13 +566,13 @@ enter_time = 14
   kind = "grid"
   id = "themes"
   x = 28
-  y = 88
+  y = "{themes_grid_y}"
   w = 840
   h = 304
   columns = 4
   cell_w = 198
   cell_h = 144
-  deck = { h = 340, cell_h = 162 }
+  deck = { h = 324, cell_h = 162 }
   gap = 16
   bleed = 12
   items = "themes"
@@ -1818,7 +1819,7 @@ fn save_button(
     let mut b = save_style_button(
         p,
         "save",
-        "SAVE",
+        "@options.save",
         "save",
         x,
         y,
@@ -1863,7 +1864,7 @@ kind = "text"
 {place}
 x = {x}
 y = {ty}
-{deck}text = "ALL SAVED"
+{deck}text = "@options.all_saved"
 font = {sf}
 bank = {sl}
 visible = "save.clean"
@@ -1899,7 +1900,11 @@ visible = "save.unsaved"
 "#,
         ty = y + 10,
         w = if short { 132 } else { 220 },
-        unsaved = if short { "UNSAVED" } else { "UNSAVED CHANGES" },
+        unsaved = if short {
+            "@options.unsaved"
+        } else {
+            "@options.unsaved_changes"
+        },
         accent = p.accent,
         edge = p.edge,
         light = p.light,
@@ -2030,9 +2035,9 @@ top = true
     );
     // the buttons sit inside the dialog's frame (absolute, drawn on top)
     for (i, (id, label, press)) in [
-        ("dlg_save", "SAVE", "leave:save"),
-        ("dlg_discard", "DISCARD", "leave:discard"),
-        ("dlg_cancel", "CANCEL", "leave:cancel"),
+        ("dlg_save", "@options.save", "leave:save"),
+        ("dlg_discard", "@options.discard", "leave:discard"),
+        ("dlg_cancel", "@online.cancel", "leave:cancel"),
     ]
     .iter()
     .enumerate()
@@ -2129,7 +2134,11 @@ mod tests {
             rugen_ui::ScreenDef::parse(&options).unwrap_or_else(|e| panic!("{theme} options: {e}"));
             rugen_ui::ScreenDef::parse(&controls)
                 .unwrap_or_else(|e| panic!("{theme} controls: {e}"));
-            assert!(!controls.contains('@'), "{theme}: placeholder left");
+            // generator placeholders are `@NAME@`; `@section.key` strings are translations
+            assert!(
+                !controls.contains("@SAVE") && !controls.contains("@DECK"),
+                "{theme}: placeholder left"
+            );
         }
     }
 }

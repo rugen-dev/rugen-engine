@@ -9,6 +9,7 @@ use rugen_sim::team::TeamMode;
 use serde_json::{Value, json};
 
 use crate::game::{Mode, Transition};
+use crate::lang::{t, tf, tn};
 use crate::play::FightSetup;
 use crate::stagesel::StagePlan;
 use crate::uiscreen::Profile;
@@ -126,19 +127,25 @@ fn official_block(m: &Manifest) -> Option<String> {
 
 fn verdict_of(m: &Manifest) -> (&'static str, String) {
     if official_block(m).is_some() {
-        return ("ui/badge_bad.webp", "BLOCKED BY THE OFFICIAL SERVER".into());
+        return (
+            "ui/badge_bad.webp",
+            t("select.blocked_by_the_official_server").into(),
+        );
     }
     match m.verify.as_ref() {
-        Some(v) if v.verdict == "verified" => ("ui/badge_ok.webp", "VERIFIED".into()),
+        Some(v) if v.verdict == "verified" => ("ui/badge_ok.webp", t("online.verified").into()),
         Some(v) if v.verdict == "warn" => (
             "ui/badge_warn.webp",
-            format!(
-                "RUNS WITH {}",
-                crate::uiscreen::plural(v.issues.len(), "ISSUE", "ISSUES")
+            tf(
+                "select.runs_with",
+                &[(
+                    "issues",
+                    &tn(v.issues.len(), "select.issue", "select.issues"),
+                )],
             ),
         ),
-        Some(v) if v.verdict == "broken" => ("ui/badge_bad.webp", "BROKEN".into()),
-        _ => ("", "NOT CHECKED".into()),
+        Some(v) if v.verdict == "broken" => ("ui/badge_bad.webp", t("select.broken").into()),
+        _ => ("", t("select.not_checked").into()),
     }
 }
 
@@ -963,15 +970,15 @@ impl Roster {
             } else if online_foe {
                 // their fighter once they picked, else a waiting line
                 match &self.foe.1 {
-                    Some(f) => format!("BRINGS {f}"),
-                    None => "THEY ARE PICKING...".to_string(),
+                    Some(f) => tf("select.brings", &[("fighter", &f)]),
+                    None => t("select.they_are_picking").to_string(),
                 }
             } else {
-                "CPU".to_string()
+                t("common.cpu").to_string()
             });
             if online_foe {
                 let name = if self.foe.0.is_empty() {
-                    "OPPONENT".to_string()
+                    t("select.opponent").to_string()
                 } else {
                     self.foe.0.to_uppercase()
                 };
@@ -995,26 +1002,29 @@ impl Roster {
             .map(|f| c.dir.join(f).display().to_string())
             .unwrap_or_default();
         let (status, ok) = match m.verify.as_ref() {
-            Some(v) if v.verdict == "verified" => ("✓ VERIFIED".to_string(), true),
+            Some(v) if v.verdict == "verified" => (t("select.verified_ok").to_string(), true),
             Some(v) if v.verdict == "warn" => (
                 format!(
                     "⚠ {}",
-                    crate::uiscreen::plural(v.issues.len(), "KNOWN ISSUE", "KNOWN ISSUES")
+                    tn(v.issues.len(), "select.known_issue", "select.known_issues")
                 ),
                 false,
             ),
-            Some(v) if v.verdict == "broken" => ("⚠ BROKEN".to_string(), false),
+            Some(v) if v.verdict == "broken" => (t("select.broken_warn").to_string(), false),
             _ => match c.pending {
                 Some(p) => (
-                    format!("PREPARING · {}%", libm::roundf(p * 100.0) as i32),
+                    tf(
+                        "select.preparing_pct",
+                        &[("pct", &(libm::roundf(p * 100.0) as i32))],
+                    ),
                     true,
                 ),
-                None => ("NOT CHECKED".to_string(), true),
+                None => (t("select.not_checked").to_string(), true),
             },
         };
         // the official blocklist wins: this fighter is refused online everywhere
         let (status, ok) = match official_block(m) {
-            Some(why) => (format!("⚠ OFFICIAL BLOCK: {why}"), false),
+            Some(why) => (tf("select.official_block", &[("why", &why)]), false),
             None => (status, ok),
         };
         let st = profile.chars.get(&m.id);
@@ -1030,8 +1040,8 @@ impl Roster {
         v["bad"] = Value::from(!ok);
         v["record"] = Value::from(format!(
             "{} · {}",
-            crate::uiscreen::plural(plays as usize, "PLAY", "PLAYS"),
-            crate::uiscreen::plural(wins as usize, "WIN", "WINS")
+            tn(plays as usize, "select.play", "select.plays"),
+            tn(wins as usize, "select.win", "select.wins")
         ));
         v["picked"] = Value::from(self.done(side));
         v["cpu"] = Value::from(!self.human[side]);
@@ -1064,7 +1074,7 @@ impl Roster {
             slots.push(json!({
                 "label": match c {
                     Some(c) => format!("{} · {}", k + 1, c.manifest.display_name.to_uppercase()),
-                    None if next => format!("{} · PICKING...", k + 1),
+                    None if next => tf("select.n_picking", &[("n", &(k + 1))]),
                     None => format!("{}", k + 1),
                 },
                 "picked": c.is_some(),
@@ -1105,7 +1115,7 @@ impl Roster {
         let st = profile.chars.get(&c.manifest.id);
         let (plays, wins) = st.map_or((0, 0), |s| (s.plays, s.wins));
         let author = if c.manifest.author.is_empty() {
-            "UNKNOWN".to_string()
+            t("select.unknown").to_string()
         } else {
             c.manifest.author.to_uppercase()
         };
@@ -1117,8 +1127,8 @@ impl Roster {
             "badge": badge,
             "stats": format!(
                 "{}   {}",
-                crate::uiscreen::plural(plays as usize, "PLAY", "PLAYS"),
-                crate::uiscreen::plural(wins as usize, "WIN", "WINS")
+                tn(plays as usize, "select.play", "select.plays"),
+                tn(wins as usize, "select.win", "select.wins")
             ),
             "present": true,
         })
@@ -1133,47 +1143,54 @@ impl Roster {
             .collect();
         let title = self.mode.label();
         let next = if self.mode.is_ladder() {
-            "CONFIRM TO FIGHT"
+            t("select.confirm_to_fight")
         } else {
-            "CONFIRM FOR THE STAGE"
+            t("select.confirm_for_the_stage")
         };
         let prompt = if self.mode == Mode::Online {
-            "BRING YOUR FIGHTER".to_string()
+            t("select.bring_your_fighter").to_string()
         } else if self.all_picked() && self.ready_in.is_some() {
-            "READY!".to_string()
+            t("select.ready").to_string()
         } else if self.all_picked() {
-            format!("READY  -  {next}")
+            tf("select.ready_next", &[("next", &next)])
         } else if self.team.iter().any(|t| t.0 != TeamMode::Single) && self.dual() {
-            "PICK YOUR TEAMS".to_string()
+            t("select.pick_your_teams").to_string()
         } else if self.picking < 2 && self.team[self.picking].1 > 1 {
-            format!(
-                "P{} : FIGHTER {} OF {}",
-                self.picking + 1,
-                self.picks[self.picking].len() + 1,
-                self.team[self.picking].1
+            tf(
+                "select.pn_fighter_i_of_n",
+                &[
+                    ("p", &(self.picking + 1)),
+                    ("i", &(self.picks[self.picking].len() + 1)),
+                    ("n", &self.team[self.picking].1),
+                ],
             )
         } else if self.dual() {
             match (self.done(0), self.done(1)) {
-                (false, false) => "P1 AND P2 : CHOOSE YOUR FIGHTERS".to_string(),
-                (true, false) => "P2 : CHOOSE YOUR FIGHTER".to_string(),
-                _ => "P1 : CHOOSE YOUR FIGHTER".to_string(),
+                (false, false) => t("select.p1_and_p2_choose_your_fighters").to_string(),
+                (true, false) => t("select.p2_choose_your_fighter").to_string(),
+                _ => t("select.p1_choose_your_fighter").to_string(),
             }
         } else if self.picking < 2 && !self.human[self.picking] {
             match (self.mode, self.picking) {
-                (Mode::Watch, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
-                (Mode::Watch, _) => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
-                (Mode::Versus, 0) => "CHOOSE THE 1P FIGHTER (CPU)".to_string(),
-                (Mode::Versus, _) if !self.human[0] => "CHOOSE THE 2P FIGHTER (CPU)".to_string(),
-                (Mode::Training, _) => "P1 : CHOOSE YOUR SPARRING PARTNER".to_string(),
-                (Mode::Debugger, _) => "OPPONENT (OR THE SAME AGAIN)".to_string(),
-                _ => "P1 : CHOOSE YOUR OPPONENT".to_string(),
+                (Mode::Watch, 0) => t("select.choose_the_1p_fighter_cpu").to_string(),
+                (Mode::Watch, _) => t("select.choose_the_2p_fighter_cpu").to_string(),
+                (Mode::Versus, 0) => t("select.choose_the_1p_fighter_cpu").to_string(),
+                (Mode::Versus, _) if !self.human[0] => {
+                    t("select.choose_the_2p_fighter_cpu").to_string()
+                }
+                (Mode::Training, _) => t("select.p1_choose_your_sparring_partner").to_string(),
+                (Mode::Debugger, _) => t("select.opponent_or_the_same_again").to_string(),
+                _ => t("select.p1_choose_your_opponent").to_string(),
             }
         } else if self.picking == 0 && self.mode == Mode::Debugger {
-            "CHOOSE THE FIGHTER TO DEBUG".to_string()
+            t("select.choose_the_fighter_to_debug").to_string()
         } else if self.picking < 2 {
-            format!("P{} : CHOOSE YOUR FIGHTER", self.picking + 1)
+            tf(
+                "select.pn_choose_your_fighter",
+                &[("p", &(self.picking + 1))],
+            )
         } else {
-            format!("READY  -  {next}")
+            tf("select.ready_next", &[("next", &next)])
         };
         let first = |s: usize| self.picks[s].first().copied();
         let shown = self.char_json(self.hover.or(first(0)).or(first(1)), profile);
@@ -1193,16 +1210,17 @@ impl Roster {
             "prompt": prompt,
             "room": room,
             "cells": cells,
-            "count": format!("{} / {} FIGHTERS", self.order.len(), self.cells.len()),
+            "count": tf("select.n_of_total_fighters", &[("n", &self.order.len()), ("total", &self.cells.len())]),
             "grid": self.grid_json(),
-            "roster_line": format!(
-                "{} FIGHTER{} · {} WITH WARNINGS · {} BROKEN",
-                self.cells.len(),
-                if self.cells.len() == 1 { "" } else { "S" },
-                warns,
-                broken
+            "roster_line": tf(
+                "select.roster_line",
+                &[
+                    ("fighters", &tn(self.cells.len(), "online.fighter", "online.fighters")),
+                    ("warns", &warns),
+                    ("broken", &broken),
+                ],
             ),
-            "filter": if self.query.is_empty() { String::new() } else { format!("SEARCH: {}", self.query.to_uppercase()) },
+            "filter": if self.query.is_empty() { String::new() } else { tf("select.search_query", &[("query", &self.query.to_uppercase())]) },
             "card1": self.card_json(0, profile),
             "card2": self.card_json(1, profile),
             "shown": shown,

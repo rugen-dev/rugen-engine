@@ -8,6 +8,7 @@ use rugen_render::{Camera, Draw, Renderer, TextureId};
 use rugen_sim::Buttons;
 
 use crate::game::{Mode, Transition};
+use crate::lang::{t, tf};
 use crate::play::FightSetup;
 use crate::stage::StageVisual;
 use crate::system::SystemData;
@@ -359,17 +360,17 @@ impl SelectScreen {
         let s = sys.select.clone();
         // title
         let title = match self.mode {
-            Mode::Arcade => "Arcade",
-            Mode::Versus => "VS Mode",
-            Mode::Training => "Training",
-            Mode::Watch => "Watch",
-            Mode::Arena => "Arena",
-            Mode::Tutorial => "Tutorial",
-            Mode::Debugger => "Debugger",
-            Mode::Online => "Online",
-            Mode::Survival => "Survival",
-            Mode::BossRush => "Boss Rush",
-            Mode::TimeAttack => "Time Attack",
+            Mode::Arcade => t("select.arcade"),
+            Mode::Versus => t("select.vs_mode"),
+            Mode::Training => t("select.training"),
+            Mode::Watch => t("select.watch"),
+            Mode::Arena => t("select.arena"),
+            Mode::Tutorial => t("select.tutorial"),
+            Mode::Debugger => t("select.debugger"),
+            Mode::Online => t("select.online"),
+            Mode::Survival => t("select.survival"),
+            Mode::BossRush => t("select.boss_rush"),
+            Mode::TimeAttack => t("select.time_attack"),
             Mode::Netplay | Mode::Options | Mode::Exit => "",
         };
         sys.text(r, s.title_font, title, s.title_offset);
@@ -482,7 +483,7 @@ impl SelectScreen {
         // stage line
         if self.phase != Phase::Chars || (self.done[0] && self.done[1]) {
             let name = if self.stage_idx == 0 {
-                "Random".to_string()
+                t("select.random").to_string()
             } else {
                 self.stages
                     .get(self.stage_idx - 1)
@@ -496,7 +497,12 @@ impl SelectScreen {
             } else {
                 s.stage_active2_font.or(s.stage_active_font)
             };
-            sys.text(r, font, &format!("Stage: {name}"), s.stage_pos);
+            sys.text(
+                r,
+                font,
+                &tf("select.stage_name", &[("name", &name)]),
+                s.stage_pos,
+            );
         }
         if let Some(b) = self.bg.as_mut() {
             b.draw(r, 1, [0.0, 0.0], 1.0, sw, Default::default());

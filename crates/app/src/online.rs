@@ -52,11 +52,12 @@ use winit::keyboard::Key;
 
 use crate::config::{Config, GOOD_PING_MS};
 use crate::game::Transition;
+use crate::lang::{t, tf, tn};
 use crate::matchup::{Driver, Shared, Xfer, XferState};
 use crate::official::{self, Stamp, Trust};
 use crate::play::{FightSetup, NetMode};
 use crate::system::SystemData;
-use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, plural, viewport};
+use crate::uiscreen::{Cached, Host, MemImage, MouseEvent, Profile, viewport};
 use crate::versus::Portrait;
 use rugen_net::online::SignedBlob;
 use rugen_net::online::{FighterCard, VerdictKind};
@@ -397,10 +398,10 @@ enum AcctForm {
 impl AcctForm {
     fn title(self) -> &'static str {
         match self {
-            Self::Create => "CREATE ACCOUNT",
-            Self::Login => "LOG IN",
-            Self::Claim => "CLAIM THIS ACCOUNT",
-            Self::Password => "CHANGE PASSWORD",
+            Self::Create => t("profile.create_account"),
+            Self::Login => t("profile.log_in"),
+            Self::Claim => t("profile.claim_this_account"),
+            Self::Password => t("online.change_password"),
         }
     }
 }
@@ -417,16 +418,15 @@ fn form_error(
     use rugen_proto::account::{password_error, username_error};
     match kind {
         AcctForm::Login if user.is_empty() || pass.is_empty() => {
-            Some("TYPE YOUR USERNAME AND PASSWORD")
+            Some(t("profile.type_your_username_and_password"))
         }
         AcctForm::Login => None,
         AcctForm::Create | AcctForm::Claim => username_error(user)
             .or_else(|| password_error(pass))
-            .or_else(|| (again != pass).then_some("THE TWO PASSWORDS DIFFER")),
-        AcctForm::Password if pass.is_empty() => Some("TYPE YOUR CURRENT PASSWORD"),
-        AcctForm::Password => {
-            password_error(new).or_else(|| (again != new).then_some("THE TWO PASSWORDS DIFFER"))
-        }
+            .or_else(|| (again != pass).then_some(t("profile.the_two_passwords_differ"))),
+        AcctForm::Password if pass.is_empty() => Some(t("profile.type_your_current_password")),
+        AcctForm::Password => password_error(new)
+            .or_else(|| (again != new).then_some(t("profile.the_two_passwords_differ"))),
     }
 }
 
@@ -533,13 +533,16 @@ fn version_problem(info: &ServerInfo) -> Option<(String, String)> {
     let me = rugen_proto::release_of(mine).to_uppercase();
     Some(if info.api < mine {
         (
-            format!("NEEDS {}", rugen_proto::release_of(info.api).to_uppercase()),
-            format!("OLDER VERSION · CAN'T PLAY FROM {me}"),
+            tf(
+                "online.needs_version",
+                &[("version", &rugen_proto::release_of(info.api).to_uppercase())],
+            ),
+            tf("online.older_version_cant_play_from", &[("me", &me)]),
         )
     } else {
         (
-            "NEWER".into(),
-            "NEWER VERSION · UPDATE RUGEN TO PLAY".into(),
+            t("online.newer").into(),
+            t("online.newer_version_update_rugen_to_play").into(),
         )
     })
 }
@@ -551,14 +554,14 @@ fn room_error(room: &RoomSummary) -> Option<String> {
     if room.joinable_by(mine) {
         None
     } else if room.api < mine {
-        Some(format!(
-            "THIS ROOM'S HOST RUNS AN OLDER RUGEN ({}). BOTH PLAYERS NEED THE SAME VERSION.",
-            rugen_proto::release_of(room.api)
+        Some(tf(
+            "online.hosts_runs_an_older_rugen",
+            &[("version", &rugen_proto::release_of(room.api))],
         ))
     } else {
-        Some(format!(
-            "THIS ROOM'S HOST RUNS A NEWER RUGEN ({}). UPDATE YOUR GAME TO JOIN.",
-            rugen_proto::release_of(room.api)
+        Some(tf(
+            "online.hosts_runs_a_newer_rugen",
+            &[("version", &rugen_proto::release_of(room.api))],
         ))
     }
 }
@@ -753,10 +756,9 @@ fn account_for(profile: &Profile, config: &Config, server: &str) -> (u64, String
 
 /// The consent dialog's text for a server keeping fighters `days` days.
 fn consent_text(days: u32) -> String {
-    format!(
-        "ONLINE PLAY SENDS YOUR FIGHTERS TO THE SERVER, YOUR OPPONENT AND VIEWERS. THEY'RE KEPT {} {}, THEN DELETED.",
-        days,
-        if days == 1 { "DAY" } else { "DAYS" }
+    tf(
+        "online.consent_text",
+        &[("kept", &tn(days as usize, "common.day", "common.days"))],
     )
 }
 
@@ -771,8 +773,8 @@ fn now_secs() -> u64 {
 fn when_text(at: u64, now: u64) -> String {
     let day = |t: u64| t / 86_400;
     match day(now).saturating_sub(day(at)) {
-        0 => "TODAY".into(),
-        1 => "YESTERDAY".into(),
+        0 => t("common.today").into(),
+        1 => t("common.yesterday").into(),
         _ => {
             // civil date from days since 1970 (Howard Hinnant's algorithm)
             let z = day(at) as i64 + 719_468;
@@ -784,9 +786,20 @@ fn when_text(at: u64, now: u64) -> String {
             let d = doy - (153 * mp + 2) / 5 + 1;
             let m = if mp < 10 { mp + 3 } else { mp - 9 };
             const MONTHS: [&str; 12] = [
-                "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+                "common.jan",
+                "common.feb",
+                "common.mar",
+                "common.apr",
+                "common.may",
+                "common.jun",
+                "common.jul",
+                "common.aug",
+                "common.sep",
+                "common.oct",
+                "common.nov",
+                "common.dec",
             ];
-            format!("{d} {}", MONTHS[(m - 1) as usize])
+            format!("{d} {}", t(MONTHS[(m - 1) as usize]))
         }
     }
 }
@@ -847,15 +860,17 @@ fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
     .any(|k| low.contains(k));
     if unreachable {
         return (
-            format!("CAN'T REACH {}", server.to_uppercase()),
-            "THE SERVER IS OFFLINE OR THE ADDRESS IS WRONG. CHECK YOUR INTERNET, THEN RETRY."
-                .into(),
+            tf("online.cant_reach", &[("server", &server.to_uppercase())]),
+            t("online.the_server_is_offline_or_wrong").into(),
         );
     }
     if low.starts_with("bad reply") {
         return (
-            format!("{} ANSWERED STRANGELY", server.to_uppercase()),
-            "IT SENT SOMETHING THIS GAME DOES NOT UNDERSTAND. IT MAY RUN ANOTHER VERSION.".into(),
+            tf(
+                "online.answered_strangely",
+                &[("server", &server.to_uppercase())],
+            ),
+            t("online.it_sent_something_not_understood").into(),
         );
     }
     let msg = e
@@ -865,18 +880,18 @@ fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
         .to_uppercase();
     if msg == "NO SUCH ROUTE" {
         return (
-            format!("{} CAN'T DO THAT", server.to_uppercase()),
-            "IT MAY RUN AN OLDER OR A DIFFERENT SERVER VERSION.".into(),
+            tf("online.cant_do_that", &[("server", &server.to_uppercase())]),
+            t("online.it_may_run_another_server_version").into(),
         );
     }
     let title = match what {
-        "room" => "COULDN'T OPEN THE ROOM",
-        "lobby" => "COULDN'T LOAD THE ROOMS",
-        "queue" => "COULDN'T JOIN THE QUEUE",
-        "leaderboard" => "COULDN'T LOAD THE LEADERBOARD",
-        "register" => "COULDN'T SIGN IN",
-        "match" | "matchup" => "THE MATCH COULDN'T START",
-        _ => "SOMETHING WENT WRONG",
+        "room" => t("online.couldnt_open_the_room"),
+        "lobby" => t("online.couldnt_load_the_rooms"),
+        "queue" => t("online.couldnt_join_the_queue"),
+        "leaderboard" => t("online.couldnt_load_the_leaderboard"),
+        "register" => t("online.couldnt_sign_in"),
+        "match" | "matchup" => t("online.the_match_couldnt_start"),
+        _ => t("online.something_went_wrong"),
     };
     let body = if msg.ends_with('.') || msg.ends_with('!') {
         msg
@@ -889,21 +904,21 @@ fn plain_error(what: &str, server: &str, e: &str) -> (String, String) {
 /// Rules as the header tags of a room: rounds, timer, fighters, fighter size, mode.
 fn rules_tags(r: &Rules) -> Vec<String> {
     vec![
-        plural(r.rounds as usize, "ROUND", "ROUNDS"),
+        tn(r.rounds as usize, "online.round", "online.rounds"),
         if r.round_time == 0 {
-            "NO TIMER".into()
+            t("online.no_timer").into()
         } else {
             format!("{} S", r.round_time)
         },
         if r.chars == "mirror" {
-            "MIRROR".into()
+            t("online.mirror").into()
         } else {
-            "FREE PICK".into()
+            t("online.free_pick").into()
         },
-        format!("{} SIZE", room_size(r).label()),
+        tf("online.size_tag", &[("size", &room_size(r).label())]),
         match room_life(r) {
-            Some(l) => format!("LIFE {l}"),
-            None => "OWN LIFE".into(),
+            Some(l) => tf("online.life_n", &[("life", &l)]),
+            None => t("online.own_life").into(),
         },
         r.mode.to_uppercase(),
     ]
@@ -1015,7 +1030,7 @@ impl OnlineScreen {
             addr: String::new(),
             local_ip: rugen_net::socket::lan_ip()
                 .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "YOUR-IP".into()),
+                .unwrap_or_else(|| t("online.your_ip").into()),
         };
         official::init(&lib.cache_dir());
         s.probe_servers();
@@ -1028,7 +1043,7 @@ impl OnlineScreen {
                 s.pending_action = Some("replays".into());
             } else if let Some(code) = room {
                 s.state = State::Room;
-                s.status = format!("ROOM {code}");
+                s.status = tf("online.room_n", &[("code", &code)]);
                 let c = s.client.clone();
                 s.jobs
                     .push(Job::Room(Pending::spawn(move || c.poll_room(&code))));
@@ -1092,9 +1107,9 @@ impl OnlineScreen {
     /// everybody, a community server only its own players.
     fn scope(&self) -> &'static str {
         match self.trust_of(&self.client.server) {
-            Trust::Official => "GLOBAL RANKING",
-            Trust::Impostor => "UNVERIFIED SERVER",
-            _ => "THIS SERVER ONLY",
+            Trust::Official => t("leaderboard.global_ranking"),
+            Trust::Impostor => t("leaderboard.unverified_server"),
+            _ => t("leaderboard.this_server_only"),
         }
     }
 
@@ -1106,19 +1121,24 @@ impl OnlineScreen {
         let Some(r) = l.as_ref() else {
             return String::new();
         };
-        let what = if r.ranked { "RANKED" } else { "MATCH" };
-        let outcome = match (r.won, r.ending) {
-            (true, Some(rugen_proto::Ending::Disconnect)) => "WIN (OPPONENT DISCONNECTED)",
-            (true, Some(_)) => "WIN (OPPONENT FLED)",
-            (false, Some(_)) => "LOSS (YOU FLED)",
-            (true, None) => "WIN",
-            (false, None) => "LOSS",
+        let what = if r.ranked {
+            t("online.ranked")
+        } else {
+            t("online.match")
         };
+        let outcome = match (r.won, r.ending) {
+            (true, Some(rugen_proto::Ending::Disconnect)) => t("online.win_opponent_disconnected"),
+            (true, Some(_)) => t("online.win_opponent_fled"),
+            (false, Some(_)) => t("online.loss_you_fled"),
+            (true, None) => t("common.win"),
+            (false, None) => t("online.loss"),
+        };
+        let args: &[(&str, &dyn std::fmt::Display)] = &[("what", &what), ("outcome", &outcome)];
         match &r.ack {
-            None => format!("LAST {what}: {outcome} - REPORTING..."),
-            Some(a) if a.disputed => format!("LAST {what}: {outcome} - DISPUTED, NOT COUNTED"),
+            None => tf("online.last_result_reporting", args),
+            Some(a) if a.disputed => tf("online.last_result_disputed", args),
             Some(a) if a.signed.is_none() && a.delta.is_none() => {
-                format!("LAST {what}: {outcome} - WAITING FOR THE OPPONENT'S REPORT")
+                tf("online.last_result_waiting_for_report", args)
             }
             Some(a) => {
                 let stamp = official::result_stamp(a, r.match_id, r.me);
@@ -1126,7 +1146,15 @@ impl OnlineScreen {
                     (true, Some(rt), Some(d)) => format!(" {d:+} -> {rt}"),
                     _ => String::new(),
                 };
-                format!("LAST {what}: {outcome}{rating} · {}", stamp.label("RESULT"))
+                tf(
+                    "online.last_result_stamped",
+                    &[
+                        ("what", &what),
+                        ("outcome", &outcome),
+                        ("rating", &rating),
+                        ("stamp", &stamp.label(t("online.result"))),
+                    ],
+                )
             }
         }
     }
@@ -1432,15 +1460,18 @@ impl OnlineScreen {
             .map(|i| json!({ "c": code.chars().nth(i).map(String::from).unwrap_or_default() }))
             .collect();
         let line = match left {
-            _ if busy && code.is_empty() => "ASKING THE SERVER...".to_string(),
+            _ if busy && code.is_empty() => t("profile.asking_the_server").to_string(),
             _ if !self.link_error.is_empty() => self.link_error.clone(),
             None => String::new(),
-            Some(0) => "THIS CODE EXPIRED. REFRESH FOR A NEW ONE.".to_string(),
-            Some(n) => format!("GOOD FOR {}:{:02} · USE IT ONCE", n / 60, n % 60),
+            Some(0) => t("profile.this_code_expired").to_string(),
+            Some(n) => tf(
+                "profile.good_for_use_it_once",
+                &[("time", &format!("{}:{:02}", n / 60, n % 60))],
+            ),
         };
         json!({
             "show": show,
-            "on_server": format!("ON {}", fit(&self.row_name(self.acct_server), 18)),
+            "on_server": tf("profile.on_server", &[("server", &fit(&self.row_name(self.acct_server), 18))]),
             "code": code,
             "has_code": !code.is_empty(),
             "cells": cells,
@@ -1448,8 +1479,8 @@ impl OnlineScreen {
             "expired": expired,
             "busy": busy,
             "error": !self.link_error.is_empty(),
-            "refresh_label": if busy { "..." } else if code.is_empty() { "GET A CODE" } else { "REFRESH" },
-            "hint": "TYPE IT AT RUGEN.DEV/SETTINGS/LINK: THE SITE THEN SHOWS YOUR PROFILE, RATING AND MATCHES.",
+            "refresh_label": if busy { "..." } else if code.is_empty() { t("profile.get_a_code") } else { t("profile.refresh") },
+            "hint": t("profile.link_hint"),
         })
     }
 
@@ -1506,7 +1537,7 @@ impl OnlineScreen {
             };
             let (c, ch) = (self.client.clone(), a.char_id.clone());
             self.state = State::Room;
-            self.status = "CREATING ROOM".into();
+            self.status = t("online.creating_room").into();
             self.jobs
                 .push(Job::Room(Pending::spawn(move || c.create_room(&ch, &opts))));
         } else {
@@ -1595,9 +1626,12 @@ impl OnlineScreen {
         self.error.clear();
         self.state = State::Matchup;
         self.status = match (&self.mx.as_ref().and_then(|m| m.room.clone()), ranked) {
-            (Some(code), _) => format!("ROOM {code}  -  CASUAL: UNBALANCED FIGHTS NEED BOTH OK"),
-            (None, true) => "RANKED: ONLY FAIR MATCHUPS".into(),
-            (None, false) => "QUICK MATCH: UNBALANCED FIGHTS NEED BOTH OK".into(),
+            (Some(code), _) => tf(
+                "online.room_casual_unbalanced_need_both_ok",
+                &[("code", &code)],
+            ),
+            (None, true) => t("online.ranked_only_fair_matchups").into(),
+            (None, false) => t("online.quick_match_unbalanced_need_both_ok").into(),
         };
         if preset.is_none() {
             self.want_select = true;
@@ -1639,7 +1673,7 @@ impl OnlineScreen {
             foe: String::new(),
         });
         self.state = State::Matchup;
-        self.status = format!("ROOM {} - FETCHING THE FIGHTERS", r.code);
+        self.status = tf("online.room_fetching_the_fighters", &[("code", &r.code)]);
     }
 
     /// Watch live match `id` from the server's input log (any moment of the
@@ -1654,7 +1688,7 @@ impl OnlineScreen {
             error: None,
         });
         self.state = State::Watch;
-        self.status = "CONNECTING TO THE MATCH...".into();
+        self.status = t("watch.connecting_to_the_match").into();
     }
 
     /// The watched match: its files once the header arrived, the fight
@@ -1666,9 +1700,12 @@ impl OnlineScreen {
         }
         if let Some(e) = w.feed.error() {
             w.error = Some(if crate::watch::is_full(&e) {
-                "THIS MATCH IS FULL: TOO MANY PEOPLE ARE WATCHING IT. TRY ANOTHER ONE.".into()
+                t("watch.this_match_is_full").into()
             } else {
-                format!("THE MATCH STREAM STOPPED: {}", e.to_uppercase())
+                tf(
+                    "watch.the_match_stream_stopped",
+                    &[("error", &e.to_uppercase())],
+                )
             });
             return;
         }
@@ -1676,10 +1713,12 @@ impl OnlineScreen {
         // another game version may simulate the match differently
         let mine = crate::matchup::engine();
         if !h.engine.is_empty() && h.engine != mine {
-            w.error = Some(format!(
-                "THIS MATCH IS PLAYED WITH {}, YOU RUN {}: BOTH NEED THE SAME VERSION TO WATCH.",
-                h.engine.to_uppercase(),
-                mine.to_uppercase()
+            w.error = Some(tf(
+                "watch.this_match_is_played_with_other_version",
+                &[
+                    ("theirs", &h.engine.to_uppercase()),
+                    ("mine", &mine.to_uppercase()),
+                ],
             ));
             return;
         }
@@ -1753,20 +1792,22 @@ impl OnlineScreen {
             .collect();
         let line = match (&w.error, &h) {
             (Some(e), _) => e.clone(),
-            (None, None) => "CONNECTING TO THE MATCH...".into(),
+            (None, None) => t("watch.connecting_to_the_match").into(),
             (None, Some(_)) if prep.progress.iter().any(|p| p.1 < 1.0) => {
-                "MISSING FIGHTERS DOWNLOAD BEFORE IT PLAYS".into()
+                t("watch.missing_fighters_download_before_it_plays").into()
             }
-            (None, Some(_)) => "STARTING...".into(),
+            (None, Some(_)) => t("watch.starting").into(),
         };
         json!({
-            "title": h.as_ref().map_or("LIVE MATCH".into(), |h| h.title()),
-            "players": h.as_ref().map_or(String::new(), |h| format!(
-                "{} VS {}",
-                h.players[0].name.to_uppercase(),
-                h.players[1].name.to_uppercase()
+            "title": h.as_ref().map_or(t("watch.live_match").into(), |h| h.title()),
+            "players": h.as_ref().map_or(String::new(), |h| tf(
+                "online.a_vs_b",
+                &[
+                    ("a", &h.players[0].name.to_uppercase()),
+                    ("b", &h.players[1].name.to_uppercase()),
+                ],
             )),
-            "frames": format!("{} S PLAYED", have / 60),
+            "frames": tf("watch.seconds_played", &[("seconds", &(have / 60))]),
             "line": line,
             "error": w.error.is_some(),
             "ok": w.error.is_none(),
@@ -1777,12 +1818,12 @@ impl OnlineScreen {
     /// Download shared replay `code`, then watch it like a live match.
     fn fetch_replay(&mut self, code: &str) {
         let Some(code) = rugen_proto::stream::replay_code::normalize(code) else {
-            self.rp_note = "TYPE THE 8 CHARACTERS OF THE CODE.".into();
+            self.rp_note = t("replay.type_the_8_characters_of_the_code").into();
             return;
         };
         let c = self.client.clone();
         let k = code.clone();
-        self.rp_note = "FETCHING THE REPLAY...".into();
+        self.rp_note = t("replay.fetching_the_replay").into();
         self.jobs.push(Job::Fetch(
             code,
             Pending::spawn(move || c.shared_replay(&k)),
@@ -1792,7 +1833,7 @@ impl OnlineScreen {
     /// A shared replay arrived: its files, then the fight.
     fn start_replay(&mut self, code: &str, c: rugen_proto::stream::Chunk) {
         let Some(h) = c.header.clone() else {
-            self.rp_note = "THIS REPLAY HAS NO HEADER.".into();
+            self.rp_note = t("replay.this_replay_has_no_header").into();
             return;
         };
         self.profile.note_replay(crate::uiscreen::RecentReplay {
@@ -1816,12 +1857,12 @@ impl OnlineScreen {
     /// SAVE FILE: the last match as a local replay (`replays/<code>.json`).
     fn save_last_replay(&mut self) {
         let Some(p) = last_played(&self.root) else {
-            self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into();
+            self.rp_note = t("replay.play_an_online_match_first").into();
             return;
         };
         // arena rooms move fighters with rules a local replay file cannot hold
         if p.rules.mode == "arena" {
-            self.rp_note = "ARENA MATCHES CAN ONLY BE SHARED BY CODE.".into();
+            self.rp_note = t("replay.arena_matches_can_only_be_shared_by_code").into();
             return;
         }
         let r = played_replay(&p);
@@ -1831,8 +1872,14 @@ impl OnlineScreen {
             .map_or_else(|| format!("online-{}", p.match_id), |s| s.code.clone());
         let path = self.root.join("replays").join(format!("{name}.json"));
         self.rp_note = match r.save(&path, &self.root) {
-            Ok(()) => format!("SAVED: REPLAYS/{}.JSON", name.to_uppercase()),
-            Err(e) => format!("NOT SAVED: {}", e.to_string().to_uppercase()),
+            Ok(()) => tf(
+                "replay.saved_replays_file",
+                &[("name", &name.to_uppercase())],
+            ),
+            Err(e) => tf(
+                "replay.not_saved",
+                &[("error", &e.to_string().to_uppercase())],
+            ),
         };
     }
 
@@ -1882,7 +1929,7 @@ impl OnlineScreen {
             "shared": shared.is_some(),
             "unshared": played.is_some() && shared.is_none(),
             "code": code_cells(&shared.map_or(String::new(), |r| r.code.clone()), None),
-            "share_label": if shared.is_some() { "COPY CODE" } else { "SHARE" },
+            "share_label": if shared.is_some() { t("online.copy_code") } else { t("replay.share") },
             "can_save": played.as_ref().is_some_and(|p| p.rules.mode != "arena"),
             "typed": code_cells(&self.rp_typed, typing.then_some(self.rp_typed.len())),
             "recent": recent,
@@ -1890,14 +1937,14 @@ impl OnlineScreen {
             "no_recent": recent.is_empty(),
             "you": played.as_ref().map_or(String::new(), |p| {
                 let mine = p.mine.clone().unwrap_or_else(crate::machine::summary);
-                format!("YOU  {}", machine_words(&mine))
+                tf("replay.you_machine", &[("machine", &machine_words(&mine))])
             }),
             "them": played.as_ref().map_or(String::new(), |p| match &p.peer {
-                Some(m) => format!("THEM  {}", machine_words(m)),
-                None => "THEM  NO DETAILS SENT (AN OLDER RUGEN)".into(),
+                Some(m) => tf("replay.them_machine", &[("machine", &machine_words(m))]),
+                None => t("replay.them_no_details_sent").into(),
             }),
             "note": self.rp_note.clone(),
-            "keep": format!("ONLY THE INPUTS ARE UPLOADED (A FEW KB). KEPT {} DAYS ON THE SERVER.", 30),
+            "keep": tf("replay.only_the_inputs_are_uploaded", &[("days", &30)]),
             "copy": self.clipboard,
         })
     }
@@ -1959,7 +2006,7 @@ impl OnlineScreen {
     pub fn pick_cancelled(&mut self) {
         self.want_select = false;
         if self.mx.as_ref().is_some_and(|m| m.need_pick) {
-            self.leave_matchup("YOU LEFT THE MATCHUP");
+            self.leave_matchup(t("online.you_left_the_matchup"));
         }
     }
 
@@ -2041,7 +2088,7 @@ impl OnlineScreen {
             log::warn!("online: matchup: {e}");
             let (title, mut body) = plain_error("matchup", &self.server_name(), &e);
             if room.is_some() {
-                body = format!("{body} ASK FOR A REMATCH TO TRY AGAIN.");
+                body = tf("online.ask_for_a_rematch_to_try_again", &[("body", &body)]);
             }
             self.problem(title, body, None);
             if room.is_some() && self.room.is_some() {
@@ -2133,7 +2180,7 @@ impl OnlineScreen {
             spectator: v.side > 2,
             rules: v.rules.clone(),
         };
-        self.status = "MATCH STARTING".into();
+        self.status = t("online.match_starting").into();
         let side = |def: &PathBuf| {
             let (name, img) = crate::game::char_card(def);
             Portrait::new(name, img.map(|(w, h, rgba)| (w, h, rgba, [0, 0])))
@@ -2193,19 +2240,24 @@ impl OnlineScreen {
         }
         let has_portrait = self.mem.get(&key).is_some_and(|(w, _, _)| *w > 0);
         let p = d.profile.clone().unwrap_or_default();
-        let here = if self.trust_of(&self.client.server).is_official() {
-            "OFFICIAL"
+        let is_official = self.trust_of(&self.client.server).is_official();
+        let here = if is_official {
+            t("online.official")
         } else {
-            "THIS SERVER"
+            t("online.this_server")
         };
         let mut rating = match &c.rating {
-            Some(r) if r.games > 0 => format!("{here} {}  ({} GAMES)", r.rating, r.games),
-            _ => format!("{here}: UNRATED"),
+            Some(r) if r.games > 0 => tf(
+                "online.here_rating_games",
+                &[("here", &here), ("rating", &r.rating), ("games", &r.games)],
+            ),
+            _ => tf("online.here_unrated", &[("here", &here)]),
         };
-        if here != "OFFICIAL"
-            && let Some((r, g)) = official::rating(&d.fingerprint)
-        {
-            rating = format!("{rating}  ·  OFFICIAL {r} ({g})");
+        if !is_official && let Some((r, g)) = official::rating(&d.fingerprint) {
+            rating = tf(
+                "online.rating_official_r_g",
+                &[("rating", &rating), ("r", &r), ("g", &g)],
+            );
         }
         let official_block = official::blocked(&d.fingerprint);
         let name = d.name.to_uppercase();
@@ -2218,16 +2270,16 @@ impl OnlineScreen {
             "name_big": len <= 10,
             "name_mid": (11..=17).contains(&len),
             "name_small": len > 17,
-            "author": if d.author.is_empty() { "BY UNKNOWN".to_string() } else { format!("BY {}", d.author.to_uppercase()) },
+            "author": if d.author.is_empty() { t("online.by_unknown").to_string() } else { tf("online.by_author", &[("author", &d.author.to_uppercase())]) },
             "portrait": format!("mem:{key}"),
             "has_portrait": has_portrait,
-            "stats1": format!("LIFE {}   ATTACK {}   DEFENCE {}", p.life, p.attack, p.defence),
-            "stats2": format!("SUPERS {}   PROJECTILES {}   THROWS {}", p.supers, p.projectiles, p.throws),
-            "stats3": format!("BEST HIT {}   COMBO ~{}", p.max_hit_damage, p.est_combo_damage),
-            "power": format!("POWER {:.0}", p.power_score),
+            "stats1": tf("online.stats_life_attack_defence", &[("life", &p.life), ("attack", &p.attack), ("defence", &p.defence)]),
+            "stats2": tf("online.stats_supers_projectiles_throws", &[("supers", &p.supers), ("projectiles", &p.projectiles), ("throws", &p.throws)]),
+            "stats3": tf("online.stats_best_hit_combo", &[("best_hit", &p.max_hit_damage), ("combo", &p.est_combo_damage)]),
+            "power": tf("online.power_n", &[("power", &format!("{:.0}", p.power_score))]),
             "rating": rating,
-            "verified": if official_block.is_some() { "BLOCKED BY THE OFFICIAL SERVER" } else if p.blocked() { "BLOCKED: NEVER SHARED" } else if c.verified { "FILES CHECKED BY THE SERVER" } else { "WAITING FOR THE SERVER CHECK" },
-            "official_block": official_block.as_ref().map(|w| format!("OFFICIAL BLOCK: {w}")).unwrap_or_default(),
+            "verified": if official_block.is_some() { t("online.blocked_by_the_official_server") } else if p.blocked() { t("online.blocked_never_shared") } else if c.verified { t("online.files_checked_by_the_server") } else { t("online.waiting_for_the_server_check") },
+            "official_block": official_block.as_ref().map(|w| tf("online.official_block", &[("why", &w)])).unwrap_or_default(),
             "has_official_block": official_block.is_some(),
             "size": format!("{:.1} MB", d.size as f64 / 1048576.0),
             "status": status,
@@ -2253,19 +2305,22 @@ impl OnlineScreen {
             xfer.iter().map(Xfer::fraction).sum::<f32>() / xfer.len() as f32
         };
         let (text, pct) = if blocked {
-            ("BLOCKED".to_string(), 0)
+            (t("online.blocked").to_string(), 0)
         } else if failed {
-            (format!("{sending} FAILED"), (frac * 100.0) as u32)
+            (
+                tf("online.sending_failed", &[("sending", &sending)]),
+                (frac * 100.0) as u32,
+            )
         } else if withheld {
-            ("NOT SENT: NO ONLINE CONSENT".to_string(), 0)
+            (t("online.not_sent_no_online_consent").to_string(), 0)
         } else if moving {
             let pct = (frac * 100.0) as u32;
             (format!("{sending} {pct}%"), pct)
         } else if c.verified {
-            ("FILES CHECKED".to_string(), 100)
+            (t("online.files_checked").to_string(), 100)
         } else {
             (
-                "WAITING FOR SERVER CHECK".to_string(),
+                t("online.waiting_for_server_check").to_string(),
                 (frac * 100.0) as u32,
             )
         };
@@ -2286,26 +2341,26 @@ impl OnlineScreen {
         let phase = v.phase.as_str();
         let status_of = |i: usize| -> String {
             let Some(card) = &v.fighters[i] else {
-                return "PICKING...".into();
+                return t("online.picking").into();
             };
             let blocked = card.decl.profile.as_ref().is_some_and(|p| p.blocked())
                 || official::blocked(&card.decl.fingerprint).is_some();
             if blocked {
-                "BLOCKED".into()
+                t("online.blocked").into()
             } else if v.ready[i] {
-                "READY".into()
+                t("teams.ready").into()
             } else if v.accepted[i] {
-                "CONFIRMED".into()
+                t("online.confirmed").into()
             } else if phase == "pick" {
-                "WAITING".into()
+                t("fight.waiting").into()
             } else {
-                "DECIDING...".into()
+                t("online.deciding").into()
             }
         };
         let my_status = if snap.preparing {
-            "PREPARING YOUR FIGHTER...".to_string()
+            t("online.preparing_your_fighter").to_string()
         } else if need_pick {
-            "PICKING...".to_string()
+            t("online.picking").to_string()
         } else {
             status_of(me)
         };
@@ -2358,11 +2413,15 @@ impl OnlineScreen {
             )
         } else {
             (
-                Self::side_xfer(v.fighters[me].as_ref(), &snap.uploads, "SENDING FIGHTER"),
+                Self::side_xfer(
+                    v.fighters[me].as_ref(),
+                    &snap.uploads,
+                    t("online.sending_fighter"),
+                ),
                 Self::side_xfer(
                     v.fighters[opp].as_ref(),
                     &snap.downloads,
-                    "RECEIVING FIGHTER",
+                    t("online.receiving_fighter"),
                 ),
             )
         };
@@ -2376,14 +2435,14 @@ impl OnlineScreen {
         let both_ok = v.accepted.iter().all(|a| *a);
         let rule = match kind {
             _ if spectator || !both => "",
-            Some(VerdictKind::Blocked) if mine_blocked => "YOUR FIGHTER IS BLOCKED",
-            Some(VerdictKind::Blocked) => "THEIR FIGHTER IS BLOCKED",
-            Some(VerdictKind::Unbalanced) if ranked => "RANKED NEEDS A FAIR FIGHT",
-            Some(VerdictKind::Unbalanced) if !both_ok => "UNBALANCED: BOTH MUST ACCEPT",
+            Some(VerdictKind::Blocked) if mine_blocked => t("online.your_fighter_is_blocked"),
+            Some(VerdictKind::Blocked) => t("online.their_fighter_is_blocked"),
+            Some(VerdictKind::Unbalanced) if ranked => t("online.ranked_needs_a_fair_fight"),
+            Some(VerdictKind::Unbalanced) if !both_ok => t("online.unbalanced_both_must_accept"),
             _ => "",
         };
         let note = if snap.verdict_changed {
-            "THE VERDICT CHANGED: CONFIRM AGAIN".to_string()
+            t("online.the_verdict_changed_confirm_again").to_string()
         } else if !snap.notice.is_empty() {
             snap.notice.to_uppercase()
         } else {
@@ -2393,26 +2452,26 @@ impl OnlineScreen {
         let stage = stage_line(&v, spectator);
         json!({
             "stage": stage,
-            "title": if spectator { "WATCHING".to_string() } else if ranked { format!("RANKED MATCHUP · {}", if self.trust_of(&self.client.server).is_official() { "OFFICIAL" } else { "COMMUNITY" }) } else { "MATCHUP".to_string() },
+            "title": if spectator { t("online.watching").to_string() } else if ranked { tf("online.ranked_matchup_scope", &[("scope", &if self.trust_of(&self.client.server).is_official() { t("online.official") } else { t("online.community") })]) } else { t("online.matchup").to_string() },
             "left": left,
             "right": right,
-            "left_tag": if spectator { "P1" } else { "YOU" },
-            "right_tag": if spectator { "P2" } else { "OPPONENT" },
+            "left_tag": if spectator { "P1" } else { t("online.you") },
+            "right_tag": if spectator { "P2" } else { t("select.opponent") },
             "has_verdict": both && kind.is_some(),
             "pending": !both || kind.is_none(),
             "verdict": kind.map(|k| k.label()).unwrap_or(""),
             "fair": both && kind == Some(VerdictKind::Fair),
             "unbalanced": both && kind == Some(VerdictKind::Unbalanced),
             "blocked": both && kind == Some(VerdictKind::Blocked),
-            "stamp": if both && kind.is_some() { stamp.label("VERDICT") } else { String::new() },
+            "stamp": if both && kind.is_some() { stamp.label(t("online.verdict")) } else { String::new() },
             "stamp_official": stamp.is_official(),
             "stamp_other": both && kind.is_some() && !stamp.is_official(),
                         "can_confirm": can_confirm,
             // the stamp already says UNBALANCED; the label must fit its button
-            "confirm_label": if kind == Some(VerdictKind::Unbalanced) { "ACCEPT" } else { "CONFIRM" },
+            "confirm_label": if kind == Some(VerdictKind::Unbalanced) { t("online.accept") } else { t("online.confirm") },
             "can_change": !spectator && matches!(phase, "pick" | "confirm" | "") && !snap.preparing,
             "changed": snap.verdict_changed,
-            "notice": if snap.verdict_changed { "THE VERDICT CHANGED: CONFIRM AGAIN".to_string() } else { snap.notice.to_uppercase() },
+            "notice": if snap.verdict_changed { t("online.the_verdict_changed_confirm_again").to_string() } else { snap.notice.to_uppercase() },
             "has_notice": !snap.notice.is_empty() || snap.verdict_changed,
             "st": stats,
             "left_xfer": left_xfer,
@@ -2421,8 +2480,8 @@ impl OnlineScreen {
             "right_state": state_of(right_state),
             "note": note,
             "has_note": !note.is_empty(),
-            "pending_label": if both { "JUDGING" } else { "WAITING FOR PICKS" },
-            "conn": if spectator { json!({ "line": "WATCHING", "high_ping": false, "sub": "" }) } else { self.conn_json(ranked, room.as_deref()) },
+            "pending_label": if both { t("online.judging") } else { t("online.waiting_for_picks") },
+            "conn": if spectator { json!({ "line": t("online.watching"), "high_ping": false, "sub": "" }) } else { self.conn_json(ranked, room.as_deref()) },
         })
     }
 
@@ -2493,7 +2552,10 @@ impl OnlineScreen {
         self.client.consent = consent;
         self.me = None;
         self.error.clear();
-        self.status = format!("CONNECTING TO {}", server.to_uppercase());
+        self.status = tf(
+            "online.connecting_to",
+            &[("server", &server.to_uppercase())],
+        );
         // no official feed yet (official server unreachable): its mirror here
         if official::feed().is_none() && !official::is_official_addr(server) {
             self.fetch_truth(Some(server));
@@ -2509,6 +2571,16 @@ impl OnlineScreen {
                 .push(Job::Me(Pending::spawn(move || c.profile(id))));
             self.run_pending();
         }
+    }
+
+    /// The status line still says CONNECTING TO this server (or the match).
+    fn connecting_status(&self) -> bool {
+        self.status
+            == tf(
+                "online.connecting_to",
+                &[("server", &self.client.server.to_uppercase())],
+            )
+            || self.status == t("watch.connecting_to_the_match")
     }
 
     /// Days `server` keeps the fighters it receives (0: it does not say).
@@ -2540,8 +2612,8 @@ impl OnlineScreen {
             self.client.consent = false;
         }
         self.notice(
-            "CONSENT WITHDRAWN",
-            "NOTHING MORE GOES TO THIS SERVER. WHAT IS THERE IS DELETED IN TIME.",
+            t("online.consent_withdrawn"),
+            t("online.nothing_more_goes_to_this_server"),
         );
     }
 
@@ -2557,11 +2629,11 @@ impl OnlineScreen {
             .position(|r| official::same_server(&r.addr, server))
             .map_or_else(|| server.to_uppercase(), |i| self.row_name(i));
         Dialog {
-            kicker: format!("ONLINE PLAY · {}", fit(&name, 22)),
-            title: "YOUR FIGHTERS GO ONLINE".into(),
+            kicker: tf("online.online_play_server", &[("server", &fit(&name, 22))]),
+            title: t("online.your_fighters_go_online").into(),
             body: consent_text(days),
-            primary: ("I AGREE".into(), format!("consent:yes:{server}")),
-            secondary: Some(("NOT NOW".into(), format!("consent:no:{server}"))),
+            primary: (t("online.i_agree").into(), format!("consent:yes:{server}")),
+            secondary: Some((t("online.not_now").into(), format!("consent:no:{server}"))),
             ..Default::default()
         }
     }
@@ -2599,8 +2671,8 @@ impl OnlineScreen {
                         self.pending_action = Some("ranked".into());
                         self.open_account(i);
                         self.notice(
-                            "RANKED NEEDS A USERNAME",
-                            "CLAIM THIS ACCOUNT: IT KEEPS ITS RATING AND HISTORY.",
+                            t("online.ranked_needs_a_username"),
+                            t("online.claim_this_account_it_keeps"),
                         );
                     }
                     return;
@@ -2647,36 +2719,52 @@ impl OnlineScreen {
         let (title, body) = if info.api < mine {
             let old = rugen_proto::release_of(info.api).to_uppercase();
             (
-                format!("{name} RUNS AN OLDER RUGEN ({old})"),
-                format!(
-                    "YOUR GAME IS {me}. FIGHTERS ARE SHARED IN A NEW FORMAT THAT {old} SERVERS DON'T UNDERSTAND. ASK THE SERVER OWNER TO UPDATE, OR PICK ANOTHER SERVER."
+                tf(
+                    "online.server_runs_an_older_rugen",
+                    &[("name", &name), ("old", &old)],
+                ),
+                tf(
+                    "online.your_game_is_older_server_body",
+                    &[("me", &me), ("old", &old)],
                 ),
             )
         } else {
             (
-                format!("{name} RUNS A NEWER RUGEN"),
-                format!("YOUR GAME IS {me}. UPDATE RUGEN TO PLAY HERE, OR PICK ANOTHER SERVER."),
+                tf("online.server_runs_a_newer_rugen", &[("name", &name)]),
+                tf("online.your_game_is_newer_server_body", &[("me", &me)]),
             )
         };
         Some(Dialog {
-            kicker: "CAN'T PLAY ON THIS SERVER".into(),
+            kicker: t("online.cant_play_on_this_server").into(),
             title,
             body,
-            details: format!(
-                "(SERVER API {}{}, THIS GAME API {mine})",
-                if info.api_min > 0 && info.api_min != info.api {
-                    format!("{}-{}", info.api_min, info.api)
-                } else {
-                    info.api.to_string()
-                },
-                if info.version.is_empty() {
-                    String::new()
-                } else {
-                    format!(", SERVER {}", info.version.to_uppercase())
-                },
+            details: tf(
+                "online.server_api_details",
+                &[
+                    (
+                        "api",
+                        &if info.api_min > 0 && info.api_min != info.api {
+                            format!("{}-{}", info.api_min, info.api)
+                        } else {
+                            info.api.to_string()
+                        },
+                    ),
+                    (
+                        "server",
+                        &if info.version.is_empty() {
+                            String::new()
+                        } else {
+                            tf(
+                                "online.comma_server_version",
+                                &[("version", &info.version.to_uppercase())],
+                            )
+                        },
+                    ),
+                    ("mine", &mine),
+                ],
             ),
-            primary: ("OTHER SERVERS".into(), "dialog:close".into()),
-            secondary: Some(("DETAILS".into(), "dialog:details".into())),
+            primary: (t("online.other_servers").into(), "dialog:close".into()),
+            secondary: Some((t("online.details").into(), "dialog:details".into())),
             ..Default::default()
         })
     }
@@ -2771,7 +2859,11 @@ impl OnlineScreen {
     /// small line under it (room, mode, what the path reveals).
     fn conn_json(&self, ranked: bool, room: Option<&str>) -> Value {
         let direct = self.config.net.direct;
-        let how = if direct { "DIRECT" } else { "RELAYED" };
+        let how = if direct {
+            t("online.direct")
+        } else {
+            t("online.relayed")
+        };
         let ping = self.est_ping();
         let line = match ping {
             Some(ms) => {
@@ -2780,20 +2872,30 @@ impl OnlineScreen {
                     .net
                     .input_delay
                     .frames(Some(ms), &self.config.net.delay_policy());
-                format!("{how} {ms} MS DELAY {d}F")
+                tf(
+                    "online.how_ms_delay_frames",
+                    &[("how", &how), ("ms", &ms), ("frames", &d)],
+                )
             }
             None => how.to_string(),
         };
         let mut sub = Vec::new();
         match room {
-            Some(code) => sub.push(format!("ROOM {code}")),
-            None => sub.push("QUICK MATCH".into()),
+            Some(code) => sub.push(tf("online.room_n", &[("code", &code)])),
+            None => sub.push(t("online.quick_match").into()),
         }
-        sub.push(if ranked { "RANKED" } else { "CASUAL" }.into());
+        sub.push(
+            if ranked {
+                t("online.ranked")
+            } else {
+                t("online.casual")
+            }
+            .into(),
+        );
         sub.push(if direct {
-            "PEER-TO-PEER, OPPONENT SEES YOUR IP".into()
+            t("online.peer_to_peer_opponent_sees_your_ip").into()
         } else {
-            "RELAYED THROUGH THE SERVER".into()
+            t("online.relayed_through_the_server").into()
         });
         json!({
             "line": line,
@@ -2822,7 +2924,7 @@ impl OnlineScreen {
     fn row_problem(&self, i: usize) -> Option<(String, String)> {
         let r = self.servers.get(i)?;
         if r.error {
-            return Some((String::new(), "OFFLINE · CAN'T REACH IT".into()));
+            return Some((String::new(), t("online.offline_cant_reach_it").into()));
         }
         version_problem(r.info.as_ref()?)
     }
@@ -2836,8 +2938,8 @@ impl OnlineScreen {
     /// without the key), nothing for community servers.
     fn row_tag(&self, i: usize) -> (&'static str, &'static str) {
         match self.servers.get(i) {
-            Some(r) if r.trust == Trust::Impostor => ("UNVERIFIED", "amber"),
-            Some(r) if r.official => ("OFFICIAL", "red"),
+            Some(r) if r.trust == Trust::Impostor => (t("online.unverified"), "amber"),
+            Some(r) if r.official => (t("online.official"), "red"),
             _ => ("", ""),
         }
     }
@@ -2850,7 +2952,9 @@ impl OnlineScreen {
         let connected = official::same_server(&self.client.server, &row.addr);
         let name = match self.acct_state(i) {
             AcctState::Named(n) => format!("{} ✓", n.to_uppercase()),
-            AcctState::None if self.has_accounts(&row.addr) => return "NOT LOGGED IN".into(),
+            AcctState::None if self.has_accounts(&row.addr) => {
+                return t("profile.not_logged_in").into();
+            }
             _ => self.profile.name.to_uppercase(),
         };
         let rank = match (&self.me, connected) {
@@ -2879,18 +2983,18 @@ impl OnlineScreen {
         let enter = Some("ENTER".to_string());
         let esc = Some("ESC".to_string());
         if self.dialog.is_some() {
-            push(enter, "OK");
-            push(esc, "CLOSE");
+            push(enter, t("common.ok"));
+            push(esc, t("common.close"));
             return h;
         }
         match self.state {
             State::Servers | State::AddServer => {
-                push(enter, "SELECT");
+                push(enter, t("common.select"));
                 if self.servers.get(self.sel).is_some_and(|r| !r.official) {
-                    push(Some("DEL".into()), "REMOVE");
+                    push(Some("DEL".into()), t("online.remove"));
                 }
-                push(key("profile"), "PROFILE");
-                push(esc, "BACK");
+                push(key("profile"), t("title.profile"));
+                push(esc, t("common.back"));
             }
             State::Lobby => {
                 // a full room playing a streamed match, or a live match row: ENTER watches
@@ -2904,98 +3008,112 @@ impl OnlineScreen {
                     Some(r) => r.live_match > 0 && r.players >= 2,
                     None => i - self.rooms.len() < self.lives.len(),
                 });
-                push(enter, if watches { "WATCH" } else { "JOIN" });
-                push(key("watch"), "WATCH");
-                push(key("create"), "CREATE");
-                push(esc, "BACK");
+                push(
+                    enter,
+                    if watches {
+                        t("online.watch")
+                    } else {
+                        t("online.join")
+                    },
+                );
+                push(key("watch"), t("online.watch"));
+                push(key("create"), t("online.create"));
+                push(esc, t("common.back"));
             }
             State::Room if self.in_bracket() => {
                 let bk = self.bracket_json();
                 if bk["can_start"].as_bool() == Some(true) {
-                    push(enter, "START");
+                    push(enter, t("common.start"));
                 } else if bk["live"].as_bool() == Some(true) {
-                    push(enter, "WATCH");
+                    push(enter, t("online.watch"));
                 }
                 if self.clipboard {
-                    push(key("copy"), "COPY CODE");
+                    push(key("copy"), t("online.copy_code"));
                 }
-                push(esc, "LEAVE");
+                push(esc, t("online.leave"));
             }
             State::Room => {
                 let r = self.room.as_ref();
                 let host = r.is_some_and(|r| r.side == 1);
                 if r.is_some_and(|r| r.opponent.is_some() && r.side <= 2) {
-                    push(enter, "REMATCH");
+                    push(enter, t("online.rematch"));
                 }
                 if host && r.is_some_and(|r| r.opponent.is_some()) {
-                    push(key("kick"), "KICK");
+                    push(key("kick"), t("online.kick"));
                 }
                 if self.clipboard && r.is_some() {
-                    push(key("copy"), "COPY CODE");
+                    push(key("copy"), t("online.copy_code"));
                 }
-                push(esc, "LEAVE");
+                push(esc, t("online.leave"));
             }
             State::Create => {
                 push(Some("@up".into()), "");
-                push(Some("@down".into()), "FIELD");
+                push(Some("@down".into()), t("online.field"));
                 push(Some("@left".into()), "");
-                push(Some("@right".into()), "CHANGE");
-                push(enter, "CREATE");
-                push(esc, "BACK");
+                push(Some("@right".into()), t("common.change"));
+                push(enter, t("online.create"));
+                push(esc, t("common.back"));
             }
             State::Join => {
-                push(Some("A-Z 0-9".into()), "TYPE");
-                push(Some("BKSP".into()), "ERASE");
+                push(Some("A-Z 0-9".into()), t("online.type"));
+                push(Some("BKSP".into()), t("online.erase"));
                 if self.clipboard {
-                    push(Some("CTRL V".into()), "PASTE");
+                    push(Some("CTRL V".into()), t("online.paste"));
                 }
-                push(enter, "JOIN");
-                push(esc, "BACK");
+                push(enter, t("online.join"));
+                push(esc, t("common.back"));
             }
             State::Profile => {
                 if self.ui.text_focused() {
-                    push(Some("TAB".into()), "NEXT FIELD");
-                    push(Some("F2".into()), "SHOW PASSWORD");
-                    push(enter, "NEXT");
+                    push(Some("TAB".into()), t("profile.next_field"));
+                    push(Some("F2".into()), t("profile.show_password"));
+                    push(enter, t("common.next"));
                 } else {
-                    push(enter, "SELECT");
+                    push(enter, t("common.select"));
                 }
-                push(esc, if self.acct_link { "ACCOUNT" } else { "BACK" });
+                push(
+                    esc,
+                    if self.acct_link {
+                        t("profile.account")
+                    } else {
+                        t("common.back")
+                    },
+                );
             }
             State::Board => {
                 push(
                     Some("TAB".into()),
                     if self.board_fighters {
-                        "PLAYERS"
+                        t("online.players")
                     } else {
-                        "FIGHTERS"
+                        t("online.fighters")
                     },
                 );
                 if self.board_seasons.len() > 1 {
                     push(Some("@left".into()), "");
-                    push(Some("@right".into()), "SEASON");
+                    push(Some("@right".into()), t("online.season"));
                 }
-                push(esc, "BACK");
+                push(esc, t("common.back"));
             }
-            State::Queue => push(esc, "CANCEL"),
+            State::Queue => push(esc, t("online.cancel")),
             State::Direct => {
                 push(Some("@left".into()), "");
-                push(Some("@right".into()), "HOST / JOIN");
-                push(enter, "START");
-                push(esc, "BACK");
+                push(Some("@right".into()), t("online.host_join"));
+                push(enter, t("common.start"));
+                push(esc, t("common.back"));
             }
             State::Matchup => {}
-            State::Watch => push(esc, "BACK"),
+            State::Watch => push(esc, t("common.back")),
             State::Replays => {
-                push(enter, "WATCH");
+                push(enter, t("online.watch"));
                 if self.clipboard {
-                    push(Some("CTRL V".into()), "PASTE");
+                    push(Some("CTRL V".into()), t("online.paste"));
                 }
-                push(esc, "BACK");
+                push(esc, t("common.back"));
             }
         }
         if self.toast.as_ref().is_some_and(|t| t.retry.is_some()) {
-            push(key("retry"), "RETRY");
+            push(key("retry"), t("online.retry"));
         }
         h
     }
@@ -3015,10 +3133,10 @@ impl OnlineScreen {
                     (Some((_, line)), _) => line.clone(),
                     (None, Some(info)) => format!(
                         "{} · {}",
-                        plural(info.online, "PLAYER ONLINE", "ONLINE"),
-                        plural(info.rooms, "ROOM", "ROOMS")
+                        tn(info.online, "online.player_online", "online.online"),
+                        tn(info.rooms, "online.room", "online.rooms")
                     ),
-                    (None, None) => "CHECKING...".into(),
+                    (None, None) => t("options.checking").into(),
                 };
                 let off = problem.is_some();
                 json!({
@@ -3051,17 +3169,17 @@ impl OnlineScreen {
         let problem = self.row_problem(i);
         let usable = self.row_usable(i);
         let (tag, tone) = match (r.official, &r.trust) {
-            (_, Trust::Impostor) => ("UNVERIFIED", "amber"),
-            (_, Trust::Official) => ("VERIFIED", "green"),
-            (true, _) => ("OFFICIAL", "red"),
-            _ => ("COMMUNITY", "grey"),
+            (_, Trust::Impostor) => (t("online.unverified"), "amber"),
+            (_, Trust::Official) => (t("online.verified"), "green"),
+            (true, _) => (t("online.official"), "red"),
+            _ => (t("online.community"), "grey"),
         };
         let reason = match (&problem, info) {
             (Some(_), _) if r.error => {
-                "CAN'T REACH THIS SERVER: IT IS OFFLINE OR THE ADDRESS IS WRONG.".to_string()
+                t("online.cant_reach_this_server_offline_or_wrong").to_string()
             }
             (Some((_, line)), _) => format!("{line}."),
-            (None, None) => "ASKING THE SERVER...".into(),
+            (None, None) => t("profile.asking_the_server").into(),
             _ => String::new(),
         };
         let connected = official::same_server(&self.client.server, &r.addr);
@@ -3071,7 +3189,7 @@ impl OnlineScreen {
                 .profile
                 .online_ranks
                 .get(&r.addr)
-                .map_or(("--".into(), "NOT RANKED YET".into()), |s| {
+                .map_or(("--".into(), t("online.not_ranked_yet").into()), |s| {
                     (s.rating.to_string(), s.rank.clone())
                 }),
         };
@@ -3117,7 +3235,7 @@ impl OnlineScreen {
             "last_result": last_line,
             "has_last_result": !last_line.is_empty(),
             "busy": self.pending_action.is_some(),
-            "busy_line": if self.pending_action.is_some() { format!("CONNECTING TO {}...", self.row_name(i)) } else { String::new() },
+            "busy_line": if self.pending_action.is_some() { tf("online.connecting_to_dots", &[("server", &self.row_name(i))]) } else { String::new() },
         })
     }
 
@@ -3145,23 +3263,29 @@ impl OnlineScreen {
                             ),
                             None => format!("{} ✓", n.to_uppercase()),
                         },
-                        "SIGNED IN",
+                        t("profile.signed_in"),
                         true,
                     ),
                     AcctState::Anonymous if !self.has_accounts(addr) => {
-                        ("ANONYMOUS: NO USERNAMES HERE".into(), "", false)
+                        (t("profile.anonymous_no_usernames_here").into(), "", false)
                     }
-                    AcctState::Anonymous => ("NO USERNAME YET".into(), "CLAIM ▶", false),
-                    AcctState::Checking => ("CHECKING...".into(), "", false),
+                    AcctState::Anonymous => (
+                        t("profile.no_username_yet").into(),
+                        t("profile.claim_arrow"),
+                        false,
+                    ),
+                    AcctState::Checking => (t("options.checking").into(), "", false),
                     _ if offline => (
                         problem.map(|(_, line)| line).unwrap_or_default(),
                         "--",
                         false,
                     ),
-                    AcctState::None if self.has_accounts(addr) => {
-                        ("NO ACCOUNT YET".into(), "SET UP ▶", false)
-                    }
-                    AcctState::None => ("NO USERNAMES ON THIS SERVER".into(), "", false),
+                    AcctState::None if self.has_accounts(addr) => (
+                        t("profile.no_account_yet").into(),
+                        t("profile.set_up_arrow"),
+                        false,
+                    ),
+                    AcctState::None => (t("profile.no_usernames_on_this_server").into(), "", false),
                 };
                 json!({
                     "name": fit(&self.row_name(i), if tag.is_empty() { 18 } else { 14 }),
@@ -3189,26 +3313,28 @@ impl OnlineScreen {
         let days = self.server_days(&addr);
         let given = self.profile.online_consent.get(&addr);
         let agreed = self.profile.consents(&addr, days);
-        let kept = |d: u32| plural(d.max(1) as usize, "DAY", "DAYS");
+        let kept = |d: u32| tn(d.max(1) as usize, "common.day", "common.days");
         let line = match given {
-            Some(c) if agreed => format!(
-                "AGREED {}: YOUR FIGHTERS GO TO THIS SERVER AND ARE KEPT {}.",
-                when_text(c.at, now_secs()),
-                kept(c.days)
+            Some(c) if agreed => tf(
+                "profile.agreed_when_fighters_kept",
+                &[
+                    ("when", &when_text(c.at, now_secs())),
+                    ("kept", &kept(c.days)),
+                ],
             ),
-            Some(_) => "THE TERMS CHANGED: NOTHING IS UPLOADED UNTIL YOU AGREE AGAIN.".to_string(),
+            Some(_) => t("profile.the_terms_changed_agree_again").to_string(),
             None if self.consent_declined.contains(&addr) => {
-                "NOT NOW (THIS SESSION): NOTHING IS UPLOADED HERE.".to_string()
+                t("profile.not_now_this_session").to_string()
             }
-            None => "NOTHING IS UPLOADED TO THIS SERVER UNTIL YOU AGREE.".to_string(),
+            None => t("profile.nothing_is_uploaded_until_you_agree").to_string(),
         };
         json!({
             "show": !addr.is_empty(),
-            "title": "ONLINE CONSENT",
+            "title": t("profile.online_consent"),
             "line": line,
             "agreed": agreed,
-            "status": if agreed { "AGREED" } else { "NOT GIVEN" },
-            "label": if agreed { "WITHDRAW" } else { "AGREE" },
+            "status": if agreed { t("profile.agreed") } else { t("profile.not_given") },
+            "label": if agreed { t("profile.withdraw") } else { t("profile.agree") },
             "action": if agreed {
                 format!("consent:withdraw:{addr}")
             } else {
@@ -3243,9 +3369,16 @@ impl OnlineScreen {
                     .as_ref()
                     .map(|s| format!(" · S{} {}", s.season, s.tier))
                     .unwrap_or_default();
-                format!(
-                    "{} {} · BEST {} · {}W {}L{badge}",
-                    p.rank, p.rating, p.best_rating, p.wins, p.losses
+                tf(
+                    "profile.rank_rating_best_w_l",
+                    &[
+                        ("rank", &p.rank),
+                        ("rating", &p.rating),
+                        ("best", &p.best_rating),
+                        ("wins", &p.wins),
+                        ("losses", &p.losses),
+                        ("badge", &badge),
+                    ],
                 )
             })
             .unwrap_or_default();
@@ -3253,29 +3386,34 @@ impl OnlineScreen {
         let note = match &state {
             _ if offline && !named => match &problem {
                 Some(_) if self.servers.get(i).is_some_and(|r| r.error) => {
-                    "THIS SERVER IS OFFLINE. TRY AGAIN WHEN IT IS BACK.".to_string()
+                    t("profile.this_server_is_offline_try_again").to_string()
                 }
-                Some((_, line)) => format!("{line}: NO ACCOUNT CAN BE MADE THERE FROM THIS GAME."),
+                Some((_, line)) => tf("profile.no_account_can_be_made_there", &[("line", &line)]),
                 None => String::new(),
             },
-            AcctState::Checking => "CHECKING YOUR ACCOUNT...".into(),
-            _ if !supported => {
-                "THIS SERVER HAS NO USERNAMES YET: YOU PLAY THERE ANONYMOUSLY. JUST ENTER IT."
-                    .into()
-            }
+            AcctState::Checking => t("profile.checking_your_account").into(),
+            _ if !supported => t("profile.no_usernames_yet_anonymous_just_enter").into(),
             _ => String::new(),
         };
         let tabs: Vec<(&str, &str, AcctForm)> = match state {
             AcctState::Anonymous => vec![
-                ("CLAIM THIS ACCOUNT", "acct:tab:claim", AcctForm::Claim),
-                ("LOG IN", "acct:tab:login", AcctForm::Login),
+                (AcctForm::Claim.title(), "acct:tab:claim", AcctForm::Claim),
+                (AcctForm::Login.title(), "acct:tab:login", AcctForm::Login),
             ],
             _ if kind == AcctForm::Password => {
-                vec![("CHANGE PASSWORD", "acct:tab:password", AcctForm::Password)]
+                vec![(
+                    AcctForm::Password.title(),
+                    "acct:tab:password",
+                    AcctForm::Password,
+                )]
             }
             _ => vec![
-                ("CREATE ACCOUNT", "acct:tab:create", AcctForm::Create),
-                ("LOG IN", "acct:tab:login", AcctForm::Login),
+                (
+                    AcctForm::Create.title(),
+                    "acct:tab:create",
+                    AcctForm::Create,
+                ),
+                (AcctForm::Login.title(), "acct:tab:login", AcctForm::Login),
             ],
         };
         let tab = |n: usize| {
@@ -3284,11 +3422,20 @@ impl OnlineScreen {
             })
         };
         let guest = match (&state, profile) {
-            (AcctState::Anonymous, Some(p)) if kind == AcctForm::Claim => format!(
-                "YOUR GUEST STATS HERE ({} {}, {}) MOVE TO THIS ACCOUNT.",
-                p.rank,
-                p.rating,
-                plural((p.wins + p.losses) as usize, "MATCH", "MATCHES")
+            (AcctState::Anonymous, Some(p)) if kind == AcctForm::Claim => tf(
+                "profile.your_guest_stats_move_to_this_account",
+                &[
+                    ("rank", &p.rank),
+                    ("rating", &p.rating),
+                    (
+                        "matches",
+                        &tn(
+                            (p.wins + p.losses) as usize,
+                            "online.match",
+                            "online.matches",
+                        ),
+                    ),
+                ],
             ),
             _ => String::new(),
         };
@@ -3297,38 +3444,38 @@ impl OnlineScreen {
         } else {
             self.acct_error.clone()
         };
-        let pass_rule = "AT LEAST 6 CHARACTERS. NO EMAIL IS ASKED, SO THERE IS NO RESET LINK: KEEP YOUR PASSWORD SAFE. THE SERVER ADMIN CAN RESET IT.";
+        let pass_rule = t("profile.pass_rule_create");
         json!({
             "server": self.row_name(i),
-            "on_server": format!("ON {}", fit(&self.row_name(i), 18)),
+            "on_server": tf("profile.on_server", &[("server", &fit(&self.row_name(i), 18))]),
             "details": details,
             "form": form,
             "note": note,
             "has_note": !details && !form && !note.is_empty(),
             "name": name,
             "rating": rating,
-            "devices": if named && devices > 0 { format!("LOGGED IN ON {}", plural(devices as usize, "DEVICE", "DEVICES")) } else { String::new() },
-            "hint": "LOG IN WITH THIS USERNAME AND PASSWORD ON YOUR OTHER DEVICES. CHANGING THE PASSWORD LOGS THEM OUT.",
+            "devices": if named && devices > 0 { tf("profile.logged_in_on_devices", &[("devices", &tn(devices as usize, "common.device", "common.devices"))]) } else { String::new() },
+            "hint": t("profile.log_in_on_your_other_devices_hint"),
             "enter": self.connect_after && !matches!(state, AcctState::None | AcctState::Checking),
             "tab0": tab(0),
             "tab1": tab(1),
             "has_user": kind != AcctForm::Password,
             "has_again": kind != AcctForm::Login,
             "has_new": kind == AcctForm::Password,
-            "pass_label": if kind == AcctForm::Password { "CURRENT PASSWORD" } else { "PASSWORD" },
+            "pass_label": if kind == AcctForm::Password { t("online.current_password") } else { t("online.password") },
             "user_rule": match kind {
-                AcctForm::Create | AcctForm::Claim => "3-16 LETTERS, NUMBERS, _ OR -",
-                _ => "USERNAMES IGNORE CASE",
+                AcctForm::Create | AcctForm::Claim => t("profile.user_rule_create"),
+                _ => t("profile.usernames_ignore_case"),
             },
             "rule": match kind {
-                AcctForm::Login => "NO EMAIL IS ASKED, SO THERE IS NO RESET LINK. THE SERVER ADMIN CAN RESET A PASSWORD.",
-                AcctForm::Password => "AT LEAST 6 CHARACTERS. YOUR OTHER DEVICES GET LOGGED OUT.",
+                AcctForm::Login => t("profile.pass_rule_login"),
+                AcctForm::Password => t("profile.pass_rule_change"),
                 _ => pass_rule,
             },
             "guest": guest,
             "has_guest": !guest.is_empty(),
             "masked": !self.acct_show,
-            "show_label": if self.acct_show { "HIDE" } else { "SHOW" },
+            "show_label": if self.acct_show { t("profile.hide") } else { t("profile.show") },
             "submit": kind.title(),
             "error": error,
             "has_error": !error.is_empty(),
@@ -3347,7 +3494,7 @@ impl OnlineScreen {
                 let tag = if off {
                     rugen_proto::release_of(r.api).to_uppercase()
                 } else if r.locked {
-                    "PASSWORD".into()
+                    t("online.password").into()
                 } else {
                     String::new()
                 };
@@ -3365,7 +3512,7 @@ impl OnlineScreen {
                     "has_tag": !tag.is_empty(),
                     "host": host,
                     "rules": if off {
-                        if r.api < rugen_proto::API_VERSION { "OLDER RUGEN · CAN'T JOIN".to_string() } else { "NEWER RUGEN · UPDATE TO JOIN".to_string() }
+                        if r.api < rugen_proto::API_VERSION { t("online.older_rugen_cant_join").to_string() } else { t("online.newer_rugen_update_to_join").to_string() }
                     } else {
                         // classic mode and normal size are the usual: only others are worth the room
                         let mut t = rules_tags(&r.rules);
@@ -3397,11 +3544,11 @@ impl OnlineScreen {
             })
             .chain(self.lives.iter().map(|m| {
                 json!({
-                    "name": if m.ranked { "RANKED MATCH" } else { "QUICK MATCH" },
-                    "tag": "LIVE",
+                    "name": if m.ranked { t("online.ranked_match") } else { t("online.quick_match") },
+                    "tag": t("online.live"),
                     "has_tag": true,
-                    "host": fit(&format!("{} VS {}", m.players[0].to_uppercase(), m.players[1].to_uppercase()), 22),
-                    "rules": fit(&format!("{} VS {}", m.fighters[0].to_uppercase(), m.fighters[1].to_uppercase()), 40),
+                    "host": fit(&tf("online.a_vs_b", &[("a", &m.players[0].to_uppercase()), ("b", &m.players[1].to_uppercase())]), 22),
+                    "rules": fit(&tf("online.a_vs_b", &[("a", &m.fighters[0].to_uppercase()), ("b", &m.fighters[1].to_uppercase())]), 40),
                     "seats": "2/2",
                     "watching": m.viewers.to_string(),
                     "live": true,
@@ -3419,7 +3566,7 @@ impl OnlineScreen {
             "rows": rows,
             "empty": self.rooms.is_empty() && !loading,
             "loading": self.rooms.is_empty() && loading,
-            "count": plural(self.rooms.len(), "PUBLIC ROOM", "PUBLIC ROOMS"),
+            "count": tn(self.rooms.len(), "online.public_room", "online.public_rooms"),
         })
     }
 
@@ -3463,9 +3610,9 @@ impl OnlineScreen {
             let slot = h_all / round.len() as f32;
             for (i, m) in round.iter().enumerate() {
                 let line = match m.state.as_str() {
-                    "live" => "LIVE · ENTER TO WATCH",
-                    "called" => "CALLED · PICKING",
-                    "next" => "NEXT",
+                    "live" => crate::lang::t("tournament.live_enter_to_watch"),
+                    "called" => crate::lang::t("tournament.called_picking"),
+                    "next" => crate::lang::t("tournament.next"),
                     _ => "",
                 };
                 let has_line = !line.is_empty() && slot >= 84.0;
@@ -3487,7 +3634,11 @@ impl OnlineScreen {
                             } else {
                                 String::new()
                             };
-                            let you = if you { " ·YOU" } else { "" };
+                            let you = if you {
+                                crate::lang::t("tournament.dot_you")
+                            } else {
+                                ""
+                            };
                             json!({
                                 "text": format!("{seed} {}{you}", fit(&name, max_chars.saturating_sub(you.len() + 2))),
                                 "score": score,
@@ -3499,11 +3650,14 @@ impl OnlineScreen {
                         }
                         None => {
                             let text = if m.state == "bye" {
-                                "BYE".to_string()
+                                crate::lang::t("tournament.bye").to_string()
                             } else if ri == 0 {
                                 "-".to_string()
                             } else {
-                                format!("WINNER {}{}", short(ri - 1), 2 * i + k + 1)
+                                tf(
+                                    "tournament.winner_of",
+                                    &[("match", &format!("{}{}", short(ri - 1), 2 * i + k + 1))],
+                                )
                             };
                             json!({ "text": text, "score": "", "win": false, "plain": false, "tbd": true, "named": false })
                         }
@@ -3531,7 +3685,7 @@ impl OnlineScreen {
         let heads: Vec<Value> = (0..cols)
             .map(|c| {
                 let label = if c == n {
-                    "CHAMPION"
+                    crate::lang::t("online.champion")
                 } else {
                     rugen_proto::TournamentView::round_name(n, c)
                 };
@@ -3539,24 +3693,27 @@ impl OnlineScreen {
             })
             .collect();
         let live_name = t.live.map(|[ri, _]| match n.saturating_sub(ri as usize) {
-            1 => "FINAL",
-            2 => "SEMI-FINAL",
-            3 => "QUARTER-FINAL",
-            _ => "ROUND OF 16",
+            1 => crate::lang::t("tournament.final"),
+            2 => crate::lang::t("tournament.semi_final"),
+            3 => crate::lang::t("tournament.quarter_final"),
+            _ => crate::lang::t("tournament.round_of_16"),
         });
         let live_state = t
             .live
             .and_then(|[ri, i]| t.rounds.get(ri as usize)?.get(i as usize))
             .map(|m| m.state.clone());
         let status = match (t.state.as_str(), live_name, live_state.as_deref()) {
-            ("open", ..) => format!("OPEN · {} / {} PLAYERS", t.entrants.len(), t.size),
-            ("done", ..) => format!(
-                "CHAMPION · {}",
-                champ.as_ref().map_or("?".into(), |c| c.0.clone())
+            ("open", ..) => tf(
+                "tournament.open_n_of_size_players",
+                &[("n", &t.entrants.len()), ("size", &t.size)],
             ),
-            (_, Some(name), Some("live")) => format!("● {name} LIVE"),
-            (_, Some(name), _) => format!("{name} · PICKING FIGHTERS"),
-            _ => "NEXT MATCH SOON".into(),
+            ("done", ..) => tf(
+                "tournament.champion_name",
+                &[("name", &champ.as_ref().map_or("?".into(), |c| c.0.clone()))],
+            ),
+            (_, Some(name), Some("live")) => tf("tournament.round_live", &[("name", &name)]),
+            (_, Some(name), _) => tf("tournament.round_picking_fighters", &[("name", &name)]),
+            _ => crate::lang::t("tournament.next_match_soon").into(),
         };
         let host = r.members.iter().any(|m| m.role == 0 && m.profile.id == me);
         // an admin's bracket: the server draws it and calls every match
@@ -3594,20 +3751,21 @@ impl OnlineScreen {
             "count": format!("{} / {}", t.entrants.len(), t.size),
             "hosted": hosted,
             "can_start": host && !hosted && t.state != "running" && t.entrants.len() >= 2,
-            "start_label": if t.state == "done" { "START AGAIN" } else { "START THE BRACKET" },
+            "start_label": if t.state == "done" { crate::lang::t("tournament.start_again") } else { crate::lang::t("tournament.start_the_bracket") },
             "wait_line": if hosted {
-                "THIS BRACKET IS RUN BY THE SERVER: NOBODY HOSTS IT, EACH MATCH IS CALLED BY THE SERVER. WAIT HERE: YOUR MATCH OPENS WHEN IT IS CALLED."
+                crate::lang::t("tournament.wait_line_server_hosted")
             } else if host {
-                "EMPTY PLACES ARE BYES FOR THE TOP SEEDS. START WHEN EVERYONE IS IN."
+                crate::lang::t("tournament.wait_line_host")
             } else {
-                "THE HOST STARTS THE BRACKET. WAIT HERE: YOUR MATCH OPENS WHEN THE SERVER CALLS IT."
+                crate::lang::t("tournament.wait_line_player")
             },
-            "note": format!(
-                "CODE {} · {} · THE SERVER CALLS EACH MATCH · FIRST TO {} {}",
-                r.code,
-                if hosted { "HOSTED BY THE SERVER" } else { "SEEDED BY RATING" },
-                r.rules.rounds,
-                if r.rules.rounds == 1 { "ROUND" } else { "ROUNDS" }
+            "note": tf(
+                "tournament.code_note",
+                &[
+                    ("code", &r.code),
+                    ("seeding", &if hosted { crate::lang::t("tournament.hosted_by_the_server") } else { crate::lang::t("tournament.seeded_by_rating") }),
+                    ("rounds", &tn(r.rules.rounds as usize, "online.round", "online.rounds")),
+                ],
             ),
         })
     }
@@ -3627,10 +3785,10 @@ impl OnlineScreen {
             };
             let you = m.profile.id == me;
             let tag = match (role, you) {
-                (0, true) => "HOST · YOU",
-                (0, false) => "HOST",
-                (_, true) => "CHALLENGER · YOU",
-                _ => "CHALLENGER",
+                (0, true) => t("online.host_you"),
+                (0, false) => t("online.host"),
+                (_, true) => t("online.challenger_you"),
+                _ => t("online.challenger"),
             };
             let ping = m.rtt_ms;
             json!({
@@ -3638,7 +3796,7 @@ impl OnlineScreen {
                 "name": fit(&badge_name(&m.profile), 17),
                 "tag": tag,
                 "you": you,
-                "line": format!("{} {} · {}W {}L", m.profile.rank, m.profile.rating, m.profile.wins, m.profile.losses),
+                "line": tf("online.rank_rating_w_l", &[("rank", &m.profile.rank), ("rating", &m.profile.rating), ("wins", &m.profile.wins), ("losses", &m.profile.losses)]),
                 "ping": ping.map_or(String::new(), |p| format!("{p} MS")),
                 "has_ping": ping.is_some(),
                 "high_ping": ping.is_some_and(|p| p > HIGH_PING_MS),
@@ -3651,21 +3809,27 @@ impl OnlineScreen {
             .map(|m| badge_name(&m.profile))
             .collect();
         let spect = if r.max_spectators == 0 {
-            "SPECTATORS OFF".to_string()
+            t("online.spectators_off").to_string()
         } else if watchers.is_empty() {
-            format!(
-                "NOBODY WATCHING · {}",
-                plural(r.max_spectators as usize, "SEAT", "SEATS")
+            tf(
+                "online.nobody_watching_seats",
+                &[(
+                    "seats",
+                    &tn(r.max_spectators as usize, "online.seat", "online.seats"),
+                )],
             )
         } else {
             fit(
-                &format!("{} WATCHING: {}", watchers.len(), watchers.join(", ")),
+                &tf(
+                    "online.n_watching_names",
+                    &[("n", &watchers.len()), ("names", &watchers.join(", "))],
+                ),
                 60,
             )
         };
         let mut tags = rules_tags(&r.rules);
         if !r.public {
-            tags.push("PRIVATE".into());
+            tags.push(t("online.private").into());
         }
         let host = r.side == 1;
         let player = r.side <= 2;
@@ -3685,9 +3849,9 @@ impl OnlineScreen {
             "watching": !player,
             "copy": self.clipboard,
             "note": if !player {
-                "YOU ARE WATCHING. THE NEXT MATCH SHOWS HERE.".to_string()
+                t("online.you_are_watching_next_match_shows_here").to_string()
             } else if !opp {
-                "THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.".to_string()
+                t("online.the_match_starts_when_a_challenger_joins").to_string()
             } else {
                 String::new()
             },
@@ -3700,75 +3864,73 @@ impl OnlineScreen {
         let host = self
             .me
             .as_ref()
-            .map(|m| format!("HOST {} · {} {}", fit(&badge_name(m), 18), m.rank, m.rating))
-            .unwrap_or_else(|| format!("HOST {}", fit(&self.profile.name.to_uppercase(), 18)));
+            .map(|m| {
+                tf(
+                    "online.host_name_rank_rating",
+                    &[
+                        ("name", &fit(&badge_name(m), 18)),
+                        ("rank", &m.rank),
+                        ("rating", &m.rating),
+                    ],
+                )
+            })
+            .unwrap_or_else(|| {
+                tf(
+                    "online.host_name",
+                    &[("name", &fit(&self.profile.name.to_uppercase(), 18))],
+                )
+            });
         let rounds = [1u8, 2, 3];
         let times = [60u16, 99, 0];
         let spect = [0u8, 2, 4, 6];
         let note = match self.ui.focused() {
-            Some("cr_mode") if f.rules.mode == "arena" => {
-                "ARENA: PLATFORMS, PITS AND BLAST ZONES. KNOCK YOUR OPPONENT OUT OF THE STAGE."
-            }
-            Some("cr_mode") => "CLASSIC: ONE FLAT STAGE, ROUNDS WON ON LIFE OR TIME.",
-            Some("cr_join") if !f.public => {
-                "CODE ONLY: THE ROOM IS NOT LISTED. SEND THE CODE TO YOUR FRIEND."
-            }
-            Some("cr_join") => {
-                "ANYONE: THE ROOM IS LISTED IN ROOMS FOR EVERY PLAYER ON THIS SERVER."
-            }
-            Some("cr_spect") => "SPECTATORS WATCH THE MATCH LIVE. THEY NEVER SLOW IT DOWN.",
-            Some("cr_pass") => "OPTIONAL. PLAYERS TYPE IT TO JOIN, EVEN WITH THE CODE.",
-            Some("cr_format") if f.tournament > 0 => {
-                "BRACKET: UP TO 8 OR 16 PLAYERS, SINGLE ELIMINATION. YOU START IT; THE SERVER SEEDS BY RATING AND CALLS EACH MATCH."
-            }
-            Some("cr_format") => "1 VS 1: THE MATCH STARTS AS SOON AS A CHALLENGER JOINS.",
-            Some("cr_life") => {
-                "EVERY FIGHTER'S LIFE IN THIS ROOM, WHATEVER ITS OWN FILES SAY. QUICK MATCH AND RANKED USE 5000."
-            }
-            Some("cr_size") => {
-                "NORMAL: FIGHTERS ALREADY 58-82 PX TALL KEEP THEIR SIZE, OTHERS GET A ROUND STEP, x1.1 TO x3.0 OR /1.1 TO /3.0. NONE NEVER SCALES."
-            }
-            _ if f.rules.chars == "mirror" => {
-                "MIRROR: THE CHALLENGER PLAYS THE HOST'S FIGHTER. NO MATCHUP QUESTIONS."
-            }
-            _ => {
-                "FREE PICK: ANY FIGHTER. THE SERVER CHECKS EACH MATCHUP; UNBALANCED ONES NEED BOTH PLAYERS TO AGREE."
-            }
+            Some("cr_mode") if f.rules.mode == "arena" => t("online.create_note_arena"),
+            Some("cr_mode") => t("online.create_note_classic"),
+            Some("cr_join") if !f.public => t("online.create_note_code_only"),
+            Some("cr_join") => t("online.create_note_anyone"),
+            Some("cr_spect") => t("online.create_note_spectators"),
+            Some("cr_pass") => t("online.create_note_password"),
+            Some("cr_format") if f.tournament > 0 => t("online.create_note_bracket"),
+            Some("cr_format") => t("online.create_note_1_vs_1"),
+            Some("cr_life") => t("online.create_note_life"),
+            Some("cr_size") => t("online.create_note_size"),
+            _ if f.rules.chars == "mirror" => t("online.create_note_mirror"),
+            _ => t("online.create_note_free_pick"),
         };
         let mut line = rules_tags(&f.rules);
         if f.tournament > 0 {
-            line.insert(0, format!("BRACKET {}", f.tournament));
+            line.insert(0, tf("online.bracket_n", &[("n", &f.tournament)]));
         }
         if !f.public {
-            line.push("CODE ONLY".into());
+            line.push(t("online.code_only").into());
         }
         if !f.password.is_empty() {
-            line.push("PASSWORD".into());
+            line.push(t("online.password").into());
         }
         json!({
             "count": format!("{} / 24", f.name.chars().count()),
             "rounds": rounds.iter().map(|r| r.to_string()).collect::<Vec<_>>(),
             "rounds_sel": rounds.iter().position(|r| *r == f.rules.rounds).unwrap_or(1),
-            "times": ["60 S", "99 S", "NO LIMIT"],
+            "times": ["60 S", "99 S", t("online.no_limit")],
             "times_sel": times.iter().position(|t| *t == f.rules.round_time).unwrap_or(1),
-            "modes": ["CLASSIC", "ARENA"],
+            "modes": [t("stages.classic"), t("common.arena")],
             "modes_sel": usize::from(f.rules.mode == "arena"),
-            "chars": ["FREE PICK", "MIRROR"],
+            "chars": [t("online.free_pick"), t("online.mirror")],
             "chars_sel": usize::from(f.rules.chars == "mirror"),
             "sizes": FighterSize::ALL.iter().map(|v| v.label()).collect::<Vec<_>>(),
             "sizes_sel": FighterSize::ALL.iter().position(|v| *v == room_size(&f.rules)).unwrap_or(3),
             "lifes": [match room_life(&f.rules) {
                 Some(l) => format!("◀  {l}  ▶"),
-                None => "◀  OWN  ▶".to_string(),
+                None => format!("◀  {}  ▶", t("online.own")),
             }],
             "lifes_sel": 0,
-            "joins": ["ANYONE", "CODE ONLY"],
+            "joins": [t("online.anyone"), t("online.code_only")],
             "joins_sel": usize::from(!f.public),
-            "spects": ["OFF", "2", "4", "6"],
+            "spects": [t("common.off"), "2", "4", "6"],
             "spects_sel": spect.iter().position(|s| *s == f.spectators).unwrap_or(1),
-            "formats": ["1 VS 1", "BRACKET 8", "BRACKET 16"],
+            "formats": [t("online.one_vs_one"), tf("online.bracket_n", &[("n", &8)]), tf("online.bracket_n", &[("n", &16)])],
             "formats_sel": match f.tournament { 8 => 1, 16 => 2, _ => 0 },
-            "preview_name": if f.name.trim().is_empty() { format!("{}'S ROOM", self.my_name()) } else { f.name.to_uppercase() },
+            "preview_name": if f.name.trim().is_empty() { tf("online.someones_room", &[("name", &self.my_name())]) } else { f.name.to_uppercase() },
             "preview_host": host,
             "preview_rules": line.join(" · "),
             "note": note,
@@ -3791,10 +3953,10 @@ impl OnlineScreen {
             "bad": self.code_bad.is_some(),
             "hint": match self.code_bad {
                 Some(c) if c.is_ascii_alphanumeric() => {
-                    format!("NO CODE HAS A {c}: 0, O, 1 AND I ARE NEVER USED")
+                    tf("online.no_code_has_a_char", &[("char", &c)])
                 }
-                Some(_) => "CODES ARE ONLY LETTERS AND NUMBERS".into(),
-                None => "LETTERS AND NUMBERS · NO 0/O OR 1/I MIX-UPS: CODES NEVER USE THEM".into(),
+                Some(_) => t("online.codes_are_only_letters_and_numbers").into(),
+                None => t("online.join_code_hint").into(),
             },
             "need_password": locked || !self.password.is_empty() || self.ui.focused() == Some("password"),
         })
@@ -3865,16 +4027,16 @@ impl OnlineScreen {
             let shown = self.board_season.or(live);
             let line = match (b, self.board_season) {
                 (Some(b), None) => b.season.ends_line(now_secs()),
-                (Some(_), Some(_)) => "FINAL STANDINGS".into(),
+                (Some(_), Some(_)) => t("leaderboard.final_standings").into(),
                 (None, _) => String::new(),
             };
             json!({
-                "name": shown.map_or(String::new(), |n| format!("SEASON {n}")),
+                "name": shown.map_or(String::new(), |n| tf("leaderboard.season_n", &[("n", &n)])),
                 "line": line,
                 "pick": match (shown, self.board_season) {
-                    (Some(n), None) => format!("{n} · NOW"),
-                    (Some(n), Some(_)) => format!("{n} · FINAL"),
-                    _ => "NOW".into(),
+                    (Some(n), None) => tf("leaderboard.n_now", &[("n", &n)]),
+                    (Some(n), Some(_)) => tf("leaderboard.n_final", &[("n", &n)]),
+                    _ => t("leaderboard.now").into(),
                 },
                 "can_step": self.board_seasons.len() > 1,
             })
@@ -3914,7 +4076,7 @@ impl OnlineScreen {
                     "name": fit(&p.name.to_uppercase(), 20),
                     "verified": p.verified,
                     "rating": p.rating,
-                    "record": format!("{}W {}L", p.wins, p.losses),
+                    "record": tf("leaderboard.w_l", &[("wins", &p.wins), ("losses", &p.losses)]),
                     "tier": p.rank,
                     "last": badge(p),
                     "you": p.id == my,
@@ -3928,9 +4090,9 @@ impl OnlineScreen {
                     json!({
                         "show": true,
                         "pos": format!("#{pos}"),
-                        "name": format!("{} · YOU", fit(&p.name.to_uppercase(), 16)),
+                        "name": tf("leaderboard.name_you", &[("name", &fit(&p.name.to_uppercase(), 16))]),
                         "rating": p.rating,
-                        "record": format!("{}W {}L", p.wins, p.losses),
+                        "record": tf("leaderboard.w_l", &[("wins", &p.wins), ("losses", &p.losses)]),
                         "tier": p.rank,
                         "last": badge(p),
                     })
@@ -3955,19 +4117,19 @@ impl OnlineScreen {
             "fighter": fighter.clone().unwrap_or_default(),
             "has_fighter": self.board_fighters && fighter.is_some(),
             "empty_line": match (self.board_fighters, no_fighters) {
-                (_, true) => "THIS SERVER HAS NO FIGHTER BOARDS YET.",
-                (true, _) => "NO RANKED MATCHES WITH A FIGHTER YET THIS SEASON.",
-                _ => "NO RANKED MATCHES YET. PLAY RANKED TO GET ON THE BOARD.",
+                (_, true) => t("leaderboard.no_fighter_boards_yet"),
+                (true, _) => t("leaderboard.no_ranked_matches_with_a_fighter_yet"),
+                _ => t("leaderboard.no_ranked_matches_yet"),
             },
             "me": me,
             "scope": self.scope(),
             "season": season_chip(Some(b)),
             "finished": b.finished,
-            "badge_col": if b.finished { "FINAL TIER" } else { "LAST SEASON" },
+            "badge_col": if b.finished { t("leaderboard.final_tier") } else { t("leaderboard.last_season") },
             "note": match (b.finished, self.board_fighters) {
-                (_, true) => "EACH PLAYER'S RATING WITH THIS FIGHTER",
-                (true, _) => "FINAL STANDINGS · TIERS AS THE SEASON ENDED",
-                _ => "RATINGS SOFT-RESET TOWARD 1200 EACH SEASON",
+                (_, true) => t("leaderboard.each_players_rating_with_this_fighter"),
+                (true, _) => t("leaderboard.final_standings_tiers_as_season_ended"),
+                _ => t("leaderboard.ratings_soft_reset_each_season"),
             },
         })
     }
@@ -3978,8 +4140,11 @@ impl OnlineScreen {
         let found = q.and_then(|q| q.found.as_ref());
         json!({
             "time": format!("{}:{:02}", secs / 60, secs % 60),
-            "count": q.map_or("JOINING THE QUEUE...".to_string(), |q| {
-                format!("{} IN THE QUEUE", plural(q.players_in_queue, "PLAYER", "PLAYERS"))
+            "count": q.map_or(t("online.joining_the_queue").to_string(), |q| {
+                tf(
+                    "online.n_in_the_queue",
+                    &[("players", &tn(q.players_in_queue, "online.player", "online.players"))],
+                )
             }),
             "found": found.is_some(),
             "searching": found.is_none(),
@@ -3991,9 +4156,9 @@ impl OnlineScreen {
                 ping_text(m.est_ping_ms)
             )).unwrap_or_default(),
             "rule": if self.ranked {
-                "RANKED: ONLY FAIR MATCHUPS. WINS AND LOSSES MOVE YOUR RATING."
+                t("online.queue_rule_ranked")
             } else {
-                "QUICK MATCH: CASUAL. UNBALANCED MATCHUPS NEED BOTH PLAYERS TO AGREE."
+                t("online.queue_rule_quick_match")
             },
         })
     }
@@ -4001,14 +4166,16 @@ impl OnlineScreen {
     fn direct_json(&self) -> Value {
         let port = self.config.net.port;
         json!({
-            "sides": ["HOST (1P)", "JOIN (2P)"],
+            "sides": [t("online.host_1p"), t("online.join_2p")],
             "side": self.direct_side,
             "mine": format!("{}:{port}", self.local_ip),
-            "fighters": format!(
-                "1P {}  VS  2P {} · STAGE {}",
-                fit(&self.config.net.p1.to_uppercase(), 14),
-                fit(&self.config.net.p2.to_uppercase(), 14),
-                if self.config.net.stage.trim().is_empty() { "AUTO".to_string() } else { fit(&self.config.net.stage.to_uppercase(), 14) },
+            "fighters": tf(
+                "online.direct_fighters_line",
+                &[
+                    ("p1", &fit(&self.config.net.p1.to_uppercase(), 14)),
+                    ("p2", &fit(&self.config.net.p2.to_uppercase(), 14)),
+                    ("stage", &if self.config.net.stage.trim().is_empty() { t("common.auto").to_string() } else { fit(&self.config.net.stage.to_uppercase(), 14) }),
+                ],
             ),
             "netplay": !self.config.net.remote.trim().is_empty(),
         })
@@ -4024,30 +4191,37 @@ impl OnlineScreen {
             }
         };
         match self.state {
-            State::Servers | State::AddServer => ("ONLINE".into(), "PICK A SERVER".into()),
-            State::Lobby => ("ROOMS".into(), server()),
+            State::Servers | State::AddServer => {
+                (t("online.online").into(), t("online.pick_a_server").into())
+            }
+            State::Lobby => (t("online.rooms").into(), server()),
             State::Create => (
-                "CREATE ROOM".into(),
+                t("online.create_room").into(),
                 fit(&self.server_name().to_uppercase(), 28),
             ),
             State::Join => (
-                "JOIN BY CODE".into(),
+                t("online.join_by_code").into(),
                 fit(&self.server_name().to_uppercase(), 28),
             ),
             State::Room if self.in_bracket() => {
                 let r = self.room.as_ref();
                 let t = r.and_then(|r| r.tournament.as_ref());
                 (
-                    "BRACKET".into(),
-                    format!(
-                        "{} · {} PLAYERS · SINGLE ELIMINATION",
-                        fit(&r.map_or(String::new(), |r| r.name.to_uppercase()), 18),
-                        t.map_or(0, |t| t.size)
+                    crate::lang::t("online.bracket").into(),
+                    tf(
+                        "online.name_n_players_single_elimination",
+                        &[
+                            (
+                                "name",
+                                &fit(&r.map_or(String::new(), |r| r.name.to_uppercase()), 18),
+                            ),
+                            ("n", &t.map_or(0, |t| t.size)),
+                        ],
                     ),
                 )
             }
             State::Room => (
-                "ROOM".into(),
+                t("online.room").into(),
                 match &self.room {
                     Some(r) => format!(
                         "{} · {}",
@@ -4058,31 +4232,42 @@ impl OnlineScreen {
                 },
             ),
             State::Queue => (
-                if self.ranked { "RANKED" } else { "QUICK MATCH" }.into(),
+                if self.ranked {
+                    t("online.ranked")
+                } else {
+                    t("online.quick_match")
+                }
+                .into(),
                 server(),
             ),
             State::Board => (
-                "LEADERBOARD".into(),
+                t("online.leaderboard").into(),
                 fit(&self.server_name().to_uppercase(), 28),
             ),
             State::Direct => (
-                "LAN / DIRECT IP".into(),
-                "NO SERVER: TYPE EACH OTHER'S ADDRESS".into(),
+                t("online.lan_direct_ip").into(),
+                t("online.no_server_type_each_others_address").into(),
             ),
             State::Profile => (
-                "PROFILE".into(),
+                t("title.profile").into(),
                 if self.connect_after {
-                    format!(
-                        "{} NEEDS AN ACCOUNT",
-                        fit(&self.row_name(self.acct_server), 20)
+                    tf(
+                        "profile.server_needs_an_account",
+                        &[("server", &fit(&self.row_name(self.acct_server), 20))],
                     )
                 } else {
-                    "ONE ACCOUNT PER SERVER · OFFLINE NEEDS NONE".into()
+                    t("profile.one_account_per_server_offline_needs_none").into()
                 },
             ),
             State::Matchup => (String::new(), String::new()),
-            State::Watch => ("WATCH".into(), fit(&self.server_name().to_uppercase(), 28)),
-            State::Replays => ("REPLAYS".into(), "SHARE A MATCH WITH A SHORT CODE".into()),
+            State::Watch => (
+                t("online.watch").into(),
+                fit(&self.server_name().to_uppercase(), 28),
+            ),
+            State::Replays => (
+                t("online.replays").into(),
+                t("replay.share_a_match_with_a_short_code").into(),
+            ),
         }
     }
 
@@ -4360,7 +4545,7 @@ impl OnlineScreen {
 
     fn join(&mut self, code: String, spectate: bool) {
         let (c, ch, pw) = (self.client.clone(), self.my_char(), self.password.clone());
-        self.status = format!("JOINING {code}");
+        self.status = tf("online.joining_code", &[("code", &code)]);
         self.error.clear();
         self.room = None;
         self.jobs.push(Job::Room(Pending::spawn(move || {
@@ -4380,7 +4565,7 @@ impl OnlineScreen {
         self.ranked = ranked;
         self.queue = None;
         self.error.clear();
-        self.status = "ENTERING QUEUE".into();
+        self.status = t("online.entering_queue").into();
         self.state = State::Queue;
         self.jobs.push(Job::Queue(Pending::spawn(move || {
             c.enter_queue(&ch, ranked, max, rtt)
@@ -4448,8 +4633,8 @@ impl OnlineScreen {
                 } else {
                     self.consent_declined.insert(server.clone());
                     self.notice(
-                        "NOTHING WILL BE UPLOADED",
-                        "YOU CAN STILL PLAY WHEN BOTH PLAYERS HAVE THE FIGHTERS.",
+                        t("online.nothing_will_be_uploaded"),
+                        t("online.you_can_still_play_when_both_have_the_fighters"),
                     );
                 }
                 if from_profile {
@@ -4589,8 +4774,8 @@ impl OnlineScreen {
                     } else if self.servers[i].error {
                         let name = self.row_name(i);
                         self.problem(
-                            format!("CAN'T REACH {}", fit(&name, 20)),
-                            "THE SERVER IS OFFLINE OR THE ADDRESS IS WRONG. CHECK YOUR INTERNET, THEN RETRY.".into(),
+                            tf("online.cant_reach", &[("server", &fit(&name, 20))]),
+                            t("online.the_server_is_offline_or_wrong").into(),
                             Some("retry:servers".into()),
                         );
                     } else if self.row_usable(i) {
@@ -4613,11 +4798,14 @@ impl OnlineScreen {
                     let _ = r;
                     let name = fit(&self.row_name(self.sel), 22);
                     self.dialog = Some(Dialog {
-                        kicker: "REMOVE SERVER".into(),
-                        title: format!("REMOVE {name}?"),
-                        body: "IT LEAVES YOUR LIST. YOUR ACCOUNT THERE STAYS: ADD IT AGAIN TO PLAY ON IT.".into(),
-                        primary: ("REMOVE".into(), format!("server_remove:{}", self.sel)),
-                        secondary: Some(("CANCEL".into(), "dialog:close".into())),
+                        kicker: t("online.remove_server").into(),
+                        title: tf("online.remove_name", &[("name", &name)]),
+                        body: t("online.it_leaves_your_list").into(),
+                        primary: (
+                            t("online.remove").into(),
+                            format!("server_remove:{}", self.sel),
+                        ),
+                        secondary: Some((t("online.cancel").into(), "dialog:close".into())),
                         ..Default::default()
                     });
                 }
@@ -4633,8 +4821,8 @@ impl OnlineScreen {
                     self.servers.retain(|r| r.addr != addr);
                     self.save_config();
                     self.notice(
-                        &format!("REMOVED {}", fit(&name, 20)),
-                        "ADD IT AGAIN ANY TIME.",
+                        &tf("online.removed_name", &[("name", &fit(&name, 20))]),
+                        t("online.add_it_again_any_time"),
                     );
                 }
                 self.sel = self.sel.min(self.servers.len().saturating_sub(1));
@@ -4646,12 +4834,11 @@ impl OnlineScreen {
                 self.addr.clear();
                 self.state = State::AddServer;
                 self.dialog = Some(Dialog {
-                    kicker: "ADD SERVER".into(),
-                    title: "TYPE THE SERVER'S ADDRESS".into(),
-                    body: "HTTPS://HOST OR IP:PORT. MATCHES GO THROUGH IT: NO PLAYER SEES YOUR IP."
-                        .into(),
-                    primary: ("ADD".into(), "server_add".into()),
-                    secondary: Some(("CANCEL".into(), "dialog:close".into())),
+                    kicker: t("online.add_server_title").into(),
+                    title: t("online.type_the_servers_address").into(),
+                    body: t("online.add_server_body").into(),
+                    primary: (t("online.add").into(), "server_add".into()),
+                    secondary: Some((t("online.cancel").into(), "dialog:close".into())),
                     input: true,
                     ..Default::default()
                 });
@@ -4677,8 +4864,8 @@ impl OnlineScreen {
                 self.state = State::Servers;
                 if official::is_official_addr(&addr) {
                     self.notice(
-                        "ALREADY LISTED",
-                        "THE OFFICIAL SERVER IS ALWAYS IN THE LIST.",
+                        t("online.already_listed"),
+                        t("online.the_official_server_is_always_listed"),
                     );
                     return None;
                 }
@@ -4698,8 +4885,11 @@ impl OnlineScreen {
                         self.save_config();
                         self.sel = self.servers.len() - 1;
                         self.notice(
-                            &format!("SAVED {}", fit(&addr.to_uppercase(), 22)),
-                            "ASKING IT WHO IT IS...",
+                            &tf(
+                                "online.saved_addr",
+                                &[("addr", &fit(&addr.to_uppercase(), 22))],
+                            ),
+                            t("online.asking_it_who_it_is"),
                         );
                     }
                 }
@@ -4727,10 +4917,10 @@ impl OnlineScreen {
                     .and_then(room_error)
                 {
                     self.dialog = Some(Dialog {
-                        kicker: "CAN'T JOIN THIS ROOM".into(),
-                        title: "ITS HOST PLAYS ANOTHER VERSION".into(),
+                        kicker: t("online.cant_join_this_room").into(),
+                        title: t("online.its_host_plays_another_version").into(),
                         body: e,
-                        primary: ("OK".into(), "dialog:close".into()),
+                        primary: (t("common.ok").into(), "dialog:close".into()),
                         ..Default::default()
                     });
                     return None;
@@ -4751,7 +4941,10 @@ impl OnlineScreen {
             }
             ("online", "create") => {
                 self.form = Form {
-                    name: fit(&format!("{}'S ROOM", self.my_name()), 24),
+                    name: fit(
+                        &tf("online.someones_room", &[("name", &self.my_name())]),
+                        24,
+                    ),
                     ..Form::default()
                 };
                 self.state = State::Create;
@@ -4787,7 +4980,7 @@ impl OnlineScreen {
                     };
                     opts[j as usize]
                 };
-                let fallback = format!("{}'S ROOM", self.my_name());
+                let fallback = tf("online.someones_room", &[("name", &self.my_name())]);
                 let f = &mut self.form;
                 match what {
                     "public" => f.public = dir == "-",
@@ -4842,7 +5035,7 @@ impl OnlineScreen {
                         let (c, ch) = (self.client.clone(), self.my_char());
                         self.room = None;
                         self.used_ticket = None;
-                        self.status = "CREATING THE ROOM...".into();
+                        self.status = t("online.creating_the_room").into();
                         self.state = State::Room;
                         self.ui.set_focus(None);
                         self.jobs
@@ -4892,12 +5085,18 @@ impl OnlineScreen {
                             .push(Job::Room(Pending::spawn(move || c.kick(&code, id))));
                     }
                 } else if rest == "rematch" {
-                    self.notice("REMATCH ASKED", "WAITING FOR YOUR OPPONENT TO ACCEPT.");
+                    self.notice(
+                        t("online.rematch_asked"),
+                        t("online.waiting_for_your_opponent_to_accept"),
+                    );
                     self.jobs
                         .push(Job::Room(Pending::spawn(move || c.rematch(&code))));
                 } else if rest == "copy" {
                     if crate::clipboard::copy(&code) {
-                        self.notice(&format!("COPIED {code}"), "PASTE IT TO YOUR FRIEND.");
+                        self.notice(
+                            &tf("online.copied_code", &[("code", &code)]),
+                            t("online.paste_it_to_your_friend"),
+                        );
                     } else {
                         self.clipboard = false;
                     }
@@ -4920,7 +5119,10 @@ impl OnlineScreen {
                 });
                 match live {
                     Some((id, code)) => self.start_live_watch(id, Some(code)),
-                    None => self.notice("NOTHING LIVE", "THE NEXT MATCH IS NOT BEING FOUGHT YET."),
+                    None => self.notice(
+                        t("tournament.nothing_live"),
+                        t("tournament.the_next_match_is_not_being_fought_yet"),
+                    ),
                 }
             }
             ("bk", _) => {}
@@ -4948,21 +5150,21 @@ impl OnlineScreen {
                     }
                     Some(p) => {
                         let c = self.client.clone();
-                        self.rp_note = "SHARING...".into();
+                        self.rp_note = t("replay.sharing").into();
                         self.jobs.push(Job::Share(Pending::spawn(move || {
                             c.share_replay(p.match_id)
                         })));
                     }
-                    None => self.rp_note = "PLAY AN ONLINE MATCH FIRST.".into(),
+                    None => self.rp_note = t("replay.play_an_online_match_first").into(),
                 }
             }
             ("rp", "copy") => {
                 if let Some(r) = &self.rp_shared {
                     let shown = rugen_proto::stream::replay_code::display(&r.code);
                     self.rp_note = if crate::clipboard::copy(&shown) {
-                        format!("{shown} COPIED")
+                        tf("replay.code_copied", &[("code", &shown)])
                     } else {
-                        format!("CODE {shown}")
+                        tf("replay.code_n", &[("code", &shown)])
                     };
                 }
             }
@@ -5014,7 +5216,7 @@ impl OnlineScreen {
                     self.want_select = true;
                 }
             }
-            ("mx", "leave") => self.leave_matchup("YOU LEFT THE MATCHUP"),
+            ("mx", "leave") => self.leave_matchup(t("online.you_left_the_matchup")),
             ("netplay", _) => return Some(Transition::Netplay),
             _ => log::warn!("online: unknown action {a:?}"),
         }
@@ -5060,7 +5262,7 @@ impl OnlineScreen {
         use std::net::ToSocketAddrs as _;
         let typed = self.addr.trim();
         if typed.is_empty() {
-            self.status = "TYPE AN ADDRESS, E.G. 192.168.1.20".into();
+            self.status = t("online.type_an_address_eg").into();
             self.ui.edit("addr");
             return;
         }
@@ -5072,7 +5274,10 @@ impl OnlineScreen {
         let remote = match with_port.to_socket_addrs().map(|mut a| a.next()) {
             Ok(Some(a)) => a,
             Ok(None) | Err(_) => {
-                self.status = format!("CANNOT REACH {}", with_port.to_uppercase());
+                self.status = tf(
+                    "online.cannot_reach_addr",
+                    &[("addr", &with_port.to_uppercase())],
+                );
                 self.ui.edit("addr");
                 return;
             }
@@ -5085,7 +5290,13 @@ impl OnlineScreen {
         let (Some(p1), Some(p2)) = (resolve(&self.lib, &n.p1), resolve(&self.lib, &n.p2)) else {
             self.fail(
                 "cannot start",
-                format!("[net] p1 {:?} / p2 {:?} must be installed", n.p1, n.p2),
+                tf(
+                    "online.net_p1_p2_must_be_installed",
+                    &[
+                        ("p1", &format!("{:?}", n.p1)),
+                        ("p2", &format!("{:?}", n.p2)),
+                    ],
+                ),
             );
             return;
         };
@@ -5143,7 +5354,7 @@ impl OnlineScreen {
             return;
         }
         if self.state == State::Matchup {
-            self.leave_matchup("YOU LEFT THE MATCHUP");
+            self.leave_matchup(t("online.you_left_the_matchup"));
             return;
         }
         if self.state == State::Watch {
@@ -5306,11 +5517,14 @@ impl OnlineScreen {
             self.status.clear();
         } else if self.error.is_empty() || !self.error.starts_with("MATCHUP") {
             self.status = if r.opponent.is_none() && r.side <= 2 {
-                format!("ROOM {} - WAITING FOR A CHALLENGER", r.code)
+                tf("online.room_waiting_for_a_challenger", &[("code", &r.code)])
             } else if r.side > 2 {
-                format!("ROOM {} - WATCHING, WAITING FOR THE NEXT MATCH", r.code)
+                tf(
+                    "online.room_watching_waiting_for_the_next_match",
+                    &[("code", &r.code)],
+                )
             } else {
-                format!("ROOM {} - REMATCH?", r.code)
+                tf("online.room_rematch", &[("code", &r.code)])
             };
         }
         self.room = Some(r);
@@ -5324,10 +5538,7 @@ impl OnlineScreen {
             [mi.opponent.id, my_id]
         };
         let Some(mv) = mi.matchup.clone() else {
-            self.fail(
-                "match",
-                "this server is too old for bring-your-own-character",
-            );
+            self.fail("match", t("online.server_too_old_for_byoc"));
             return;
         };
         if self.mx.as_ref().is_some_and(|m| m.driver.id == mv.id) || started_before(mv.id) {
@@ -5337,11 +5548,13 @@ impl OnlineScreen {
         if let Some(mx) = self.mx.as_mut() {
             mx.foe = badge_name(&mi.opponent);
         }
-        self.status = format!(
-            "MATCH FOUND: {} ({})  {}",
-            mi.opponent.name,
-            mi.opponent.rank,
-            ping_text(mi.est_ping_ms)
+        self.status = tf(
+            "online.match_found_name_rank_ping",
+            &[
+                ("name", &mi.opponent.name),
+                ("rank", &mi.opponent.rank),
+                ("ping", &ping_text(mi.est_ping_ms)),
+            ],
         );
     }
 
@@ -5367,7 +5580,10 @@ impl OnlineScreen {
                 ServerMsg::Kicked { code } => {
                     if self.room.as_ref().is_some_and(|r| r.code == code) {
                         self.room = None;
-                        self.fail("room", format!("{code} closed or you were removed"));
+                        self.fail(
+                            "room",
+                            tf("online.room_closed_or_you_were_removed", &[("code", &code)]),
+                        );
                     }
                 }
                 ServerMsg::Pong | ServerMsg::Error { .. } | ServerMsg::Matchup { .. } => {}
@@ -5426,10 +5642,10 @@ impl OnlineScreen {
                         log::warn!("online: link code: {e}");
                         self.link_error = match e {
                             OnlineError::Server(m) if m == "no such route" => {
-                                "THIS SERVER HAS NO WEBSITE LINKS YET.".into()
+                                t("profile.this_server_has_no_website_links_yet").into()
                             }
                             OnlineError::Server(m) => m.to_uppercase(),
-                            _ => "CANNOT REACH THE SERVER. TRY AGAIN.".into(),
+                            _ => t("profile.cannot_reach_the_server_try_again").into(),
                         };
                     }
                 },
@@ -5447,17 +5663,20 @@ impl OnlineScreen {
                                 self.acct_form = self.default_form(self.acct_server);
                                 if everywhere {
                                     self.notice(
-                                        "LOGGED OUT ON EVERY DEVICE",
-                                        "LOG IN AGAIN WITH YOUR USERNAME AND PASSWORD.",
+                                        t("profile.logged_out_on_every_device"),
+                                        t("profile.log_in_again_with_username_and_password"),
                                     );
                                 } else {
-                                    self.notice("LOGGED OUT", "YOUR ACCOUNT STAYS ON THE SERVER.");
+                                    self.notice(
+                                        t("profile.logged_out"),
+                                        t("profile.your_account_stays_on_the_server"),
+                                    );
                                 }
                             }
                             Err(e) => {
                                 log::warn!("online: logout: {e}");
                                 self.status.clear();
-                                self.acct_error = "CANNOT REACH THE SERVER".into();
+                                self.acct_error = t("profile.cannot_reach_the_server").into();
                             }
                         }
                     }
@@ -5531,15 +5750,15 @@ impl OnlineScreen {
                             self.jobs
                                 .push(Job::Me(Pending::spawn(move || c.set_profile(&name, 0))));
                         }
-                        if self.status.starts_with("CONNECTING") {
-                            self.status = "CONNECTED".into();
+                        if self.connecting_status() {
+                            self.status = t("online.connected").into();
                         }
                         self.me = Some(me);
                     }
                     Some(Err(e)) => {
                         log::warn!("online: profile: {e}");
-                        if self.status.starts_with("CONNECTING") {
-                            self.status = "CONNECTED".into();
+                        if self.connecting_status() {
+                            self.status = t("online.connected").into();
                         }
                     }
                 },
@@ -5549,9 +5768,9 @@ impl OnlineScreen {
                         // matches in public rooms show as their room
                         self.lives = lives.into_iter().filter(|m| m.room.is_none()).collect();
                         self.status = if r.is_empty() {
-                            "NO PUBLIC ROOMS - CREATE ONE!".into()
+                            t("online.no_public_rooms_create_one").into()
                         } else {
-                            format!("{} PUBLIC ROOMS", r.len())
+                            tf("online.n_public_rooms", &[("n", &r.len())])
                         };
                         // rooms to join: Enter joins the first (the hint says
                         // ENTER JOIN), unless the player moved elsewhere
@@ -5585,9 +5804,9 @@ impl OnlineScreen {
                             }
                         } else if self.state == State::Queue {
                             self.status = if q.queued {
-                                format!("SEARCHING - {} IN QUEUE", q.players_in_queue)
+                                tf("online.searching_n_in_queue", &[("n", &q.players_in_queue)])
                             } else {
-                                "NOT QUEUED".into()
+                                t("online.not_queued").into()
                             };
                             self.queue = Some(q);
                         }
@@ -5599,9 +5818,9 @@ impl OnlineScreen {
                     Some(Ok(r)) => {
                         let shown = rugen_proto::stream::replay_code::display(&r.code);
                         self.rp_note = if crate::clipboard::copy(&shown) {
-                            format!("SHARED AS {shown} · COPIED")
+                            tf("replay.shared_as_code_copied", &[("code", &shown)])
                         } else {
-                            format!("SHARED AS {shown}")
+                            tf("replay.shared_as_code", &[("code", &shown)])
                         };
                         self.profile.note_replay(crate::uiscreen::RecentReplay {
                             server: self.client.server.clone(),
@@ -5613,7 +5832,10 @@ impl OnlineScreen {
                         self.rp_shared = Some(r);
                     }
                     Some(Err(e)) => {
-                        self.rp_note = format!("NOT SHARED: {}", e.to_string().to_uppercase())
+                        self.rp_note = tf(
+                            "replay.not_shared",
+                            &[("error", &e.to_string().to_uppercase())],
+                        )
                     }
                 },
                 Job::Fetch(code, p) => match p.take() {
@@ -5624,7 +5846,10 @@ impl OnlineScreen {
                         self.start_replay(&code, c);
                     }
                     Some(Err(e)) => {
-                        self.rp_note = format!("NO SUCH REPLAY: {}", e.to_string().to_uppercase())
+                        self.rp_note = tf(
+                            "replay.no_such_replay",
+                            &[("error", &e.to_string().to_uppercase())],
+                        )
                     }
                 },
                 Job::Board(p) => match p.take() {
@@ -5676,7 +5901,7 @@ impl OnlineScreen {
                 Err(OnlineError::Server(e)) if e == "bad key" => {
                     // revoked (password changed / logged out elsewhere)
                     view.info = None;
-                    view.error = "LOGGED OUT: THE ACCOUNT WAS LOGGED OUT ON THIS DEVICE".into();
+                    view.error = t("profile.logged_out_on_this_device").into();
                     forget = true;
                 }
                 Err(OnlineError::Server(e)) => {
@@ -5687,7 +5912,7 @@ impl OnlineScreen {
                 }
                 Err(e) => {
                     log::info!("online: {addr}: accounts: {e}");
-                    view.error = "SERVER OFFLINE".into();
+                    view.error = t("profile.server_offline").into();
                 }
             }
         }
@@ -5741,15 +5966,21 @@ impl OnlineScreen {
                 self.check_accounts();
                 let name = fit(&s.username.to_uppercase(), 16);
                 let (title, body) = match kind {
-                    AcctForm::Create => (format!("WELCOME, {name}!"), "YOUR ACCOUNT IS READY."),
-                    AcctForm::Login => (format!("LOGGED IN AS {name}"), "WELCOME BACK."),
+                    AcctForm::Create => (
+                        tf("profile.welcome_name", &[("name", &name)]),
+                        t("profile.your_account_is_ready"),
+                    ),
+                    AcctForm::Login => (
+                        tf("profile.logged_in_as_name", &[("name", &name)]),
+                        t("profile.welcome_back"),
+                    ),
                     AcctForm::Claim => (
-                        format!("YOU ARE {name}"),
-                        "THE ACCOUNT KEPT ITS RATING AND HISTORY.",
+                        tf("profile.you_are_name", &[("name", &name)]),
+                        t("profile.the_account_kept_its_rating_and_history"),
                     ),
                     AcctForm::Password => (
-                        "PASSWORD CHANGED".to_string(),
-                        "YOUR OTHER DEVICES WERE LOGGED OUT.",
+                        t("profile.password_changed").to_string(),
+                        t("profile.your_other_devices_were_logged_out"),
                     ),
                 };
                 self.notice(&title, body);
@@ -5774,7 +6005,7 @@ impl OnlineScreen {
                         .entry(addr.to_string())
                         .or_default()
                         .unsupported = true;
-                    "THIS SERVER HAS NO USERNAMES YET: GO BACK AND ENTER IT".into()
+                    t("profile.no_usernames_yet_go_back_and_enter_it").into()
                 } else {
                     e.to_uppercase()
                 };
@@ -5782,7 +6013,7 @@ impl OnlineScreen {
             Err(e) => {
                 log::warn!("online: account: {e}");
                 self.status = kind.title().into();
-                self.acct_error = "CANNOT REACH THE SERVER".into();
+                self.acct_error = t("profile.cannot_reach_the_server").into();
             }
         }
         // typed passwords go as soon as they were sent
@@ -6125,10 +6356,15 @@ fn stage_line(v: &rugen_net::online::MatchupView, spectator: bool) -> String {
             } else {
                 c.decl.name.as_str()
             };
-            format!("STAGE: {}", fit(&name.to_uppercase(), 28))
+            tf(
+                "online.stage_name",
+                &[("name", &fit(&name.to_uppercase(), 28))],
+            )
         }
-        None if v.side == 1 && !spectator => "STAGE: YOU PICK IT AFTER YOUR FIGHTER".into(),
-        None => "STAGE: THE HOST PICKS IT".into(),
+        None if v.side == 1 && !spectator => {
+            t("online.stage_you_pick_it_after_your_fighter").into()
+        }
+        None => t("online.stage_the_host_picks_it").into(),
     }
 }
 
@@ -6226,6 +6462,7 @@ pub fn apply_result(root: &Path, ack: &OnlineResult<ResultAck>, won: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::tn;
 
     /// The host picks the stage; both sides read the pick (or who makes it).
     #[test]
@@ -6552,8 +6789,8 @@ mod tests {
 
     #[test]
     fn counts_say_one_or_many() {
-        assert_eq!(plural(1, "ROOM", "ROOMS"), "1 ROOM");
-        assert_eq!(plural(0, "ROOM", "ROOMS"), "0 ROOMS");
+        assert_eq!(tn(1, "online.room", "online.rooms"), "1 ROOM");
+        assert_eq!(tn(0, "online.room", "online.rooms"), "0 ROOMS");
         assert_eq!(fit("A VERY LONG SERVER NAME", 10), "A VERY...");
         assert_eq!(fit("SHORT", 10), "SHORT");
     }

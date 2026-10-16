@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::game::Mode;
+use crate::lang::{t, tf};
 use crate::play::RunRules;
 
 /// Fights in the arcade ladder.
@@ -40,7 +41,7 @@ impl ChallengeBest {
 
     fn boss_text(&self) -> String {
         if self.boss_cleared() {
-            "CLEARED".into()
+            t("challenge.cleared").into()
         } else {
             format!("{} / {}", self.boss_rush, self.boss_total)
         }
@@ -54,7 +55,7 @@ pub fn run_time(frames: u32) -> String {
 }
 
 fn wins_text(n: u32) -> String {
-    crate::uiscreen::plural(n as usize, "WIN", "WINS")
+    crate::lang::tn(n as usize, "common.win", "common.wins")
 }
 
 /// A run in progress: who plays, how far they got.
@@ -234,16 +235,22 @@ impl Run {
         let n = self.length().unwrap_or(0);
         Some(match self.mode {
             Mode::Survival => (
-                format!("WINS {}", self.wins),
-                format!("LIFE +{SURVIVAL_HEAL}% NEXT"),
+                tf("challenge.wins_n", &[("n", &self.wins)]),
+                tf("challenge.life_heal_next", &[("heal", &SURVIVAL_HEAL)]),
             ),
             Mode::BossRush => (
-                format!("BOSS {} / {n}", (self.wins + 1).min(n)),
-                "NO CONTINUES".into(),
+                tf(
+                    "challenge.boss_i_of_n",
+                    &[("i", &(self.wins + 1).min(n)), ("n", &n)],
+                ),
+                t("challenge.no_continues").into(),
             ),
             Mode::TimeAttack => (
-                format!("RUN {}", run_time(self.frames)),
-                format!("STAGE {} / {n}", (self.wins + 1).min(n)),
+                tf("challenge.run_time", &[("time", &run_time(self.frames))]),
+                tf(
+                    "challenge.stage_i_of_n",
+                    &[("i", &(self.wins + 1).min(n)), ("n", &n)],
+                ),
             ),
             _ => return None,
         })
@@ -255,51 +262,62 @@ impl Run {
         let n = self.length().unwrap_or(0);
         let tag = |s: String| {
             if self.new_best {
-                format!("{s} · NEW")
+                tf("challenge.best_new", &[("best", &s)])
             } else {
                 s
             }
         };
         match (self.mode, self.over) {
             (Mode::Survival, None) => vec![
-                ("WINS".into(), self.wins.to_string()),
-                ("NEXT".into(), format!("LIFE +{SURVIVAL_HEAL}%")),
+                (t("common.wins").into(), self.wins.to_string()),
+                (
+                    t("common.next").into(),
+                    tf("challenge.life_heal", &[("heal", &SURVIVAL_HEAL)]),
+                ),
             ],
             (Mode::Survival, Some(_)) => vec![
-                ("WINS".into(), self.wins.to_string()),
-                ("BEST".into(), tag(wins_text(best.survival))),
+                (t("common.wins").into(), self.wins.to_string()),
+                (t("challenge.best").into(), tag(wins_text(best.survival))),
             ],
             (Mode::BossRush, None) => vec![
-                ("BOSSES".into(), format!("{} / {n}", self.wins)),
-                ("NEXT".into(), format!("BOSS {}", self.wins + 1)),
+                (t("challenge.bosses").into(), format!("{} / {n}", self.wins)),
+                (
+                    t("common.next").into(),
+                    tf("challenge.boss_n", &[("n", &(self.wins + 1))]),
+                ),
             ],
             (Mode::BossRush, Some(cleared)) => vec![
                 (
-                    "BOSSES".into(),
+                    t("challenge.bosses").into(),
                     if cleared {
-                        "CLEARED".into()
+                        t("challenge.cleared").into()
                     } else {
                         format!("{} / {n}", self.wins)
                     },
                 ),
-                ("BEST".into(), tag(best.boss_text())),
+                (t("challenge.best").into(), tag(best.boss_text())),
             ],
             (Mode::TimeAttack, None) => vec![
-                ("RUN".into(), run_time(self.frames)),
-                ("STAGE".into(), format!("{} / {n}", self.wins)),
+                (t("challenge.run").into(), run_time(self.frames)),
+                (t("stages.stage").into(), format!("{} / {n}", self.wins)),
             ],
             (Mode::TimeAttack, Some(cleared)) => vec![
                 (
-                    "RUN".into(),
+                    t("challenge.run").into(),
                     if cleared {
                         run_time(self.frames)
                     } else {
-                        format!("OUT AT {} / {n}", self.wins + 1)
+                        tf(
+                            "challenge.out_at_i_of_n",
+                            &[("i", &(self.wins + 1)), ("n", &n)],
+                        )
                     },
                 ),
                 (
-                    "BEST".into(),
-                    tag(best.time_attack.map_or("NONE YET".into(), run_time)),
+                    t("challenge.best").into(),
+                    tag(best
+                        .time_attack
+                        .map_or(t("challenge.none_yet").into(), run_time)),
                 ),
             ],
             _ => Vec::new(),
@@ -494,40 +512,40 @@ pub fn cards(
         b.time_attack
             .map(|t| (u64::MAX - u64::from(t), run_time(t)))
     });
-    let none = || "NO RECORD YET".to_string();
+    let none = || t("challenge.no_record_yet").to_string();
     let boss_rule = if bosses_flagged {
-        "BOSSES FROM SELECT.DEF"
+        t("challenge.bosses_from_select_def")
     } else {
-        "THE STRONGEST FIGHTERS"
+        t("challenge.the_strongest_fighters")
     };
     json!([
         {
             "id": "survival",
-            "title": "SURVIVAL",
-            "desc": "ONE LIFE BAR AGAINST AN ENDLESS LINE OF RANDOM OPPONENTS. A LITTLE LIFE COMES BACK BETWEEN FIGHTS.",
-            "hud_l": "ONE ROUND EACH",
-            "hud_r": format!("LIFE +{SURVIVAL_HEAL}% NEXT"),
-            "note": "THE RUN ENDS AT THE FIRST LOSS",
+            "title": t("common.survival"),
+            "desc": t("challenge.survival_desc"),
+            "hud_l": t("challenge.one_round_each"),
+            "hud_r": tf("challenge.life_heal_next", &[("heal", &SURVIVAL_HEAL)]),
+            "note": t("challenge.the_run_ends_at_the_first_loss"),
             "best": survival.unwrap_or_else(none),
             "action": "mode:survival",
         },
         {
             "id": "bossrush",
-            "title": "BOSS RUSH",
-            "desc": "THE TOUGHEST FIGHTERS BACK TO BACK: BOSSES MARKED IN SELECT.DEF, OR THE FIVE STRONGEST IF NONE ARE.",
-            "hud_l": crate::uiscreen::plural(boss_count, "BOSS", "BOSSES"),
-            "hud_r": "NO CONTINUES",
+            "title": t("common.boss_rush"),
+            "desc": t("challenge.boss_rush_desc"),
+            "hud_l": crate::lang::tn(boss_count, "challenge.boss", "challenge.bosses"),
+            "hud_r": t("challenge.no_continues"),
             "note": boss_rule,
             "best": boss.unwrap_or_else(none),
             "action": "mode:bossrush",
         },
         {
             "id": "timeattack",
-            "title": "TIME ATTACK",
-            "desc": "CLEAR THE ARCADE LADDER AS FAST AS YOU CAN. THE RUN TIMER NEVER STOPS, EVEN BETWEEN ROUNDS.",
-            "hud_l": format!("{LADDER} STAGES"),
-            "hud_r": "RUN TIMER",
-            "note": "A LOSS ENDS THE RUN WITHOUT A TIME",
+            "title": t("common.time_attack"),
+            "desc": t("challenge.time_attack_desc"),
+            "hud_l": tf("challenge.n_stages", &[("n", &LADDER)]),
+            "hud_r": t("challenge.run_timer"),
+            "note": t("challenge.a_loss_ends_the_run_without_a_time"),
             "best": time.unwrap_or_else(none),
             "action": "mode:timeattack",
         },

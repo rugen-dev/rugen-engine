@@ -24,6 +24,7 @@ use rugen_sim::{Buttons, CharData, World};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::config::Config;
+use crate::lang::{t, tf};
 
 /// How the match is driven.
 #[derive(Clone, Debug)]
@@ -397,10 +398,12 @@ impl TeamSetup {
                     .unwrap_or_default(),
             })
             .collect();
-        format!(
-            "{} · WITH {}",
-            self.mode[side].as_str().to_uppercase(),
-            names.join(", ")
+        tf(
+            "fight.mode_with_names",
+            &[
+                ("mode", &self.mode[side].as_str().to_uppercase()),
+                ("names", &names.join(", ")),
+            ],
         )
     }
 
@@ -708,9 +711,9 @@ impl EarlyEnd {
     /// The line the winner reads.
     pub fn message(self) -> &'static str {
         match self {
-            EarlyEnd::Fled => "YOU FLED THE MATCH",
-            EarlyEnd::PeerGone(rugen_net::PeerExit::Lost) => "OPPONENT DISCONNECTED",
-            EarlyEnd::PeerGone(_) => "YOUR OPPONENT FLED",
+            EarlyEnd::Fled => t("fight.you_fled_the_match"),
+            EarlyEnd::PeerGone(rugen_net::PeerExit::Lost) => t("fight.opponent_disconnected"),
+            EarlyEnd::PeerGone(_) => t("fight.your_opponent_fled"),
         }
     }
 }
@@ -1189,7 +1192,7 @@ impl Match {
             bgm,
             bgm_volume,
             tutorial: None,
-            start_label: "START".into(),
+            start_label: t("common.start").into(),
             tag_labels: ["TAG".into(), "TAG".into()],
             arena_caps: [["X".into(), "B".into()], ["X".into(), "B".into()]],
             stats_recorded: false,
@@ -2052,12 +2055,12 @@ impl Match {
         let grey = [0.7, 0.7, 0.72, 1.0];
         let red = [1.0, 0.3, 0.25, 1.0];
         if let Some(e) = won {
-            text(r, "YOU WIN", top + 20.0, 0, [1.0, 0.85, 0.3, 1.0]);
+            text(r, t("fight.you_win"), top + 20.0, 0, [1.0, 0.85, 0.3, 1.0]);
             text(r, e.message(), top + 42.0, 1, white);
             if self.early.is_some_and(|(_, t)| t > 60) {
                 text(
                     r,
-                    &format!("PRESS {}", self.start_label),
+                    &tf("fight.press_key", &[("key", &self.start_label)]),
                     top + 62.0,
                     2,
                     grey,
@@ -2068,13 +2071,21 @@ impl Match {
         let Some(menu) = self.flee_menu else { return };
         let (title, rows, note) = if menu.confirm {
             let note = match self.ranked {
-                Some(true) => "RANKED: YOU LOSE RATING",
-                Some(false) => "CASUAL: RECORDED AS A FLEE",
-                None => "IT COUNTS AS A LOSS",
+                Some(true) => t("fight.ranked_you_lose_rating"),
+                Some(false) => t("fight.casual_recorded_as_a_flee"),
+                None => t("fight.it_counts_as_a_loss"),
             };
-            ("FLEE THE MATCH?", ["NO", "YES, FLEE"], note)
+            (
+                t("fight.flee_the_match"),
+                [t("common.no"), t("fight.yes_flee")],
+                note,
+            )
         } else {
-            ("MATCH MENU", ["RESUME", "FLEE"], "THE FIGHT GOES ON")
+            (
+                t("fight.match_menu"),
+                [t("pause.resume"), t("fight.flee")],
+                t("fight.the_fight_goes_on"),
+            )
         };
         text(r, title, top + 15.0, 1, white);
         r.rect(
@@ -2123,19 +2134,27 @@ impl Match {
         let names = feed
             .header()
             .map(|h| {
-                format!(
-                    "{} VS {}",
-                    h.players[0].name.to_uppercase(),
-                    h.players[1].name.to_uppercase()
+                tf(
+                    "fight.p1_vs_p2",
+                    &[
+                        ("p1", &h.players[0].name.to_uppercase()),
+                        ("p2", &h.players[1].name.to_uppercase()),
+                    ],
                 )
             })
             .unwrap_or_default();
         // the tag under the HUD: LIVE (a running match) or REPLAY
         let tag = if complete && !self.catching {
-            format!("REPLAY · {names}")
+            tf("fight.replay_names", &[("names", &names)])
         } else {
             let behind = have.saturating_sub(*cursor) as f32 / 60.0;
-            format!("● LIVE · {names} · {:.0} S BEHIND", behind.max(0.0))
+            tf(
+                "fight.live_names_secs_behind",
+                &[
+                    ("names", &names),
+                    ("secs", &format!("{:.0}", behind.max(0.0))),
+                ],
+            )
         };
         // a red strip under the clock, in the HUD's small font, kept narrow
         let y = 46.0;
@@ -2190,7 +2209,7 @@ impl Match {
         );
         let white = [1.0, 1.0, 1.0, 1.0];
         if self.catching {
-            text(r, "CATCHING UP...", top + 18.0, 1, white);
+            text(r, t("fight.catching_up"), top + 18.0, 1, white);
             let frac = (*cursor as f32 / have.max(1) as f32).clamp(0.0, 1.0);
             r.rect(
                 hud(cx - 80.0, top + 34.0),
@@ -2203,7 +2222,7 @@ impl Match {
                 [0.86, 0.12, 0.12, 1.0],
             );
         } else {
-            text(r, "WAITING FOR THE PLAYERS...", top + 22.0, 1, white);
+            text(r, t("fight.waiting_for_the_players"), top + 22.0, 1, white);
         }
     }
 
@@ -2255,7 +2274,7 @@ impl Match {
         if st.unstable {
             draw_text(
                 r,
-                "CONNECTION UNSTABLE",
+                t("fight.connection_unstable"),
                 hud(screen_w / 2.0, 56.0),
                 1.5 * u,
                 [1.0, 0.5, 0.3, 0.95],
@@ -2543,19 +2562,19 @@ impl Match {
                     }
                 }
                 Event::RoundStart(n) => {
-                    self.banner = Some((format!("ROUND {n}"), 90));
+                    self.banner = Some((tf("fight.round_n", &[("n", &n)]), 90));
                     self.play_sound(audio, 0, false, 0, n, -1, 100, true);
                 }
                 Event::Fight => {
-                    self.banner = Some(("FIGHT".into(), 45));
+                    self.banner = Some((t("fight.fight").into(), 45));
                     self.play_sound(audio, 0, false, 1, 0, -1, 100, true);
                 }
                 Event::KO => {
-                    self.banner = Some(("K.O.".into(), 90));
+                    self.banner = Some((t("fight.ko").into(), 90));
                     self.play_sound(audio, 0, false, 2, 0, -1, 100, true);
                 }
                 Event::TimeOver => {
-                    self.banner = Some(("TIME OVER".into(), 90));
+                    self.banner = Some((t("fight.time_over").into(), 90));
                     self.play_sound(audio, 0, false, 2, 2, -1, 100, true);
                 }
                 Event::RoundWon(_) => {}
@@ -2565,9 +2584,9 @@ impl Match {
                             .display_name
                             .clone()
                     } else {
-                        "DRAW".into()
+                        crate::lang::t("result.draw").into()
                     };
-                    self.banner = Some((format!("{name} WINS"), 100_000));
+                    self.banner = Some((tf("fight.name_wins", &[("name", &name)]), 100_000));
                 }
                 Event::Spark { .. } => {}
             }
@@ -2996,9 +3015,12 @@ impl Match {
             [feet[0] + half, y + 1.0 * u],
             yellow,
         );
-        let label = format!(
-            "SELECTED - {}",
-            crate::debugger::Debugger::who(&self.world, d.selected)
+        let label = tf(
+            "debug.selected_dash_who",
+            &[(
+                "who",
+                &crate::debugger::Debugger::who(&self.world, d.selected),
+            )],
         );
         let w = label.chars().count() as f32 * 4.0 * u + 6.0 * u;
         let (x0, y0) = (feet[0] - w / 2.0, y - 13.0 * u);
@@ -3296,7 +3318,14 @@ impl Match {
             if self.setup.mode == Some(crate::game::Mode::Versus) && !arena {
                 for side in 0..2 {
                     if self.setup.ai[side] > 0 {
-                        lb.draw_side_tag(r, &lb_hud, u * ratio, x_off / ratio, side, "CPU");
+                        lb.draw_side_tag(
+                            r,
+                            &lb_hud,
+                            u * ratio,
+                            x_off / ratio,
+                            side,
+                            t("common.cpu"),
+                        );
                     }
                 }
             }
@@ -3612,9 +3641,9 @@ pub fn drop_hint(left: i32) -> crate::lifebar::Hint {
     Hint {
         dark: false,
         title: None,
-        rows: vec![vec![HintSeg::Text(format!(
-            "DROPS IN {} S",
-            (left + 59) / 60
+        rows: vec![vec![HintSeg::Text(tf(
+            "fight.drops_in_secs",
+            &[("secs", &((left + 59) / 60))],
         ))]],
         below: false,
     }
@@ -3626,13 +3655,13 @@ pub fn wind_hint((push, next): (f32, Option<(i32, f32)>)) -> Option<crate::lifeb
     let arrow = |d: f32| if d > 0.0 { "→" } else { "←" };
     let row = if push != 0.0 {
         vec![
-            HintSeg::Text("WIND".into()),
+            HintSeg::Text(t("fight.wind").into()),
             HintSeg::Cap(arrow(push).into()),
         ]
     } else {
         let (left, dir) = next?;
         vec![
-            HintSeg::Text(format!("WIND IN {} S", (left + 59) / 60)),
+            HintSeg::Text(tf("fight.wind_in_secs", &[("secs", &((left + 59) / 60))])),
             HintSeg::Cap(arrow(dir).into()),
         ]
     };
@@ -3651,9 +3680,9 @@ pub fn item_hint(throw: &str) -> crate::lifebar::Hint {
         dark: false,
         title: None,
         rows: vec![vec![
-            HintSeg::Text("PICKED UP ·".into()),
+            HintSeg::Text(t("fight.picked_up").into()),
             HintSeg::Cap(throw.into()),
-            HintSeg::Text("THROW".into()),
+            HintSeg::Text(t("fight.throw").into()),
         ]],
         below: false,
     }
@@ -3745,11 +3774,14 @@ pub fn ledge_hint(left: i32, side: f32, jump: &str) -> crate::lifebar::Hint {
     let row = |cap: &str, label: &str| vec![HintSeg::Cap(cap.into()), HintSeg::Text(label.into())];
     Hint {
         dark: true,
-        title: Some(format!("LEDGE · {}.{} S", tenths / 10, tenths % 10)),
+        title: Some(tf(
+            "fight.ledge_secs",
+            &[("s", &(tenths / 10)), ("tenths", &(tenths % 10))],
+        )),
         rows: vec![
-            row("↑", "CLIMB"),
-            row(if side > 0.0 { "←" } else { "→" }, "ROLL IN"),
-            row(jump, "JUMP"),
+            row("↑", t("fight.climb")),
+            row(if side > 0.0 { "←" } else { "→" }, t("fight.roll_in")),
+            row(jump, t("common.jump")),
         ],
         below: false,
     }

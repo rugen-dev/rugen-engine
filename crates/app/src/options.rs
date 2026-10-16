@@ -7,12 +7,10 @@ use winit::keyboard::Key;
 
 use crate::config::Config;
 use crate::game::Transition;
+use crate::lang::{t, tf};
+use crate::settings::{ACTIONS, action_label};
 use crate::stage::StageVisual;
 use crate::system::SystemData;
-
-const BUTTON_NAMES: [&str; 13] = [
-    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "C", "X", "Y", "Z", "S", "START", "TAG",
-];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Item {
@@ -91,7 +89,7 @@ impl OptionsScreen {
         };
         keys.set(idx, &name);
         self.dirty = true;
-        self.capture = if idx + 1 < BUTTON_NAMES.len() {
+        self.capture = if idx + 1 < ACTIONS.len() {
             Some((player, idx + 1))
         } else {
             None
@@ -134,7 +132,12 @@ impl OptionsScreen {
             Item::Music => format!("{}%", libm::roundf(c.audio.music * 100.0)),
             Item::ZoomOut => format!("{:.2}", c.camera.zoom_out),
             Item::ZoomIn => format!("{:.2}", c.camera.zoom_in),
-            Item::Fullscreen => if c.video.fullscreen { "ON" } else { "OFF" }.into(),
+            Item::Fullscreen => if c.video.fullscreen {
+                t("common.on")
+            } else {
+                t("common.off")
+            }
+            .into(),
             Item::AiLevel => c.game.ai_level.to_string(),
             Item::InputDelay => c.net.input_delay.to_string(),
             Item::Theme => c.video.theme.trim().to_uppercase(),
@@ -144,17 +147,17 @@ impl OptionsScreen {
 
     fn label(item: Item) -> &'static str {
         match item {
-            Item::Master => "MASTER VOLUME",
-            Item::Music => "MUSIC VOLUME",
-            Item::ZoomOut => "CAMERA ZOOM OUT",
-            Item::ZoomIn => "CAMERA ZOOM IN",
-            Item::Fullscreen => "FULLSCREEN",
-            Item::AiLevel => "COMPUTER LEVEL",
-            Item::InputDelay => "INPUT DELAY",
-            Item::Theme => "UI THEME",
-            Item::KeysP1 => "P1 KEYS",
-            Item::KeysP2 => "P2 KEYS",
-            Item::Back => "BACK",
+            Item::Master => t("options.master_volume"),
+            Item::Music => t("options.music_volume"),
+            Item::ZoomOut => t("options.camera_zoom_out"),
+            Item::ZoomIn => t("options.camera_zoom_in"),
+            Item::Fullscreen => t("title.fullscreen"),
+            Item::AiLevel => t("options.computer_level"),
+            Item::InputDelay => t("options.input_delay"),
+            Item::Theme => t("options.ui_theme"),
+            Item::KeysP1 => t("options.p1_keys"),
+            Item::KeysP2 => t("options.p2_keys"),
+            Item::Back => t("common.back"),
         }
     }
 
@@ -227,11 +230,19 @@ impl OptionsScreen {
                 f
             })
         };
-        sys.text(r, item_font, "OPTIONS", [lc[0] / 2.0, 24.0]);
+        sys.text(r, item_font, t("options.options"), [lc[0] / 2.0, 24.0]);
         if let Some((player, idx)) = self.capture {
-            let line = format!("P{} : PRESS KEY FOR {}", player + 1, BUTTON_NAMES[idx]);
+            let line = tf(
+                "options.pn_press_key_for",
+                &[("p", &(player + 1)), ("action", &action_label(idx))],
+            );
             sys.text(r, active_font.or(item_font), &line, [lc[0] / 2.0, 110.0]);
-            sys.text(r, item_font, "ESC TO CANCEL", [lc[0] / 2.0, 130.0]);
+            sys.text(
+                r,
+                item_font,
+                t("options.esc_to_cancel"),
+                [lc[0] / 2.0, 130.0],
+            );
         } else {
             for (i, item) in ITEMS.iter().enumerate() {
                 let y = 50.0 + i as f32 * 14.0;

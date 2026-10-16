@@ -58,11 +58,6 @@ pub const LANGS: [(&str, &str); 11] = [
 /// `[interface] lang` value meaning "the OS language".
 pub const AUTO: &str = "auto";
 
-/// The languages' codes.
-pub fn codes() -> impl Iterator<Item = &'static str> {
-    LANGS.iter().map(|(c, _)| *c)
-}
-
 /// A language's name in itself (`English` for an unknown code).
 pub fn label(code: &str) -> &'static str {
     LANGS
@@ -304,50 +299,87 @@ mod tests {
         }
     }
 
-    /// Keys the sources refer to: `t("a.b")`, `tf("a.b"`, `tn(n, "a.b", "a.c")`
-    /// and `"@a.b"` literals in Rust, `"@a.b"` values in the screen TOMLs.
-    fn used_keys() -> std::collections::BTreeSet<String> {
+    /// Every quoted `"section.key"` (or `"@section.key"`, spacing allowed
+    /// after it) in the Rust sources and the screen TOMLs, plus the
+    /// sections built at run time (`format!("pause.{id}")`), whose keys all
+    /// count as used.
+    fn used_keys(en: &rugen_ui::lang::Table) -> std::collections::BTreeSet<String> {
         let mut files = Vec::new();
         walk(&repo().join("crates/app/src"), "rs", &mut files);
         walk(&repo().join("crates/app/src"), "toml", &mut files);
         walk(&repo().join("motif/themes"), "toml", &mut files);
-        let mut keys = std::collections::BTreeSet::new();
-        let key_char = |c: char| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-';
+        let mut text = String::new();
         for f in files {
-            let text = std::fs::read_to_string(&f).unwrap();
-            // "@a.b" anywhere (Rust and TOML)
-            for (i, _) in text.match_indices("\"@") {
-                let k: String = text[i + 2..].chars().take_while(|c| key_char(*c)).collect();
-                if k.contains('.') {
-                    keys.insert(k);
-                }
+            text.push_str(&std::fs::read_to_string(&f).unwrap());
+            text.push('\n');
+        }
+        let mut dynamic: Vec<String> = Vec::new();
+        for (i, _) in text.match_indices(".{") {
+            let head: String = text[..i]
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if text[..i].ends_with(&head) && text[..i - head.len()].ends_with('"') {
+                dynamic.push(format!("{head}."));
             }
-            if f.extension().is_some_and(|x| x == "rs") {
+        }
+        en.keys()
+            .filter(|k| {
+                text.contains(&format!("\"{k}\""))
+                    || text.contains(&format!("\"@{k}\""))
+                    || text.contains(&format!("\"@{k} "))
+                    || dynamic.iter().any(|d| k.starts_with(d.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Keys the sources ask for by name: `t("a.b")`, `tf("a.b"`, `tn(n, "a.b", "a.c")`
+    /// and `"@a.b"` (comment lines skipped).
+    fn asked_keys() -> Vec<String> {
+        let mut files = Vec::new();
+        walk(&repo().join("crates/app/src"), "rs", &mut files);
+        walk(&repo().join("crates/app/src"), "toml", &mut files);
+        walk(&repo().join("motif/themes"), "toml", &mut files);
+        let key_char = |c: char| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-';
+        let mut keys = Vec::new();
+        for f in files {
+            for line in std::fs::read_to_string(&f).unwrap().lines() {
+                let l = line.trim_start();
+                if l.starts_with("//") || l.starts_with('#') {
+                    continue;
+                }
+                let mut starts: Vec<usize> = l.match_indices("\"@").map(|(i, _)| i + 2).collect();
                 for pat in ["t(\"", "tf(\"", "tn(", "lang::t(\"", "lang::tf(\""] {
-                    for (i, _) in text.match_indices(pat) {
-                        if i > 0
-                            && pat.starts_with('t')
-                            && text[..i]
-                                .chars()
-                                .next_back()
-                                .is_some_and(|c| c.is_alphanumeric() || c == '_')
-                        {
-                            continue; // `format!(`, `insert(`, ...
+                    for (i, _) in l.match_indices(pat) {
+                        let before = l[..i].chars().next_back();
+                        if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                            continue;
                         }
-                        let rest = &text[i + pat.len()..];
-                        // every "a.b" literal among the call's first arguments
-                        let args: &str = &rest[..rest.find(')').unwrap_or(rest.len()).min(200)];
-                        for (j, _) in args.match_indices('"') {
-                            let k: String =
-                                args[j + 1..].chars().take_while(|c| key_char(*c)).collect();
-                            if k.contains('.') && !k.contains("..") && !k.ends_with('.') {
-                                keys.insert(k);
-                            }
+                        let rest = &l[i + pat.len()..];
+                        let end = rest.find(')').unwrap_or(rest.len());
+                        for (j, _) in rest[..end].match_indices('"') {
+                            starts.push(i + pat.len() + j + 1);
                         }
+                        if pat.ends_with('"') {
+                            starts.push(i + pat.len());
+                        }
+                    }
+                }
+                for st in starts {
+                    let k: String = l[st..].chars().take_while(|c| key_char(*c)).collect();
+                    if k.contains('.') && !k.ends_with('.') && !k.contains("..") {
+                        keys.push(k);
                     }
                 }
             }
         }
+        keys.sort_unstable();
+        keys.dedup();
         keys
     }
 
@@ -388,9 +420,9 @@ mod tests {
                 }
             }
         }
-        let used = used_keys();
-        for k in &used {
-            if !en.contains_key(k) {
+        let used = used_keys(&en);
+        for k in asked_keys() {
+            if !en.contains_key(&k) {
                 problems.push(format!("en: {k} is used but not defined"));
             }
         }

@@ -26,19 +26,19 @@ use rugen_net::online::{
     FighterDecl, MatchupView, OnlineClient, ReadyReport, SessionTicket, Transfer, VerdictKind,
 };
 
+use crate::lang::{t, tf};
+
 /// Largest decompressed size of a downloaded content file (bombs stop here).
 const MAX_UNPACKED: u64 = 1 << 30;
 /// A downloaded package of rugen 0.5 or earlier (RGPK / zip): the opponent
 /// runs an older game (an API 4 server pairs anyone with anyone).
-const OLDER_PEER: &str =
-    "your opponent runs an older rugen (0.5): both players need the same version";
+fn older_peer() -> &'static str {
+    t("matchup.older_peer")
+}
 
 /// Why a match cannot run: we lack `name` and its owner sends nothing.
 pub fn missing_offline(name: &str) -> String {
-    format!(
-        "you don't have {}, and your opponent plays without sending fighters to the server",
-        name.to_lowercase()
-    )
+    tf("matchup.missing_offline", &[("name", &name.to_lowercase())])
 }
 
 /// First 12 hex digits of a fingerprint, for logs.
@@ -266,7 +266,9 @@ impl Worker {
                 last_poll = Instant::now();
                 match self.client.matchup(self.id) {
                     Ok(v) => self.update(v),
-                    Err(e) => self.with(|s| s.notice = format!("server: {e}")),
+                    Err(e) => {
+                        self.with(|s| s.notice = tf("matchup.server_error", &[("error", &e)]))
+                    }
                 }
             }
             self.advance();
@@ -288,7 +290,7 @@ impl Worker {
         });
         if v.phase == "failed" {
             let why = if v.error.is_empty() {
-                "the matchup failed".to_string()
+                t("matchup.the_matchup_failed").to_string()
             } else {
                 v.error.clone()
             };
@@ -309,7 +311,7 @@ impl Worker {
                 Err(e) => {
                     self.with(|s| {
                         s.preparing = false;
-                        s.notice = format!("server: {e}");
+                        s.notice = tf("matchup.server_error", &[("error", &e)]);
                     });
                     return;
                 }
@@ -349,7 +351,7 @@ impl Worker {
                 self.update(v);
             }
             Err(e) => {
-                self.with(|s| s.notice = format!("pick refused: {e}"));
+                self.with(|s| s.notice = tf("matchup.pick_refused", &[("error", &e)]));
                 return;
             }
         }
@@ -373,15 +375,21 @@ impl Worker {
         let entry = self
             .lib
             .find_char(char_id)
-            .ok_or_else(|| format!("{char_id} is not installed"))?;
+            .ok_or_else(|| tf("matchup.is_not_installed", &[("name", &char_id)]))?;
         let (dir, m) = crate::verify::prepare_verified(&self.lib, &entry)
             .map_err(|e| format!("{char_id}: {e}"))?;
         let decl = self.lib.declare(&dir, &m).ok_or_else(|| {
-            format!(
-                "{char_id} cannot go online: {}",
-                m.fair_error
-                    .clone()
-                    .unwrap_or_else(|| "no fingerprint".into())
+            tf(
+                "matchup.cannot_go_online",
+                &[
+                    ("name", &char_id),
+                    (
+                        "why",
+                        &m.fair_error
+                            .clone()
+                            .unwrap_or_else(|| t("matchup.no_fingerprint").into()),
+                    ),
+                ],
             )
         })?;
         let card = m.card.as_ref().map(|c| dir.join(c));
@@ -396,7 +404,7 @@ impl Worker {
                 .iter()
                 .find(|e| e.id.eq_ignore_ascii_case(&want))
                 .or_else(|| stages.first())
-                .ok_or("no stage installed in stages/")?;
+                .ok_or(t("matchup.no_stage_installed"))?;
             let (sdir, sm) = self
                 .lib
                 .prepare_stage(e)
@@ -404,7 +412,7 @@ impl Worker {
             let sd = self
                 .lib
                 .declare(&sdir, &sm)
-                .ok_or_else(|| format!("stage {} cannot go online", e.id))?;
+                .ok_or_else(|| tf("matchup.stage_cannot_go_online", &[("stage", &e.id)]))?;
             out.push((sd, sdir, sm));
         }
         Ok((out, card))
@@ -418,7 +426,11 @@ impl Worker {
                 // never ship what can never be played
                 continue;
             }
-            let label = if i == 0 { "YOUR FIGHTER" } else { "STAGE" };
+            let label = if i == 0 {
+                t("matchup.your_fighter")
+            } else {
+                t("stages.stage")
+            };
             let x = Xfer::new(label, &d.fingerprint);
             rows.push(x.clone());
             let (c, lib, fp, dir, m, shared) = (
@@ -502,7 +514,10 @@ impl Worker {
         // an upload that failed ends the matchup: the opponent could never get it
         let failed = self.with(|s| {
             s.uploads.iter().find_map(|x| match &x.state {
-                XferState::Failed(e) => Some(format!("could not upload {}: {e}", x.label)),
+                XferState::Failed(e) => Some(tf(
+                    "matchup.could_not_upload",
+                    &[("what", &x.label), ("error", &e)],
+                )),
                 _ => None,
             })
         });
@@ -525,7 +540,11 @@ impl Worker {
                 if !self.downloading.contains(*fp) && i < 2 && v.side as usize != i + 1 {
                     // the opponent's fighter is already in our cache
                     self.downloading.insert(fp.to_string());
-                    let label = if i < 2 { "OPPONENT" } else { "STAGE" };
+                    let label = if i < 2 {
+                        t("select.opponent")
+                    } else {
+                        t("stages.stage")
+                    };
                     let mut x = Xfer::new(label, fp);
                     x.state = XferState::Cached;
                     self.with(|s| s.downloads.push(x));
@@ -538,7 +557,7 @@ impl Worker {
                 let name = if i < 2 { &v.fighters[i] } else { &v.stage }
                     .as_ref()
                     .map(|c| c.decl.name.to_uppercase())
-                    .unwrap_or_else(|| "A FIGHTER".into());
+                    .unwrap_or_else(|| t("matchup.a_fighter").into());
                 if v.side <= 2 {
                     let _ = self.client.leave_matchup_missing(self.id, fp);
                 }
@@ -553,7 +572,11 @@ impl Worker {
                 continue;
             };
             self.downloading.insert(fp.to_string());
-            let label = if i < 2 { "OPPONENT" } else { "STAGE" };
+            let label = if i < 2 {
+                t("select.opponent")
+            } else {
+                t("stages.stage")
+            };
             let x = Xfer::new(label, fp);
             self.with(|s| s.downloads.push(x.clone()));
             self.spawn_download(x, size);
@@ -561,8 +584,11 @@ impl Worker {
         // a download that failed ends the matchup
         let failed = self.with(|s| {
             s.downloads.iter().find_map(|x| match &x.state {
-                XferState::Failed(e) if e == OLDER_PEER => Some(e.clone()),
-                XferState::Failed(e) => Some(format!("could not download {}: {e}", x.label)),
+                XferState::Failed(e) if e == older_peer() => Some(e.clone()),
+                XferState::Failed(e) => Some(tf(
+                    "matchup.could_not_download",
+                    &[("what", &x.label), ("error", &e)],
+                )),
                 _ => None,
             })
         });
@@ -591,7 +617,7 @@ impl Worker {
                     self.update(nv);
                 }
                 Err(e) => {
-                    self.fatal(format!("ready refused: {e}"));
+                    self.fatal(tf("matchup.ready_refused", &[("error", &e)]));
                     return;
                 }
             }
@@ -618,7 +644,7 @@ impl Worker {
                         })
                     });
                 }
-                None => self.fatal("synced files vanished from the cache".into()),
+                None => self.fatal(t("matchup.synced_files_vanished").into()),
             }
         }
     }
@@ -646,7 +672,7 @@ impl Worker {
                 .and_then(|()| {
                     // an RGPK / zip: the opponent's game predates .rgc
                     if rugen_fair::package::is_legacy_file(&part) {
-                        return Err(OLDER_PEER.to_string());
+                        return Err(older_peer().to_string());
                     }
                     lib.install_package(&part, &fp, MAX_UNPACKED)
                         .map_err(|e| e.to_string())

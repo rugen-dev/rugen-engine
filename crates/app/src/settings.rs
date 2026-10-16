@@ -11,20 +11,25 @@ use winit::keyboard::{Key, NamedKey};
 
 use crate::config::{Config, PlayerKeys};
 use crate::input::{Device, PadKind};
+use crate::lang::{t, tf};
 
-/// `(id, tab label, subtitle)`; `controls` opens its own page.
+/// `(id, tab label key, subtitle key)`; `controls` opens its own page.
 pub const TABS: [(&str, &str, &str); 7] = [
-    ("gameplay", "GAMEPLAY", "Applies to offline matches"),
-    ("video", "VIDEO", "Window and display"),
-    ("audio", "AUDIO", "Volume levels"),
     (
-        "controls",
-        "CONTROLS",
-        "Keys and gamepads, on their own page",
+        "gameplay",
+        "options.tab_gameplay",
+        "options.tab_gameplay_sub",
     ),
-    ("online", "ONLINE", "Netplay and the rugen server"),
-    ("interface", "INTERFACE", "How the menus look"),
-    ("update", "UPDATE", "Keep rugen current"),
+    ("video", "options.tab_video", "options.tab_video_sub"),
+    ("audio", "options.tab_audio", "options.tab_audio_sub"),
+    ("controls", "common.controls", "options.tab_controls_sub"),
+    ("online", "online.online", "options.tab_online_sub"),
+    (
+        "interface",
+        "options.tab_interface",
+        "options.tab_interface_sub",
+    ),
+    ("update", "options.tab_update", "options.tab_update_sub"),
 ];
 
 pub const CONTROLS_TAB: usize = 3;
@@ -33,7 +38,8 @@ pub const UPDATE_TAB: usize = 6;
 
 const ROUND_TIMES: [i32; 4] = [30, 60, 99, 0];
 const RESOLUTIONS: [(u32, u32); 4] = [(1280, 720), (1280, 800), (1600, 900), (1920, 1080)];
-/// RENDER SCALE row labels, in [`crate::config::RENDER_SCALES`] order.
+/// RENDER SCALE row labels, in [`crate::config::RENDER_SCALES`] order
+/// (the first is drawn as `common.auto`).
 const RENDER_SCALE_LABELS: [&str; 4] = ["AUTO", "100%", "75%", "50%"];
 
 enum Widget {
@@ -47,6 +53,9 @@ enum Widget {
     Progress(f32),
     /// Read-only value.
     Text,
+    /// A value picked with left / right out of a list too long to show
+    /// (the language): only the current one is drawn.
+    Cycle(String),
     /// Opens another page.
     Link,
 }
@@ -61,7 +70,10 @@ struct Row {
 }
 
 fn on_off(b: bool) -> Widget {
-    Widget::Choice(vec!["OFF".into(), "ON".into()], Some(usize::from(b)))
+    Widget::Choice(
+        vec![t("common.off").into(), t("common.on").into()],
+        Some(usize::from(b)),
+    )
 }
 
 fn percent(v: f32) -> String {
@@ -80,14 +92,14 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
         "gameplay" => vec![
             row(
                 "ai",
-                "COMPUTER LEVEL",
+                t("options.computer_level"),
                 Widget::Pips(8, c.game.ai_level.clamp(0, 8) as u32),
                 String::new(),
-                "How hard the computer fights in arcade and versus-CPU matches.",
+                t("options.computer_level_help"),
             ),
             row(
                 "round_time",
-                "ROUND TIME",
+                t("options.round_time"),
                 Widget::Choice(
                     vec!["30".into(), "60".into(), "99".into(), "@inf".into()],
                     ROUND_TIMES
@@ -95,52 +107,52 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         .position(|t| *t == c.game.round_time.max(0)),
                 ),
                 String::new(),
-                "Seconds on the round clock. Infinite turns the timer off.",
+                t("options.round_time_help"),
             ),
             row(
                 "life",
-                "LIFE",
+                t("online.life"),
                 Widget::Slider(
                     (crate::config::clamp_life(c.game.life) - crate::config::LIFE_MIN) as f32
                         / (crate::config::LIFE_MAX - crate::config::LIFE_MIN) as f32,
                 ),
                 crate::config::clamp_life(c.game.life).to_string(),
-                "Every fighter's life, whatever its own files say. Online rooms set their own; quick match and ranked use 5000.",
+                t("options.life_help"),
             ),
             row(
                 "air_jumps",
-                "AIR JUMPS",
+                t("options.air_jumps"),
                 Widget::Choice(
                     (0..4).map(|i| i.to_string()).collect(),
                     usize::try_from(c.game.air_jumps).ok().filter(|i| *i < 4),
                 ),
                 String::new(),
-                "Extra jumps in mid-air for every fighter. Stages may override it.",
+                t("options.air_jumps_help"),
             ),
             row(
                 "air_dash",
-                "AIR DASH",
+                t("options.air_dash"),
                 on_off(c.game.air_dash),
                 String::new(),
-                "Double-tap forward or back in the air to dash.",
+                t("options.air_dash_help"),
             ),
             row(
                 "fast_fall",
-                "FAST FALL",
+                t("options.fast_fall"),
                 on_off(c.game.fast_fall),
                 String::new(),
-                "Hold down while falling to drop faster.",
+                t("options.fast_fall_help"),
             ),
             row(
                 "arena_ai",
-                "ARENA AI",
+                t("options.arena_ai"),
                 on_off(c.game.arena_ai),
                 String::new(),
-                "Computer fighters on arena stages stay on the island, recover and use the platforms.",
+                t("options.arena_ai_help"),
             ),
             row(
                 "fighter_size",
-                "FIGHTER SIZE",
+                t("online.fighter_size"),
                 Widget::Choice(
                     FighterSize::ALL.iter().map(|v| v.label().into()).collect(),
                     FighterSize::ALL
@@ -148,34 +160,34 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         .position(|v| *v == c.game.fighter_size),
                 ),
                 String::new(),
-                "Normal: fighters already 58-82 px tall keep their size, others get a round step, x1.1 to x3.0 or /1.1 to /3.0. None never scales.",
+                t("options.fighter_size_help"),
             ),
             row(
                 "zoom_out",
-                "CAMERA ZOOM OUT",
+                t("options.camera_zoom_out"),
                 Widget::Slider((c.camera.zoom_out - 0.25) / 0.75),
                 format!("{:.2}", c.camera.zoom_out),
-                "How far the camera may pull back before fighters stop dragging each other. Lower = wider view.",
+                t("options.camera_zoom_out_help"),
             ),
             row(
                 "zoom_in",
-                "CAMERA ZOOM IN",
+                t("options.camera_zoom_in"),
                 Widget::Slider((c.camera.zoom_in - 0.6) / 1.0),
                 format!("{:.2}", c.camera.zoom_in),
-                "How close the camera gets when the fighters stand together. Lower = wider view.",
+                t("options.camera_zoom_in_help"),
             ),
         ],
         "video" => vec![
             row(
                 "fullscreen",
-                "FULLSCREEN",
+                t("title.fullscreen"),
                 on_off(c.video.fullscreen),
                 String::new(),
-                "Borderless fullscreen on the current monitor. F11 toggles it anywhere.",
+                t("options.fullscreen_help"),
             ),
             row(
                 "resolution",
-                "WINDOW SIZE",
+                t("options.window_size"),
                 Widget::Choice(
                     RESOLUTIONS
                         .iter()
@@ -186,11 +198,11 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         .position(|r| *r == (c.video.width, c.video.height)),
                 ),
                 String::new(),
-                "Size of the game window. Menus stretch to any shape of window.",
+                t("options.window_size_help"),
             ),
             row(
                 "profile",
-                "DEVICE",
+                t("common.device"),
                 Widget::Choice(
                     crate::deck::PROFILES
                         .iter()
@@ -201,62 +213,66 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                         .position(|p| p.eq_ignore_ascii_case(c.video.profile.trim())),
                 ),
                 String::new(),
-                "Steam Deck: hints name the Deck's buttons. Auto picks it on a Steam Deck.",
+                t("options.device_help"),
             ),
             row(
                 "render_scale",
-                "RENDER SCALE",
+                t("options.render_scale"),
                 Widget::Choice(
-                    RENDER_SCALE_LABELS.iter().map(|s| s.to_string()).collect(),
+                    RENDER_SCALE_LABELS
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| if i == 0 { t("common.auto") } else { s }.to_string())
+                        .collect(),
                     Some(c.video.render_scale_index()),
                 ),
                 String::new(),
-                "Draw the game smaller and scale it up: smoother on old or integrated GPUs. Auto lowers it on those.",
+                t("options.render_scale_help"),
             ),
             row(
                 "mouse",
-                "MOUSE IN MENUS",
+                t("options.mouse_in_menus"),
                 on_off(c.input.mouse),
                 String::new(),
-                "Point and click in the menus. Off hides the cursor: Esc, Enter and the arrows always work.",
+                t("options.mouse_in_menus_help"),
             ),
         ],
         "audio" => vec![
             row(
                 "master",
-                "MASTER VOLUME",
+                t("options.master_volume"),
                 Widget::Slider(c.audio.master),
                 percent(c.audio.master),
-                "Overall loudness of music and sound effects.",
+                t("options.master_volume_help"),
             ),
             row(
                 "music",
-                "MUSIC VOLUME",
+                t("options.music_volume"),
                 Widget::Slider(c.audio.music),
                 percent(c.audio.music),
-                "Loudness of menu and stage music, relative to the master volume.",
+                t("options.music_volume_help"),
             ),
         ],
         "controls" => vec![
             row(
                 "keys1",
-                "1P BINDINGS",
+                t("options.bindings_1p"),
                 Widget::Link,
                 String::new(),
-                "Rebind player 1 one action at a time, test keys on the arcade pad, pick a preset.",
+                t("options.bindings_1p_help"),
             ),
             row(
                 "keys2",
-                "2P BINDINGS",
+                t("options.bindings_2p"),
                 Widget::Link,
                 String::new(),
-                "Rebind player 2 one action at a time, test keys on the arcade pad, pick a preset.",
+                t("options.bindings_2p_help"),
             ),
         ],
         "online" => {
             let show = |s: &str| {
                 if s.trim().is_empty() {
-                    "NOT SET".to_string()
+                    t("options.not_set").to_string()
                 } else {
                     s.trim().to_uppercase()
                 }
@@ -264,48 +280,69 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
             let mut rows = vec![
                 row(
                     "delay",
-                    "INPUT DELAY",
+                    t("options.input_delay"),
                     {
                         let (opts, sel) = c.net.input_delay.choice();
                         Widget::Choice(opts, Some(sel))
                     },
                     c.net.input_delay.to_string(),
-                    "AUTO adds delay only beyond what rollback hides (1 frame up to ~300 ms ping).",
+                    t("options.input_delay_help"),
                 ),
                 row(
                     "direct",
-                    "DIRECT CONNECTION",
+                    t("options.direct_connection"),
                     on_off(c.net.direct),
                     String::new(),
-                    "ON: faster, your opponent's PC can see your IP. OFF: always relayed, private.",
+                    t("options.direct_connection_help"),
                 ),
                 row(
                     "server",
-                    "SERVER",
+                    t("options.server"),
                     Widget::Text,
                     show(&c.net.server),
-                    "rugen-server address for rooms and ranked. Set [net] server in rugen.toml.",
+                    t("options.server_help"),
                 ),
                 row(
                     "good_conn",
-                    "GOOD CONNECTIONS ONLY",
+                    t("options.good_connections_only"),
                     on_off(c.net.good_connections_only),
                     String::new(),
-                    "Quick match and ranked only pair you with opponents under 80 ms.",
+                    t("options.good_connections_only_help"),
                 ),
             ];
             if crate::link::supported() {
                 rows.push(row(
                     "links",
-                    "REGISTER RUGEN:// LINKS",
+                    t("options.register_rugen_links"),
                     Widget::Link,
                     crate::link::status(),
-                    "Links on rugen.dev (rugen://watch/CODE) open this game on that match. Per user, no administrator.",
+                    t("options.register_rugen_links_help"),
                 ));
             }
             rows
         }
         "update" => update_rows(c),
+        "interface" => {
+            // AUTO (the OS language, named) then every shipped language in
+            // its own name
+            let auto = format!(
+                "{} ({})",
+                t("common.auto"),
+                crate::lang::label(crate::lang::detect())
+            );
+            let i = crate::lang::picker_index(&c.interface.lang);
+            let current = match i.checked_sub(1).and_then(|i| crate::lang::LANGS.get(i)) {
+                Some((_, n)) => (*n).to_string(),
+                None => auto,
+            };
+            vec![row(
+                "language",
+                t("options.language"),
+                Widget::Cycle(current.clone()),
+                current,
+                t("options.language_help"),
+            )]
+        }
         _ => Vec::new(),
     }
 }
@@ -327,60 +364,57 @@ fn update_rows(c: &Config) -> Vec<Row> {
     let opened = crate::update::opened();
     let copied = |url: &str| {
         if opened.as_deref() == Some(url) {
-            "COPIED"
+            t("options.copied")
         } else {
             ""
         }
     };
     let mut out = vec![row(
         "update_version",
-        "VERSION",
+        t("options.version"),
         Widget::Text,
         env!("CARGO_PKG_VERSION").to_string(),
-        "The rugen you are running.",
+        t("options.version_help"),
     )];
     let Some(snap) = snap else {
         out.push(row(
             "update_latest",
-            "LATEST",
+            t("options.latest"),
             Widget::Text,
-            "OFF".into(),
-            "The updater is off in this run (--no-update-check).",
+            t("common.off").into(),
+            t("options.updater_off_help"),
         ));
         return out;
     };
     let newer = snap.newer().cloned();
     let (latest, latest_help) = match (&snap.phase, &snap.latest) {
         (Phase::Checking, _) => (
-            "CHECKING...".to_string(),
-            "Asking GitHub for the latest release.".to_string(),
+            t("options.checking").to_string(),
+            t("options.asking_github_help").to_string(),
         ),
         (Phase::Failed, None) => (
-            "CHECK FAILED".to_string(),
-            format!(
-                "Could not reach GitHub: {}",
-                snap.error.clone().unwrap_or_default()
+            t("options.check_failed").to_string(),
+            tf(
+                "options.could_not_reach_github",
+                &[("error", &snap.error.clone().unwrap_or_default())],
             ),
         ),
         (_, Some(r)) if newer.is_some() => (
             format!("{} - {}", r.version, r.date),
-            format!(
-                "rugen {} is out. UPDATE NOW installs it; the release notes say what changed.",
-                r.version
-            ),
+            tf("options.new_release_help", &[("version", &r.version)]),
         ),
         (_, Some(r)) => (
-            format!("{} - UP TO DATE", r.version),
-            format!("You run the latest release, published {}.", r.date),
+            tf("options.version_up_to_date", &[("version", &r.version)]),
+            tf("options.up_to_date_help", &[("date", &r.date)]),
         ),
         _ => (
-            "NOT CHECKED YET".to_string(),
-            "No check has run yet. CHECK NOW asks GitHub.".to_string(),
+            t("options.not_checked_yet").to_string(),
+            t("options.no_check_yet_help").to_string(),
         ),
     };
     out.push(row(
         "update_latest",
-        "LATEST",
+        t("options.latest"),
         Widget::Text,
         latest,
         &latest_help,
@@ -388,10 +422,10 @@ fn update_rows(c: &Config) -> Vec<Row> {
     let checking = snap.phase == Phase::Checking;
     out.push(row(
         "update_check",
-        "CHECK NOW",
+        t("options.check_now"),
         if checking { Widget::Text } else { Widget::Link },
         if checking { "..." } else { "" }.into(),
-        "Ask GitHub for the latest release now. The game also checks when it starts, at most every six hours.",
+        t("options.check_now_help"),
     ));
     if let Some(r) = &newer {
         let install = up.as_ref().map(|u| u.install().clone());
@@ -400,9 +434,9 @@ fn update_rows(c: &Config) -> Vec<Row> {
             (Some(Install::Package(_)), _) => {
                 let kind = rugen_update::package_kind();
                 let (label, what) = match kind {
-                    Some(rugen_update::PackageKind::Deb) => ("GET THE .DEB", ".deb"),
-                    Some(rugen_update::PackageKind::Rpm) => ("GET THE .RPM", ".rpm"),
-                    None => ("GET THE PACKAGE", "package"),
+                    Some(rugen_update::PackageKind::Deb) => (t("options.get_the_deb"), ".deb"),
+                    Some(rugen_update::PackageKind::Rpm) => (t("options.get_the_rpm"), ".rpm"),
+                    None => (t("options.get_the_package"), t("options.package")),
                 };
                 let url = kind
                     .and_then(|k| r.package(k))
@@ -413,64 +447,77 @@ fn update_rows(c: &Config) -> Vec<Row> {
                     label,
                     Widget::Link,
                     copied(&url).into(),
-                    &format!(
-                        "rugen was installed by your package manager, so it does not replace itself. Download the new {what} ({}) and install it like the first one; the link goes to the clipboard and your browser.",
-                        r.version
+                    &tf(
+                        "options.package_update_help",
+                        &[("what", &what), ("version", &r.version)],
                     ),
                 ));
             }
             (_, Some(why)) if !matches!(snap.phase, Phase::Ready) => {
                 out.push(row(
                     "update_now",
-                    "UPDATE NOW",
+                    t("options.update_now"),
                     Widget::Text,
-                    "UNAVAILABLE".into(),
-                    &format!("{}: download rugen {} from the release page instead (RELEASE NOTES opens it).", capitalize(why), r.version),
+                    t("options.unavailable").into(),
+                    &tf(
+                        "options.update_unavailable_help",
+                        &[("why", &capitalize(why)), ("version", &r.version)],
+                    ),
                 ));
             }
             _ => {
                 let (label, widget, text, help): (&str, Widget, String, String) = match snap.phase {
                     Phase::Downloading => (
-                        "UPDATE NOW",
+                        t("options.update_now"),
                         Widget::Progress(snap.progress),
                         match snap.total {
                             Some(t) if t > 0 => format!("{}%", (snap.progress * 100.0) as u32),
                             _ => format!("{} MB", snap.received >> 20),
                         },
-                        format!("Downloading rugen {}. Keep playing; nothing changes until it is verified.", r.version),
+                        tf("options.downloading_help", &[("version", &r.version)]),
                     ),
                     Phase::Verifying => (
-                        "UPDATE NOW",
+                        t("options.update_now"),
                         Widget::Progress(1.0),
-                        "VERIFYING".into(),
-                        "Checking the download against the release's SHA256SUMS.".into(),
+                        t("options.verifying").into(),
+                        t("options.verifying_help").into(),
                     ),
                     Phase::Installing => (
-                        "UPDATE NOW",
+                        t("options.update_now"),
                         Widget::Progress(1.0),
-                        "INSTALLING".into(),
-                        "Swapping the new files in. Your fighters, stages and settings stay.".into(),
+                        t("options.installing").into(),
+                        t("options.installing_help").into(),
                     ),
                     Phase::Ready => (
-                        "RESTART",
+                        t("options.restart"),
                         Widget::Link,
-                        format!("{} INSTALLED", r.version),
-                        "The new rugen is in place. RESTART closes this one and starts it with the same arguments.".into(),
+                        tf("options.version_installed", &[("version", &r.version)]),
+                        t("options.restart_help").into(),
                     ),
                     Phase::Failed => (
-                        "UPDATE NOW",
+                        t("options.update_now"),
                         Widget::Link,
-                        "FAILED - RETRY".into(),
-                        format!("The update failed: {}", snap.error.clone().unwrap_or_default()),
+                        t("options.failed_retry").into(),
+                        tf(
+                            "options.update_failed_help",
+                            &[("error", &snap.error.clone().unwrap_or_default())],
+                        ),
                     ),
                     _ => (
-                        "UPDATE NOW",
+                        t("options.update_now"),
                         Widget::Link,
                         String::new(),
-                        format!(
-                            "Download rugen {} ({}), verify it against SHA256SUMS and replace this folder's binary, motif/ and data/. rugen.toml, chars/ and stages/ stay.",
-                            r.version,
-                            r.own_archive().map(|a| format!("{} MB", (a.size + (1 << 19)) >> 20)).unwrap_or_default()
+                        tf(
+                            "options.update_now_help",
+                            &[
+                                ("version", &r.version),
+                                (
+                                    "size",
+                                    &r.own_archive()
+                                        .map(|a| format!("{} MB", (a.size + (1 << 19)) >> 20))
+                                        .unwrap_or_default(),
+                                ),
+                            ],
                         ),
                     ),
                 };
@@ -480,10 +527,10 @@ fn update_rows(c: &Config) -> Vec<Row> {
     }
     out.push(row(
         "update_auto",
-        "CHECK AT LAUNCH",
+        t("options.check_at_launch"),
         on_off(c.update.check),
         String::new(),
-        "Look for a new release when the game starts (once every six hours, in the background). [update] check in rugen.toml.",
+        t("options.check_at_launch_help"),
     ));
     let notes = snap
         .latest
@@ -492,10 +539,14 @@ fn update_rows(c: &Config) -> Vec<Row> {
         .unwrap_or_else(|| rugen_update::NOTES_URL.to_string());
     out.push(row(
         "update_notes",
-        "RELEASE NOTES",
+        t("options.release_notes"),
         Widget::Link,
-        if copied(&notes).is_empty() { "RUGEN.DEV".into() } else { "COPIED".into() },
-        "What changed, on the release page: opens in your browser and goes to the clipboard. Docs at rugen.dev.",
+        if copied(&notes).is_empty() {
+            "RUGEN.DEV".into()
+        } else {
+            t("options.copied").into()
+        },
+        t("options.release_notes_help"),
     ));
     out
 }
@@ -511,7 +562,7 @@ fn capitalize(s: &str) -> String {
 fn row_json(r: &Row) -> Value {
     let adjustable = matches!(
         r.widget,
-        Widget::Pips(..) | Widget::Choice(..) | Widget::Slider(_)
+        Widget::Pips(..) | Widget::Choice(..) | Widget::Slider(_) | Widget::Cycle(_)
     );
     let (kind, max, on, options, sel, frac) = match &r.widget {
         Widget::Pips(m, o) => ("pips", *m, *o, Vec::new(), -1, 0.0),
@@ -526,14 +577,15 @@ fn row_json(r: &Row) -> Value {
         Widget::Slider(f) | Widget::Progress(f) => {
             ("slider", 0, 0, Vec::new(), -1, f.clamp(0.0, 1.0))
         }
-        Widget::Text => ("text", 0, 0, Vec::new(), -1, 0.0),
+        Widget::Text | Widget::Cycle(_) => ("text", 0, 0, Vec::new(), -1, 0.0),
         Widget::Link => ("link", 0, 0, Vec::new(), -1, 0.0),
     };
     // plain value for screens that only show `{item.value}`
     let value = match &r.widget {
         Widget::Pips(_, o) if r.text.is_empty() => o.to_string(),
-        Widget::Choice(opts, Some(i)) => opts[*i].replace("@inf", "INF"),
+        Widget::Choice(opts, Some(i)) => opts[*i].replace("@inf", t("options.inf")),
         Widget::Link => ">".into(),
+        Widget::Cycle(v) => v.clone(),
         _ => r.text.clone(),
     };
     let id = r.id;
@@ -584,19 +636,19 @@ fn theme_cards(themes: &[crate::themes::Card], c: &Config) -> Vec<Value> {
     sorted.sort_by_key(|t| rank(t));
     let mut out: Vec<Value> = sorted
         .into_iter()
-        .map(|t| {
-            let active = t.id.eq_ignore_ascii_case(c.video.theme.trim());
-            let preview = t
+        .map(|card| {
+            let active = card.id.eq_ignore_ascii_case(c.video.theme.trim());
+            let preview = card
                 .preview
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             json!({
-                "id": t.id,
-                "label": if t.user { format!("{} (YOURS)", t.label) } else { t.label.clone() },
-                "name": t.label,
-                "sub": if t.user { "LIVE RELOAD ON" } else { "BUNDLED" },
-                "user": t.user,
+                "id": card.id,
+                "label": if card.user { tf("options.theme_yours", &[("name", &card.label)]) } else { card.label.clone() },
+                "name": card.label,
+                "sub": if card.user { t("options.live_reload_on") } else { t("common.bundled") },
+                "user": card.user,
                 "is_add": false,
                 "has_preview": !preview.is_empty(),
                 // a frame of its own (not active, not the folder card) /
@@ -605,15 +657,15 @@ fn theme_cards(themes: &[crate::themes::Card], c: &Config) -> Vec<Value> {
                 "show_name": preview.is_empty(),
                 "preview": preview,
                 "active": active,
-                "press": format!("theme:{}", t.id),
+                "press": format!("theme:{}", card.id),
             })
         })
         .collect();
     out.push(json!({
         "id": "",
-        "label": "OPEN THEMES FOLDER",
+        "label": t("options.open_themes_folder"),
         "name": "",
-        "sub": "ADD YOUR OWN",
+        "sub": t("options.add_your_own"),
         "user": false,
         "is_add": true,
         "has_preview": false,
@@ -640,7 +692,7 @@ pub fn options_data(
         .map(|(i, (id, label, _))| {
             json!({
                 "id": id,
-                "label": label,
+                "label": t(label),
                 "active": i == tab,
                 "ext": i == CONTROLS_TAB,
                 "press": format!("tab:{i}"),
@@ -663,35 +715,29 @@ pub fn options_data(
         rows.get(i).map_or("", |r| r.help.as_str()).to_string()
     } else if let Some(i) = index("themes[") {
         match theme_cards.get(i) {
-            Some(t) if t["is_add"] == json!(true) => {
-                "Opens themes/ next to chars/. Any folder there \
-                with a system.def is a theme; rugen theme new <name> starts one."
-                    .to_string()
+            Some(card) if card["is_add"] == json!(true) => {
+                t("options.themes_folder_help").to_string()
             }
-            Some(t) if t["user"] == json!(true) => format!(
-                "Your theme in themes/{}. Press enter to use it; save one of its files and the \
-                 screen updates at once.",
-                t["id"].as_str().unwrap_or_default()
+            Some(card) if card["user"] == json!(true) => tf(
+                "options.your_theme_help",
+                &[("theme", &card["id"].as_str().unwrap_or_default())],
             ),
-            _ => "Press enter to use this theme. It switches at once.".to_string(),
+            _ => t("options.use_this_theme_help").to_string(),
         }
     } else if tab == CONTROLS_TAB {
-        "Press enter to open the controls page: one row per action, presets and a live test pad."
-            .to_string()
+        t("options.controls_page_help").to_string()
     } else {
         // what the tab holds (its subtitle already says what it is for)
         let inside = match TABS[tab].0 {
-            "gameplay" => "Computer level, round clock, life, movement, fighter size and camera.",
-            "video" => "Fullscreen, window size and the mouse.",
-            "audio" => "Master and music volume.",
-            "online" => "Input delay, direct connections and the server.",
-            "interface" => "Pick a theme for every screen, or add your own.",
-            "update" => {
-                "See whether a newer rugen is out, install it, or turn the launch check off."
-            }
+            "gameplay" => t("options.tab_gameplay_help"),
+            "video" => t("options.tab_video_help"),
+            "audio" => t("options.tab_audio_help"),
+            "online" => t("options.tab_online_help"),
+            "interface" => t("options.tab_interface_help"),
+            "update" => t("options.tab_update_help"),
             _ => "",
         };
-        format!("{inside} Up and down pick a category, right or enter goes into it.")
+        tf("options.pick_a_category_help", &[("inside", &inside)])
             .trim_start()
             .to_string()
     };
@@ -700,9 +746,15 @@ pub fn options_data(
     let (right, right_glyph) = (String::new(), "right");
     json!({
         "tabs": tabs,
-        "tab": { "id": TABS[tab].0, "title": TABS[tab].1, "subtitle": TABS[tab].2, "index": tab },
+        "tab": { "id": TABS[tab].0, "title": t(TABS[tab].1), "subtitle": t(TABS[tab].2), "index": tab },
         "rows": rows.iter().map(row_json).collect::<Vec<_>>(),
         "show_rows": !rows.is_empty(),
+        // INTERFACE: the LANGUAGE row sits above the theme cards
+        "rows_h": if tab == INTERFACE_TAB { 48 } else { 414 },
+        "themes_y": if tab == INTERFACE_TAB { 118 } else { 62 },
+        "themes_grid_y": if tab == INTERFACE_TAB { 144 } else { 88 },
+        "themes_y_dojo": if tab == INTERFACE_TAB { 130 } else { 74 },
+        "themes_grid_y_dojo": if tab == INTERFACE_TAB { 156 } else { 100 },
         "themes": theme_cards,
         "show_themes": tab == INTERFACE_TAB,
         "help": help,
@@ -785,6 +837,11 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
             c.video.render_scale =
                 crate::config::RENDER_SCALES[cycle(c.video.render_scale_index(), n)].into();
         }
+        "language" => {
+            let cur = crate::lang::picker_index(&c.interface.lang);
+            c.interface.lang =
+                crate::lang::picker_value(cycle(cur, crate::lang::LANGS.len() + 1)).into();
+        }
         "resolution" => {
             let cur = RESOLUTIONS
                 .iter()
@@ -852,6 +909,7 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
             let n = crate::config::RENDER_SCALES.len();
             c.video.render_scale = crate::config::RENDER_SCALES[i.min(n - 1)].into();
         }
+        "language" => c.interface.lang = crate::lang::picker_value(i).into(),
         "resolution" => {
             let (w, h) = RESOLUTIONS[i.min(RESOLUTIONS.len() - 1)];
             c.video.width = w;
@@ -864,22 +922,30 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
 
 // ---------------------------------------------------------------- controls
 
-/// `(id, label, group)` in config order (Buttons order + START).
+/// `(id, label, group key)` in config order (Buttons order + START). The
+/// label is a key for the words (`controls.up`), the letter itself for the
+/// buttons: [`action_label`] resolves it.
 pub const ACTIONS: [(&str, &str, &str); 13] = [
-    ("up", "UP", "MOVE"),
-    ("down", "DOWN", "MOVE"),
-    ("left", "LEFT", "MOVE"),
-    ("right", "RIGHT", "MOVE"),
-    ("a", "A", "LOW ROW"),
-    ("b", "B", "LOW ROW"),
-    ("c", "C", "LOW ROW"),
-    ("x", "X", "TOP ROW"),
-    ("y", "Y", "TOP ROW"),
-    ("z", "Z", "TOP ROW"),
-    ("s", "S", "FIGHTER EXTRA"),
-    ("start", "START", "PAUSE / MENUS"),
-    ("tag", "TAG", "TAG TEAMS"),
+    ("up", "controls.up", "controls.move"),
+    ("down", "controls.down", "controls.move"),
+    ("left", "controls.left", "controls.move"),
+    ("right", "controls.right", "controls.move"),
+    ("a", "A", "controls.low_row"),
+    ("b", "B", "controls.low_row"),
+    ("c", "C", "controls.low_row"),
+    ("x", "X", "controls.top_row"),
+    ("y", "Y", "controls.top_row"),
+    ("z", "Z", "controls.top_row"),
+    ("s", "S", "controls.fighter_extra"),
+    ("start", "common.start", "controls.pause_menus"),
+    ("tag", "common.tag", "controls.tag_teams"),
 ];
+
+/// The label of action `i` in the active language (`UP`, `A`, `START`).
+pub fn action_label(i: usize) -> &'static str {
+    let label = ACTIONS[i].1;
+    if label.contains('.') { t(label) } else { label }
+}
 
 /// One-press layouts for a whole player.
 pub fn presets() -> [(&'static str, PlayerKeys); 3] {
@@ -898,7 +964,7 @@ pub fn presets() -> [(&'static str, PlayerKeys); 3] {
                 "w", "s", "a", "d", "j", "k", "l", "u", "i", "o", ";", "p", "n",
             ]),
         ),
-        ("ARROWS + NUMPAD", PlayerKeys::p2()),
+        (t("controls.arrows_numpad"), PlayerKeys::p2()),
     ]
 }
 
@@ -913,11 +979,14 @@ pub fn conflicts(keys: [&PlayerKeys; 2], player: usize) -> [Option<String>; 13] 
     std::array::from_fn(|i| {
         let k = me[i];
         if let Some(j) = other.iter().position(|o| same_key(k, o)) {
-            return Some(format!("ALSO {}P {}", 2 - player, ACTIONS[j].1));
+            return Some(tf(
+                "controls.also_np_action",
+                &[("p", &(2 - player)), ("action", &action_label(j))],
+            ));
         }
         (0..ACTIONS.len())
             .find(|&j| j != i && same_key(k, me[j]))
-            .map(|j| format!("ALSO {}", ACTIONS[j].1))
+            .map(|j| tf("controls.also_action", &[("action", &action_label(j))]))
     })
 }
 
@@ -1082,7 +1151,8 @@ impl Controls {
         let binds: Vec<Value> = ACTIONS
             .iter()
             .enumerate()
-            .map(|(i, (id, label, group))| {
+            .map(|(i, (id, _, group))| {
+                let label = action_label(i);
                 let listening = self.listen == Some(i);
                 let (text, glyph) = cap(i);
                 let conflict = conflicts[i].clone();
@@ -1090,7 +1160,7 @@ impl Controls {
                 json!({
                     "id": id,
                     "label": label,
-                    "group": if pad.is_some() { "FIXED ON PAD" } else { *group },
+                    "group": if pad.is_some() { t("controls.fixed_on_pad") } else { t(group) },
                     "icon": if dir || *id == "start" {
                         String::new()
                     } else if *id == "tag" {
@@ -1119,8 +1189,9 @@ impl Controls {
             .collect();
         let n_conf = conflicts.iter().filter(|c| c.is_some()).count();
         let mut padj = serde_json::Map::new();
-        for (i, (id, label, _)) in ACTIONS.iter().enumerate() {
+        for (i, (id, _, _)) in ACTIONS.iter().enumerate() {
             let (text, glyph) = cap(i);
+            let label = action_label(i);
             padj.insert(
                 id.to_string(),
                 json!({ "cap": text, "glyph": glyph, "lit": lit[i], "label": label }),
@@ -1147,7 +1218,7 @@ impl Controls {
                 n.truncate(18);
                 n
             }
-            None => "KEYBOARD".into(),
+            None => t("controls.keyboard").into(),
         };
         let other = 1 - self.player;
         let players: Vec<Value> = (0..2)
@@ -1174,7 +1245,7 @@ impl Controls {
                 "count": n_conf,
                 "any": n_conf > 0,
                 "none": n_conf == 0,
-                "text": if n_conf == 0 { "NO CONFLICTS".to_string() } else if n_conf == 1 { "1 CONFLICT".to_string() } else { format!("{n_conf} CONFLICTS") },
+                "text": if n_conf == 0 { t("controls.no_conflicts").to_string() } else if n_conf == 1 { t("controls.one_conflict").to_string() } else { tf("controls.n_conflicts", &[("n", &n_conf)]) },
             },
             "pad": Value::Object(padj),
             "presets": presets,

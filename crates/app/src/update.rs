@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::game::Transition;
+use crate::lang::tf;
 
 static UPDATER: OnceLock<Arc<Updater>> = OnceLock::new();
 /// The arguments to start the new binary with after an update.
@@ -80,7 +81,9 @@ pub fn generation() -> u64 {
 /// The title pill: `{on, line}`.
 pub fn title_json() -> Value {
     match snapshot().as_ref().and_then(|s| s.newer().cloned()) {
-        Some(r) => json!({ "on": true, "line": format!("UPDATE {} AVAILABLE", r.version) }),
+        Some(r) => {
+            json!({ "on": true, "line": tf("update.update_version_available", &[("version", &r.version)]) })
+        }
         None => json!({ "on": false, "line": "" }),
     }
 }

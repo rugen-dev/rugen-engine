@@ -19,6 +19,8 @@ use std::sync::Mutex;
 
 use rugen_proto::room_code;
 
+use crate::lang::t;
+
 /// The scheme, without `:`.
 pub const SCHEME: &str = "rugen";
 
@@ -172,11 +174,11 @@ pub fn register() -> Result<String, String> {
     match &r {
         Ok(line) => {
             log::info!("{SCHEME}:// links: {line}");
-            set_status("DONE");
+            set_status(t("link.done"));
         }
         Err(e) => {
             log::warn!("{SCHEME}:// links: {e}");
-            set_status("FAILED");
+            set_status(t("link.failed"));
         }
     }
     r

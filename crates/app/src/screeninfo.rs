@@ -19,13 +19,13 @@ pub enum Group {
 
 impl Group {
     pub fn label(self) -> &'static str {
-        match self {
-            Group::Super => "SUPERS",
-            Group::Special => "SPECIALS",
-            Group::System => "SYSTEM",
-            Group::Movement => "MOVEMENT",
-            Group::Combo => "COMBOS",
-        }
+        crate::lang::t(match self {
+            Group::Super => "moves.supers",
+            Group::Special => "moves.specials",
+            Group::System => "moves.system",
+            Group::Movement => "moves.movement",
+            Group::Combo => "moves.combos",
+        })
     }
 }
 

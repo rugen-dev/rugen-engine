@@ -326,7 +326,8 @@ impl SystemData {
         pos: [f32; 2],
     ) {
         let Some(f) = f else { return };
-        match self.fonts.get_mut(&f.index) {
+        let slot = crate::lang::font_slot(f.index, |s| self.fonts.contains_key(&s));
+        match self.fonts.get_mut(&slot) {
             Some(font) => {
                 font.draw(
                     r,
