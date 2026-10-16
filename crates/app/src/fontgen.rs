@@ -906,26 +906,24 @@ pub const CODE_FONT: &str = "rugen-code";
 
 /// The Japanese text font (`fontN.ja` in both themes): DotGothic16 on its
 /// own 16 px grid (1000 / 16 font units), 13 px capitals, ASCII plus the
-/// kana and every kanji `motif/lang/ja.toml` uses (see [`ja_chars`]).
-/// `rugen-ja2` is the same face at 2x (a `size` of 46 snaps to two pixels
-/// per design pixel at the face's 1448-unit line height) for the dojo
-/// theme's body font.
+/// kana and every kanji `motif/lang/ja.toml` uses (see [`ja_chars`]). One
+/// cut: it draws at a whole multiple of its grid next to each theme font
+/// (see [`crate::sprites::FontGpu::companion_scale`]).
 pub const JA_FONT: &str = "rugen-ja";
 
-fn ja_roles() -> [Role; 2] {
-    let role = |name, size| Role {
-        name,
+fn ja_role() -> Role {
+    Role {
+        name: JA_FONT,
         file: "DotGothic16-Regular.ttf",
         style: Style {
-            size,
+            size: 16,
             italic: 0,
             condense: 1.0,
             rim: false,
             highlight: false,
         },
         grid: Some(1000.0 / 16.0),
-    };
-    [role(JA_FONT, 16), role("rugen-ja2", 46)]
+    }
 }
 
 /// The characters the Japanese font carries beyond ASCII: hiragana,
@@ -950,7 +948,7 @@ pub fn ja_chars(motif: &Path) -> Vec<char> {
 /// room-code font, the Steam Deck's small text and the Japanese fonts. All
 /// OFL pixel fonts rendered at a whole multiple of their native pixel size
 /// (crisp, no AA); every zero is slashed.
-pub fn roles() -> [Role; 8] {
+pub fn roles() -> [Role; 7] {
     let st = |size, italic, rim, highlight| Style {
         size,
         italic,
@@ -992,8 +990,7 @@ pub fn roles() -> [Role; 8] {
             grid: None,
         },
         deck_role(),
-        ja_roles()[0].clone(),
-        ja_roles()[1].clone(),
+        ja_role(),
     ]
 }
 
@@ -1002,7 +999,7 @@ pub fn roles() -> [Role; 8] {
 /// tags, HUD numbers and room codes. Slots: 1 small, 2 menu (captions),
 /// 3 title, 4 num, 5 code, 6 body; Pixelify Sans for the Steam Deck,
 /// DotGothic16 for Japanese.
-pub fn dojo_roles() -> [Role; 9] {
+pub fn dojo_roles() -> [Role; 8] {
     let st = |size, rim, highlight| Style {
         size,
         italic: 0,
@@ -1048,8 +1045,7 @@ pub fn dojo_roles() -> [Role; 9] {
             grid: None,
         },
         deck_role(),
-        ja_roles()[0].clone(),
-        ja_roles()[1].clone(),
+        ja_role(),
     ]
 }
 
@@ -1107,7 +1103,7 @@ pub fn write_roles(
         if role.name == CODE_FONT {
             g = g.ascii_only();
         }
-        if role.name.starts_with(JA_FONT) {
+        if role.name == JA_FONT {
             // thin strokes: no dark outline on the red bank either
             g = g.ascii_only().plain_red().with_chars(ja_chars(motif));
         }

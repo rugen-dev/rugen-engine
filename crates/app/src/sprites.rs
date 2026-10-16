@@ -494,6 +494,9 @@ pub struct FontGpu {
     /// Font pixels the ink band sits below the cell centre when a label is
     /// centred on `size[1]` (see [`FontGpu::center_dy`]).
     ink_dy: f32,
+    /// Height of the capitals' ink band in font pixels (the line height
+    /// when the font has no capitals).
+    cap_px: f32,
 }
 
 impl FontGpu {
@@ -501,9 +504,14 @@ impl FontGpu {
         // draw_xf puts the cell top at baseline - h + 1 + offset; a centred
         // label puts the baseline h / 2 under the centre
         let h = font.size[1] as f32;
-        let ink_dy = font.ink_rows().map_or(0.0, |(t, b)| {
+        let band = font.ink_rows();
+        let ink_dy = band.map_or(0.0, |(t, b)| {
             1.0 + font.offset[1] as f32 - h / 2.0 + (t as f32 + b as f32 + 1.0) / 2.0
         });
+        let cap_px = font
+            .cap_height()
+            .map_or_else(|| band.map_or(h, |(t, b)| (b - t + 1) as f32), f32::from)
+            .max(1.0);
         Self {
             font,
             atlas: None,
@@ -511,7 +519,14 @@ impl FontGpu {
             banks: Vec::new(),
             snap: None,
             ink_dy,
+            cap_px,
         }
+    }
+
+    /// Where the middle of the capitals lands below the line `pos.y` a
+    /// draw call names, at `scale` (negative: above it).
+    fn ink_centre(&self, scale: f32) -> f32 {
+        (self.ink_dy - self.font.size[1] as f32 / 2.0) * scale
     }
 
     /// How far below a box's centre the visible text lands when centred on
@@ -540,6 +555,19 @@ impl FontGpu {
         let page = self.atlas.take().map(|(t, _)| t);
         r.free_textures(self.glyphs.drain().map(|(_, t)| t).chain(page));
         r.free_palettes(self.banks.drain(..));
+    }
+
+    /// The scale the Japanese face `ja` draws at next to this font at
+    /// `scale`: its capitals at least as tall as this font's, in half
+    /// steps (never below 1: the 16 px kana stand in for an 8 px face).
+    pub fn companion_scale(&self, ja: &FontGpu, scale: f32) -> f32 {
+        (libm::ceilf(self.cap_px * scale / ja.cap_px * 2.0 - 0.1) / 2.0).max(1.0)
+    }
+
+    /// The `pos.y` the Japanese face draws at so its capitals are centred
+    /// on this font's capitals drawn at `y`.
+    pub fn companion_y(&self, ja: &FontGpu, y: f32, scale: f32, ja_scale: f32) -> f32 {
+        y + self.ink_centre(scale) - ja.ink_centre(ja_scale)
     }
 
     /// Draw `text` with its bottom line at `pos.y` (MUGEN convention). `align`: 1 left, 0 centred, -1 right.
@@ -648,5 +676,117 @@ impl FontGpu {
             }
             x += (w + self.font.spacing[0] as f32) * scale;
         }
+    }
+}
+
+/// Kana, kanji and CJK punctuation: drawn with the Japanese face.
+pub fn is_cjk(c: char) -> bool {
+    matches!(c as u32, 0x3000..=0x30FF | 0x3400..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF)
+}
+
+/// `text` cut into runs that keep the theme's font (`false`) and runs of
+/// Japanese characters (`true`).
+pub fn script_runs(text: &str) -> Vec<(bool, &str)> {
+    let mut out: Vec<(bool, &str)> = Vec::new();
+    let mut start = 0;
+    let mut cur: Option<bool> = None;
+    for (i, c) in text.char_indices() {
+        let ja = is_cjk(c);
+        match cur {
+            Some(k) if k == ja => {}
+            Some(k) => {
+                out.push((k, &text[start..i]));
+                start = i;
+                cur = Some(ja);
+            }
+            None => cur = Some(ja),
+        }
+    }
+    if let Some(k) = cur {
+        out.push((k, &text[start..]));
+    }
+    out
+}
+
+/// Width of `text` drawn with `font`, Japanese runs with `ja` at their
+/// companion scale (see [`FontGpu::companion_scale`]).
+pub fn mixed_width(
+    fonts: &HashMap<i32, FontGpu>,
+    font: i32,
+    ja: i32,
+    text: &str,
+    scale: f32,
+) -> f32 {
+    let (Some(f), Some(j)) = (fonts.get(&font), fonts.get(&ja)) else {
+        return fonts
+            .get(&font)
+            .map_or(text.len() as f32 * 8.0 * scale, |f| f.width(text, scale));
+    };
+    let js = f.companion_scale(j, scale);
+    script_runs(text)
+        .iter()
+        .map(|(cjk, run)| {
+            if *cjk {
+                j.width(run, js)
+            } else {
+                f.width(run, scale)
+            }
+        })
+        .sum()
+}
+
+/// [`FontGpu::draw_xf`] of `text` in `font`, its Japanese runs in `ja`,
+/// sized and centred on the font's capitals. `snap`: window pixels per
+/// unit (upright text starts on whole pixels).
+#[allow(clippy::too_many_arguments)]
+pub fn mixed_draw(
+    fonts: &mut HashMap<i32, FontGpu>,
+    r: &mut Renderer,
+    font: i32,
+    ja: i32,
+    text: &str,
+    pos: [f32; 2],
+    bank: i32,
+    align: i32,
+    scale: f32,
+    clip: Option<[f32; 4]>,
+    alpha: f32,
+    xf: Option<(f32, [f32; 2])>,
+    snap: Option<[f32; 2]>,
+) {
+    if !fonts.contains_key(&ja) || !text.chars().any(is_cjk) {
+        if let Some(f) = fonts.get_mut(&font) {
+            f.snap = snap;
+            f.draw_xf(r, text, pos, bank, align, scale, clip, alpha, xf);
+            f.snap = None;
+        }
+        return;
+    }
+    let total = mixed_width(fonts, font, ja, text, scale);
+    let (js, jy) = {
+        let (Some(f), Some(j)) = (fonts.get(&font), fonts.get(&ja)) else {
+            return;
+        };
+        let js = f.companion_scale(j, scale);
+        (js, f.companion_y(j, pos[1], scale, js))
+    };
+    let mut x = match align {
+        a if a > 0 => pos[0],
+        0 => pos[0] - total / 2.0,
+        _ => pos[0] - total,
+    };
+    for (cjk, run) in script_runs(text) {
+        let (slot, s, y) = if cjk {
+            (ja, js, jy)
+        } else {
+            (font, scale, pos[1])
+        };
+        let Some(f) = fonts.get_mut(&slot) else {
+            continue;
+        };
+        f.snap = snap;
+        f.draw_xf(r, run, [x, y], bank, 1, s, clip, alpha, xf);
+        f.snap = None;
+        x += f.width(run, s);
     }
 }

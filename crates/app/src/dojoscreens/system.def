@@ -26,7 +26,7 @@ font2.deck = font/rugen-deck.def
 font1.ja = font/rugen-ja.def
 font2.ja = font/rugen-ja.def
 font3.ja = font/rugen-ja.def
-font6.ja = font/rugen-ja2.def
+font6.ja = font/rugen-ja.def
 
 [Music]
 title.bgm =

@@ -703,9 +703,11 @@ copyrighted fighters).
   machine-written, worth a native pass). LANGUAGE row in OPTIONS ›
   INTERFACE (AUTO = OS locale via LANG / LC_ALL / Windows LocaleName /
   AppleLocale, nearest shipped code, else en), `[interface] lang`, applied
-  live; `motif/lang/` is watched like a user theme. Japanese: `rugen-ja` /
-  `rugen-ja2` (DotGothic16, OFL, 16 px grid) cut to the kana and the kanji
-  `ja.toml` uses, `fontN.ja` slots in both themes' `system.def`. Labels
+  live; `motif/lang/` is watched like a user theme. Japanese: `rugen-ja`
+  (DotGothic16, OFL, 16 px grid) cut to the kana and the kanji `ja.toml`
+  uses, `fontN.ja` slots in both themes' `system.def`; only the kana / kanji
+  runs of a text draw with it, sized (half steps) and centred on the named
+  font's capitals, so Latin names, digits and key caps look as in English. Labels
   wider than their button or sized box shrink (whole scales first), text
   without spaces wraps by character. `scripts/i18n-strings.py` lists,
   converts, merges and checks; the `lang` test checks every language file

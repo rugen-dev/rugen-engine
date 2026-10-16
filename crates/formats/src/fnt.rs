@@ -74,6 +74,23 @@ impl Font {
         band
     }
 
+    /// Rows of ink of one flat capital (`H`, else `E`, `T`, `0`): the
+    /// capital height without descending `J` / `Q` tails.
+    pub fn cap_height(&self) -> Option<u16> {
+        let g = ['H', 'E', 'T', '0']
+            .iter()
+            .find_map(|c| self.glyphs.get(c))?;
+        let w = g.width as usize;
+        let mut band: Option<(u16, u16)> = None;
+        for y in 0..g.height {
+            let row = &g.pixels[y as usize * w..(y as usize + 1) * w];
+            if row.iter().any(|&px| px != 0) {
+                band = Some(band.map_or((y, y), |(t, b)| (t.min(y), b.max(y))));
+            }
+        }
+        band.map(|(t, b)| b - t + 1)
+    }
+
     pub fn char_width(&self, c: char) -> i32 {
         match self.glyphs.get(&c) {
             Some(g) => g.width as i32,

@@ -260,24 +260,17 @@ pub fn load(assets: &Path, setting: &str) -> &'static str {
 }
 
 /// `system.def` `fontN.ja` loads into slot `N + JA_FONT_SLOT`: the pixel
-/// font with kana and kanji, drawn in place of `fontN` while the language
-/// is Japanese (whatever the scale: Latin faces have no Japanese glyphs).
+/// font with kana and kanji. Japanese runs of a text draw with it, sized
+/// and centred on `fontN`'s capitals; Latin letters, digits and symbols
+/// keep `fontN` (see [`crate::sprites::mixed_draw`]), so names and
+/// numbers look as they do in English.
 pub const JA_FONT_SLOT: i32 = 200;
 
-/// The suffix of the font key the active language asks for (`ja`), if any.
-pub fn font_suffix() -> Option<&'static str> {
-    rugen_ui::lang::code().starts_with("ja").then_some("ja")
-}
-
-/// The font slot a screen's `font` draws with in the active language:
-/// the `.ja` variant while Japanese is on and the theme has one (`has`).
-pub fn font_slot(font: i32, has: impl Fn(i32) -> bool) -> i32 {
+/// The Japanese companion slot of `font` while the language is Japanese
+/// and the theme has one (`has`).
+pub fn ja_slot(font: i32, has: impl Fn(i32) -> bool) -> Option<i32> {
     let slot = font + JA_FONT_SLOT;
-    if font_suffix().is_some() && has(slot) {
-        slot
-    } else {
-        font
-    }
+    (rugen_ui::lang::code().starts_with("ja") && has(slot)).then_some(slot)
 }
 
 #[cfg(test)]

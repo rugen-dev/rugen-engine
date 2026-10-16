@@ -327,19 +327,25 @@ impl SystemData {
         pos: [f32; 2],
     ) {
         let Some(f) = f else { return };
-        let slot = crate::lang::font_slot(f.index, |s| self.fonts.contains_key(&s));
-        match self.fonts.get_mut(&slot) {
-            Some(font) => {
-                font.draw(
-                    r,
-                    line,
-                    [pos[0] - self.localcoord[0] / 2.0, pos[1]],
-                    f.bank,
-                    f.align,
-                    1.0,
-                );
-            }
-            None => log::warn!("system.def: font{} is not loaded (text {line:?})", f.index),
+        if !self.fonts.contains_key(&f.index) {
+            log::warn!("system.def: font{} is not loaded (text {line:?})", f.index);
+            return;
         }
+        let ja = crate::lang::ja_slot(f.index, |s| self.fonts.contains_key(&s)).unwrap_or(f.index);
+        crate::sprites::mixed_draw(
+            &mut self.fonts,
+            r,
+            f.index,
+            ja,
+            line,
+            [pos[0] - self.localcoord[0] / 2.0, pos[1]],
+            f.bank,
+            f.align,
+            1.0,
+            None,
+            1.0,
+            None,
+            None,
+        );
     }
 }

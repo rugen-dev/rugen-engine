@@ -2914,12 +2914,12 @@ impl Host<'_> {
     /// The font slot `font` at `scale` draws with (the Steam Deck variant
     /// of 1:1 text, see [`crate::deck::font_slot`]).
     fn slot(&self, font: i32, scale: f32) -> i32 {
-        let has = |s| self.fonts.contains_key(&s);
-        let ja = crate::lang::font_slot(font, has);
-        if ja != font {
-            return ja;
-        }
-        crate::deck::font_slot(font, scale, has)
+        crate::deck::font_slot(font, scale, |s| self.fonts.contains_key(&s))
+    }
+
+    /// The Japanese face that draws the kana and kanji of a text in `font`.
+    fn ja_slot(&self, font: i32) -> Option<i32> {
+        crate::lang::ja_slot(font, |s| self.fonts.contains_key(&s))
     }
 
     fn texture(&mut self, key: &str) -> Cached {
@@ -3101,10 +3101,15 @@ impl Painter for Host<'_> {
     }
 
     fn text_width(&mut self, font: i32, text: &str, scale: f32) -> f32 {
+        let ja = self.ja_slot(font);
         let font = self.slot(font, scale);
-        self.fonts
-            .get(&font)
-            .map_or(text.len() as f32 * 8.0 * scale, |f| f.width(text, scale))
+        match ja {
+            Some(ja) => crate::sprites::mixed_width(self.fonts, font, ja, text, scale),
+            None => self
+                .fonts
+                .get(&font)
+                .map_or(text.len() as f32 * 8.0 * scale, |f| f.width(text, scale)),
+        }
     }
 
     fn text_height(&mut self, font: i32, scale: f32) -> f32 {
@@ -3146,22 +3151,24 @@ impl Painter for Host<'_> {
         let win = self.r.size();
         let (vw, vh) = viewport(win);
         let k = [win.0 as f32 / vw, win.1 as f32 / vh];
+        let ja = self.ja_slot(font);
         let font = self.slot(font, scale);
-        if let Some(f) = self.fonts.get_mut(&font) {
-            f.snap = Some(k);
-            f.draw_xf(
-                self.r,
-                text,
-                [x, y],
-                bank,
-                align,
-                scale,
-                Self::clip_of(clip),
-                alpha,
-                self.rot.map(|r| (-r.deg, [r.cx, r.cy])),
-            );
-            f.snap = None;
-        }
+        let ja = ja.unwrap_or(font);
+        crate::sprites::mixed_draw(
+            self.fonts,
+            self.r,
+            font,
+            ja,
+            text,
+            [x, y],
+            bank,
+            align,
+            scale,
+            Self::clip_of(clip),
+            alpha,
+            self.rot.map(|r| (-r.deg, [r.cx, r.cy])),
+            Some(k),
+        );
     }
 }
 
