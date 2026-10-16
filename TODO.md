@@ -693,15 +693,27 @@ copyrighted fighters).
   (or a bracket without a host member, for servers on the 0.7.2 proto) have
   no host: no START THE BRACKET / KICK, a CALLED BY THE SERVER plaque, join
   by code from the ONLINE lobby works as today.
-- [ ] **Translations (i18n).** Move every UI string into `motif/lang/en.toml`
-  keyed by id; add `pt-BR`, `es`, `fr`, `it`, `de`, `pl`, `tr`, `id`, `fil`
-  and `ja`. Accented Latin glyphs are in every generated text font (a24f1ef:
-  Latin-1, Latin Extended-A, Romanian, typographic quotes); Japanese needs
-  its own pixel font (kana plus common kanji): DotGothic16 (OFL) rasterises
-  crisply at its 16 px grid (`fontgen --grid 62.5`, 13 px capitals) but
-  lacks Ğ İ Ş and most of Latin Extended-A, so it can only back the
-  Japanese strings. Language picker in INTERFACE,
-  default from the OS locale. Buttons must fit the longest language.
+- [x] **Translations (i18n).** (50f4c31, 74d442f, 4afb89c, b2a79cf, 7096867,
+  6cb2802, de4757b) Every UI string lives in `motif/lang/en.toml` (1061 keys,
+  `[section]` per screen, `common` shared), screens ask with
+  `text = "@section.key"`, Rust with `lang::t()` / `tf()` / `tn()`
+  (`rugen_ui::lang`, English fallback per key, `'static` strings, capitals
+  follow the English source, Turkish İ). `pt-BR`, `es`, `fr`, `it`, `de`,
+  `pl`, `tr`, `id`, `fil`, `ja` ship (terminology from the docs site;
+  machine-written, worth a native pass). LANGUAGE row in OPTIONS ›
+  INTERFACE (AUTO = OS locale via LANG / LC_ALL / Windows LocaleName /
+  AppleLocale, nearest shipped code, else en), `[interface] lang`, applied
+  live; `motif/lang/` is watched like a user theme. Japanese: `rugen-ja` /
+  `rugen-ja2` (DotGothic16, OFL, 16 px grid) cut to the kana and the kanji
+  `ja.toml` uses, `fontN.ja` slots in both themes' `system.def`. Labels
+  wider than their button or sized box shrink (whole scales first), text
+  without spaces wraps by character. `scripts/i18n-strings.py` lists,
+  converts, merges and checks; the `lang` test checks every language file
+  (keys, placeholders, empties) and every key the sources ask for. Classic
+  (flat motif) screens draw through the table too but MUGEN fonts lack
+  accents; fighter / stage / server names, codes, CLI and logs stay English;
+  the docs' bold UI labels are still the English ones. Shots:
+  `~/.cache/rugen-work/i18n/shots/<lang>-<theme>[-deck]-<screen>.png`.
 - [x] **Steam Deck layout.** (6aec258, 13ee138) A 1280x800 profile: controller-first hints,
   bigger text, no hover-only actions, suspend and resume safe.
   `[video] profile = auto|deck|desktop` (detected on a Deck), first launch
