@@ -2299,6 +2299,12 @@ impl UiScreen {
             "open" => match arg {
                 "keys1" | "controls" | "controls1" => Some(Transition::Controls(0)),
                 "keys2" | "controls2" => Some(Transition::Controls(1)),
+                // REGISTER RUGEN:// LINKS: the row's text says DONE / FAILED
+                "links" => {
+                    let _ = crate::link::register();
+                    self.refresh_data(sys);
+                    None
+                }
                 _ => None,
             },
             "tab" => {

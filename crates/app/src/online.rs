@@ -1172,6 +1172,31 @@ impl OnlineScreen {
         Ok(s)
     }
 
+    /// A `rugen://watch/<code>` link: into the official server, then the
+    /// room as a spectator (its consent and account steps as usual; a room
+    /// that is gone leaves the player in the lobby with the reason).
+    pub fn load_watch(
+        motif: &Path,
+        root: &Path,
+        lib: &Library,
+        config: &Config,
+        code: &str,
+    ) -> anyhow::Result<Self> {
+        if let Ok(mut r) = RESUME.lock() {
+            *r = None;
+        }
+        let mut s = Self::load(motif, root, lib, config)?;
+        let server = official::server().to_string();
+        if let Some(i) = s.servers.iter().position(|r| r.official) {
+            s.sel = i;
+        }
+        log::info!("online: link: watch room {code} on {server}");
+        s.pending_action = Some(format!("watch:{}", rugen_proto::room_code::normalize(code)));
+        s.connect(&server);
+        s.refresh();
+        Ok(s)
+    }
+
     // ---- PROFILE: accounts
 
     /// The PROFILE page: every server's account, checked again.
@@ -2527,6 +2552,11 @@ impl OnlineScreen {
                 self.board_fighter = None;
                 self.state = State::Board;
                 self.fetch_board();
+            }
+            // a `rugen://watch/<code>` link: the room, as a spectator
+            _ if a.starts_with("watch:") => {
+                self.password.clear();
+                self.join(a["watch:".len()..].to_string(), true);
             }
             _ => log::warn!("online: unknown hub action {a:?}"),
         }

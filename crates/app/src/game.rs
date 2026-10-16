@@ -123,6 +123,9 @@ pub enum Transition {
     Online,
     /// PROFILE: accounts on the online servers (the ONLINE screen's page).
     Profile,
+    /// A `rugen://watch/<code>` link: WATCH of that room on the official
+    /// server (the ONLINE screen joins it as a spectator).
+    OnlineWatch(String),
     /// The online screen wants the fighter pick (select screen in online mode).
     OnlineSelect,
     /// The online fighter pick came back with this character: the host goes
@@ -1662,6 +1665,23 @@ impl Shell {
                     Ok(o) => Screen::Online(Box::new(o)),
                     Err(e) => {
                         log::error!("profile: {e:#}");
+                        self.transition(Transition::Title);
+                        return;
+                    }
+                };
+            }
+            Transition::OnlineWatch(code) => {
+                let r = OnlineScreen::load_watch(
+                    &self.motif_dir,
+                    &self.lib.root,
+                    &self.lib,
+                    &self.config,
+                    &code,
+                );
+                self.screen = match r {
+                    Ok(o) => Screen::Online(Box::new(o)),
+                    Err(e) => {
+                        log::error!("watch link: {e:#}");
                         self.transition(Transition::Title);
                         return;
                     }
