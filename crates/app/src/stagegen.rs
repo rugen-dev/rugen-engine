@@ -416,7 +416,7 @@ fn stroke(c: &mut Canvas, pts: &[(f32, f32)], w0: f32, w1: f32, col: Rgba, dry: 
     let mut i = 0u32;
     for p in pts.windows(2) {
         let seg = libm::hypotf(p[1].0 - p[0].0, p[1].1 - p[0].1).max(0.001);
-        let steps = (seg / 1.5).ceil() as i32;
+        let steps = libm::ceilf(seg / 1.5) as i32;
         for k in 0..steps {
             let t = k as f32 / steps as f32;
             let u = (done + t * seg) / len.max(0.001);
@@ -436,6 +436,7 @@ fn stroke(c: &mut Canvas, pts: &[(f32, f32)], w0: f32, w1: f32, col: Rgba, dry: 
 
 /// Mountain ridge painted as a wash: ink whose alpha runs from `a_top` at the
 /// ridge to `a_bot` at the bottom, dry-brush edge, paper grain. Tiles sideways.
+#[allow(clippy::too_many_arguments)]
 fn wash_ridge(
     col: Rgba,
     width: i32,
@@ -535,7 +536,7 @@ fn waterfall(frame: i32) -> Canvas {
     for x in x0..x1 {
         let col_seed = hash(x / D, 0, 61);
         for y in 0..h {
-            let phase = ((y + frame * 5 * D) / (3 * D)) as i32;
+            let phase = (y + frame * 5 * D) / (3 * D);
             let on = hash(x / D, phase, 62) > 0.4 || col_seed > 0.8;
             let a = if on { 0.95 } else { 0.55 };
             c.put(x, y, with_alpha(PAPER, a));
@@ -1828,7 +1829,8 @@ fn street() -> Canvas {
             let rx = r as f32 * 1.6 * D as f32;
             let ry = r as f32 * 0.45 * D as f32;
             for yy in (-ry) as i32..=(ry) as i32 {
-                let half = rx * libm::sqrtf((1.0 - (yy as f32 / ry.max(1.0)).powi(2)).max(0.0));
+                let yn = yy as f32 / ry.max(1.0);
+                let half = rx * libm::sqrtf((1.0 - yn * yn).max(0.0));
                 c.rect(
                     (cx - half) as i32,
                     6 * D + yy,
