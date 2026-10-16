@@ -197,7 +197,10 @@ group = "tabs"
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 222
+  align = "center"
   font = 1
   scale = 2
   bank = 9
@@ -207,7 +210,10 @@ group = "tabs"
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 222
+  align = "center"
   font = 1
   scale = 2
   bank = 11
@@ -216,7 +222,10 @@ group = "tabs"
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 222
+  align = "center"
   font = 1
   scale = 2
   bank = 11

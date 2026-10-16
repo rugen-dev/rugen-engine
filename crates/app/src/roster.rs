@@ -1233,11 +1233,11 @@ impl Roster {
             "ready": self.all_picked(),
             "dual": self.dual(),
             "query": self.query,
-            "sort": match self.sort {
-                Sort::Name => "NAME",
-                Sort::Author => "AUTHOR",
-                Sort::Recent => "RECENT",
-            },
+            "sort": crate::lang::t(match self.sort {
+                Sort::Name => "select.sort_name",
+                Sort::Author => "select.sort_author",
+                Sort::Recent => "select.sort_recent",
+            }),
             "profile": serde_json::to_value(profile).unwrap_or(Value::Null),
             "rating": profile.rating_text(),
         })

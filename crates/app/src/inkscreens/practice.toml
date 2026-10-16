@@ -98,6 +98,8 @@ enter_time = 16
     text = "{item.title}"
     x = 24
     y = 26
+    # up to the NEW tag: a long translation draws at scale 2
+    w = 262
     font = 1
     scale = 3
     bank = 9

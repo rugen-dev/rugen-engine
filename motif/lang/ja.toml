@@ -884,6 +884,9 @@ quote_4 = "勝利は墨で記される！"
 winner = "WINNER"
 
 [select]
+sort_name = "名前"
+sort_author = "作者"
+sort_recent = "最近"
 arcade = "アーケード"
 arena = "アリーナ"
 blocked_by_the_official_server = "公式サーバーが使用禁止"

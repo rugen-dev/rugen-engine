@@ -1707,7 +1707,32 @@ fn save_style_button(
     h: i32,
     extra: &str,
     hot: &str,
+    inset_right: i32,
 ) -> String {
+    // the label's own box: centred in the button, or left of the keycap
+    // (`inset_right`) so a long translation shrinks rather than overlapping it
+    let text_box = if inset_right > 0 {
+        // the button's Deck width (`w = N` in `extra`'s deck table) sizes the box there too
+        let deck_w = extra
+            .split_once("deck = {")
+            .and_then(|(_, t)| t.split_once("w = "))
+            .and_then(|(_, t)| {
+                t.trim_start()
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+                    .parse::<i32>()
+                    .ok()
+            })
+            .map(|dw| format!("  deck = {{ w = {} }}\n", dw - 8 - inset_right))
+            .unwrap_or_default();
+        format!(
+            "  anchor = \"left\"\n  x = 8\n  w = {}\n  align = \"center\"\n{deck_w}",
+            w - 8 - inset_right
+        )
+    } else {
+        "  anchor = \"center\"\n".to_string()
+    };
     let hot_fill = if hot.is_empty() {
         String::new()
     } else {
@@ -1723,7 +1748,7 @@ fn save_style_button(
     };
     let text = |bank: u32, visible: &str| {
         format!(
-            "\n  [[node.children]]\n  kind = \"text\"\n  text = \"{label}\"\n  anchor = \"center\"\n  font = {}\n  scale = {}\n  bank = {bank}\n  when = \"blur\"\n{visible}",
+            "\n  [[node.children]]\n  kind = \"text\"\n  text = \"{label}\"\n{text_box}  font = {}\n  scale = {}\n  bank = {bank}\n  when = \"blur\"\n{visible}",
             p.big_font, p.big_scale
         )
     };
@@ -1777,8 +1802,7 @@ on_press = "{press}"
 {blur_text}  [[node.children]]
   kind = "text"
   text = "{label}"
-  anchor = "center"
-  font = {bf}
+{text_box}  font = {bf}
   scale = {bs}
   bank = {bl}
   when = "focus"
@@ -1830,6 +1854,7 @@ fn save_button(
             deck_line(deck)
         ),
         "save.unsaved",
+        60,
     );
     b.push_str(&format!(
         r#"
@@ -1865,7 +1890,7 @@ kind = "text"
 x = {x}
 y = {ty}
 {deck}text = "@options.all_saved"
-font = {sf}
+{status_w}font = {sf}
 bank = {sl}
 visible = "save.clean"
 
@@ -1899,6 +1924,9 @@ visible = "save.unsaved"
   bank = {sl}
 "#,
         ty = y + 10,
+        // the header's status sits between the SAVE button and DEVICE: a
+        // long translation shrinks to that room
+        status_w = if short { "w = 150\n" } else { "" },
         w = if short { 132 } else { 220 },
         unsaved = if short {
             "@options.unsaved"
@@ -2053,6 +2081,7 @@ top = true
             56,
             "visible = \"save.confirm\"\nmodal = true\ntop = true\ngroup = \"dialog\"\n",
             "",
+            0,
         );
         out.push_str(&b);
     }

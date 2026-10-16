@@ -635,8 +635,6 @@ fn team_exit(mode: Mode, motif: &Path) -> Transition {
     }
 }
 
-/// `1 ROOM`, `2 ROOMS`: a count with its noun in the right number.
-
 /// State of the options tabs and the controls page.
 #[derive(Default)]
 struct SettingsPage {

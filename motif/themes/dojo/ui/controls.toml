@@ -143,7 +143,11 @@ deck = { w = 190 }
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 142
+  align = "center"
+  deck = { w = 122 }
   font = 6
   scale = 1
   bank = 12
@@ -153,7 +157,11 @@ deck = { w = 190 }
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 142
+  align = "center"
+  deck = { w = 122 }
   font = 6
   scale = 1
   bank = 14
@@ -162,7 +170,11 @@ deck = { w = 190 }
   [[node.children]]
   kind = "text"
   text = "@options.save"
-  anchor = "center"
+  anchor = "left"
+  x = 8
+  w = 142
+  align = "center"
+  deck = { w = 122 }
   font = 6
   scale = 1
   bank = 14
@@ -184,6 +196,7 @@ x = 866
 y = 36
 deck = { x = 842 }
 text = "@options.all_saved"
+w = 150
 font = 2
 bank = 14
 visible = "save.clean"

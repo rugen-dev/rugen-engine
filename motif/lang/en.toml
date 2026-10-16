@@ -885,6 +885,9 @@ quote_4 = "Victory is written in ink!"
 winner = "WINNER"
 
 [select]
+sort_name = "NAME"
+sort_author = "AUTHOR"
+sort_recent = "RECENT"
 arcade = "Arcade"
 arena = "Arena"
 blocked_by_the_official_server = "BLOCKED BY THE OFFICIAL SERVER"
