@@ -458,40 +458,49 @@ const INK: Rgba = [17, 17, 17, 255];
 const RED: Rgba = [224, 32, 32, 255];
 const WOOD: Rgba = [204, 192, 168, 255];
 
-/// Sky: paper, screentone getting denser toward the top.
-fn ink_sky() -> Canvas {
-    let (w, h) = (320 * D, 560 * D);
-    let mut c = Canvas::new(w as u32, h as u32);
-    c.rect(0, 0, w, h, PAPER);
-    tone(&mut c, 6 * D, [17, 17, 17, 70], |_, y| {
-        (1.0 - y as f32 / (h as f32 * 0.8)).clamp(0.0, 1.0) * 0.55
-    });
-    c
-}
-
-/// Red sun with an ink ring (single, not tiled).
-fn ink_sun() -> Canvas {
-    let r = 40.0 * D as f32;
-    let s = (2.0 * r + 8.0) as u32;
-    let mut c = Canvas::new(s, s);
-    let m = s as f32 / 2.0;
-    disc(&mut c, m, m, r, INK);
-    disc(&mut c, m, m, r - 3.0 * D as f32, RED);
-    // brush-dry streaks across the sun
-    for i in 0..5 {
-        let y = (m - r * 0.5 + i as f32 * r * 0.25) as i32;
-        let len = (r * (1.2 - 0.15 * i as f32)) as i32;
-        c.rect(m as i32 - len / 2, y, len, D, with_alpha(PAPER, 0.35));
+/// A brush stroke along `pts` (canvas px): discs whose radius runs from
+/// `w0` to `w1`, with a dry edge (random gaps) past `dry` of the length.
+fn stroke(c: &mut Canvas, pts: &[(f32, f32)], w0: f32, w1: f32, col: Rgba, dry: f32, seed: u32) {
+    let mut len = 0.0;
+    for p in pts.windows(2) {
+        len += libm::hypotf(p[1].0 - p[0].0, p[1].1 - p[0].1);
     }
-    c
+    let mut done = 0.0;
+    let mut i = 0u32;
+    for p in pts.windows(2) {
+        let seg = libm::hypotf(p[1].0 - p[0].0, p[1].1 - p[0].1).max(0.001);
+        let steps = (seg / 1.5).ceil() as i32;
+        for k in 0..steps {
+            let t = k as f32 / steps as f32;
+            let u = (done + t * seg) / len.max(0.001);
+            let x = p[0].0 + (p[1].0 - p[0].0) * t;
+            let y = p[0].1 + (p[1].1 - p[0].1) * t;
+            let r = w0 + (w1 - w0) * u;
+            let wob = 1.0 + (hash(i as i32, 0, seed) - 0.5) * 0.5;
+            i += 1;
+            if u > dry && hash(i as i32, 1, seed) > 0.86 {
+                continue;
+            }
+            disc(c, x, y, (r * wob).max(0.6), col);
+        }
+        done += seg;
+    }
 }
 
-/// Mountain range silhouette; `far` ranges are screentoned grey.
-fn ink_mountains(width: i32, height: i32, seed: u32, far: bool) -> Canvas {
+/// Mountain ridge painted as a wash: ink whose alpha runs from `a_top` at the
+/// ridge to `a_bot` at the bottom, dry-brush edge, paper grain. Tiles sideways.
+fn wash_ridge(
+    width: i32,
+    height: i32,
+    seed: u32,
+    a_top: f32,
+    a_bot: f32,
+    peaks: i32,
+    dry: bool,
+) -> Canvas {
     let (w, h) = (width * D, height * D);
     let pad = 40 * D;
     let mut wide = Canvas::new((w + 2 * pad) as u32, h as u32);
-    let peaks = 5;
     let mut ridge = vec![0f32; (w + 2 * pad) as usize];
     for (x, r) in ridge.iter_mut().enumerate() {
         let u = (x as f32 - pad as f32) / w as f32;
@@ -500,38 +509,401 @@ fn ink_mountains(width: i32, height: i32, seed: u32, far: bool) -> Canvas {
             let ph = hash(k, 0, seed) * std::f32::consts::TAU;
             v += libm::sinf(u * std::f32::consts::TAU * (peaks * k) as f32 / 2.0 + ph) / k as f32;
         }
-        let jag = (hash(x as i32 / D, 1, seed) - 0.5) * 3.0 * D as f32;
-        *r = h as f32 * (0.45 - 0.22 * v) + jag;
+        let jag = (hash(x as i32 / D, 1, seed) - 0.5) * 2.0 * D as f32;
+        *r = h as f32 * (0.42 - 0.24 * v) + jag;
     }
     for x in 0..wide.w as i32 {
         let top = ridge[x as usize].max(2.0) as i32;
         for y in top..h {
-            let col = if far {
-                if ((x / D) % 3 == 0 && (y / D) % 3 == 0) || y < top + D {
-                    INK
-                } else {
-                    [0; 4]
+            let t = ((y - top) as f32 / (h - top).max(1) as f32).clamp(0.0, 1.0);
+            let mut a = a_top + (a_bot - a_top) * t;
+            let edge = (y - top) as f32 / (5.0 * D as f32);
+            if dry {
+                // dry edge: gaps in the first few rows under the ridge
+                if edge < 1.0 && hash(x, y, seed ^ 0x55) > 0.45 + edge * 0.5 {
+                    continue;
                 }
-            } else if y < top + 2 * D {
-                INK
-            } else {
-                // inside: solid ink with paper hatching near the ridge (snow light)
-                let near = (y - top) as f32 / (30.0 * D as f32);
-                if near < 1.0 && (x + y) % (4 * D) < D && hash(x, y, seed) > near {
-                    PAPER2
-                } else {
-                    INK
-                }
-            };
-            if col[3] > 0 {
-                wide.put(x, y, col);
+            } else if edge < 1.0 {
+                // wet edge: the wash just ramps in
+                a *= 0.4 + 0.6 * edge;
             }
+            // paper grain
+            a *= 0.9 + 0.2 * hash(x / D, y / D, seed ^ 0x99);
+            // a darker brush line right at the ridge
+            if y < top + D {
+                a = (a + 0.18).min(1.0);
+            }
+            wide.put(x, y, with_alpha(INK, a));
         }
     }
     wrap_x(&Canvas::new(w as u32, h as u32), &wide, pad)
 }
 
-/// Dojo veranda: two thick ink posts, beam, hanging rope and a red paper charm.
+/// A mist band: paper, strongest in the middle rows, ragged soft edges. Tiles.
+fn mist(width: i32, height: i32, seed: u32) -> Canvas {
+    let (w, h) = (width * D, height * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    for y in 0..h {
+        let t = y as f32 / h as f32;
+        let core = (1.0 - (t * 2.0 - 1.0).abs()).clamp(0.0, 1.0);
+        for x in 0..w {
+            // long horizontal streaks of varying strength
+            let u = (x as f32 / w as f32) * std::f32::consts::TAU;
+            let streak = 0.75 + 0.25 * libm::sinf(u * 3.0 + hash(y / (6 * D), 0, seed) * 6.0);
+            let a = core * core * streak * (0.85 + 0.15 * hash(x / D, y / D, seed));
+            if a > 0.03 {
+                c.put(x, y, with_alpha(PAPER, a.min(1.0)));
+            }
+        }
+    }
+    c
+}
+
+/// Waterfall frame: a dark cleft in the rock with paper streaks sliding down
+/// (offset by `frame`), spray at the foot.
+fn waterfall(frame: i32) -> Canvas {
+    let (w, h) = (40 * D, 80 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let (x0, x1) = (13 * D, 27 * D);
+    // the rock on both sides: ink wash, darker toward the water
+    for y in 0..h {
+        for x in 0..w {
+            let dist = if x < x0 {
+                (x0 - x) as f32
+            } else if x >= x1 {
+                (x - x1 + 1) as f32
+            } else {
+                0.0
+            };
+            if dist == 0.0 {
+                continue;
+            }
+            let a = (0.85 - dist / (13.0 * D as f32) * 0.85).max(0.0)
+                * (0.85 + 0.3 * hash(x / D, y / D, 60));
+            c.put(x, y, with_alpha(INK, a));
+        }
+    }
+    // the water: paper streaks
+    for x in x0..x1 {
+        let col_seed = hash(x / D, 0, 61);
+        for y in 0..h {
+            let phase = ((y + frame * 5 * D) / (3 * D)) as i32;
+            let on = hash(x / D, phase, 62) > 0.4 || col_seed > 0.8;
+            let a = if on { 0.95 } else { 0.55 };
+            c.put(x, y, with_alpha(PAPER, a));
+        }
+    }
+    // spray
+    for i in 0..16 {
+        let x = x0 as f32 - 4.0 * D as f32 + hash(i, frame, 63) * (x1 - x0 + 8 * D) as f32;
+        let y = h as f32 - 6.0 * D as f32 - hash(i, frame + 7, 64) * 10.0 * D as f32;
+        disc(
+            &mut c,
+            x,
+            y,
+            D as f32 * (0.7 + hash(i, 3, 65)),
+            with_alpha(PAPER, 0.85),
+        );
+    }
+    c
+}
+
+/// A pine leaning in from the left: brush trunk, branches, needle clusters.
+fn pine() -> Canvas {
+    let (w, h) = (300 * D, 230 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let d = D as f32;
+    // trunk from the bottom-left corner, bending right
+    stroke(
+        &mut c,
+        &[
+            (10.0 * d, h as f32),
+            (40.0 * d, 150.0 * d),
+            (90.0 * d, 95.0 * d),
+            (150.0 * d, 70.0 * d),
+        ],
+        7.0 * d,
+        2.5 * d,
+        INK,
+        2.0,
+        71,
+    );
+    // branches
+    stroke(
+        &mut c,
+        &[
+            (70.0 * d, 112.0 * d),
+            (120.0 * d, 100.0 * d),
+            (190.0 * d, 104.0 * d),
+        ],
+        3.5 * d,
+        1.2 * d,
+        INK,
+        2.0,
+        72,
+    );
+    stroke(
+        &mut c,
+        &[
+            (50.0 * d, 135.0 * d),
+            (30.0 * d, 120.0 * d),
+            (4.0 * d, 118.0 * d),
+        ],
+        3.0 * d,
+        1.0 * d,
+        INK,
+        2.0,
+        73,
+    );
+    stroke(
+        &mut c,
+        &[
+            (150.0 * d, 70.0 * d),
+            (200.0 * d, 58.0 * d),
+            (250.0 * d, 62.0 * d),
+        ],
+        2.5 * d,
+        1.0 * d,
+        INK,
+        2.0,
+        74,
+    );
+    // needle pads: three stacked flat ellipses per cluster, ragged edges,
+    // a few needles hanging from the underside
+    let clusters = [
+        (190.0, 94.0, 46.0),
+        (118.0, 90.0, 36.0),
+        (250.0, 54.0, 40.0),
+        (160.0, 58.0, 30.0),
+        (16.0, 110.0, 28.0),
+        (62.0, 102.0, 24.0),
+    ];
+    for (i, (cx, cy, rx)) in clusters.iter().enumerate() {
+        let (cx, cy, rx) = (cx * d, cy * d, rx * d);
+        for layer in 0..3 {
+            let ly = cy - 4.0 * d + layer as f32 * 4.0 * d;
+            let lrx = rx * (0.7 + 0.15 * layer as f32);
+            let ry = 3.2 * d;
+            for y in (ly - ry * 1.6) as i32..(ly + ry * 1.6) as i32 {
+                for x in (cx - lrx * 1.1) as i32..(cx + lrx * 1.1) as i32 {
+                    let (dx, dy) = ((x as f32 - cx) / lrx, (y as f32 - ly) / ry);
+                    let r = dx * dx + dy * dy;
+                    let n = hash(x / D, y / D, 80 + i as u32 * 3 + layer as u32);
+                    if r < 1.0 && (r < 0.6 || n > r - 0.4) {
+                        c.put(x, y, with_alpha(INK, 0.9));
+                    } else if r < 1.5 && n > 0.88 {
+                        c.put(x, y, with_alpha(INK, 0.6));
+                    }
+                }
+            }
+        }
+        for k in 0..7 {
+            let u = (k as f32 + 0.5) / 7.0 * 2.0 - 1.0;
+            let (sx, sy) = (cx + u * rx * 0.85, cy + 7.0 * d);
+            stroke(
+                &mut c,
+                &[
+                    (sx, sy),
+                    (
+                        sx + u * 2.0 * d,
+                        sy + (5.0 + 3.0 * hash(k, i as i32, 95)) * d,
+                    ),
+                ],
+                0.9 * d,
+                0.3 * d,
+                INK,
+                0.0,
+                90 + k as u32,
+            );
+        }
+    }
+    c
+}
+
+/// Bamboo stand (three stalks, leaves swaying by `frame`).
+fn bamboo(frame: i32) -> Canvas {
+    let (w, h) = (90 * D, 200 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let d = D as f32;
+    let sway = [0.0f32, 1.6, -1.2][frame.rem_euclid(3) as usize] * d;
+    let stalks = [(22.0, 3.2, 0.0), (48.0, 2.6, 24.0), (72.0, 2.1, 50.0)];
+    for (i, (x, wdt, top)) in stalks.iter().enumerate() {
+        let x = x * d;
+        stroke(
+            &mut c,
+            &[(x, h as f32), (x + sway * 0.4, top * d)],
+            wdt * d,
+            wdt * d * 0.8,
+            INK,
+            2.0,
+            100 + i as u32,
+        );
+        // nodes: paper lines
+        let mut y = h as f32 - 26.0 * d;
+        while y > top * d + 10.0 * d {
+            c.rect(
+                (x - wdt * d) as i32,
+                y as i32,
+                (wdt * 2.0 * d) as i32,
+                D,
+                with_alpha(PAPER, 0.85),
+            );
+            y -= 26.0 * d;
+        }
+        // leaves: pairs of thin tapering strokes from the nodes
+        let mut y = h as f32 - 52.0 * d;
+        let mut k: i32 = 0;
+        while y > top * d + 4.0 * d {
+            let dir = if (k as usize + i) % 2 == 0 { -1.0 } else { 1.0 };
+            let lx = x + sway;
+            for leaf in 0..3i32 {
+                let ang = -0.25 + leaf as f32 * 0.35 + hash(k, leaf, 110 + i as u32) * 0.3;
+                let len = (12.0 + hash(k, leaf + 3, 111) * 8.0) * d;
+                let ex = lx + dir * libm::cosf(ang) * len;
+                let ey = y - libm::sinf(ang) * len * 0.6 + 2.0 * d;
+                stroke(
+                    &mut c,
+                    &[(lx, y), (ex, ey)],
+                    1.8 * d,
+                    0.3 * d,
+                    INK,
+                    0.0,
+                    120 + k as u32 * 3 + leaf as u32,
+                );
+            }
+            y -= 40.0 * d;
+            k += 1;
+        }
+    }
+    c
+}
+
+/// A crane in flight: a long neck, trailing legs, two curved wing strokes.
+fn crane() -> Canvas {
+    let (w, h) = (22 * D, 14 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let d = D as f32;
+    // body + neck + head
+    stroke(
+        &mut c,
+        &[
+            (4.0 * d, 8.0 * d),
+            (11.0 * d, 7.5 * d),
+            (17.0 * d, 6.0 * d),
+            (20.5 * d, 5.0 * d),
+        ],
+        1.3 * d,
+        0.45 * d,
+        INK,
+        0.0,
+        130,
+    );
+    // legs trailing
+    stroke(
+        &mut c,
+        &[(5.0 * d, 8.0 * d), (0.5 * d, 9.5 * d)],
+        0.5 * d,
+        0.3 * d,
+        INK,
+        0.0,
+        133,
+    );
+    // wings: up and down curves from the shoulder
+    stroke(
+        &mut c,
+        &[(10.0 * d, 7.5 * d), (8.0 * d, 4.0 * d), (5.0 * d, 1.0 * d)],
+        1.5 * d,
+        0.4 * d,
+        INK,
+        0.0,
+        131,
+    );
+    stroke(
+        &mut c,
+        &[
+            (10.5 * d, 8.0 * d),
+            (12.0 * d, 11.0 * d),
+            (14.5 * d, 13.5 * d),
+        ],
+        1.4 * d,
+        0.4 * d,
+        INK,
+        0.0,
+        132,
+    );
+    c.rect(20 * D, 4 * D, 2 * D, D, RED);
+    c
+}
+
+/// The artist's red seal, tilted, with a paper glyph.
+fn seal() -> Canvas {
+    let size = 30 * D;
+    let mut c = Canvas::new(size as u32, size as u32);
+    let (cx, cy) = (size as f32 / 2.0, size as f32 / 2.0);
+    let ang = -0.1f32;
+    let (ca, sa) = (libm::cosf(ang), libm::sinf(ang));
+    let half = 11.0 * D as f32;
+    for y in 0..size {
+        for x in 0..size {
+            let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+            let (rx, ry) = (dx * ca + dy * sa, -dx * sa + dy * ca);
+            if rx.abs() <= half && ry.abs() <= half {
+                // worn edge
+                let edge = (half - rx.abs()).min(half - ry.abs());
+                if edge < 1.5 * D as f32 && hash(x, y, 140) > 0.6 {
+                    continue;
+                }
+                c.put(x, y, RED);
+                // the glyph: a paper grid of strokes (a made-up kanji)
+                let (gx, gy) = (rx / half, ry / half);
+                let bar = (gy.abs() < 0.08)
+                    || ((gy + 0.55).abs() < 0.08 && gx.abs() < 0.7)
+                    || ((gy - 0.55).abs() < 0.08 && gx.abs() < 0.7);
+                let post = gx.abs() < 0.08 && gy.abs() < 0.8;
+                if bar && gx.abs() < 0.8 || post {
+                    c.put(x, y, PAPER);
+                }
+            }
+        }
+    }
+    c
+}
+
+/// Ink drops drifting down (tiled both ways, velocity on the layer).
+fn drops() -> Canvas {
+    let (w, h) = (400 * D, 300 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    for i in 0..14 {
+        let x = hash(i, 0, 150) * w as f32;
+        let y = hash(i, 1, 150) * h as f32;
+        let r = (0.5 + hash(i, 2, 150) * 0.6) * D as f32;
+        disc(
+            &mut c,
+            x,
+            y,
+            r,
+            with_alpha(INK, 0.5 + 0.3 * hash(i, 3, 150)),
+        );
+    }
+    c
+}
+
+/// Sky: paper with a light wash at the very top (no dots).
+fn ink_sky() -> Canvas {
+    let (w, h) = (320 * D, 560 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.rect(0, 0, w, h, PAPER);
+    for y in 0..(220 * D) {
+        let t = 1.0 - y as f32 / (220.0 * D as f32);
+        for x in 0..w {
+            let a = t * t * 0.16 * (0.85 + 0.3 * hash(x / (3 * D), y / (3 * D), 160));
+            c.put(x, y, with_alpha(INK, a));
+        }
+    }
+    c
+}
+
+/// Dojo veranda: two thick ink posts, beam with calligraphy, hanging rope and a red paper charm.
 fn ink_dojo_frame() -> Canvas {
     let (w, h) = (200 * D, 330 * D);
     let mut c = Canvas::new(w as u32, h as u32);
@@ -547,7 +919,7 @@ fn ink_dojo_frame() -> Canvas {
         }
     }
     hline(&mut c, beam_y + 18 * D, 0, w, 2 * D, with_alpha(INK, 0.6));
-    // posts every 200 units, one per tile
+    // post, one per tile
     let post_x = 20 * D;
     let pw = 16 * D;
     c.rect(post_x, beam_y, pw, h - beam_y, INK);
@@ -559,7 +931,15 @@ fn ink_dojo_frame() -> Canvas {
             c.rect(post_x + 4 * D, y, D, 1, with_alpha(WOOD, 0.4));
         }
     }
-    // post foot block
+    // dry edge on the post
+    for y in beam_y..h {
+        if hash(y, 5, 12) > 0.7 {
+            c.put_raw(post_x + pw - 1, y, [0; 4]);
+        }
+        if hash(y, 6, 12) > 0.8 {
+            c.put_raw(post_x, y, [0; 4]);
+        }
+    }
     c.rect(post_x - 4 * D, h - 12 * D, pw + 8 * D, 12 * D, INK);
     // shimenawa rope sagging from the beam with paper zigzags
     let (x0, x1) = (post_x + pw, w + post_x);
@@ -569,10 +949,12 @@ fn ink_dojo_frame() -> Canvas {
         let y = beam_y + 22 * D + sag as i32;
         c.rect(x.min(w - 1), y, 1, 3 * D, INK);
         if (x - x0) % (36 * D) == 18 * D {
+            // shide: zigzag paper strips, inked outline so they read on paper
             for k in 0..4 {
                 let zx = x + if k % 2 == 0 { 0 } else { 4 * D };
-                c.rect(zx, y + 3 * D + k * 5 * D, 4 * D, 5 * D, PAPER);
-                c.rect(zx, y + 3 * D + k * 5 * D, 4 * D, D, INK);
+                let zy = y + 3 * D + k * 5 * D;
+                c.rect(zx - 1, zy, 4 * D + 2, 5 * D + 1, INK);
+                c.rect(zx, zy + D, 4 * D, 4 * D, PAPER);
             }
         }
     }
@@ -583,7 +965,7 @@ fn ink_dojo_frame() -> Canvas {
     c
 }
 
-/// Wooden deck: plank seams in perspective, ink hatching toward the camera.
+/// Wooden deck: plank seams in perspective, ink hatching toward the camera, red trim.
 fn ink_floor() -> Canvas {
     let (w, h) = (200 * D, 440 * D);
     let mut c = Canvas::new(w as u32, h as u32);
@@ -595,13 +977,11 @@ fn ink_floor() -> Canvas {
         let y0 = y as i32;
         let y1 = (y + step) as i32;
         hline(&mut c, y0, 0, w, D.max((step / 10.0) as i32), INK);
-        // staggered vertical seams
         let seam = 50 * D;
         let off = if row % 2 == 0 { 0 } else { seam / 2 };
         for sx in (off..w).step_by(seam as usize) {
             vline(&mut c, sx, y0, y1, D, INK);
         }
-        // grain hatching, denser in front
         let dens = (y / h as f32).min(1.0);
         for gy in y0 + D..y1 {
             for gx in 0..w {
@@ -614,12 +994,14 @@ fn ink_floor() -> Canvas {
         step *= 1.28;
         row += 1;
     }
-    // heavy ground stroke
+    // heavy ground stroke and the red trim under it
     c.rect(0, 0, w, 3 * D, INK);
+    c.rect(0, 3 * D, w, D, RED);
     c
 }
 
 const INK_DEF: &str = r#"; rugen built-in stage, generated by `rugen stage-gen`
+; Sumi-e: washes and brush strokes on paper, mist between the ridges.
 [Info]
 name = "Ink Dojo"
 displayname = "Ink Dojo"
@@ -680,6 +1062,20 @@ spr = ink_dojo.sff
 debugbg = 0
 bgclearcolor = 243,239,228
 
+; waterfall streaks
+[Begin Action 30]
+4,0, 0,0, 5
+4,1, 0,0, 5
+4,2, 0,0, 5
+4,3, 0,0, 5
+
+; bamboo sway
+[Begin Action 40]
+10,0, 0,0, 50
+10,1, 0,0, 50
+10,0, 0,0, 50
+10,2, 0,0, 50
+
 [BG sky]
 type = normal
 spriteno = 0, 0
@@ -688,32 +1084,98 @@ delta = .1, .1
 tile = 1, 0
 scalestart = .5, .5
 
-[BG sun]
+[BG seal]
 type = normal
 spriteno = 1, 0
-start = 110, 92
-delta = .12, .12
+start = 118, 70
+delta = .15, .15
 scalestart = .5, .5
 
-[BG far range]
+[BG crane]
 type = normal
 spriteno = 2, 0
-start = 0, 118
-delta = .25, .25
+start = -300, 56
+delta = .2, .2
+velocity = 0.45, 0
+tile = 1, 0
+tilespacing = 2600, 0
+scalestart = .5, .5
+
+[BG far ridge]
+type = normal
+spriteno = 3, 0
+start = 0, 66
+delta = .3, .3
 tile = 1, 0
 scalestart = .5, .5
 
-[BG near range]
+[BG mist far]
 type = normal
-spriteno = 3, 0
-start = 0, 136
-delta = .45, .45
+spriteno = 5, 0
+start = 0, 112
+delta = .38, .38
+velocity = 0.1, 0
 tile = 1, 0
+scalestart = .5, .5
+
+[BG mid ridge]
+type = normal
+spriteno = 6, 0
+start = 0, 108
+delta = .5, .5
+tile = 1, 0
+scalestart = .5, .5
+
+[BG waterfall]
+type = anim
+actionno = 30
+start = 170, 114
+delta = .5, .5
+scalestart = .5, .5
+
+[BG mist near]
+type = normal
+spriteno = 7, 0
+start = 0, 150
+delta = .62, .62
+velocity = 0.18, 0
+tile = 1, 0
+scalestart = .5, .5
+
+[BG near ridge]
+type = normal
+spriteno = 8, 0
+start = 0, 144
+delta = .75, .75
+tile = 1, 0
+scalestart = .5, .5
+
+[BG pine]
+type = normal
+spriteno = 9, 0
+start = -470, 190
+delta = .9, .9
+scalestart = .5, .5
+
+[BG bamboo]
+type = anim
+actionno = 40
+start = 500, 190
+delta = .9, .9
+scalestart = .5, .5
+
+[BG drops]
+type = normal
+spriteno = 11, 0
+start = 0, -200
+delta = .85, .85
+velocity = 0.06, 0.3
+tile = 1, 1
 scalestart = .5, .5
 
 [BG dojo]
 type = normal
-spriteno = 4, 0
+spriteno = 12, 0
 start = 0, 4
 delta = .85, .85
 tile = 1, 0
@@ -721,7 +1183,7 @@ scalestart = .5, .5
 
 [BG deck]
 type = normal
-spriteno = 5, 0
+spriteno = 13, 0
 start = 0, 188
 delta = 1, 1
 tile = 1, 0
@@ -729,6 +1191,66 @@ scalestart = .5, .5
 "#;
 
 // ---------------------------------------------------------------- ink arena
+
+/// Red sun with an ink ring (single, not tiled): the arena's old sky, kept until its remake.
+fn ink_sun() -> Canvas {
+    let r = 40.0 * D as f32;
+    let s = (2.0 * r + 8.0) as u32;
+    let mut c = Canvas::new(s, s);
+    let m = s as f32 / 2.0;
+    disc(&mut c, m, m, r, INK);
+    disc(&mut c, m, m, r - 3.0 * D as f32, RED);
+    for i in 0..5 {
+        let y = (m - r * 0.5 + i as f32 * r * 0.25) as i32;
+        let len = (r * (1.2 - 0.15 * i as f32)) as i32;
+        c.rect(m as i32 - len / 2, y, len, D, with_alpha(PAPER, 0.35));
+    }
+    c
+}
+
+/// Mountain range silhouette; `far` ranges are screentoned grey (arena, until its remake).
+fn ink_mountains(width: i32, height: i32, seed: u32, far: bool) -> Canvas {
+    let (w, h) = (width * D, height * D);
+    let pad = 40 * D;
+    let mut wide = Canvas::new((w + 2 * pad) as u32, h as u32);
+    let peaks = 5;
+    let mut ridge = vec![0f32; (w + 2 * pad) as usize];
+    for (x, r) in ridge.iter_mut().enumerate() {
+        let u = (x as f32 - pad as f32) / w as f32;
+        let mut v = 0.0;
+        for k in 1..=3 {
+            let ph = hash(k, 0, seed) * std::f32::consts::TAU;
+            v += libm::sinf(u * std::f32::consts::TAU * (peaks * k) as f32 / 2.0 + ph) / k as f32;
+        }
+        let jag = (hash(x as i32 / D, 1, seed) - 0.5) * 3.0 * D as f32;
+        *r = h as f32 * (0.45 - 0.22 * v) + jag;
+    }
+    for x in 0..wide.w as i32 {
+        let top = ridge[x as usize].max(2.0) as i32;
+        for y in top..h {
+            let col = if far {
+                if ((x / D) % 3 == 0 && (y / D) % 3 == 0) || y < top + D {
+                    INK
+                } else {
+                    [0; 4]
+                }
+            } else if y < top + 2 * D {
+                INK
+            } else {
+                let near = (y - top) as f32 / (30.0 * D as f32);
+                if near < 1.0 && (x + y) % (4 * D) < D && hash(x, y, seed) > near {
+                    PAPER2
+                } else {
+                    INK
+                }
+            };
+            if col[3] > 0 {
+                wide.put(x, y, col);
+            }
+        }
+    }
+    wrap_x(&Canvas::new(w as u32, h as u32), &wide, pad)
+}
 
 /// Mist under the island: paper with screentone thickening toward the bottom.
 fn ink_abyss() -> Canvas {
@@ -1138,22 +1660,41 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     let dir = out.join("ink_dojo");
     std::fs::create_dir_all(&dir)?;
     let mut s = sff();
-    let layers = [
-        ink_sky(),
-        ink_sun(),
-        ink_mountains(360, 90, 21, true),
-        ink_mountains(300, 70, 4, false),
-        ink_dojo_frame(),
-        ink_floor(),
-    ];
-    for (i, c) in layers.iter().enumerate() {
-        let axis = if i == 1 {
-            [(c.w / 2) as i16, (c.h / 2) as i16]
-        } else {
-            [(c.w / 2) as i16, 0]
-        };
-        to_sprite(&mut s, (i as u16, 0), c, axis);
+    let top = |c: &Canvas| [(c.w / 2) as i16, 0];
+    let bottom = |c: &Canvas| [(c.w / 2) as i16, c.h as i16];
+    let mid = |c: &Canvas| [(c.w / 2) as i16, (c.h / 2) as i16];
+    let sky = ink_sky();
+    to_sprite(&mut s, (0, 0), &sky, top(&sky));
+    let sl = seal();
+    to_sprite(&mut s, (1, 0), &sl, mid(&sl));
+    let cr = crane();
+    to_sprite(&mut s, (2, 0), &cr, mid(&cr));
+    let far = wash_ridge(360, 90, 21, 0.4, 0.04, 5, false);
+    to_sprite(&mut s, (3, 0), &far, top(&far));
+    for f in 0..4 {
+        let wf = waterfall(f);
+        to_sprite(&mut s, (4, f as u16), &wf, top(&wf));
     }
+    let m1 = mist(320, 40, 3);
+    to_sprite(&mut s, (5, 0), &m1, mid(&m1));
+    let midr = wash_ridge(300, 90, 4, 0.62, 0.1, 5, false);
+    to_sprite(&mut s, (6, 0), &midr, top(&midr));
+    let m2 = mist(300, 34, 9);
+    to_sprite(&mut s, (7, 0), &m2, mid(&m2));
+    let near = wash_ridge(260, 60, 8, 0.96, 0.6, 4, true);
+    to_sprite(&mut s, (8, 0), &near, top(&near));
+    let pn = pine();
+    to_sprite(&mut s, (9, 0), &pn, bottom(&pn));
+    for f in 0..3 {
+        let bb = bamboo(f);
+        to_sprite(&mut s, (10, f as u16), &bb, bottom(&bb));
+    }
+    let dr = drops();
+    to_sprite(&mut s, (11, 0), &dr, top(&dr));
+    let frame = ink_dojo_frame();
+    to_sprite(&mut s, (12, 0), &frame, top(&frame));
+    let deck = ink_floor();
+    to_sprite(&mut s, (13, 0), &deck, top(&deck));
     std::fs::write(dir.join("ink_dojo.sff"), s.write_v2())?;
     std::fs::write(dir.join("ink_dojo.def"), INK_DEF)?;
 
