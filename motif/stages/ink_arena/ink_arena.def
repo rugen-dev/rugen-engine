@@ -130,35 +130,70 @@ delta = .1, .1
 tile = 1, 0
 scalestart = .5, .5
 
-[BG sun]
+[BG moon]
 type = normal
 spriteno = 1, 0
-start = 110, 92
-delta = .12, .12
+start = -170, 24
+delta = .15, .15
 scalestart = .5, .5
 
-[BG far range]
+[BG cloud sea]
 type = normal
 spriteno = 2, 0
-start = 0, 118
-delta = .25, .25
+start = 0, 150
+delta = .3, .3
+velocity = 0.05, 0
 tile = 1, 0
 scalestart = .5, .5
 
-[BG near range]
+[BG shard a]
 type = normal
 spriteno = 3, 0
-start = 0, 136
-delta = .45, .45
-tile = 1, 0
+start = -330, 60
+delta = .5, .5
+sin.y = 6, 180, 0
+scalestart = .5, .5
+
+[BG shard b]
+type = normal
+spriteno = 3, 1
+start = 300, 20
+delta = .5, .5
+sin.y = 8, 220, 120
+scalestart = .5, .5
+
+[BG shard c]
+type = normal
+spriteno = 3, 2
+start = 90, 110
+delta = .55, .55
+sin.y = 5, 160, 240
 scalestart = .5, .5
 
 [BG abyss]
 type = normal
 spriteno = 4, 0
-start = 0, 200
+start = 0, 186
 delta = .6, .6
 tile = 1, 0
+scalestart = .5, .5
+
+[BG mist far]
+type = normal
+spriteno = 9, 0
+start = 0, 212
+delta = .7, .7
+velocity = 0.2, 0
+tile = 1, 0
+scalestart = .5, .5
+
+[BG ash]
+type = normal
+spriteno = 10, 0
+start = 0, 100
+delta = .8, .8
+velocity = 0.02, -0.12
+tile = 1, 1
 scalestart = .5, .5
 
 [BG island 1]
@@ -268,4 +303,13 @@ start = 160, -52
 delta = 1, 1
 ; falls with the dropping platform (9th [Platform])
 platform = 9
+scalestart = .5, .5
+
+[BG mist near]
+type = normal
+spriteno = 11, 0
+start = 0, 236
+delta = 1, 1
+velocity = 0.4, 0
+tile = 1, 0
 scalestart = .5, .5

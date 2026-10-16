@@ -1192,74 +1192,94 @@ scalestart = .5, .5
 
 // ---------------------------------------------------------------- ink arena
 
-/// Red sun with an ink ring (single, not tiled): the arena's old sky, kept until its remake.
-fn ink_sun() -> Canvas {
-    let r = 40.0 * D as f32;
-    let s = (2.0 * r + 8.0) as u32;
-    let mut c = Canvas::new(s, s);
-    let m = s as f32 / 2.0;
-    disc(&mut c, m, m, r, INK);
-    disc(&mut c, m, m, r - 3.0 * D as f32, RED);
-    for i in 0..5 {
-        let y = (m - r * 0.5 + i as f32 * r * 0.25) as i32;
-        let len = (r * (1.2 - 0.15 * i as f32)) as i32;
-        c.rect(m as i32 - len / 2, y, len, D, with_alpha(PAPER, 0.35));
+/// Abyss under the island: ink wash deepening toward the bottom (tiled).
+fn ink_abyss() -> Canvas {
+    let (w, h) = (320 * D, 360 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    for y in 0..h {
+        let t = y as f32 / h as f32;
+        let a = (libm::powf(t, 0.7) * 0.95).min(0.95);
+        for x in 0..w {
+            let g = 0.9 + 0.2 * hash(x / (2 * D), y / (2 * D), 201);
+            c.put(x, y, with_alpha(INK, (a * g).min(1.0)));
+        }
     }
     c
 }
 
-/// Mountain range silhouette; `far` ranges are screentoned grey (arena, until its remake).
-fn ink_mountains(width: i32, height: i32, seed: u32, far: bool) -> Canvas {
-    let (w, h) = (width * D, height * D);
-    let pad = 40 * D;
-    let mut wide = Canvas::new((w + 2 * pad) as u32, h as u32);
-    let peaks = 5;
-    let mut ridge = vec![0f32; (w + 2 * pad) as usize];
-    for (x, r) in ridge.iter_mut().enumerate() {
-        let u = (x as f32 - pad as f32) / w as f32;
-        let mut v = 0.0;
-        for k in 1..=3 {
-            let ph = hash(k, 0, seed) * std::f32::consts::TAU;
-            v += libm::sinf(u * std::f32::consts::TAU * (peaks * k) as f32 / 2.0 + ph) / k as f32;
-        }
-        let jag = (hash(x as i32 / D, 1, seed) - 0.5) * 3.0 * D as f32;
-        *r = h as f32 * (0.45 - 0.22 * v) + jag;
-    }
-    for x in 0..wide.w as i32 {
-        let top = ridge[x as usize].max(2.0) as i32;
-        for y in top..h {
-            let col = if far {
-                if ((x / D) % 3 == 0 && (y / D) % 3 == 0) || y < top + D {
-                    INK
-                } else {
-                    [0; 4]
+/// The ink moon: a paper disc with a thick brush ring and a grey wash inside.
+fn moon() -> Canvas {
+    let r = 38.0 * D as f32;
+    let s = (2.0 * r + 10.0) as u32;
+    let mut c = Canvas::new(s, s);
+    let m = s as f32 / 2.0;
+    // ring: a circular brush stroke with a dry outer edge
+    for y in 0..s as i32 {
+        for x in 0..s as i32 {
+            let (dx, dy) = (x as f32 + 0.5 - m, y as f32 + 0.5 - m);
+            let d = libm::sqrtf(dx * dx + dy * dy);
+            if d > r {
+                continue;
+            }
+            let ang = libm::atan2f(dy, dx);
+            let thick = (4.0 + 2.6 * libm::sinf(ang * 2.0 + 0.8)) * D as f32;
+            let n = hash(x, y, 210);
+            if d > r - thick {
+                if d > r - 1.2 * D as f32 && n > 0.55 {
+                    continue;
                 }
-            } else if y < top + 2 * D {
-                INK
+                c.put(x, y, with_alpha(INK, 0.92));
             } else {
-                let near = (y - top) as f32 / (30.0 * D as f32);
-                if near < 1.0 && (x + y) % (4 * D) < D && hash(x, y, seed) > near {
-                    PAPER2
-                } else {
-                    INK
-                }
-            };
-            if col[3] > 0 {
-                wide.put(x, y, col);
+                // inside: a faint wash, heavier toward the lower right
+                let a = 0.05 + 0.12 * ((dx + dy) / r * 0.5 + 0.5).clamp(0.0, 1.0);
+                c.put(x, y, mix(PAPER, INK, a * (0.8 + 0.4 * n)));
             }
         }
     }
-    wrap_x(&Canvas::new(w as u32, h as u32), &wide, pad)
+    c
 }
 
-/// Mist under the island: paper with screentone thickening toward the bottom.
-fn ink_abyss() -> Canvas {
-    let (w, h) = (320 * D, 360 * D);
+/// A drifting rock shard: a ragged ink silhouette with a paper top.
+fn shard(seed: u32, width: i32, height: i32) -> Canvas {
+    let (w, h) = (width * D, height * D);
     let mut c = Canvas::new(w as u32, h as u32);
-    c.rect(0, 0, w, h, PAPER);
-    tone(&mut c, 6 * D, [17, 17, 17, 90], |_, y| {
-        (y as f32 / h as f32 * 1.1).clamp(0.0, 1.0) * 0.7
-    });
+    for y in 0..h {
+        let t = y as f32 / h as f32;
+        // narrows to a point at the bottom, ragged sides
+        let half = (w as f32 / 2.0) * (1.0 - t * t) * (0.9 + 0.2 * hash(y / D, 0, seed));
+        let cx = w as f32 / 2.0 + (hash(y / (3 * D), 1, seed) - 0.5) * 3.0 * D as f32;
+        let (l, r) = ((cx - half) as i32, (cx + half) as i32);
+        for x in l.max(0)..r.min(w) {
+            let edge = ((x - l).min(r - x)) as f32 / (3.0 * D as f32);
+            let col = if y < 3 * D {
+                PAPER2
+            } else if edge < 1.0 {
+                INK
+            } else {
+                mix(PAPER2, INK, 0.55 + 0.45 * t)
+            };
+            c.put(x, y, col);
+        }
+    }
+    c
+}
+
+/// Ash motes rising from the abyss (tiled both ways, velocity on the layer).
+fn ash() -> Canvas {
+    let (w, h) = (300 * D, 240 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    for i in 0..7 {
+        let x = hash(i, 0, 220) * w as f32;
+        let y = hash(i, 1, 220) * h as f32;
+        let r = (0.5 + hash(i, 2, 220) * 0.5) * D as f32;
+        disc(
+            &mut c,
+            x,
+            y,
+            r,
+            with_alpha(INK, 0.3 + 0.2 * hash(i, 3, 220)),
+        );
+    }
     c
 }
 
@@ -1308,8 +1328,8 @@ fn ink_island_lobe(depth: i32, seed: u32) -> Canvas {
     for sx in (0..w).step_by((32 * D) as usize) {
         vline(&mut c, sx, 2 * D, deck - 3 * D, D, INK);
     }
-    // red rope along the deck edge
-    hline(&mut c, deck - 2 * D, 0, w, D, RED);
+    // red lip along the deck edge: the thing you fall off
+    hline(&mut c, deck - 3 * D, 0, w, 2 * D, RED);
     c
 }
 
@@ -1476,35 +1496,70 @@ delta = .1, .1
 tile = 1, 0
 scalestart = .5, .5
 
-[BG sun]
+[BG moon]
 type = normal
 spriteno = 1, 0
-start = 110, 92
-delta = .12, .12
+start = -170, 24
+delta = .15, .15
 scalestart = .5, .5
 
-[BG far range]
+[BG cloud sea]
 type = normal
 spriteno = 2, 0
-start = 0, 118
-delta = .25, .25
+start = 0, 150
+delta = .3, .3
+velocity = 0.05, 0
 tile = 1, 0
 scalestart = .5, .5
 
-[BG near range]
+[BG shard a]
 type = normal
 spriteno = 3, 0
-start = 0, 136
-delta = .45, .45
-tile = 1, 0
+start = -330, 60
+delta = .5, .5
+sin.y = 6, 180, 0
+scalestart = .5, .5
+
+[BG shard b]
+type = normal
+spriteno = 3, 1
+start = 300, 20
+delta = .5, .5
+sin.y = 8, 220, 120
+scalestart = .5, .5
+
+[BG shard c]
+type = normal
+spriteno = 3, 2
+start = 90, 110
+delta = .55, .55
+sin.y = 5, 160, 240
 scalestart = .5, .5
 
 [BG abyss]
 type = normal
 spriteno = 4, 0
-start = 0, 200
+start = 0, 186
 delta = .6, .6
 tile = 1, 0
+scalestart = .5, .5
+
+[BG mist far]
+type = normal
+spriteno = 9, 0
+start = 0, 212
+delta = .7, .7
+velocity = 0.2, 0
+tile = 1, 0
+scalestart = .5, .5
+
+[BG ash]
+type = normal
+spriteno = 10, 0
+start = 0, 100
+delta = .8, .8
+velocity = 0.02, -0.12
+tile = 1, 1
 scalestart = .5, .5
 
 [BG island 1]
@@ -1615,6 +1670,15 @@ delta = 1, 1
 ; falls with the dropping platform (9th [Platform])
 platform = 9
 scalestart = .5, .5
+
+[BG mist near]
+type = normal
+spriteno = 11, 0
+start = 0, 236
+delta = 1, 1
+velocity = 0.4, 0
+tile = 1, 0
+scalestart = .5, .5
 "#;
 
 fn sff() -> Sff {
@@ -1701,26 +1765,35 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     let dir = out.join("ink_arena");
     std::fs::create_dir_all(&dir)?;
     let mut s = sff();
-    let layers = [
-        ink_sky(),
-        ink_sun(),
-        ink_mountains(360, 90, 21, true),
-        ink_mountains(300, 70, 4, false),
-        ink_abyss(),
-        ink_island_lobe(90, 13),
-        ink_platform(140),
-        ink_island_lobe(120, 7),
-        ink_island_post(),
-    ];
-    for (i, c) in layers.iter().enumerate() {
-        let axis = match i {
-            1 => [(c.w / 2) as i16, (c.h / 2) as i16],
-            // island sections are placed by their left edge
-            5 | 7 => [0, 0],
-            _ => [(c.w / 2) as i16, 0],
-        };
-        to_sprite(&mut s, (i as u16, 0), c, axis);
+    let sky = ink_sky();
+    to_sprite(&mut s, (0, 0), &sky, top(&sky));
+    let mn = moon();
+    to_sprite(&mut s, (1, 0), &mn, mid(&mn));
+    let sea = wash_ridge(400, 70, 33, 0.22, 0.0, 3, false);
+    to_sprite(&mut s, (2, 0), &sea, top(&sea));
+    for (i, (seed, w, h)) in [(41u32, 40, 34), (42, 56, 44), (43, 30, 26)]
+        .into_iter()
+        .enumerate()
+    {
+        let sh = shard(seed, w, h);
+        to_sprite(&mut s, (3, i as u16), &sh, mid(&sh));
     }
+    let ab = ink_abyss();
+    to_sprite(&mut s, (4, 0), &ab, top(&ab));
+    let lobe_a = ink_island_lobe(90, 13);
+    to_sprite(&mut s, (5, 0), &lobe_a, [0, 0]);
+    let pf = ink_platform(140);
+    to_sprite(&mut s, (6, 0), &pf, top(&pf));
+    let lobe_b = ink_island_lobe(120, 7);
+    to_sprite(&mut s, (7, 0), &lobe_b, [0, 0]);
+    let post = ink_island_post();
+    to_sprite(&mut s, (8, 0), &post, top(&post));
+    let m1 = mist(320, 60, 17);
+    to_sprite(&mut s, (9, 0), &m1, mid(&m1));
+    let motes = ash();
+    to_sprite(&mut s, (10, 0), &motes, top(&motes));
+    let m2 = mist(300, 90, 23);
+    to_sprite(&mut s, (11, 0), &m2, mid(&m2));
     std::fs::write(dir.join("ink_arena.sff"), s.write_v2())?;
     std::fs::write(dir.join("ink_arena.def"), ARENA_DEF)?;
     Ok(())
