@@ -657,7 +657,7 @@ copyrighted fighters).
   `~/.cache/rugen-work/creators/shots/debugger-{ink,dojo}.png`.
 
 ### Reach
-- [x] **In-game updater.** (415899c, 3bb03cb) `crates/update` (`rugen-update`):
+- [x] **In-game updater.** (415899c, 3bb03cb, 7b8bf3a) `crates/update` (`rugen-update`):
   the latest GitHub release (`releases/latest`, once per launch at most every
   6 h, cached in `cache/update.json`, background thread), semver compare,
   the asset for (os, arch), `SHA256SUMS` parsing and the install layout from
