@@ -345,6 +345,8 @@ pub struct UiScreen {
     /// Background preparation last shown: (ready, total) fighters and
     /// stages; `None` once everything is ready.
     prep_seen: Option<(usize, usize)>,
+    /// The updater's generation last drawn (title pill, UPDATE tab).
+    update_gen: u64,
     /// Versus screen: what the fight still waits for (`waiting` in the
     /// data: on, name, progress, line).
     waiting: Value,
@@ -1183,6 +1185,7 @@ impl UiScreen {
             arenas: Value::Null,
             try_stage: None,
             prep_seen: None,
+            update_gen: crate::update::generation(),
             waiting: Value::Null,
             ticks: 0,
             lib: None,
@@ -1574,6 +1577,7 @@ impl UiScreen {
                     "news": self.news,
                     "profile": self.profile_json(),
                     "version": env!("CARGO_PKG_VERSION"),
+                    "update": crate::update::title_json(),
                 })
             }
             UiKind::Debug => self.debug.clone(),
@@ -2299,8 +2303,17 @@ impl UiScreen {
             "open" => match arg {
                 "keys1" | "controls" | "controls1" => Some(Transition::Controls(0)),
                 "keys2" | "controls2" => Some(Transition::Controls(1)),
-                _ => None,
+                _ => match arg.strip_prefix("update_") {
+                    Some(what) => {
+                        let t = crate::update::action(what);
+                        self.refresh_data(sys);
+                        t
+                    }
+                    None => None,
+                },
             },
+            // the title pill: straight to OPTIONS › UPDATE
+            "update" if arg == "open" => Some(Transition::OptionsTab(crate::settings::UPDATE_TAB)),
             "tab" => {
                 let i = arg.parse::<usize>().unwrap_or(0);
                 if i == crate::settings::CONTROLS_TAB {
@@ -2378,6 +2391,14 @@ impl UiScreen {
         }
         self.ticks += 1;
         self.watch_preparation(sys);
+        // the updater moved (check done, download progress): pill and rows follow
+        if matches!(self.kind, UiKind::Title | UiKind::Options) && self.ticks % 6 == 0 {
+            let g = crate::update::generation();
+            if g != self.update_gen {
+                self.update_gen = g;
+                self.refresh_data(sys);
+            }
+        }
         if self.kind == UiKind::Title && self.featured.len() > 1 && self.ticks % FEATURE_TICKS == 0
         {
             self.feature_at = (self.feature_at + 1) % self.featured.len();

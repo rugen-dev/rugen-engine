@@ -131,6 +131,8 @@ pub enum Transition {
     /// Back to the matchup with the character id and the host's stage choice.
     OnlinePicked(String, Option<String>),
     Options,
+    /// The options open on that tab (the title's UPDATE pill).
+    OptionsTab(usize),
     /// Key bindings page for player 0 / 1 (`ui/controls.toml`).
     Controls(usize),
     /// Show the VS screen, then fight.
@@ -1762,6 +1764,10 @@ impl Shell {
                 ) {
                     u.set_tab(tab, sys);
                 }
+            }
+            Transition::OptionsTab(tab) => {
+                self.reopen_tab = Some(tab);
+                self.transition(Transition::Options);
             }
             Transition::Controls(player) => {
                 let loaded = match self.system.as_ref() {

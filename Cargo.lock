@@ -2768,6 +2768,7 @@ dependencies = [
  "rugen-render",
  "rugen-sim",
  "rugen-ui",
+ "rugen-update",
  "serde",
  "serde_json",
  "thread-priority",

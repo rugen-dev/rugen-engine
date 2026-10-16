@@ -1,6 +1,7 @@
 # rugen HOME — Dojo theme. Coordinates are 1280x720.
 # Data: menu[] {id label action desc exit right}, featured {name art present},
-# arenas {name line counts}, ranked {title rating line}, profile, keys.
+# arenas {name line counts}, ranked {title rating line}, profile, keys,
+# update {on line} (a newer release).
 # Fonts: 6 body (Jersey 30), 2 captions (Jersey 20), 1 / 4 Press Start for
 # key caps and numbers. Banks: 12 sumi, 13 vermilion, 14 washi, 15 brass,
 # 16 muted on lacquer, 17 soft sumi on washi.
@@ -380,6 +381,27 @@ h = 60
     text = "FULLSCREEN"
     font = 2
     bank = 14
+
+
+# a newer release is out (crate::update): the pill opens OPTIONS › UPDATE
+[[node]]
+kind = "button"
+id = "update_pill"
+x = 730
+y = 6
+w = 300
+h = 30
+pad = 14
+image = "ui/plaque9_red.webp"
+nine = [8, 8, 8, 10]
+text = "{update.line}"
+font = 2
+bank = 14
+focus = false
+on_press = "update:open"
+visible = "update.on"
+enter = "fade"
+enter_delay = 12
 
 # fighters and stages still converting in the background (crate::prepare)
 [[node]]

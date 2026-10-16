@@ -13,7 +13,7 @@ use crate::config::{Config, PlayerKeys};
 use crate::input::{Device, PadKind};
 
 /// `(id, tab label, subtitle)`; `controls` opens its own page.
-pub const TABS: [(&str, &str, &str); 6] = [
+pub const TABS: [(&str, &str, &str); 7] = [
     ("gameplay", "GAMEPLAY", "Applies to offline matches"),
     ("video", "VIDEO", "Window and display"),
     ("audio", "AUDIO", "Volume levels"),
@@ -24,10 +24,12 @@ pub const TABS: [(&str, &str, &str); 6] = [
     ),
     ("online", "ONLINE", "Netplay and the rugen server"),
     ("interface", "INTERFACE", "How the menus look"),
+    ("update", "UPDATE", "Keep rugen current"),
 ];
 
 pub const CONTROLS_TAB: usize = 3;
 pub const INTERFACE_TAB: usize = 5;
+pub const UPDATE_TAB: usize = 6;
 
 const ROUND_TIMES: [i32; 4] = [30, 60, 99, 0];
 const RESOLUTIONS: [(u32, u32); 4] = [(1280, 720), (1280, 800), (1600, 900), (1920, 1080)];
@@ -41,6 +43,8 @@ enum Widget {
     Choice(Vec<String>, Option<usize>),
     /// Fill fraction.
     Slider(f32),
+    /// Fill fraction, read-only (a download).
+    Progress(f32),
     /// Read-only value.
     Text,
     /// Opens another page.
@@ -49,11 +53,11 @@ enum Widget {
 
 struct Row {
     id: &'static str,
-    label: &'static str,
+    label: String,
     widget: Widget,
     /// Value text shown next to the widget (slider number, read-only value).
     text: String,
-    help: &'static str,
+    help: String,
 }
 
 fn on_off(b: bool) -> Widget {
@@ -65,12 +69,12 @@ fn percent(v: f32) -> String {
 }
 
 fn rows(tab: usize, c: &Config) -> Vec<Row> {
-    let row = |id, label, widget, text: String, help| Row {
+    let row = |id, label: &str, widget, text: String, help: &str| Row {
         id,
-        label,
+        label: label.to_string(),
         widget,
         text,
-        help,
+        help: help.to_string(),
     };
     match TABS[tab].0 {
         "gameplay" => vec![
@@ -291,7 +295,206 @@ fn rows(tab: usize, c: &Config) -> Vec<Row> {
                 ),
             ]
         }
+        "update" => update_rows(c),
         _ => Vec::new(),
+    }
+}
+
+/// The UPDATE tab: the running and latest versions, CHECK NOW, UPDATE NOW
+/// (its progress while it runs, RESTART once installed) or the package
+/// link, the launch check toggle and the release notes.
+fn update_rows(c: &Config) -> Vec<Row> {
+    use rugen_update::{Install, Phase};
+    let row = |id, label: &str, widget, text: String, help: &str| Row {
+        id,
+        label: label.to_string(),
+        widget,
+        text,
+        help: help.to_string(),
+    };
+    let snap = crate::update::snapshot();
+    let up = crate::update::get();
+    let opened = crate::update::opened();
+    let copied = |url: &str| {
+        if opened.as_deref() == Some(url) {
+            "COPIED"
+        } else {
+            ""
+        }
+    };
+    let mut out = vec![row(
+        "update_version",
+        "VERSION",
+        Widget::Text,
+        env!("CARGO_PKG_VERSION").to_string(),
+        "The rugen you are running.",
+    )];
+    let Some(snap) = snap else {
+        out.push(row(
+            "update_latest",
+            "LATEST",
+            Widget::Text,
+            "OFF".into(),
+            "The updater is off in this run (--no-update-check).",
+        ));
+        return out;
+    };
+    let newer = snap.newer().cloned();
+    let (latest, latest_help) = match (&snap.phase, &snap.latest) {
+        (Phase::Checking, _) => (
+            "CHECKING...".to_string(),
+            "Asking GitHub for the latest release.".to_string(),
+        ),
+        (Phase::Failed, None) => (
+            "CHECK FAILED".to_string(),
+            format!(
+                "Could not reach GitHub: {}",
+                snap.error.clone().unwrap_or_default()
+            ),
+        ),
+        (_, Some(r)) if newer.is_some() => (
+            format!("{} - {}", r.version, r.date),
+            format!(
+                "rugen {} is out. UPDATE NOW installs it; the release notes say what changed.",
+                r.version
+            ),
+        ),
+        (_, Some(r)) => (
+            format!("{} - UP TO DATE", r.version),
+            format!("You run the latest release, published {}.", r.date),
+        ),
+        _ => (
+            "NOT CHECKED YET".to_string(),
+            "No check has run yet. CHECK NOW asks GitHub.".to_string(),
+        ),
+    };
+    out.push(row(
+        "update_latest",
+        "LATEST",
+        Widget::Text,
+        latest,
+        &latest_help,
+    ));
+    let checking = snap.phase == Phase::Checking;
+    out.push(row(
+        "update_check",
+        "CHECK NOW",
+        if checking { Widget::Text } else { Widget::Link },
+        if checking { "..." } else { "" }.into(),
+        "Ask GitHub for the latest release now. The game also checks when it starts, at most every six hours.",
+    ));
+    if let Some(r) = &newer {
+        let install = up.as_ref().map(|u| u.install().clone());
+        let blocker: Option<String> = up.as_ref().and_then(|u| u.blocker());
+        match (install, blocker.as_deref()) {
+            (Some(Install::Package(_)), _) => {
+                let kind = rugen_update::package_kind();
+                let (label, what) = match kind {
+                    Some(rugen_update::PackageKind::Deb) => ("GET THE .DEB", ".deb"),
+                    Some(rugen_update::PackageKind::Rpm) => ("GET THE .RPM", ".rpm"),
+                    None => ("GET THE PACKAGE", "package"),
+                };
+                let url = kind
+                    .and_then(|k| r.package(k))
+                    .map(|a| a.url.clone())
+                    .unwrap_or_else(|| r.url.clone());
+                out.push(row(
+                    "update_package",
+                    label,
+                    Widget::Link,
+                    copied(&url).into(),
+                    &format!(
+                        "rugen was installed by your package manager, so it does not replace itself. Download the new {what} ({}) and install it like the first one; the link goes to the clipboard and your browser.",
+                        r.version
+                    ),
+                ));
+            }
+            (_, Some(why)) if !matches!(snap.phase, Phase::Ready) => {
+                out.push(row(
+                    "update_now",
+                    "UPDATE NOW",
+                    Widget::Text,
+                    "UNAVAILABLE".into(),
+                    &format!("{}: download rugen {} from the release page instead (RELEASE NOTES opens it).", capitalize(why), r.version),
+                ));
+            }
+            _ => {
+                let (label, widget, text, help): (&str, Widget, String, String) = match snap.phase {
+                    Phase::Downloading => (
+                        "UPDATE NOW",
+                        Widget::Progress(snap.progress),
+                        match snap.total {
+                            Some(t) if t > 0 => format!("{}%", (snap.progress * 100.0) as u32),
+                            _ => format!("{} MB", snap.received >> 20),
+                        },
+                        format!("Downloading rugen {}. Keep playing; nothing changes until it is verified.", r.version),
+                    ),
+                    Phase::Verifying => (
+                        "UPDATE NOW",
+                        Widget::Progress(1.0),
+                        "VERIFYING".into(),
+                        "Checking the download against the release's SHA256SUMS.".into(),
+                    ),
+                    Phase::Installing => (
+                        "UPDATE NOW",
+                        Widget::Progress(1.0),
+                        "INSTALLING".into(),
+                        "Swapping the new files in. Your fighters, stages and settings stay.".into(),
+                    ),
+                    Phase::Ready => (
+                        "RESTART",
+                        Widget::Link,
+                        format!("{} INSTALLED", r.version),
+                        "The new rugen is in place. RESTART closes this one and starts it with the same arguments.".into(),
+                    ),
+                    Phase::Failed => (
+                        "UPDATE NOW",
+                        Widget::Link,
+                        "FAILED - RETRY".into(),
+                        format!("The update failed: {}", snap.error.clone().unwrap_or_default()),
+                    ),
+                    _ => (
+                        "UPDATE NOW",
+                        Widget::Link,
+                        String::new(),
+                        format!(
+                            "Download rugen {} ({}), verify it against SHA256SUMS and replace this folder's binary, motif/ and data/. rugen.toml, chars/ and stages/ stay.",
+                            r.version,
+                            r.own_archive().map(|a| format!("{} MB", (a.size + (1 << 19)) >> 20)).unwrap_or_default()
+                        ),
+                    ),
+                };
+                out.push(row("update_now", label, widget, text, &help));
+            }
+        }
+    }
+    out.push(row(
+        "update_auto",
+        "CHECK AT LAUNCH",
+        on_off(c.update.check),
+        String::new(),
+        "Look for a new release when the game starts (once every six hours, in the background). [update] check in rugen.toml.",
+    ));
+    let notes = snap
+        .latest
+        .as_ref()
+        .map(|r| r.url.clone())
+        .unwrap_or_else(|| rugen_update::NOTES_URL.to_string());
+    out.push(row(
+        "update_notes",
+        "RELEASE NOTES",
+        Widget::Link,
+        if copied(&notes).is_empty() { "RUGEN.DEV".into() } else { "COPIED".into() },
+        "What changed, on the release page: opens in your browser and goes to the clipboard. Docs at rugen.dev.",
+    ));
+    out
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
     }
 }
 
@@ -310,7 +513,9 @@ fn row_json(r: &Row) -> Value {
             s.map_or(-1, |i| i as i64),
             0.0,
         ),
-        Widget::Slider(f) => ("slider", 0, 0, Vec::new(), -1, f.clamp(0.0, 1.0)),
+        Widget::Slider(f) | Widget::Progress(f) => {
+            ("slider", 0, 0, Vec::new(), -1, f.clamp(0.0, 1.0))
+        }
         Widget::Text => ("text", 0, 0, Vec::new(), -1, 0.0),
         Widget::Link => ("link", 0, 0, Vec::new(), -1, 0.0),
     };
@@ -445,7 +650,7 @@ pub fn options_data(
             .and_then(|i| i.parse::<usize>().ok())
     };
     let help = if let Some(i) = index("rows[") {
-        rows.get(i).map_or("", |r| r.help).to_string()
+        rows.get(i).map_or("", |r| r.help.as_str()).to_string()
     } else if let Some(i) = index("themes[") {
         match theme_cards.get(i) {
             Some(t) if t["is_add"] == json!(true) => {
@@ -471,6 +676,9 @@ pub fn options_data(
             "audio" => "Master and music volume.",
             "online" => "Input delay, direct connections and the server.",
             "interface" => "Pick a theme for every screen, or add your own.",
+            "update" => {
+                "See whether a newer rugen is out, install it, or turn the launch check off."
+            }
             _ => "",
         };
         format!("{inside} Up and down pick a category, right or enter goes into it.")
@@ -539,6 +747,7 @@ pub fn adjust(c: &mut Config, id: &str, dir: i32, wrap: bool) -> bool {
         "delay" => c.net.input_delay = c.net.input_delay.step(dir, wrap),
         "good_conn" => c.net.good_connections_only = !c.net.good_connections_only,
         "direct" => c.net.direct = !c.net.direct,
+        "update_auto" => c.update.check = !c.update.check,
         "fighter_size" => {
             let cur = FighterSize::ALL
                 .iter()
@@ -618,6 +827,7 @@ pub fn pick(c: &mut Config, id: &str, value: &str) -> bool {
         "mouse" => c.input.mouse = on,
         "good_conn" => c.net.good_connections_only = on,
         "direct" => c.net.direct = on,
+        "update_auto" => c.update.check = on,
         "delay" => {
             let max = crate::config::InputDelay::MAX;
             c.net.input_delay = crate::config::InputDelay((i > 0).then(|| (i - 1).min(max)));
