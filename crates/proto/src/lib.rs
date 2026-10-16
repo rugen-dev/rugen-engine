@@ -17,7 +17,7 @@ pub mod size;
 pub mod stream;
 pub mod trust;
 
-pub use account::{AccountInfo, Session};
+pub use account::{AccountInfo, LinkCode, Session};
 pub use fair::*;
 pub use machine::MachineSummary;
 pub use trust::*;

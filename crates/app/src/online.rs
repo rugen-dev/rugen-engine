@@ -501,6 +501,8 @@ enum Job {
     Session(String, AcctForm, Pending<Session>),
     /// Log out (`true`: everywhere) on a server.
     Logout(String, bool, Pending<()>),
+    /// PROFILE › LINK WEBSITE: a code for rugen.dev from server `addr`.
+    LinkCode(String, Pending<rugen_proto::LinkCode>),
     Info(usize, Pending<(ServerInfo, u32, Option<SignedBlob>)>),
     /// The official truth feed (from the official server or a mirror).
     Truth(Pending<SignedBlob>),
@@ -708,6 +710,11 @@ pub struct OnlineScreen {
     connect_after: bool,
     /// Password typed again (create / claim / change).
     acct_again: String,
+    /// PROFILE › LINK WEBSITE is up (the code panel replaces the account).
+    acct_link: bool,
+    /// The website code shown (and when it arrived: the countdown).
+    link_code: Option<(rugen_proto::LinkCode, std::time::Instant)>,
+    link_error: String,
     /// Hub: the selected server row (the panel on the right shows it).
     sel: usize,
     /// Hub action waiting for the connection (`quick`, `ranked`, `lobby`, `board`).
@@ -992,6 +999,9 @@ impl OnlineScreen {
             profile_from_title: false,
             connect_after: false,
             acct_again: String::new(),
+            acct_link: false,
+            link_code: None,
+            link_error: String::new(),
             sel: 0,
             pending_action: None,
             consent_declined: Default::default(),
@@ -1304,6 +1314,9 @@ impl OnlineScreen {
     }
 
     fn clear_form(&mut self) {
+        self.acct_link = false;
+        self.link_code = None;
+        self.link_error.clear();
         self.acct_user.clear();
         self.acct_pass.clear();
         self.acct_new.clear();
@@ -1379,6 +1392,65 @@ impl OnlineScreen {
             AcctForm::Password => c.change_password(&pass, &new),
         });
         self.jobs.push(Job::Session(addr, kind, job));
+    }
+
+    /// LINK WEBSITE: ask the selected server for a fresh code (the old one
+    /// stops working the moment the new one arrives).
+    fn request_link_code(&mut self) {
+        if self.jobs.iter().any(|j| matches!(j, Job::LinkCode(..))) {
+            return;
+        }
+        let addr = self.acct_addr();
+        let (_, key) = account_for(&self.profile, &self.config, &addr);
+        if key.is_empty() {
+            return;
+        }
+        self.link_error.clear();
+        let c = OnlineClient::new(&addr, Some(key));
+        self.jobs
+            .push(Job::LinkCode(addr, Pending::spawn(move || c.link_code())));
+    }
+
+    /// LINK WEBSITE: seconds the code on screen is still good for.
+    fn link_left(&self) -> Option<u64> {
+        let (lc, at) = self.link_code.as_ref()?;
+        Some(lc.expires_in.saturating_sub(at.elapsed().as_secs()))
+    }
+
+    /// PROFILE › LINK WEBSITE: the code, its countdown, REFRESH and BACK.
+    fn link_json(&self, named: bool) -> Value {
+        let show = named && self.acct_link;
+        let busy = self.jobs.iter().any(|j| matches!(j, Job::LinkCode(..)));
+        let code = self
+            .link_code
+            .as_ref()
+            .map(|(lc, _)| lc.code.to_ascii_uppercase())
+            .unwrap_or_default();
+        let left = self.link_left();
+        let expired = left == Some(0);
+        let cells: Vec<Value> = (0..6)
+            .map(|i| json!({ "c": code.chars().nth(i).map(String::from).unwrap_or_default() }))
+            .collect();
+        let line = match left {
+            _ if busy && code.is_empty() => "ASKING THE SERVER...".to_string(),
+            _ if !self.link_error.is_empty() => self.link_error.clone(),
+            None => String::new(),
+            Some(0) => "THIS CODE EXPIRED. REFRESH FOR A NEW ONE.".to_string(),
+            Some(n) => format!("GOOD FOR {}:{:02} · USE IT ONCE", n / 60, n % 60),
+        };
+        json!({
+            "show": show,
+            "on_server": format!("ON {}", fit(&self.row_name(self.acct_server), 18)),
+            "code": code,
+            "has_code": !code.is_empty(),
+            "cells": cells,
+            "line": line,
+            "expired": expired,
+            "busy": busy,
+            "error": !self.link_error.is_empty(),
+            "refresh_label": if busy { "..." } else if code.is_empty() { "GET A CODE" } else { "REFRESH" },
+            "hint": "TYPE IT AT RUGEN.DEV/SETTINGS/LINK: THE SITE THEN SHOWS YOUR PROFILE, RATING AND MATCHES.",
+        })
     }
 
     fn logout(&mut self, everywhere: bool) {
@@ -2888,7 +2960,7 @@ impl OnlineScreen {
                 } else {
                     push(enter, "SELECT");
                 }
-                push(esc, "BACK");
+                push(esc, if self.acct_link { "ACCOUNT" } else { "BACK" });
             }
             State::Board => {
                 push(
@@ -3159,7 +3231,7 @@ impl OnlineScreen {
         let named = matches!(state, AcctState::Named(_));
         let form = kind == AcctForm::Password
             || (supported && !offline && matches!(state, AcctState::None | AcctState::Anonymous));
-        let details = named && !form;
+        let details = named && !form && !self.acct_link;
         let name = match &state {
             AcctState::Named(n) => n.to_uppercase(),
             _ => String::new(),
@@ -3261,6 +3333,7 @@ impl OnlineScreen {
             "error": error,
             "has_error": !error.is_empty(),
             "busy": self.jobs.iter().any(|j| matches!(j, Job::Session(..) | Job::Logout(..))),
+            "link": self.link_json(named),
         })
     }
 
@@ -4456,6 +4529,20 @@ impl OnlineScreen {
                     }
                     "logout" => self.logout(false),
                     "logout_all" => self.logout(true),
+                    // LINK WEBSITE: the code panel; REFRESH asks again
+                    "link" => {
+                        self.acct_link = true;
+                        self.link_code = None;
+                        self.request_link_code();
+                        self.pending_focus_key = Some("acct_link_refresh".into());
+                    }
+                    "link_refresh" => self.request_link_code(),
+                    "link_back" => {
+                        self.acct_link = false;
+                        self.link_code = None;
+                        self.link_error.clear();
+                        self.pending_focus_key = Some("acct_btn3".into());
+                    }
                     "show" => self.acct_show = !self.acct_show,
                     "submit" => self.submit_form(),
                     "next" => {
@@ -5088,6 +5175,10 @@ impl OnlineScreen {
                 self.action("acct:cancel_password");
                 return;
             }
+            State::Profile if self.acct_link => {
+                self.action("acct:link_back");
+                return;
+            }
             State::Profile => {
                 self.clear_form();
                 self.connect_after = false;
@@ -5320,6 +5411,26 @@ impl OnlineScreen {
                     Some(r) => {
                         let (addr, kind) = (addr.clone(), *kind);
                         self.session_done(&addr, kind, r);
+                    }
+                },
+                Job::LinkCode(addr, p) => match p.take() {
+                    None => keep.push(j),
+                    Some(Ok(lc)) => {
+                        if *addr == self.acct_addr() {
+                            self.link_code = Some((lc, std::time::Instant::now()));
+                            self.link_error.clear();
+                        }
+                    }
+                    Some(Err(e)) => {
+                        use rugen_net::online::OnlineError;
+                        log::warn!("online: link code: {e}");
+                        self.link_error = match e {
+                            OnlineError::Server(m) if m == "no such route" => {
+                                "THIS SERVER HAS NO WEBSITE LINKS YET.".into()
+                            }
+                            OnlineError::Server(m) => m.to_uppercase(),
+                            _ => "CANNOT REACH THE SERVER. TRY AGAIN.".into(),
+                        };
                     }
                 },
                 Job::Logout(addr, everywhere, p) => match p.take() {

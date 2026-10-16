@@ -107,6 +107,17 @@ pub struct Session {
     pub profile: ProfileInfo,
 }
 
+/// Reply of `POST /v1/account/link_code`: a short code the player types on
+/// the website to link this account (valid `expires_in` seconds, once).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinkCode {
+    pub code: String,
+    /// Unix time it stops working.
+    pub expires_at: u64,
+    /// Seconds it is good for, from when it was made.
+    pub expires_in: u64,
+}
+
 // account keys must never end up in logs
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
