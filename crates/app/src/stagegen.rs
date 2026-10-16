@@ -1,17 +1,21 @@
 //! `rugen stage-gen`: the built-in stages shipped in `motif/stages/`.
 //!
-//! - `training`: a high-detail take on MUGEN's blue "Training Room" grid.
-//! - `ink_dojo`: a Shonen Ink manga dojo (paper, screentone, brush ink).
-//! - `ink_arena`: the dojo sky over a long floating ink island (1280 units)
-//!   with nine platforms in three tiers and a pit; its `[Arena]` section
-//!   turns on stocks, blast zones and ring-outs (the ARENA mode's stage),
-//!   ledges, items and wind; the top-left platform slides, the top-right
-//!   one drops now and then (their art follows with `platform = N`).
+//! - `training`: a very large take on MUGEN's blue "Training Room" grid
+//!   (the camera runs ±1200 units) with a floor ruler in stage units.
+//! - `ink_dojo`: the Shonen Ink dojo painted sumi-e: washed ridges, mist,
+//!   a waterfall, a pine, bamboo, a crane and the red seal.
+//! - `ink_arena`: Sky Islands, a long floating ink island (1280 units) with
+//!   nine platforms in three tiers over a washed abyss; its `[Arena]` section
+//!   turns on stocks, blast zones and ring-outs (the ARENA mode's stage).
+//! - `ink_stadium`: a raised ring under a dark roof, crowd tiers, three ropes
+//!   with the middle one red: the ranked and tournament stage.
+//! - `night_festival`: the dark one, a festival street under lantern strings.
 //!
-//! Both are built for the far camera: every layer tiles sideways, layers run
-//! far above and below the play area, and the clear colour matches the top
-//! of the sky, so nothing runs out down to `zoomout = 0.25`. Art is drawn at
-//! 2x (`scalestart = .5`) in a 320x240 stage, so pixels stay crisp and chunky.
+//! All are built for the far camera: every layer tiles sideways (animated
+//! layers are drawn as one wide sprite), layers run far above and below the
+//! play area, and the clear colour matches the top of the sky, so nothing
+//! runs out down to `zoomout = 0.22`. Art is drawn at 2x (`scalestart = .5`)
+//! in a 320x240 stage, so pixels stay crisp and chunky.
 
 use std::path::Path;
 
@@ -57,26 +61,6 @@ fn disc(c: &mut Canvas, cx: f32, cy: f32, r: f32, col: Rgba) {
                 c.put(x, y, col);
             }
         }
-    }
-}
-
-/// Screentone: dots on a `pitch` grid whose radius follows `density(x, y)` in 0..1.
-fn tone(c: &mut Canvas, pitch: i32, col: Rgba, density: impl Fn(i32, i32) -> f32) {
-    let (w, h) = (c.w as i32, c.h as i32);
-    let mut y = 0;
-    while y < h + pitch {
-        let row = y / pitch;
-        let off = if row % 2 == 1 { pitch / 2 } else { 0 };
-        let mut x = -pitch;
-        while x < w + pitch {
-            let (cx, cy) = (x + off, y);
-            let d = density(cx.clamp(0, w - 1), cy.clamp(0, h - 1));
-            if d > 0.02 {
-                disc(c, cx as f32, cy as f32, d * pitch as f32 * 0.5, col);
-            }
-            x += pitch;
-        }
-        y += pitch;
     }
 }
 
@@ -490,6 +474,7 @@ fn stroke(c: &mut Canvas, pts: &[(f32, f32)], w0: f32, w1: f32, col: Rgba, dry: 
 /// Mountain ridge painted as a wash: ink whose alpha runs from `a_top` at the
 /// ridge to `a_bot` at the bottom, dry-brush edge, paper grain. Tiles sideways.
 fn wash_ridge(
+    col: Rgba,
     width: i32,
     height: i32,
     seed: u32,
@@ -533,7 +518,7 @@ fn wash_ridge(
             if y < top + D {
                 a = (a + 0.18).min(1.0);
             }
-            wide.put(x, y, with_alpha(INK, a));
+            wide.put(x, y, with_alpha(col, a));
         }
     }
     wrap_x(&Canvas::new(w as u32, h as u32), &wide, pad)
@@ -2069,6 +2054,388 @@ delta = 1, 1
 scalestart = .5, .5
 "#;
 
+// ---------------------------------------------------------------- night festival
+
+const NIGHT: Rgba = [22, 20, 15, 255];
+const NIGHT2: Rgba = [43, 40, 33, 255];
+const NIGHT3: Rgba = [68, 64, 54, 255];
+const WARM: Rgba = [243, 222, 170, 255];
+
+/// Night sky: dark paper, a few paper stars, a lighter wash toward the village (tiled).
+fn night_sky() -> Canvas {
+    let (w, h) = (320 * D, 560 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.rect(0, 0, w, h, NIGHT);
+    for y in (h - 260 * D)..h {
+        let t = (y - (h - 260 * D)) as f32 / (260.0 * D as f32);
+        c.rect(0, y, w, 1, with_alpha(NIGHT3, t * t * 0.7));
+    }
+    for i in 0..40 {
+        let x = hash(i, 0, 401) * w as f32;
+        let y = hash(i, 1, 401) * (h as f32 * 0.6);
+        let a = 0.35 + 0.6 * hash(i, 2, 401);
+        c.rect(x as i32, y as i32, D, D, with_alpha(PAPER, a));
+    }
+    c
+}
+
+/// Crescent moon: paper disc with a night disc biting it.
+fn crescent() -> Canvas {
+    let r = 18.0 * D as f32;
+    let s = (2.0 * r + 6.0) as u32;
+    let mut c = Canvas::new(s, s);
+    let m = s as f32 / 2.0;
+    disc(&mut c, m, m, r, PAPER);
+    disc(
+        &mut c,
+        m + 7.0 * D as f32,
+        m - 4.0 * D as f32,
+        r - 2.0 * D as f32,
+        NIGHT,
+    );
+    c
+}
+
+/// A village house silhouette with lit windows.
+fn house(width: i32, height: i32, seed: u32) -> Canvas {
+    let (w, h) = (width * D, height * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let roof = 18 * D;
+    for y in 0..roof {
+        let t = y as f32 / roof as f32;
+        let half = (w as f32 / 2.0) * (0.15 + 0.85 * t);
+        let cx = w as f32 / 2.0;
+        c.rect((cx - half) as i32, y, (half * 2.0) as i32, 1, NIGHT2);
+    }
+    hline(&mut c, roof - D, 0, w, D, NIGHT3);
+    c.rect(3 * D, roof, w - 6 * D, h - roof, NIGHT2);
+    let n = 2 + (hash(0, 0, seed) * 2.0) as i32;
+    for i in 0..n {
+        let x = 8 * D + i * ((w - 16 * D) / n);
+        let y = roof + 10 * D + (hash(i, 1, seed) * 6.0) as i32 * D;
+        c.rect(x, y, 8 * D, 10 * D, INK);
+        c.rect(x + D, y + D, 6 * D, 8 * D, WARM);
+        c.rect(x + 4 * D, y + D, D, 8 * D, NIGHT2);
+        c.rect(x + D, y + 5 * D, 6 * D, D, NIGHT2);
+    }
+    c.rect(w / 2 - 4 * D, h - 14 * D, 8 * D, 14 * D, INK);
+    c
+}
+
+/// A string of lanterns across the tile (catenary), lanterns swaying by `frame`.
+fn lantern_string(frame: i32) -> Canvas {
+    let (w, h) = (320 * D, 60 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let d = D as f32;
+    let sway = [0.0f32, 1.5, -1.5][frame.rem_euclid(3) as usize] * d;
+    let sag = |x: i32| -> f32 {
+        let u = x as f32 / w as f32;
+        4.0 * d + libm::sinf(u * std::f32::consts::PI) * 10.0 * d
+    };
+    for x in 0..w {
+        c.rect(x, sag(x) as i32, 1, D, NIGHT3);
+    }
+    let step = 80 * D;
+    let mut x = step / 2;
+    while x < w {
+        let y = sag(x);
+        let lx = x as f32 + sway;
+        for r in (6..18).rev() {
+            let a = 0.07 * (18 - r) as f32 / 12.0;
+            disc(&mut c, lx, y + 10.0 * d, r as f32 * d, with_alpha(RED, a));
+        }
+        c.rect(lx as i32, y as i32, D, 4 * D, NIGHT3);
+        for yy in 0..12 {
+            let t = yy as f32 / 11.0;
+            let half = 5.0 * d * libm::sinf(t * std::f32::consts::PI).max(0.35);
+            let row = (y + 4.0 * d) as i32 + yy * D;
+            c.rect((lx - half) as i32, row, (half * 2.0) as i32, D, INK);
+            c.rect((lx - half) as i32 + 1, row, (half * 2.0) as i32 - 2, D, RED);
+        }
+        c.rect(
+            (lx - 1.5 * d) as i32,
+            (y + 6.0 * d) as i32,
+            D,
+            5 * D,
+            with_alpha(PAPER, 0.5),
+        );
+        c.rect(lx as i32, (y + 16.0 * d) as i32, D, 4 * D, WARM);
+        let bx = x + step / 2;
+        if bx < w {
+            let by = sag(bx);
+            c.rect(bx, by as i32, D, 3 * D, NIGHT3);
+            disc(&mut c, bx as f32 + 0.5, by + 5.0 * d, 2.2 * d, WARM);
+        }
+        x += step;
+    }
+    c
+}
+
+/// Festival stall: red awning, counter, hanging goods as ink dots.
+fn stall() -> Canvas {
+    let (w, h) = (110 * D, 70 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.rect(4 * D, 10 * D, 3 * D, h - 10 * D, NIGHT3);
+    c.rect(w - 7 * D, 10 * D, 3 * D, h - 10 * D, NIGHT3);
+    c.rect(0, 6 * D, w, 10 * D, RED);
+    c.rect(0, 6 * D, w, D, INK);
+    for x in (0..w).step_by((10 * D) as usize) {
+        disc(
+            &mut c,
+            x as f32 + 5.0 * D as f32,
+            16.0 * D as f32,
+            5.0 * D as f32,
+            RED,
+        );
+    }
+    for x in (5 * D..w).step_by((20 * D) as usize) {
+        c.rect(x, 7 * D, 4 * D, 9 * D, with_alpha(PAPER, 0.75));
+    }
+    c.rect(8 * D, 40 * D, w - 16 * D, h - 40 * D, NIGHT2);
+    c.rect(8 * D, 40 * D, w - 16 * D, D, NIGHT3);
+    c.rect(14 * D, 44 * D, w - 28 * D, 6 * D, with_alpha(WARM, 0.25));
+    for i in 0..7 {
+        let x = 14 * D + i * 13 * D;
+        let len = 6 * D + (hash(i, 0, 410) * 6.0) as i32 * D;
+        c.rect(x, 18 * D, D, len, NIGHT3);
+        c.rect(
+            x - 2 * D,
+            18 * D + len,
+            5 * D,
+            4 * D,
+            if i % 3 == 0 { WARM } else { INK },
+        );
+    }
+    c.rect(w / 2 - 10 * D, 22 * D, 20 * D, 12 * D, PAPER);
+    c.rect(w / 2 - 6 * D, 26 * D, 12 * D, 2 * D, INK);
+    c.rect(w / 2 - 6 * D, 30 * D, 8 * D, 2 * D, RED);
+    c
+}
+
+/// Fireflies: warm dots drifting up (tiled both ways).
+fn fireflies() -> Canvas {
+    let (w, h) = (320 * D, 240 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    for i in 0..9 {
+        let x = hash(i, 0, 420) * w as f32;
+        let y = hash(i, 1, 420) * h as f32;
+        disc(&mut c, x, y, 2.5 * D as f32, with_alpha(WARM, 0.18));
+        disc(&mut c, x, y, 0.9 * D as f32, with_alpha(WARM, 0.9));
+    }
+    c
+}
+
+/// Street: stone seams in perspective, warm light pools under the lanterns (tiled 320).
+fn street() -> Canvas {
+    let (w, h) = (320 * D, 440 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.rect(0, 0, w, h, NIGHT2);
+    let mut y = 0.0f32;
+    let mut step = 6.0 * D as f32;
+    let mut row = 0;
+    while (y as i32) < h {
+        let y0 = y as i32;
+        let y1 = (y + step) as i32;
+        hline(&mut c, y0, 0, w, D, NIGHT3);
+        let seam = 40 * D;
+        let off = if row % 2 == 0 { 0 } else { seam / 2 };
+        for sx in (off..w).step_by(seam as usize) {
+            vline(&mut c, sx, y0, y1, D, with_alpha(NIGHT3, 0.8));
+        }
+        y += step;
+        step *= 1.22;
+        row += 1;
+    }
+    for i in 0..4 {
+        let cx = (40 + i * 80) as f32 * D as f32;
+        for r in (1..26).rev() {
+            let a = 0.11 * (26 - r) as f32 / 26.0;
+            let rx = r as f32 * 1.6 * D as f32;
+            let ry = r as f32 * 0.45 * D as f32;
+            for yy in (-ry) as i32..=(ry) as i32 {
+                let half = rx * libm::sqrtf((1.0 - (yy as f32 / ry.max(1.0)).powi(2)).max(0.0));
+                c.rect(
+                    (cx - half) as i32,
+                    6 * D + yy,
+                    (half * 2.0) as i32,
+                    1,
+                    with_alpha(WARM, a),
+                );
+            }
+        }
+    }
+    c.rect(0, 0, w, 2 * D, NIGHT3);
+    c.rect(0, 2 * D, w, D, with_alpha(RED, 0.6));
+    c
+}
+
+const FESTIVAL_DEF: &str = r#"; rugen built-in stage, generated by `rugen stage-gen`
+; Night ink: a festival street under lantern strings, the dojo's ridges
+; seen from the village. The dark stage of the set.
+[Info]
+name = "Night Festival"
+displayname = "Night Festival"
+author = "rugen"
+mugenversion = 1.1
+
+[Camera]
+startx = 0
+starty = 0
+boundleft = -600
+boundright = 600
+boundhigh = -300
+boundlow = 0
+verticalfollow = .25
+floortension = 20
+tension = 50
+zoomout = 0.3
+zoomin = 1.15
+cuthigh = 35
+cutlow = 25
+
+[PlayerInfo]
+p1startx = -70
+p1starty = 0
+p1facing = 1
+p2startx = 70
+p2starty = 0
+p2facing = -1
+leftbound = -1400
+rightbound = 1400
+
+[Bound]
+screenleft = 15
+screenright = 15
+
+[StageInfo]
+zoffset = 190
+autoturn = 1
+resetBG = 1
+localcoord = 320, 240
+xscale = 1
+yscale = 1
+
+[Shadow]
+intensity = 200
+color = 0,0,0
+yscale = .25
+
+[Reflection]
+intensity = 25
+
+[Music]
+bgmusic =
+bgmvolume = 100
+
+[BGdef]
+spr = night_festival.sff
+debugbg = 0
+bgclearcolor = 22,20,15
+
+; lantern sway (two strings out of phase)
+[Begin Action 70]
+4,0, 0,0, 48
+4,1, 0,0, 48
+4,0, 0,0, 48
+4,2, 0,0, 48
+[Begin Action 71]
+4,0, 0,0, 30
+4,2, 0,0, 48
+4,0, 0,0, 48
+4,1, 0,0, 48
+4,0, 0,0, 18
+
+[BG sky]
+type = normal
+spriteno = 0, 0
+start = 0, -370
+delta = .1, .1
+tile = 1, 0
+scalestart = .5, .5
+
+[BG moon]
+type = normal
+spriteno = 1, 0
+start = 110, 60
+delta = .12, .12
+scalestart = .5, .5
+
+[BG far ridge]
+type = normal
+spriteno = 2, 0
+start = 0, 70
+delta = .3, .3
+tile = 1, 0
+scalestart = .5, .5
+
+[BG near ridge]
+type = normal
+spriteno = 3, 0
+start = 0, 104
+delta = .45, .45
+tile = 1, 0
+scalestart = .5, .5
+
+[BG house left]
+type = normal
+spriteno = 5, 0
+start = -200, 190
+delta = .6, .6
+scalestart = .5, .5
+
+[BG house right]
+type = normal
+spriteno = 5, 1
+start = 230, 190
+delta = .6, .6
+scalestart = .5, .5
+
+[BG house far]
+type = normal
+spriteno = 5, 2
+start = 30, 184
+delta = .55, .55
+scalestart = .5, .5
+
+[BG fireflies]
+type = normal
+spriteno = 6, 0
+start = 0, -100
+delta = .8, .8
+velocity = 0.03, -0.08
+tile = 1, 1
+scalestart = .5, .5
+
+[BG stall]
+type = normal
+spriteno = 7, 0
+start = -150, 190
+delta = .85, .85
+scalestart = .5, .5
+
+[BG lanterns high]
+type = anim
+actionno = 71
+start = 0, -10
+delta = .7, .7
+scalestart = .5, .5
+
+[BG lanterns low]
+type = anim
+actionno = 70
+start = 0, 36
+delta = .9, .9
+scalestart = .5, .5
+
+[BG street]
+type = normal
+spriteno = 8, 0
+start = 0, 188
+delta = 1, 1
+tile = 1, 0
+scalestart = .5, .5
+"#;
+
 fn sff() -> Sff {
     Sff {
         version: Some(Version::V2 { patch: 1 }),
@@ -2121,7 +2488,7 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     to_sprite(&mut s, (1, 0), &sl, mid(&sl));
     let cr = crane();
     to_sprite(&mut s, (2, 0), &cr, mid(&cr));
-    let far = wash_ridge(360, 90, 21, 0.4, 0.04, 5, false);
+    let far = wash_ridge(INK, 360, 90, 21, 0.4, 0.04, 5, false);
     to_sprite(&mut s, (3, 0), &far, top(&far));
     for f in 0..4 {
         let wf = waterfall(f);
@@ -2129,11 +2496,11 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     }
     let m1 = mist(320, 40, 3);
     to_sprite(&mut s, (5, 0), &m1, mid(&m1));
-    let midr = wash_ridge(300, 90, 4, 0.62, 0.1, 5, false);
+    let midr = wash_ridge(INK, 300, 90, 4, 0.62, 0.1, 5, false);
     to_sprite(&mut s, (6, 0), &midr, top(&midr));
     let m2 = mist(300, 34, 9);
     to_sprite(&mut s, (7, 0), &m2, mid(&m2));
-    let near = wash_ridge(260, 60, 8, 0.96, 0.6, 4, true);
+    let near = wash_ridge(INK, 260, 60, 8, 0.96, 0.6, 4, true);
     to_sprite(&mut s, (8, 0), &near, top(&near));
     let pn = pine();
     to_sprite(&mut s, (9, 0), &pn, bottom(&pn));
@@ -2157,7 +2524,7 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     to_sprite(&mut s, (0, 0), &sky, top(&sky));
     let mn = moon();
     to_sprite(&mut s, (1, 0), &mn, mid(&mn));
-    let sea = wash_ridge(400, 70, 33, 0.22, 0.0, 3, false);
+    let sea = wash_ridge(INK, 400, 70, 33, 0.22, 0.0, 3, false);
     to_sprite(&mut s, (2, 0), &sea, top(&sea));
     for (i, (seed, w, h)) in [(41u32, 40, 34), (42, 56, 44), (43, 30, 26)]
         .into_iter()
@@ -2212,5 +2579,41 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     }
     std::fs::write(dir.join("ink_stadium.sff"), s.write_v2())?;
     std::fs::write(dir.join("ink_stadium.def"), STADIUM_DEF)?;
+
+    let dir = out.join("night_festival");
+    std::fs::create_dir_all(&dir)?;
+    let mut s = sff();
+    let sky = night_sky();
+    to_sprite(&mut s, (0, 0), &sky, top(&sky));
+    let mn = crescent();
+    to_sprite(&mut s, (1, 0), &mn, mid(&mn));
+    let far = wash_ridge(NIGHT3, 360, 90, 21, 0.55, 0.1, 5, false);
+    to_sprite(&mut s, (2, 0), &far, top(&far));
+    let near = wash_ridge(NIGHT2, 300, 90, 4, 0.95, 0.5, 5, false);
+    to_sprite(&mut s, (3, 0), &near, top(&near));
+    // lantern strings: one wide sprite per frame (anim layers do not tile)
+    for f in 0..3 {
+        let one = lantern_string(f);
+        let mut wide = Canvas::new(one.w * 5, one.h);
+        for k in 0..5 {
+            wide.blit(&one, (k * one.w) as i32, 0);
+        }
+        to_sprite(&mut s, (4, f as u16), &wide, top(&wide));
+    }
+    for (i, (w, h, seed)) in [(70, 70, 1u32), (84, 64, 2), (60, 50, 3)]
+        .into_iter()
+        .enumerate()
+    {
+        let hs = house(w, h, seed);
+        to_sprite(&mut s, (5, i as u16), &hs, bottom(&hs));
+    }
+    let ff = fireflies();
+    to_sprite(&mut s, (6, 0), &ff, top(&ff));
+    let st = stall();
+    to_sprite(&mut s, (7, 0), &st, bottom(&st));
+    let road = street();
+    to_sprite(&mut s, (8, 0), &road, top(&road));
+    std::fs::write(dir.join("night_festival.sff"), s.write_v2())?;
+    std::fs::write(dir.join("night_festival.def"), FESTIVAL_DEF)?;
     Ok(())
 }
