@@ -1031,7 +1031,11 @@ pub fn ease(kind: &str, t: f32) -> f32 {
 fn wrap_text(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cur = String::new();
-    for word in text.split_whitespace() {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .flat_map(|w| widgets::break_word(p, font, scale, w, width))
+        .collect();
+    for word in &words {
         let cand = if cur.is_empty() {
             word.to_string()
         } else {
@@ -3098,8 +3102,10 @@ impl Ui {
             if n.wrap && n.kind == Kind::Text {
                 let lines = wrap_text(p, font, scale, &text, rect.w - 2.0 * inset);
                 let lines = fit_lines(p, font, scale, lines, n, rect.w - 2.0 * inset);
-                let lh = n.line_h.unwrap_or(th);
-                let top = rect.y + (rect.h - lh * lines.len() as f32) / 2.0;
+                // a substitute font taller than the layout's lines (the
+                // Japanese one) keeps its lines apart
+                let lh = n.line_h.unwrap_or(th).max(th);
+                let top = rect.y + ((rect.h - lh * lines.len() as f32) / 2.0).max(0.0);
                 for (i, line) in lines.iter().enumerate() {
                     let ly = top + lh * i as f32 + (lh + th) / 2.0 - ink;
                     p.draw_text(

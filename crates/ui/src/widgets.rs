@@ -590,14 +590,18 @@ pub(crate) fn wrap_lines(
 ) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
-    for word in text.split_whitespace() {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .flat_map(|w| break_word(p, font, scale, w, width))
+        .collect();
+    for word in &words {
         let candidate = if cur.is_empty() {
             word.to_string()
         } else {
             format!("{cur} {word}")
         };
         if !cur.is_empty() && p.text_width(font, &candidate, scale) > width {
-            lines.push(std::mem::replace(&mut cur, word.to_string()));
+            lines.push(std::mem::replace(&mut cur, word.clone()));
         } else {
             cur = candidate;
         }
@@ -606,6 +610,35 @@ pub(crate) fn wrap_lines(
         lines.push(cur);
     }
     lines
+}
+
+/// A word wider than `width` (Japanese text has no spaces) split at the
+/// characters that fit; a word that fits comes back whole.
+pub(crate) fn break_word(
+    p: &mut dyn Painter,
+    font: i32,
+    scale: f32,
+    word: &str,
+    width: f32,
+) -> Vec<String> {
+    if width <= 0.0 || p.text_width(font, word, scale) <= width {
+        return vec![word.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in word.chars() {
+        let mut cand = cur.clone();
+        cand.push(c);
+        if !cur.is_empty() && p.text_width(font, &cand, scale) > width {
+            out.push(std::mem::replace(&mut cur, c.to_string()));
+        } else {
+            cur = cand;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 /// Repeat an image at its own size (times `scale`) across `r`.

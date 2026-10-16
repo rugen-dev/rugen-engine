@@ -6,7 +6,7 @@ name = "rugen-ja2"
 [Def]
 Type = bitmap
 BankType = palette
-Size = 11,27
-Spacing = -2,0
+Size = 17,50
+Spacing = -1,0
 Offset = -1,2
 File = rugen-ja2.sff

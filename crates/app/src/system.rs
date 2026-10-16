@@ -185,7 +185,8 @@ impl SystemData {
         let mut items = Vec::new();
         for (k, v) in &ti.entries {
             if let Some(key) = k.strip_prefix("menu.itemname.") {
-                let label = v.trim().trim_matches('"').to_string();
+                // `@common.arcade`: translated (the bundled themes)
+                let label = rugen_ui::lang::resolve(v.trim().trim_matches('"')).into_owned();
                 if !label.is_empty() {
                     items.push((key.to_string(), label));
                 }
@@ -193,14 +194,14 @@ impl SystemData {
         }
         if items.is_empty() {
             items = [
-                ("arcade", "ARCADE"),
-                ("versus", "VS MODE"),
-                ("training", "TRAINING"),
-                ("watch", "WATCH"),
-                ("exit", "EXIT"),
+                ("arcade", "@common.arcade"),
+                ("versus", "@common.vs_mode"),
+                ("training", "@practice.training"),
+                ("watch", "@practice.watch"),
+                ("exit", "@title.exit"),
             ]
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .map(|(k, v)| (k.to_string(), rugen_ui::lang::t(&v[1..]).to_string()))
             .collect();
         }
         let title = TitleInfo {
