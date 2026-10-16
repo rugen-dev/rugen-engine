@@ -104,6 +104,59 @@ fn wrap_x(c: &Canvas, wide: &Canvas, pad: i32) -> Canvas {
     out
 }
 
+// ---------------------------------------------------------------- shared
+
+/// 3x5 pixel digits and signs for stage rulers.
+fn glyph(ch: char) -> [u8; 5] {
+    match ch {
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        '7' => [0b111, 0b001, 0b001, 0b010, 0b010],
+        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+        '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
+        _ => [0; 5],
+    }
+}
+
+/// Draw `text` with the 3x5 font, `px` pixels per cell, left-aligned at (x, y).
+fn text(c: &mut Canvas, x: i32, y: i32, px: i32, col: Rgba, text: &str) -> i32 {
+    let mut cx = x;
+    for ch in text.chars() {
+        let g = glyph(ch);
+        for (row, bits) in g.iter().enumerate() {
+            for col_i in 0..3 {
+                if bits & (0b100 >> col_i) != 0 {
+                    c.rect(cx + col_i * px, y + row as i32 * px, px, px, col);
+                }
+            }
+        }
+        cx += 4 * px;
+    }
+    cx - x - px
+}
+
+/// Width of `text` in the 3x5 font at `px`.
+fn text_w(t: &str, px: i32) -> i32 {
+    (t.chars().count() as i32 * 4 - 1) * px
+}
+
+/// A soft horizontal band: alpha peaks in the middle row and fades to the edges.
+fn band(c: &mut Canvas, y0: i32, y1: i32, col: Rgba, peak: f32) {
+    let h = (y1 - y0).max(1) as f32;
+    for y in y0..y1 {
+        let t = (y - y0) as f32 / h;
+        let a = (1.0 - (t * 2.0 - 1.0).abs()).clamp(0.0, 1.0) * peak;
+        c.rect(0, y, c.w as i32, 1, with_alpha(col, a));
+    }
+}
+
 // ---------------------------------------------------------------- training
 
 const T_SKY: Rgba = [4, 9, 40, 255];
@@ -113,60 +166,97 @@ const T_GLOW: Rgba = [120, 210, 255, 255];
 const T_FLOOR: Rgba = [8, 36, 140, 255];
 const T_DEEP: Rgba = [3, 12, 60, 255];
 
-/// Far wall: night-blue gradient with a big faint grid (delta .5).
+/// Half the room in stage units: the camera runs to ±T_HALF.
+const T_HALF: i32 = 1200;
+
+/// Far wall (delta .3): night-blue gradient, a very large faint grid and tall
+/// light columns every 400 units that give the room its size.
 fn training_far() -> Canvas {
-    let (w, h) = (256 * D, 520 * D);
+    let (w, h) = (400 * D, 900 * D);
     let mut c = Canvas::new(w as u32, h as u32);
-    c.vgrad(0, 0, w, h, T_SKY, mix(T_SKY, T_WALL, 0.75));
-    let cell = 64 * D;
+    c.vgrad(0, 0, w, h, T_SKY, mix(T_SKY, T_WALL, 0.7));
+    let cell = 100 * D;
     for y in (0..h).step_by(cell as usize) {
-        let a = 0.08 + 0.22 * (y as f32 / h as f32);
+        let a = 0.06 + 0.2 * (y as f32 / h as f32);
         hline(&mut c, y, 0, w, D, with_alpha(T_LINE, a));
     }
     for x in (0..w).step_by(cell as usize) {
         for y in 0..h {
-            let a = 0.08 + 0.22 * (y as f32 / h as f32);
+            let a = 0.06 + 0.2 * (y as f32 / h as f32);
             c.rect(x, y, D, 1, with_alpha(T_LINE, a));
         }
     }
-    // distant light strips near the horizon
-    for i in 0..4 {
-        let x = i * cell + cell / 2 - 6 * D;
-        c.rect(x, h - 70 * D, 12 * D, 3 * D, with_alpha(T_GLOW, 0.35));
+    // a light column: a bright core with a soft halo, from the floor up to a fade
+    let cx = w / 2;
+    for y in 0..h {
+        let t = y as f32 / h as f32;
+        let a = (t * t * 1.1).min(1.0);
+        for dx in -18 * D..=18 * D {
+            let u = (dx.abs() as f32) / (18.0 * D as f32);
+            let halo = (1.0 - u) * (1.0 - u) * 0.5 * a;
+            c.put(cx + dx, y, with_alpha(T_LINE, halo));
+        }
+        c.rect(cx - D, y, 2 * D, 1, with_alpha(T_GLOW, a));
     }
+    // a wide glow where the column meets the floor
+    band(&mut c, h - 40 * D, h, T_GLOW, 0.35);
     c
 }
 
-/// Near wall: MUGEN's training grid, fading out toward the top.
-fn training_wall() -> Canvas {
-    let (w, h) = (160 * D, 300 * D);
+/// Scan band (delta .3, drifts up, additive): a thin horizontal light.
+fn training_scan() -> Canvas {
+    let (w, h) = (400 * D, 26 * D);
     let mut c = Canvas::new(w as u32, h as u32);
-    let fade = 90 * D;
+    band(&mut c, 0, h, T_GLOW, 0.22);
+    hline(&mut c, h / 2, 0, w, D, with_alpha(T_GLOW, 0.5));
+    c
+}
+
+/// Mid wall (delta .7): MUGEN's training grid, lines only, fading out toward
+/// the top; the far wall shows through it.
+fn training_wall() -> Canvas {
+    let (w, h) = (200 * D, 420 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let fade = 140 * D;
+    // a faint tint so the near wall reads as a surface, not just lines
     for y in 0..h {
-        let a = (y as f32 / fade as f32).min(1.0);
-        let base = mix(mix(T_WALL, T_SKY, 0.35), T_WALL, y as f32 / h as f32);
-        c.rect(0, y, w, 1, with_alpha(base, a));
+        let a = (y as f32 / fade as f32).min(1.0) * 0.22;
+        c.rect(0, y, w, 1, with_alpha(T_WALL, a));
     }
     let cell = 40 * D;
     for y in (h % cell..h).step_by(cell as usize) {
-        let a = (y as f32 / fade as f32).min(1.0);
+        let a = (y as f32 / fade as f32).min(1.0) * 0.9;
         hline(&mut c, y, 0, w, D, with_alpha(T_LINE, a));
     }
     for x in (0..w).step_by(cell as usize) {
         for y in 0..h {
-            let a = (y as f32 / fade as f32).min(1.0);
+            let a = (y as f32 / fade as f32).min(1.0) * 0.9;
             c.rect(x, y, D, 1, with_alpha(T_LINE, a));
         }
     }
-    // horizon glow along the floor line
-    hline(&mut c, h - 3 * D, 0, w, D, with_alpha(T_GLOW, 0.5));
-    hline(&mut c, h - 2 * D, 0, w, 2 * D, T_GLOW);
     c
 }
 
-/// Floor: perspective rows getting further apart toward the camera.
+/// Horizon line (delta 1, one sprite across the room: anim layers do not
+/// tile) in three brightness steps for the pulse anim.
+fn training_horizon(level: f32) -> Canvas {
+    let (w, h) = (2 * (T_HALF + 400) * D, 10 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    band(&mut c, 0, h, T_GLOW, 0.25 * level);
+    hline(
+        &mut c,
+        h / 2 - D,
+        0,
+        w,
+        2 * D,
+        with_alpha(T_GLOW, 0.5 + 0.5 * level),
+    );
+    c
+}
+
+/// Floor (delta 1, tiled 200 units): perspective rows and converging columns.
 fn training_floor() -> Canvas {
-    let (w, h) = (160 * D, 440 * D);
+    let (w, h) = (200 * D, 440 * D);
     let mut c = Canvas::new(w as u32, h as u32);
     c.vgrad(0, 0, w, 120 * D, T_FLOOR, mix(T_FLOOR, T_DEEP, 0.5));
     c.vgrad(
@@ -196,7 +286,50 @@ fn training_floor() -> Canvas {
     c
 }
 
+/// Floor ruler (delta 1, not tiled): ticks every 50 units, numbers every 100,
+/// 0 at the centre, across the whole room.
+fn training_ruler() -> Canvas {
+    let span = T_HALF + 400;
+    let (w, h) = (2 * span * D, 16 * D);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let mid = w / 2;
+    let mut u = -span;
+    while u <= span {
+        let x = mid + u * D;
+        let major = u % 100 == 0;
+        let th = if major { 2 * D } else { D };
+        let tall = if major { 6 * D } else { 3 * D };
+        c.rect(
+            x - th / 2,
+            0,
+            th,
+            tall,
+            with_alpha(T_GLOW, if major { 0.9 } else { 0.5 }),
+        );
+        if major {
+            let label = if u == 0 {
+                "0".to_string()
+            } else if u > 0 {
+                format!("+{u}")
+            } else {
+                format!("{u}")
+            };
+            let tw = text_w(&label, D);
+            let col = if u == 0 {
+                T_GLOW
+            } else {
+                with_alpha(T_GLOW, 0.75)
+            };
+            text(&mut c, x - tw / 2, 8 * D, D, col, &label);
+        }
+        u += 50;
+    }
+    c
+}
+
 const TRAINING_DEF: &str = r#"; rugen built-in stage, generated by `rugen stage-gen`
+; A very large room: the camera runs 1200 units each way, so the whole
+; screen can be a fighter's dash. Floor ruler in stage units, 0 at centre.
 [Info]
 name = "Training Room EX"
 displayname = "Training Room EX"
@@ -206,14 +339,14 @@ mugenversion = 1.1
 [Camera]
 startx = 0
 starty = 0
-boundleft = -600
-boundright = 600
-boundhigh = -300
+boundleft = -1200
+boundright = 1200
+boundhigh = -700
 boundlow = 0
 verticalfollow = .25
 floortension = 20
 tension = 50
-zoomout = 0.3
+zoomout = 0.22
 zoomin = 1.15
 overdrawhigh = 0
 overdrawlow = 0
@@ -227,8 +360,8 @@ p1facing = 1
 p2startx = 70
 p2starty = 0
 p2facing = -1
-leftbound = -1400
-rightbound = 1400
+leftbound = -2600
+rightbound = 2600
 
 [Bound]
 screenleft = 15
@@ -248,7 +381,7 @@ color = 0,0,0
 yscale = .3
 
 [Reflection]
-intensity = 32
+intensity = 40
 
 [Music]
 bgmusic =
@@ -259,28 +392,61 @@ spr = training.sff
 debugbg = 0
 bgclearcolor = 4,9,40
 
+; horizon pulse: 4 s breathing
+[Begin Action 10]
+3,0, 0,0, 60
+3,1, 0,0, 60
+3,2, 0,0, 60
+3,1, 0,0, 60
+
 [BG far]
 type = normal
 spriteno = 0, 0
-start = 0, -330
-delta = .5, .5
+start = 0, -700
+delta = .3, .3
 tile = 1, 0
+scalestart = .5, .5
+
+[BG scan]
+type = normal
+spriteno = 1, 0
+start = 0, -40
+delta = .3, .3
+velocity = 0, -0.25
+tile = 1, 1
+tilespacing = 0, 300
+trans = add
 scalestart = .5, .5
 
 [BG wall]
 type = normal
-spriteno = 1, 0
-start = 0, -112
-delta = 1, 1
+spriteno = 2, 0
+start = 0, -232
+delta = .7, .7
 tile = 1, 0
+scalestart = .5, .5
+
+[BG horizon]
+type = anim
+actionno = 10
+start = 0, 185
+delta = 1, 1
+trans = add
 scalestart = .5, .5
 
 [BG floor]
 type = normal
-spriteno = 2, 0
+spriteno = 4, 0
 start = 0, 188
 delta = 1, 1
 tile = 1, 0
+scalestart = .5, .5
+
+[BG ruler]
+type = normal
+spriteno = 5, 0
+start = 0, 191
+delta = 1, 1
 scalestart = .5, .5
 "#;
 
@@ -941,12 +1107,31 @@ pub fn generate(out: &Path) -> anyhow::Result<()> {
     let dir = out.join("training");
     std::fs::create_dir_all(&dir)?;
     let mut s = sff();
+    let top = |c: &Canvas| [(c.w / 2) as i16, 0];
     let far = training_far();
-    to_sprite(&mut s, (0, 0), &far, [(far.w / 2) as i16, 0]);
+    to_sprite(&mut s, (0, 0), &far, top(&far));
+    let scan = training_scan();
+    to_sprite(
+        &mut s,
+        (1, 0),
+        &scan,
+        [(scan.w / 2) as i16, (scan.h / 2) as i16],
+    );
     let wall = training_wall();
-    to_sprite(&mut s, (1, 0), &wall, [(wall.w / 2) as i16, 0]);
+    to_sprite(&mut s, (2, 0), &wall, top(&wall));
+    for (i, level) in [0.3f32, 0.65, 1.0].into_iter().enumerate() {
+        let hz = training_horizon(level);
+        to_sprite(
+            &mut s,
+            (3, i as u16),
+            &hz,
+            [(hz.w / 2) as i16, (hz.h / 2) as i16],
+        );
+    }
     let floor = training_floor();
-    to_sprite(&mut s, (2, 0), &floor, [(floor.w / 2) as i16, 0]);
+    to_sprite(&mut s, (4, 0), &floor, top(&floor));
+    let ruler = training_ruler();
+    to_sprite(&mut s, (5, 0), &ruler, top(&ruler));
     std::fs::write(dir.join("training.sff"), s.write_v2())?;
     std::fs::write(dir.join("training.def"), TRAINING_DEF)?;
 
