@@ -657,6 +657,26 @@ copyrighted fighters).
   `~/.cache/rugen-work/creators/shots/debugger-{ink,dojo}.png`.
 
 ### Reach
+- [x] **In-game updater.** (415899c, 3bb03cb) `crates/update` (`rugen-update`):
+  the latest GitHub release (`releases/latest`, once per launch at most every
+  6 h, cached in `cache/update.json`, background thread), semver compare,
+  the asset for (os, arch), `SHA256SUMS` parsing and the install layout from
+  the binary's path (portable folder / system package / dev build). Title
+  pill "UPDATE x.y.z AVAILABLE" (click opens the tab), OPTIONS › UPDATE in
+  both themes: VERSION, LATEST + date, CHECK NOW, UPDATE NOW (download % →
+  VERIFYING → INSTALLING → RESTART, relaunch with the same arguments),
+  CHECK AT LAUNCH (`[update] check`), RELEASE NOTES (clipboard + browser);
+  package installs get GET THE .DEB / .RPM instead. Portable installs swap
+  the binary, `motif/` and `data/` by renames next to the install
+  (`.rugen-update/`, `.rugen-old/`; Windows keeps `rugen.exe.old` until the
+  next start); `rugen.toml`, `chars/`, `stages/`, `themes/`, `cache/`,
+  replays stay. Archives must match the release's `SHA256SUMS` (release.yml
+  now publishes it); 500 MB cap, timeouts. `rugen update [--check]`,
+  `--no-update-check`, `RUGEN_UPDATE_URL` for tests (local `TcpListener`
+  release in `crates/update/tests`). Shots:
+  `~/.cache/rugen-work/update/shots/{ink,dojo}-{title,update}.png`,
+  `ink-update-ready.png`, `ink-update-deck.png`. Windows / macOS apply paths
+  untested on real machines.
 - [ ] **Website link (rugen.dev).** PROFILE › LINK WEBSITE: `POST /v1/account/link_code
   {key}` on the current server, show the 6-character code large (room-code
   alphabet), a countdown from `expires_in` (600 s), REFRESH re-requests (the
