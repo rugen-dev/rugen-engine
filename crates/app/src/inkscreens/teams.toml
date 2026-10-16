@@ -38,7 +38,7 @@ enter_time = 12
 
   [[node.children]]
   kind = "text"
-  text = "STEP 1 · CHOOSE HOW YOU FIGHT"
+  text = "@teams.step_1_choose_how_you_fight"
   x = 360
   y = 10
   h = 36
@@ -51,7 +51,7 @@ enter_time = 12
 
   [[node.children]]
   kind = "text"
-  text = "STEP 2 · PICK FIGHTERS"
+  text = "@teams.step_2_pick_fighters"
   dock = "right"
   x = 900
   y = 0
@@ -114,7 +114,7 @@ enter_time = 14
     w = 76
     h = 28
     deck = { w = 96 }
-    text = "HUMAN"
+    text = "@teams.human"
     align = "center"
     color = [0.078, 0.071, 0.063, 1.0]
     border = 3
@@ -132,7 +132,7 @@ enter_time = 14
     w = 76
     h = 28
     deck = { w = 96 }
-    text = "HUMAN"
+    text = "@teams.human"
     align = "center"
     color = [1.0, 1.0, 1.0, 1.0]
     border = 3
@@ -150,7 +150,7 @@ enter_time = 14
     w = 52
     h = 28
     deck = { x = 170, w = 62 }
-    text = "CPU"
+    text = "@common.cpu"
     align = "center"
     color = [0.078, 0.071, 0.063, 1.0]
     border = 3
@@ -168,7 +168,7 @@ enter_time = 14
     w = 52
     h = 28
     deck = { x = 170, w = 62 }
-    text = "CPU"
+    text = "@common.cpu"
     align = "center"
     color = [1.0, 1.0, 1.0, 1.0]
     border = 3
@@ -528,7 +528,7 @@ enter_time = 14
   # the fighter slots this team fills on the grid next
   [[node.children]]
   kind = "text"
-  text = "NEXT:"
+  text = "@teams.next"
   x = 16
   y = 426
   deck = { y = 456 }
@@ -580,7 +580,7 @@ enter_time = 14
 # ------------------------------------------------------------- VS between
 [[node]]
 kind = "text"
-text = "VS"
+text = "@common.vs"
 x = 566
 y = 250
 w = 148
@@ -654,7 +654,7 @@ enter_time = 14
     w = 76
     h = 28
     deck = { w = 96 }
-    text = "HUMAN"
+    text = "@teams.human"
     align = "center"
     color = [0.078, 0.071, 0.063, 1.0]
     border = 3
@@ -672,7 +672,7 @@ enter_time = 14
     w = 76
     h = 28
     deck = { w = 96 }
-    text = "HUMAN"
+    text = "@teams.human"
     align = "center"
     color = [1.0, 1.0, 1.0, 1.0]
     border = 3
@@ -690,7 +690,7 @@ enter_time = 14
     w = 52
     h = 28
     deck = { x = 170, w = 62 }
-    text = "CPU"
+    text = "@common.cpu"
     align = "center"
     color = [0.078, 0.071, 0.063, 1.0]
     border = 3
@@ -708,7 +708,7 @@ enter_time = 14
     w = 52
     h = 28
     deck = { x = 170, w = 62 }
-    text = "CPU"
+    text = "@common.cpu"
     align = "center"
     color = [1.0, 1.0, 1.0, 1.0]
     border = 3
@@ -1068,7 +1068,7 @@ enter_time = 14
   # the fighter slots this team fills on the grid next
   [[node.children]]
   kind = "text"
-  text = "NEXT:"
+  text = "@teams.next"
   x = 16
   y = 426
   deck = { y = 456 }
@@ -1143,7 +1143,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "HUMAN / CPU  "
+  text = "@teams.human_cpu  "
   font = 2
   bank = 9
   visible = "toggle"
@@ -1161,7 +1161,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "MODE  "
+  text = "@common.mode  "
   font = 2
   bank = 9
 
@@ -1178,7 +1178,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "TEAM SIZE  "
+  text = "@teams.team_size  "
   font = 2
   bank = 9
 
@@ -1195,7 +1195,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "READY  "
+  text = "@teams.ready  "
   font = 2
   bank = 9
 
@@ -1212,6 +1212,6 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK"
+  text = "@common.back"
   font = 2
   bank = 9

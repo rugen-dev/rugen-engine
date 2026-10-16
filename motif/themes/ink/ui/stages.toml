@@ -70,7 +70,7 @@ enter_time = 12
 
     [[node.children.children]]
     kind = "text"
-    text = "VS"
+    text = "@common.vs"
     font = 1
     scale = 2
     bank = 11
@@ -132,7 +132,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "LOADING..."
+  text = "@stages.loading"
   w = 820
   h = 404
   align = "center"
@@ -142,7 +142,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "LIVE PREVIEW"
+  text = "@stages.live_preview"
   x = 16
   y = 16
   h = 24
@@ -194,7 +194,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "BY {cur.author}"
+  text = "@stages.by_author"
   x = 22
   y = 92
   w = 300
@@ -231,7 +231,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "MUSIC"
+  text = "@stages.music"
   x = 22
   y = 178
   font = 2
@@ -251,7 +251,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "WIDTH"
+  text = "@stages.width"
   x = 22
   y = 206
   font = 2
@@ -422,7 +422,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "STAGE  "
+  text = "@stages.stage  "
   font = 2
   bank = 9
 
@@ -456,7 +456,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK TO FIGHTERS"
+  text = "@stages.back_to_fighters"
   font = 2
   bank = 9
 

@@ -14,7 +14,7 @@ h = "100%"
 [[node]]
 kind = "text"
 dock = "left top"
-text = "OPTIONS"
+text = "@options.options"
 x = 44
 y = 30
 font = 3
@@ -423,7 +423,7 @@ enter_time = 14
   # INTERFACE: theme picker (bundled, the player's own, OPEN THEMES FOLDER)
   [[node.children]]
   kind = "text"
-  text = "UI THEME"
+  text = "@options.ui_theme"
   x = 30
   y = 74
   font = 2
@@ -432,7 +432,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "ADD YOUR OWN IN THEMES/ NEXT TO CHARS/"
+  text = "@options.add_your_own_in_themes_next"
   anchor = "tr"
   x = 26
   y = 74
@@ -570,7 +570,7 @@ enter_time = 14
 
         [[node.children.children.children.children]]
         kind = "text"
-        text = "ACTIVE"
+        text = "@options.active"
         anchor = "left"
         x = 22
         font = 2
@@ -641,7 +641,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
+  text = "@options.applied_at_once_save_to_keep"
   x = 30
   y = 418
   deck = { y = 444, w = 836, h = 62, wrap = true, line_gap = 1 }
@@ -673,7 +673,7 @@ enter_time = 18
 
     [[node.children.children]]
     kind = "text"
-    text = "HELP"
+    text = "@options.help"
     anchor = "center"
     font = 2
     bank = 14
@@ -731,7 +731,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHANGE"
+  text = "@common.change"
   font = 2
   bank = 14
 
@@ -748,7 +748,7 @@ align = "center"
   [[node.children]]
   kind = "keycap"
   h = 30
-  text = "ESC"
+  text = "@common.esc"
   color = [0.933, 0.882, 0.769, 1.0]
   border = 2
   border_color = [0.078, 0.051, 0.043, 1.0]
@@ -758,7 +758,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK"
+  text = "@common.back"
   font = 2
   bank = 14
 
@@ -787,7 +787,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "SAVED TO RUGEN.TOML"
+  text = "@options.saved_to_rugen_toml"
   anchor = "left"
   x = 46
   font = 2
@@ -846,7 +846,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "UNSAVED CHANGES"
+  text = "@options.unsaved_changes"
   x = 54
   y = 14
   font = 6
@@ -855,7 +855,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "You changed settings that are not in rugen.toml yet. Save them before leaving?"
+  text = "@options.you_changed_settings_that_are_not"
   x = 30
   y = 84
   w = 560

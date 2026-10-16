@@ -843,6 +843,11 @@ font5 = font/rugen-code.def
 ; at 2x (14 px capitals), readable on the Deck's 7" 1280x800 screen
 font1.deck = font/rugen-deck.def
 font2.deck = font/rugen-deck.def
+; Japanese: fonts 1-3 draw with DotGothic16 (kana and the kanji the
+; translation uses) while the language is ja
+font1.ja = font/rugen-ja.def
+font2.ja = font/rugen-ja.def
+font3.ja = font/rugen-ja.def
 
 [Music]
 title.bgm =

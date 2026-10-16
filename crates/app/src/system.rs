@@ -124,11 +124,13 @@ impl SystemData {
             .and_then(|p| Snd::open(p).ok());
         let root = data_dir.parent().unwrap_or(data_dir);
         let mut fonts = HashMap::new();
-        // `fontN` and its Steam Deck variant `fontN.deck` (slot N + 100)
+        // `fontN`, its Steam Deck variant `fontN.deck` (slot N + 100) and
+        // its Japanese variant `fontN.ja` (slot N + 200)
         let keys = (1..=10).flat_map(|i| {
             [
                 (i, format!("font{i}")),
                 (i + crate::deck::DECK_FONT_SLOT, format!("font{i}.deck")),
+                (i + crate::lang::JA_FONT_SLOT, format!("font{i}.ja")),
             ]
         });
         for (i, key) in keys {

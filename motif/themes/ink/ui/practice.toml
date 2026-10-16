@@ -26,7 +26,7 @@ enter_time = 12
 
   [[node.children]]
   kind = "text"
-  text = "TITLE ▶"
+  text = "@practice.title"
   font = 1
   scale = 1
   bank = 9
@@ -35,14 +35,14 @@ enter_time = 12
 
   [[node.children]]
   kind = "text"
-  text = "PRACTICE"
+  text = "@practice.practice"
   font = 3
   scale = 2
   bank = 9
 
   [[node.children]]
   kind = "text"
-  text = "LEARN, WATCH, DEBUG"
+  text = "@practice.learn_watch_debug"
   font = 1
   scale = 1
   bank = 9
@@ -106,7 +106,7 @@ enter_time = 16
 
     [[node.children.children]]
     kind = "text"
-    text = "NEW"
+    text = "@practice.new"
     x = 291
     y = 30
     w = 62
@@ -265,7 +265,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHOOSE  "
+  text = "@common.choose  "
   font = 2
   bank = 9
 
@@ -282,7 +282,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "START  "
+  text = "@common.start  "
   font = 2
   bank = 9
 
@@ -299,6 +299,6 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK TO TITLE"
+  text = "@practice.back_to_title"
   font = 2
   bank = 9

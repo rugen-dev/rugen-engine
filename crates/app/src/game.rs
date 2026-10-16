@@ -365,6 +365,8 @@ pub struct Shell {
     motif_dir: PathBuf,
     /// The active user theme's files, watched for live reload.
     theme_watch: Option<crate::themes::Watch>,
+    /// `motif/lang/`, watched so a saved translation shows at once.
+    lang_watch: crate::themes::Watch,
     /// `rugen debug`: the panel around the match (`ui/debug.toml`) and
     /// where the fight was drawn last frame (its camera, the view rectangle).
     debug_ui: Option<Box<UiScreen>>,
@@ -501,6 +503,7 @@ impl Shell {
         let mut lib = lib;
         lib.keep_originals = config.content.keep_originals;
         crate::themes::init(&lib);
+        crate::lang::load(&lib.assets, &config.interface.lang);
         // convert and verify what is new in chars/ and stages/ in the
         // background while the title shows (crate::prepare); menus show
         // what is not ready yet and wait only for a fighter that is picked
@@ -510,6 +513,7 @@ impl Shell {
         }
         let data_dir = lib.data_dir();
         let motif_dir = lib.motif_dir_for(&config.video.theme);
+        let lang_watch = crate::themes::Watch::new(&crate::lang::dir(&lib.assets));
         let config_fullscreen = config.video.fullscreen;
         let system = match SystemData::load(&motif_dir, &data_dir) {
             Ok(s) => Some(s),
@@ -543,6 +547,7 @@ impl Shell {
             data_dir,
             theme_watch: crate::themes::is_user(&motif_dir)
                 .then(|| crate::themes::Watch::new(&motif_dir)),
+            lang_watch,
             debug_ui: None,
             debug_view: None,
             motif_dir,
@@ -905,7 +910,12 @@ impl Shell {
             .theme
             .trim()
             .eq_ignore_ascii_case(config.video.theme.trim());
+        let lang_changed = crate::lang::resolve(&self.config.interface.lang)
+            != crate::lang::resolve(&config.interface.lang);
         self.config = config;
+        if lang_changed {
+            crate::lang::load(&self.lib.assets, &self.config.interface.lang);
+        }
         self.input.rebind(&self.config.input);
         let deck = crate::deck::active(&self.config.video.profile);
         self.input.set_deck(deck);
@@ -950,7 +960,7 @@ impl Shell {
                 );
             }
         }
-        theme_changed || deck_changed
+        theme_changed || deck_changed || lang_changed
     }
 
     fn save_config(&self) {
@@ -2318,10 +2328,15 @@ impl Shell {
         if self.fade > 0.0 {
             self.fade -= 1.0 / 12.0;
         }
-        if self
-            .theme_watch
-            .as_mut()
-            .is_some_and(crate::themes::Watch::poll)
+        let lang_saved = self.lang_watch.poll();
+        if lang_saved {
+            crate::lang::load(&self.lib.assets, &self.config.interface.lang);
+        }
+        if lang_saved
+            || self
+                .theme_watch
+                .as_mut()
+                .is_some_and(crate::themes::Watch::poll)
         {
             self.live_reload_theme();
         }

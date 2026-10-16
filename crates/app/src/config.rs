@@ -15,6 +15,24 @@ pub struct Config {
     pub game: GameCfg,
     pub content: ContentCfg,
     pub update: UpdateCfg,
+    pub interface: InterfaceCfg,
+}
+
+/// `[interface]`: the menus' language (OPTIONS › INTERFACE).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InterfaceCfg {
+    /// `auto` (the OS language), else a code from `motif/lang/` (`en`,
+    /// `pt-BR`, `ja`, ...). English for anything unknown.
+    pub lang: String,
+}
+
+impl Default for InterfaceCfg {
+    fn default() -> Self {
+        Self {
+            lang: crate::lang::AUTO.into(),
+        }
+    }
 }
 
 /// `[update]`: the in-game updater (OPTIONS › UPDATE, `rugen update`).

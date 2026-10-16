@@ -2890,7 +2890,12 @@ impl Host<'_> {
     /// The font slot `font` at `scale` draws with (the Steam Deck variant
     /// of 1:1 text, see [`crate::deck::font_slot`]).
     fn slot(&self, font: i32, scale: f32) -> i32 {
-        crate::deck::font_slot(font, scale, |s| self.fonts.contains_key(&s))
+        let has = |s| self.fonts.contains_key(&s);
+        let ja = crate::lang::font_slot(font, has);
+        if ja != font {
+            return ja;
+        }
+        crate::deck::font_slot(font, scale, has)
     }
 
     fn texture(&mut self, key: &str) -> Cached {

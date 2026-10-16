@@ -279,7 +279,7 @@ color = [0.067, 0.067, 0.067, 1.0]
 [[node]]
 kind = "text"
 dock = "left top"
-text = "OPTIONS"
+text = "@options.options"
 x = 44
 y = 25
 font = 3
@@ -289,7 +289,7 @@ scale = 2
 [[node]]
 kind = "text"
 dock = "left top"
-text = "OPTIONS"
+text = "@options.options"
 x = 40
 y = 21
 font = 3
@@ -544,7 +544,7 @@ enter_time = 14
   # INTERFACE: theme picker (bundled, the player's own, OPEN THEMES FOLDER)
   [[node.children]]
   kind = "text"
-  text = "UI THEME"
+  text = "@options.ui_theme"
   x = 28
   y = 62
   font = 2
@@ -553,7 +553,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "ADD YOUR OWN IN THEMES/ NEXT TO CHARS/"
+  text = "@options.add_your_own_in_themes_next"
   anchor = "tr"
   x = 24
   y = 62
@@ -676,7 +676,7 @@ enter_time = 14
 
         [[node.children.children.children.children]]
         kind = "text"
-        text = "ACTIVE"
+        text = "@options.active"
         anchor = "left"
         x = 22
         font = 2
@@ -749,7 +749,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "APPLIED AT ONCE - SAVE TO KEEP IT. YOUR OWN THEMES RELOAD AS YOU SAVE THEIR FILES"
+  text = "@options.applied_at_once_save_to_keep"
   x = 28
   y = 404
   deck = { y = 432, w = 836, h = 62, wrap = true, line_gap = 1 }
@@ -783,7 +783,7 @@ enter_time = 18
 
     [[node.children.children]]
     kind = "text"
-    text = "HELP"
+    text = "@options.help"
     anchor = "center"
     font = 2
     bank = 10
@@ -834,7 +834,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHANGE"
+  text = "@common.change"
   font = 2
   bank = 9
 
@@ -851,13 +851,13 @@ align = "center"
   [[node.children]]
   kind = "keycap"
   h = 30
-  text = "ESC"
+  text = "@common.esc"
   font = 2
   bank = 9
 
   [[node.children]]
   kind = "text"
-  text = "BACK"
+  text = "@common.back"
   font = 2
   bank = 9
 @SAVE_OVERLAYS@"##;
@@ -884,7 +884,7 @@ color = [0.067, 0.067, 0.067, 1.0]
 [[node]]
 kind = "text"
 dock = "left top"
-text = "CONTROLS"
+text = "@common.controls"
 x = 44
 y = 25
 font = 3
@@ -894,7 +894,7 @@ scale = 2
 [[node]]
 kind = "text"
 dock = "left top"
-text = "CONTROLS"
+text = "@common.controls"
 x = 40
 y = 21
 font = 3
@@ -941,7 +941,7 @@ group = "header"
 
   [[node.children]]
   kind = "text"
-  text = "DEVICE"
+  text = "@common.device"
   font = 2
   bank = 11
 
@@ -994,7 +994,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "TEST PAD"
+  text = "@common.test_pad"
   x = 22
   y = 18
   font = 2
@@ -1002,7 +1002,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "PRESS YOUR KEYS, THEY LIGHT UP"
+  text = "@common.press_your_keys_they_light_up"
   anchor = "tr"
   x = 34
   y = 18
@@ -1103,7 +1103,7 @@ enter_time = 14
 @BUTTONS@
   [[node.children]]
   kind = "text"
-  text = "STICK"
+  text = "@common.stick"
   x = 112
   y = 352
   font = 2
@@ -1111,7 +1111,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "TOP ROW X Y Z - LOW ROW A B C"
+  text = "@common.top_row_x_y_z_low"
   x = 296
   deck = { x = 262 }
   y = 352
@@ -1176,7 +1176,7 @@ enter_time = 14
 
     [[node.children.children]]
     kind = "text"
-    text = "START"
+    text = "@common.start"
     font = 2
     bank = 9
 
@@ -1184,7 +1184,7 @@ enter_time = 14
 [[node]]
 kind = "text"
 dock = "left"
-text = "PRESETS"
+text = "@common.presets"
 x = 40
 y = 580
 font = 2
@@ -1237,7 +1237,7 @@ align = "center"
   [[node.children]]
   kind = "keycap"
   h = 30
-  text = "ESC"
+  text = "@common.esc"
   font = 2
   bank = 9
 
@@ -1262,7 +1262,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "BINDINGS"
+  text = "@common.bindings"
   x = 22
   y = 18
   font = 2
@@ -1433,7 +1433,7 @@ enter_time = 18
 
       [[node.children.children.children]]
       kind = "text"
-      text = "PRESS A KEY - ESC CANCEL"
+      text = "@common.press_a_key_esc_cancel"
       anchor = "left"
       x = 290
       font = 2
@@ -1496,13 +1496,13 @@ align = "center"
   [[node.children]]
   kind = "keycap"
   h = 30
-  text = "ENTER"
+  text = "@common.enter"
   font = 2
   bank = 9
 
   [[node.children]]
   kind = "text"
-  text = "REBIND"
+  text = "@common.rebind"
   font = 2
   bank = 9
 
@@ -1514,7 +1514,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CLEAR"
+  text = "@common.clear"
   font = 2
   bank = 9
 
@@ -1527,14 +1527,14 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "DEFAULTS"
+  text = "@common.defaults"
   font = 2
   bank = 9
 
   [[node.children]]
   kind = "keycap"
   h = 30
-  text = "TAB"
+  text = "@common.tab"
   font = 2
   bank = 9
 
@@ -1938,7 +1938,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "SAVED TO RUGEN.TOML"
+  text = "@options.saved_to_rugen_toml"
   anchor = "left"
   x = 46
   font = {sf}
@@ -1997,7 +1997,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "UNSAVED CHANGES"
+  text = "@options.unsaved_changes"
   x = 54
   y = 14
   font = {bf}
@@ -2006,7 +2006,7 @@ top = true
 
   [[node.children]]
   kind = "text"
-  text = "You changed settings that are not in rugen.toml yet. Save them before leaving?"
+  text = "@options.you_changed_settings_that_are_not"
   x = 30
   y = 84
   w = 560

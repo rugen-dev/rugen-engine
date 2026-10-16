@@ -40,7 +40,7 @@ ease = "back"
 [[node]]
 kind = "text"
 dock = "left"
-text = "DRAW"
+text = "@result.draw"
 x = 40
 y = 40
 font = 1
@@ -139,7 +139,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "MATCH REPORT"
+  text = "@result.match_report"
   x = 24
   y = 22
   font = 1
@@ -200,7 +200,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "LOSE"
+  text = "@result.lose"
   x = 306
   y = 330
   h = 34

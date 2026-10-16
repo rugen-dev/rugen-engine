@@ -27,14 +27,14 @@ enter_time = 12
 
   [[node.children]]
   kind = "text"
-  text = "CHALLENGE"
+  text = "@challenge.challenge"
   font = 3
   bank = 14
   text_dy = 2
 
   [[node.children]]
   kind = "text"
-  text = "PICK A RUN AND A FIGHTER"
+  text = "@challenge.pick_a_run_and_a_fighter"
   font = 2
   bank = 16
   text_dy = -6
@@ -149,7 +149,7 @@ enter_time = 16
 
     [[node.children.children]]
     kind = "text"
-    text = "YOUR BEST"
+    text = "@challenge.your_best"
     x = 24
     y = 426
     deck = { y = 442 }
@@ -170,7 +170,7 @@ enter_time = 16
 
 [[node]]
 kind = "text"
-text = "BEST SCORES ARE SAVED PER FIGHTER IN YOUR PROFILE"
+text = "@challenge.best_scores_are_saved_per_fighter"
 x = 48
 y = 652
 h = 36
@@ -200,7 +200,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHOOSE  "
+  text = "@common.choose  "
   font = 2
   bank = 16
 
@@ -217,7 +217,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "START  "
+  text = "@common.start  "
   font = 2
   bank = 16
 
@@ -234,6 +234,6 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK"
+  text = "@common.back"
   font = 2
   bank = 16

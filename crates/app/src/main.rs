@@ -74,6 +74,7 @@ mod inkscreens;
 mod input;
 mod keylabel;
 mod kit;
+mod lang;
 mod latency;
 mod lifebar;
 mod link;

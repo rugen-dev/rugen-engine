@@ -150,7 +150,7 @@ enter_time = 18
 
   [[node.children]]
   kind = "text"
-  text = "FEATURED"
+  text = "@title.featured"
   x = 44
   y = 44
   h = 28
@@ -186,7 +186,7 @@ enter_time = 18
 
     [[node.children.children]]
     kind = "text"
-    text = "PRESS ▶ TO TRY"
+    text = "@title.press_to_try"
     font = 2
     bank = 17
 
@@ -215,7 +215,7 @@ enter_delay = 6
 
   [[node.children]]
   kind = "text"
-  text = "ARENAS"
+  text = "@title.arenas"
   x = 20
   y = 20
   h = 26
@@ -344,7 +344,7 @@ h = 60
 
     [[node.children.children]]
     kind = "text"
-    text = "SELECT  "
+    text = "@common.select  "
     font = 2
     bank = 14
 
@@ -361,7 +361,7 @@ h = 60
 
     [[node.children.children]]
     kind = "text"
-    text = "BACK  "
+    text = "@common.back  "
     font = 2
     bank = 14
 
@@ -378,7 +378,7 @@ h = 60
 
     [[node.children.children]]
     kind = "text"
-    text = "FULLSCREEN"
+    text = "@title.fullscreen"
     font = 2
     bank = 14
 

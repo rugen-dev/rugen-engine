@@ -62,6 +62,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod lang;
 mod widgets;
 
 use std::collections::HashMap;
@@ -957,6 +958,21 @@ fn value_num(v: Option<&Value>) -> f32 {
 
 /// Replace `{path}` with context values.
 pub fn interpolate<S: Scope + ?Sized>(s: &str, ctx: &S) -> String {
+    // `@some.key`: a translated string (which may hold `{binds}` itself);
+    // spacing after the key stays (`"@common.back  "`)
+    let translated;
+    let s: &str = match lang::key_of(s.trim_end()) {
+        Some(k) => {
+            let pad = &s[s.trim_end().len()..];
+            if pad.is_empty() {
+                lang::t(k)
+            } else {
+                translated = format!("{}{pad}", lang::t(k));
+                &translated
+            }
+        }
+        None => s,
+    };
     if !s.contains('{') {
         return s.to_string();
     }
@@ -2983,7 +2999,9 @@ impl Ui {
                 }
                 if t.is_empty() && !editing {
                     alpha *= 0.45;
-                    n.placeholder.clone()
+                    n.placeholder
+                        .as_deref()
+                        .map(|t| lang::resolve(t).into_owned())
                 } else {
                     Some(t)
                 }

@@ -155,7 +155,7 @@ enter_delay = 18
 [[node]]
 kind = "text"
 dock = "left"
-text = "ROUND 1 · {stage.name}"
+text = "@vs.round_1_name"
 x = 40
 y = 692
 font = 1

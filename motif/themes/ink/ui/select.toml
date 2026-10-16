@@ -66,7 +66,7 @@ enter_time = 12
 
     [[node.children.children]]
     kind = "text"
-    text = "TAB"
+    text = "@common.tab"
     h = 26
     pad = 8
     image = "ui/key9_dark.webp"
@@ -76,7 +76,7 @@ enter_time = 12
 
     [[node.children.children]]
     kind = "text"
-    text = "SEARCH  "
+    text = "@select.search  "
     font = 2
     bank = 11
 
@@ -92,7 +92,7 @@ enter_time = 12
 
     [[node.children.children]]
     kind = "text"
-    text = "SORT: {sort}"
+    text = "@select.sort_sort"
     font = 2
     bank = 11
 
@@ -249,7 +249,7 @@ visible = "!ready"
 
 [[node]]
 kind = "text"
-text = "PAGE {pages.grid.page} / {pages.grid.count}"
+text = "@select.page_page_count"
 x = 860
 y = 446
 w = 200
@@ -271,7 +271,7 @@ visible = "searching"
 
 [[node]]
 kind = "text"
-text = "ESC CLEARS"
+text = "@select.esc_clears"
 x = 840
 y = 446
 font = 2
@@ -363,7 +363,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "BY {card1.author}"
+  text = "@select.by_author"
   x = 196
   y = 26
   w = 180
@@ -418,7 +418,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "PICKED!"
+  text = "@select.picked_2"
   x = 224
   y = 112
   h = 30
@@ -461,7 +461,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "CPU"
+  text = "@common.cpu"
   x = 330
   y = 8
   font = 2
@@ -665,7 +665,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "BY {card2.author}"
+  text = "@select.by_author_2"
   x = 24
   y = 26
   w = 180
@@ -725,7 +725,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "PICKED!"
+  text = "@select.picked_2"
   x = 60
   y = 112
   h = 30
@@ -770,7 +770,7 @@ enter_time = 16
 
   [[node.children]]
   kind = "text"
-  text = "CPU"
+  text = "@common.cpu"
   x = 24
   y = 8
   font = 2
@@ -905,7 +905,7 @@ enter_time = 16
 # stage is picked on its own screen next)
 [[node]]
 kind = "text"
-text = "VS"
+text = "@common.vs"
 x = 460
 y = 500
 w = 366
@@ -920,7 +920,7 @@ enter_delay = 4
 
 [[node]]
 kind = "text"
-text = "SIDES MAY USE DIFFERENT MODES"
+text = "@select.sides_may_use_different_modes"
 x = 460
 y = 604
 w = 366
@@ -931,7 +931,7 @@ visible = "team_note"
 
 [[node]]
 kind = "text"
-text = "READY!"
+text = "@select.ready"
 x = 560
 y = 596
 h = 40
@@ -969,7 +969,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "PICK  "
+  text = "@select.pick  "
   font = 2
   bank = 9
   visible = "pick_key"
@@ -987,7 +987,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "BACK"
+  text = "@common.back"
   font = 2
   bank = 9
 

@@ -203,7 +203,7 @@ enter_time = 18
 
     [[node.children.children]]
     kind = "text"
-    text = "PRESS ▶ TO TRY"
+    text = "@title.press_to_try"
     font = 2
     bank = 10
 
@@ -361,7 +361,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
     [[node.children.children]]
     kind = "text"
-    text = "SELECT  "
+    text = "@common.select  "
     font = 2
     bank = 11
 
@@ -378,7 +378,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
     [[node.children.children]]
     kind = "text"
-    text = "BACK  "
+    text = "@common.back  "
     font = 2
     bank = 11
 
@@ -395,7 +395,7 @@ color = [0.07, 0.07, 0.07, 1.0]
 
     [[node.children.children]]
     kind = "text"
-    text = "FULLSCREEN"
+    text = "@title.fullscreen"
     font = 2
     bank = 11
 

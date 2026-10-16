@@ -281,7 +281,7 @@ items = "servers"
   font = 6
   on_press = "{item.action}"
   pad = 16
-  text = "+ ADD SERVER"
+  text = "@online.add_server"
   shadow_focus = [6, 6]
 
 [[node]]
@@ -393,7 +393,7 @@ nine = [12, 12, 12, 12]
   y = 172
   bank = 17
   font = 2
-  text = "ONLINE"
+  text = "@online.online"
 
   [[node.children]]
   kind = "text"
@@ -411,7 +411,7 @@ nine = [12, 12, 12, 12]
   y = 172
   bank = 17
   font = 2
-  text = "ROOMS"
+  text = "@online.rooms"
 
   [[node.children]]
   kind = "text"
@@ -429,7 +429,7 @@ nine = [12, 12, 12, 12]
   y = 172
   bank = 17
   font = 2
-  text = "PING"
+  text = "@online.ping"
 
   [[node.children]]
   kind = "text"
@@ -447,7 +447,7 @@ nine = [12, 12, 12, 12]
   y = 172
   bank = 17
   font = 2
-  text = "YOUR RATING"
+  text = "@online.your_rating"
 
   [[node.children]]
   kind = "text"
@@ -527,7 +527,7 @@ nine = [12, 12, 12, 12]
     bank_focus = 14
     font = 6
     on_press = "retry:servers"
-    text = "RETRY"
+    text = "@online.retry"
     shadow_focus = [6, 6]
     image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -548,7 +548,7 @@ nine = [12, 12, 12, 12]
     bank_focus = 14
     font = 6
     on_press = "server:{index}"
-    text = "WHY?"
+    text = "@online.why"
     shadow_focus = [6, 6]
     image = "ui/plaque9.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -581,7 +581,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "hub:quick"
-  text = "QUICK MATCH"
+  text = "@online.quick_match"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -602,7 +602,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "hub:ranked"
-  text = "RANKED"
+  text = "@online.ranked"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -623,7 +623,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "hub:lobby"
-  text = "ROOMS"
+  text = "@online.rooms"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -644,7 +644,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "hub:board"
-  text = "LEADERBOARD"
+  text = "@online.leaderboard"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -667,7 +667,7 @@ nine = [12, 12, 12, 12]
   border_color = [0.635, 0.4, 0.227, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
   font = 6
-  text = "QUICK MATCH"
+  text = "@online.quick_match"
 
   [[node.children]]
   kind = "text"
@@ -683,7 +683,7 @@ nine = [12, 12, 12, 12]
   border_color = [0.635, 0.4, 0.227, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
   font = 6
-  text = "RANKED"
+  text = "@online.ranked"
 
   [[node.children]]
   kind = "text"
@@ -699,7 +699,7 @@ nine = [12, 12, 12, 12]
   border_color = [0.635, 0.4, 0.227, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
   font = 6
-  text = "ROOMS"
+  text = "@online.rooms"
 
   [[node.children]]
   kind = "text"
@@ -715,7 +715,7 @@ nine = [12, 12, 12, 12]
   border_color = [0.635, 0.4, 0.227, 1.0]
   color = [0.839, 0.769, 0.627, 1.0]
   font = 6
-  text = "LEADERBOARD"
+  text = "@online.leaderboard"
 
 [[node]]
 kind = "button"
@@ -736,7 +736,7 @@ color_focus = [0.706, 0.188, 0.102, 1.0]
 font = 2
 on_press = "online:lan"
 pad = 10
-text = "LAN / DIRECT IP"
+text = "@online.lan_direct_ip"
 shadow_focus = [4, 4]
 
   [[node.children]]
@@ -767,7 +767,7 @@ bank = 14
 bank_focus = 14
 font = 6
 on_press = "online:create"
-text = "CREATE ROOM"
+text = "@online.create_room"
 shadow_focus = [6, 6]
 image = "ui/plaque9_dark.webp"
 image_focus = "ui/plaque9_lit.webp"
@@ -788,7 +788,7 @@ bank = 14
 bank_focus = 14
 font = 6
 on_press = "online:join"
-text = "JOIN BY CODE"
+text = "@online.join_by_code"
 shadow_focus = [6, 6]
 image = "ui/plaque9.webp"
 image_focus = "ui/plaque9_lit.webp"
@@ -813,7 +813,7 @@ nine = [12, 12, 12, 12]
   y = 16
   bank = 17
   font = 2
-  text = "ROOM"
+  text = "@online.room"
 
   [[node.children]]
   kind = "text"
@@ -821,7 +821,7 @@ nine = [12, 12, 12, 12]
   y = 16
   bank = 17
   font = 2
-  text = "HOST"
+  text = "@online.host"
 
   [[node.children]]
   kind = "text"
@@ -829,7 +829,7 @@ nine = [12, 12, 12, 12]
   y = 16
   bank = 17
   font = 2
-  text = "RULES"
+  text = "@online.rules"
 
   [[node.children]]
   kind = "text"
@@ -837,7 +837,7 @@ nine = [12, 12, 12, 12]
   y = 16
   bank = 17
   font = 2
-  text = "SEATS"
+  text = "@online.seats"
 
   [[node.children]]
   kind = "text"
@@ -845,7 +845,7 @@ nine = [12, 12, 12, 12]
   y = 16
   bank = 17
   font = 2
-  text = "WATCHING"
+  text = "@online.watching"
 
   [[node.children]]
   kind = "panel"
@@ -930,7 +930,7 @@ nine = [12, 12, 12, 12]
         font = 1
         pad = 6
         scale = 1
-        text = "LIVE"
+        text = "@online.live"
 
       [[node.children.children.children]]
       kind = "text"
@@ -989,7 +989,7 @@ nine = [12, 12, 12, 12]
         color = [0.706, 0.188, 0.102, 1.0]
         font = 2
         pad = 12
-        text = "JOIN"
+        text = "@online.join"
 
         [[node.children.children.children.children]]
         kind = "text"
@@ -1002,7 +1002,7 @@ nine = [12, 12, 12, 12]
         color = [0.933, 0.882, 0.769, 1.0]
         font = 2
         pad = 12
-        text = "WATCH"
+        text = "@online.watch"
 
       [[node.children.children.children]]
       kind = "hbox"
@@ -1020,7 +1020,7 @@ nine = [12, 12, 12, 12]
         kind = "text"
         bank = 17
         font = 2
-        text = "FULL · WATCH ONLY"
+        text = "@online.full_watch_only"
 
       [[node.children.children.children]]
       kind = "panel"
@@ -1040,7 +1040,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 12
   font = 6
-  text = "NO PUBLIC ROOMS YET"
+  text = "@online.no_public_rooms_yet"
 
   [[node.children]]
   kind = "text"
@@ -1051,7 +1051,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 2
-  text = "CREATE ONE, OR JOIN A FRIEND'S ROOM BY CODE."
+  text = "@online.create_one_or_join_a_friend"
 
   [[node.children]]
   kind = "text"
@@ -1062,7 +1062,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 6
-  text = "LOADING ROOMS..."
+  text = "@online.loading_rooms"
 
   [[node.children]]
   kind = "panel"
@@ -1087,7 +1087,7 @@ nine = [12, 12, 12, 12]
   y = 510
   bank = 17
   font = 2
-  text = "PRIVATE ROOMS NEED A CODE"
+  text = "@online.private_rooms_need_a_code"
 
 [[node]]
 kind = "hbox"
@@ -1184,7 +1184,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 2
-  text = "ROOM CODE"
+  text = "@online.room_code"
 
   [[node.children]]
   kind = "panel"
@@ -1315,7 +1315,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 2
-  text = "SEND THIS CODE TO YOUR FRIEND:"
+  text = "@online.send_this_code_to_your_friend"
 
   [[node.children]]
   kind = "text"
@@ -1326,7 +1326,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 2
-  text = "ONLINE · ROOMS · JOIN BY CODE"
+  text = "@online.online_rooms_join_by_code"
 
   [[node.children]]
   kind = "button"
@@ -1340,7 +1340,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "room:copy"
-  text = "COPY CODE"
+  text = "@online.copy_code"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -1447,7 +1447,7 @@ nine = [12, 12, 12, 12]
   font = 1
   pad = 6
   scale = 1
-  text = "HIGH PING"
+  text = "@online.high_ping"
 
 [[node]]
 kind = "panel"
@@ -1536,7 +1536,7 @@ nine = [12, 12, 12, 12]
   font = 1
   pad = 6
   scale = 1
-  text = "HIGH PING"
+  text = "@online.high_ping"
 
 [[node]]
 kind = "panel"
@@ -1559,7 +1559,7 @@ color = [0.0, 0.0, 0.0, 0.0]
   bank = 16
   blink = 60
   font = 6
-  text = "WAITING FOR A CHALLENGER..."
+  text = "@online.waiting_for_a_challenger"
 
 [[node]]
 kind = "panel"
@@ -1579,7 +1579,7 @@ color = [0.0, 0.0, 0.0, 0.0]
   h = 48
   bank = 16
   font = 2
-  text = "SPECTATORS"
+  text = "@online.spectators"
 
   [[node.children]]
   kind = "text"
@@ -1626,7 +1626,7 @@ justify = "end"
   font = 6
   grow = true
   on_press = "room:rematch"
-  text = "REMATCH"
+  text = "@online.rematch"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -1645,7 +1645,7 @@ justify = "end"
   bank_focus = 14
   font = 6
   on_press = "room:kick"
-  text = "KICK"
+  text = "@online.kick"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -1663,7 +1663,7 @@ justify = "end"
   bank_focus = 14
   font = 6
   on_press = "back"
-  text = "LEAVE"
+  text = "@online.leave"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -1688,7 +1688,7 @@ nine = [12, 12, 12, 12]
   y = 18
   bank = 17
   font = 2
-  text = "ROOM NAME"
+  text = "@online.room_name"
 
   [[node.children]]
   kind = "input"
@@ -1711,7 +1711,7 @@ nine = [12, 12, 12, 12]
   on_change = "room_name:{value}"
   on_press = "form:go"
   pad = 16
-  placeholder = "NAME YOUR ROOM"
+  placeholder = "@online.name_your_room"
   value = "create.name"
   shadow_focus = [6, 6]
 
@@ -1729,7 +1729,7 @@ nine = [12, 12, 12, 12]
   y = 136
   bank = 17
   font = 2
-  text = "ROUNDS"
+  text = "@online.rounds"
 
   [[node.children]]
   kind = "choice"
@@ -1765,7 +1765,7 @@ nine = [12, 12, 12, 12]
   y = 182
   bank = 17
   font = 2
-  text = "TIME"
+  text = "@online.time"
 
   [[node.children]]
   kind = "choice"
@@ -1801,7 +1801,7 @@ nine = [12, 12, 12, 12]
   y = 228
   bank = 17
   font = 2
-  text = "MODE"
+  text = "@common.mode"
 
   [[node.children]]
   kind = "choice"
@@ -1837,7 +1837,7 @@ nine = [12, 12, 12, 12]
   y = 274
   bank = 17
   font = 2
-  text = "FIGHTERS"
+  text = "@online.fighters"
 
   [[node.children]]
   kind = "choice"
@@ -1873,7 +1873,7 @@ nine = [12, 12, 12, 12]
   y = 320
   bank = 17
   font = 2
-  text = "FIGHTER SIZE"
+  text = "@online.fighter_size"
 
   [[node.children]]
   kind = "choice"
@@ -1909,7 +1909,7 @@ nine = [12, 12, 12, 12]
   y = 366
   bank = 17
   font = 2
-  text = "LIFE"
+  text = "@online.life"
 
   [[node.children]]
   kind = "choice"
@@ -1945,7 +1945,7 @@ nine = [12, 12, 12, 12]
   y = 412
   bank = 17
   font = 2
-  text = "WHO CAN JOIN"
+  text = "@online.who_can_join"
 
   [[node.children]]
   kind = "choice"
@@ -1981,7 +1981,7 @@ nine = [12, 12, 12, 12]
   y = 458
   bank = 17
   font = 2
-  text = "SPECTATORS"
+  text = "@online.spectators"
 
   [[node.children]]
   kind = "choice"
@@ -2018,7 +2018,7 @@ nine = [12, 12, 12, 12]
   deck = { y = 492 }
   bank = 17
   font = 2
-  text = "PASSWORD"
+  text = "@online.password"
 
   [[node.children]]
   kind = "input"
@@ -2049,7 +2049,7 @@ nine = [12, 12, 12, 12]
   deck = { y = 516 }
   bank = 17
   font = 2
-  text = "OPTIONAL"
+  text = "@online.optional"
 
 [[node]]
 kind = "text"
@@ -2058,7 +2058,7 @@ x = 900
 y = 100
 bank = 16
 font = 2
-text = "HOW OTHERS SEE IT"
+text = "@online.how_others_see_it"
 
 [[node]]
 kind = "panel"
@@ -2127,7 +2127,7 @@ x = 900
 y = 466
 bank = 16
 font = 2
-text = "FORMAT"
+text = "@online.format"
 
 [[node]]
 kind = "choice"
@@ -2170,7 +2170,7 @@ bank = 14
 bank_focus = 14
 font = 3
 on_press = "form:go"
-text = "CREATE"
+text = "@online.create"
 shadow_focus = [6, 6]
 image = "ui/plaque9_dark.webp"
 image_focus = "ui/plaque9_lit.webp"
@@ -2197,7 +2197,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 2
-  text = "TYPE THE 5-CHARACTER CODE"
+  text = "@online.type_the_5_character_code"
 
   [[node.children]]
   kind = "panel"
@@ -2524,7 +2524,7 @@ nine = [12, 12, 12, 12]
   y = 218
   bank = 17
   font = 2
-  text = "ROOM PASSWORD"
+  text = "@online.room_password"
 
   [[node.children]]
   kind = "input"
@@ -2561,7 +2561,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 3
   on_press = "join:join"
-  text = "JOIN"
+  text = "@online.join"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -2581,7 +2581,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "join:watch"
-  text = "WATCH"
+  text = "@online.watch"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -2847,7 +2847,7 @@ color = [0.133, 0.078, 0.059, 1.0]
   bank = 4
   font = 1
   scale = 1
-  text = "CHAMPION"
+  text = "@online.champion"
 
   [[node.children]]
   kind = "text"
@@ -2890,7 +2890,7 @@ border_color = [0.62, 0.553, 0.471, 1.0]
   align = "center"
   bank = 16
   font = 2
-  text = "TBD"
+  text = "@online.tbd"
 
 # before the draw: the entrants, START for the host
 [[node]]
@@ -2909,7 +2909,7 @@ nine = [12, 12, 12, 12]
   y = 22
   bank = 17
   font = 2
-  text = "PLAYERS {bk.count}"
+  text = "@online.players_count"
 
   [[node.children]]
   kind = "grid"
@@ -2964,7 +2964,7 @@ nine = [12, 12, 12, 12]
       y = 18
       bank = 13
       font = 2
-      text = "YOU"
+      text = "@online.you"
 
 [[node]]
 kind = "text"
@@ -3048,7 +3048,7 @@ color = [0.976, 0.949, 0.886, 1.0]
   align = "center"
   bank = 13
   font = 2
-  text = "CALLED BY THE SERVER"
+  text = "@online.called_by_the_server"
 
   [[node.children]]
   kind = "text"
@@ -3058,7 +3058,7 @@ color = [0.976, 0.949, 0.886, 1.0]
   align = "center"
   bank = 16
   font = 2
-  text = "NOBODY HOSTS THIS ROOM"
+  text = "@online.nobody_hosts_this_room"
 
 [[node]]
 kind = "text"
@@ -3090,7 +3090,7 @@ nine = [12, 12, 12, 12]
   y = 36
   bank = 17
   font = 2
-  text = "● LIVE"
+  text = "@online.live_2"
 
   [[node.children]]
   kind = "text"
@@ -3203,7 +3203,7 @@ nine = [12, 12, 12, 12]
   y = 26
   bank = 17
   font = 2
-  text = "AFTER A MATCH · SHARE"
+  text = "@online.after_a_match_share"
 
   [[node.children]]
   kind = "text"
@@ -3236,7 +3236,7 @@ nine = [12, 12, 12, 12]
   max_lines = 3
   bank = 12
   font = 2
-  text = "PLAY AN ONLINE MATCH ON THIS SERVER, THEN SHARE IT HERE."
+  text = "@online.play_an_online_match_on_this"
   wrap = true
 
   [[node.children]]
@@ -3346,7 +3346,7 @@ nine = [12, 12, 12, 12]
     align = "center"
     bank = 12
     font = 6
-    text = "SAVE FILE"
+    text = "@online.save_file"
 
   [[node.children]]
   kind = "text"
@@ -3412,7 +3412,7 @@ nine = [12, 12, 12, 12]
   y = 26
   bank = 17
   font = 2
-  text = "WATCH → BY CODE"
+  text = "@online.watch_by_code"
 
   [[node.children]]
   kind = "hbox"
@@ -3479,7 +3479,7 @@ nine = [12, 12, 12, 12]
   y = 130
   bank = 17
   font = 2
-  text = "CTRL+V PASTES · MISSING FIGHTERS DOWNLOAD FIRST"
+  text = "@online.ctrl_v_pastes_missing_fighters_download"
 
   [[node.children]]
   kind = "button"
@@ -3505,7 +3505,7 @@ nine = [12, 12, 12, 12]
     align = "center"
     bank = 14
     font = 6
-    text = "WATCH"
+    text = "@online.watch"
 
   [[node.children]]
   kind = "text"
@@ -3513,7 +3513,7 @@ nine = [12, 12, 12, 12]
   y = 232
   bank = 12
   font = 2
-  text = "RECENT"
+  text = "@online.recent"
 
   [[node.children]]
   kind = "text"
@@ -3522,7 +3522,7 @@ nine = [12, 12, 12, 12]
   y = 262
   bank = 17
   font = 2
-  text = "CODES YOU SHARE OR WATCH SHOW HERE."
+  text = "@online.codes_you_share_or_watch_show"
 
   [[node.children]]
   kind = "list"
@@ -3569,7 +3569,7 @@ nine = [12, 12, 12, 12]
       y = 16
       bank = 12
       font = 2
-      text = "▶ WATCH"
+      text = "@online.watch_2"
 
 # ---- END REPLAYS
 # ---- HUB REPLAYS button
@@ -3598,7 +3598,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 14
   font = 2
-  text = "REPLAYS"
+  text = "@online.replays"
 
   [[node.children]]
   kind = "text"
@@ -3609,7 +3609,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 14
   font = 2
-  text = "REPLAYS"
+  text = "@online.replays"
 
 # ---- END HUB REPLAYS
 # ---- PROFILE: one card per server (left), its account (right)
@@ -3906,7 +3906,7 @@ nine = [12, 12, 12, 12]
       font = 1
       pad = 6
       scale = 1
-      text = "VERIFIED"
+      text = "@online.verified"
 
     [[node.children.children]]
     kind = "text"
@@ -3968,7 +3968,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 2
       on_press = "acct:password"
-      text = "CHANGE PASSWORD"
+      text = "@online.change_password"
       deck = { w = 222 }
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
@@ -3987,7 +3987,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 2
       on_press = "acct:logout"
-      text = "LOG OUT"
+      text = "@online.log_out"
       deck = { w = 100 }
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
@@ -4006,7 +4006,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 2
       on_press = "acct:logout_all"
-      text = "LOG OUT EVERYWHERE"
+      text = "@online.log_out_everywhere"
       deck = { w = 250 }
       shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
@@ -4034,7 +4034,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 2
       on_press = "acct:link"
-      text = "LINK WEBSITE"
+      text = "@online.link_website"
       deck = { w = 222 }
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
@@ -4050,7 +4050,7 @@ nine = [12, 12, 12, 12]
       align = "center"
       bank = 17
       font = 2
-      text = "SHOW YOUR PROFILE ON RUGEN.DEV"
+      text = "@online.show_your_profile_on_rugen_dev"
 
     [[node.children.children]]
     kind = "button"
@@ -4064,7 +4064,7 @@ nine = [12, 12, 12, 12]
     bank_focus = 14
     font = 3
     on_press = "acct:enter"
-    text = "ENTER SERVER"
+    text = "@online.enter_server"
     shadow_focus = [6, 6]
     image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -4090,7 +4090,7 @@ nine = [12, 12, 12, 12]
     h = 34
     bank = 12
     font = 3
-    text = "LINK WEBSITE"
+    text = "@online.link_website"
 
     [[node.children.children]]
     kind = "text"
@@ -4108,7 +4108,7 @@ nine = [12, 12, 12, 12]
     w = 592
     bank = 12
     font = 2
-    text = "YOUR CODE"
+    text = "@online.your_code"
 
     [[node.children.children]]
     kind = "panel"
@@ -4300,7 +4300,7 @@ nine = [12, 12, 12, 12]
     font = 2
     line_gap = 8
     max_lines = 2
-    text = "THE CODE WORKS ONCE AND ONLY FOR TEN MINUTES. REFRESH REPLACES IT."
+    text = "@online.the_code_works_once_and_only"
     wrap = true
 
     [[node.children.children]]
@@ -4334,7 +4334,7 @@ nine = [12, 12, 12, 12]
     bank_focus = 14
     font = 2
     on_press = "acct:link_back"
-    text = "BACK TO THE ACCOUNT"
+    text = "@online.back_to_the_account"
     shadow_focus = [6, 6]
     image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -4458,7 +4458,7 @@ nine = [12, 12, 12, 12]
     y = 80
     bank = 17
     font = 2
-    text = "USERNAME"
+    text = "@online.username"
 
     [[node.children.children]]
     kind = "input"
@@ -4499,7 +4499,7 @@ nine = [12, 12, 12, 12]
     y = 80
     bank = 17
     font = 2
-    text = "CURRENT PASSWORD"
+    text = "@online.current_password"
 
     [[node.children.children]]
     kind = "input"
@@ -4565,7 +4565,7 @@ nine = [12, 12, 12, 12]
     y = 174
     bank = 17
     font = 2
-    text = "NEW PASSWORD"
+    text = "@online.new_password"
 
     [[node.children.children]]
     kind = "input"
@@ -4598,7 +4598,7 @@ nine = [12, 12, 12, 12]
     y = 174
     bank = 17
     font = 2
-    text = "AGAIN"
+    text = "@online.again"
 
     [[node.children.children]]
     kind = "input"
@@ -4748,7 +4748,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 6
       on_press = "acct:cancel_password"
-      text = "CANCEL"
+      text = "@online.cancel"
       shadow_focus = [6, 6]
       image = "ui/plaque9.webp"
       image_focus = "ui/plaque9_lit.webp"
@@ -4767,7 +4767,7 @@ nine = [12, 12, 12, 12]
       bank_focus = 14
       font = 6
       on_press = "acct:enter"
-      text = "ENTER"
+      text = "@common.enter"
       shadow_focus = [6, 6]
       image = "ui/plaque9_dark.webp"
       image_focus = "ui/plaque9_lit.webp"
@@ -4820,7 +4820,7 @@ nine = [12, 12, 12, 12]
     bank_focus = 14
     font = 3
     on_press = "acct:enter"
-    text = "ENTER SERVER"
+    text = "@online.enter_server"
     shadow_focus = [6, 6]
     image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -4903,7 +4903,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 14
   font = 2
-  text = "PLAYERS"
+  text = "@online.players"
 
   [[node.children]]
   kind = "text"
@@ -4914,7 +4914,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 12
   font = 2
-  text = "PLAYERS"
+  text = "@online.players"
 
 [[node]]
 kind = "button"
@@ -4951,7 +4951,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 14
   font = 2
-  text = "FIGHTERS"
+  text = "@online.fighters"
 
   [[node.children]]
   kind = "text"
@@ -4962,7 +4962,7 @@ shadow_focus = [4, 4]
   align = "center"
   bank = 12
   font = 2
-  text = "FIGHTERS"
+  text = "@online.fighters"
 
 [[node]]
 kind = "text"
@@ -4971,7 +4971,7 @@ x = 368
 y = 108
 bank = 16
 font = 2
-text = "FIGHTER"
+text = "@online.fighter"
 
 [[node]]
 kind = "button"
@@ -5021,7 +5021,7 @@ x = 250
 y = 108
 bank = 16
 font = 2
-text = "SEASON"
+text = "@online.season"
 
 [[node]]
 kind = "button"
@@ -5077,7 +5077,7 @@ nine = [12, 12, 12, 12]
   y = 14
   bank = 17
   font = 2
-  text = "PLAYER"
+  text = "@online.player"
 
   [[node.children]]
   kind = "text"
@@ -5085,7 +5085,7 @@ nine = [12, 12, 12, 12]
   y = 14
   bank = 17
   font = 2
-  text = "RATING"
+  text = "@online.rating"
 
   [[node.children]]
   kind = "text"
@@ -5093,7 +5093,7 @@ nine = [12, 12, 12, 12]
   y = 14
   bank = 17
   font = 2
-  text = "RECORD"
+  text = "@online.record"
 
   [[node.children]]
   kind = "text"
@@ -5201,7 +5201,7 @@ nine = [12, 12, 12, 12]
         font = 1
         pad = 6
         scale = 1
-        text = "VERIFIED"
+        text = "@online.verified"
 
       [[node.children.children.children]]
       kind = "text"
@@ -5274,7 +5274,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 17
   font = 6
-  text = "LOADING THE LEADERBOARD..."
+  text = "@online.loading_the_leaderboard"
 
   [[node.children]]
   kind = "panel"
@@ -5379,7 +5379,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 12
   font = 6
-  text = "SEARCHING FOR AN OPPONENT"
+  text = "@online.searching_for_an_opponent"
 
   [[node.children]]
   kind = "text"
@@ -5390,7 +5390,7 @@ nine = [12, 12, 12, 12]
   align = "center"
   bank = 13
   font = 6
-  text = "MATCH FOUND"
+  text = "@online.match_found"
 
   [[node.children]]
   kind = "text"
@@ -5451,7 +5451,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "online:cancel"
-  text = "CANCEL"
+  text = "@online.cancel"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -5476,7 +5476,7 @@ nine = [12, 12, 12, 12]
   y = 24
   bank = 17
   font = 2
-  text = "YOU ARE"
+  text = "@online.you_are"
 
   [[node.children]]
   kind = "choice"
@@ -5511,7 +5511,7 @@ nine = [12, 12, 12, 12]
   y = 114
   bank = 17
   font = 2
-  text = "YOUR ADDRESS"
+  text = "@online.your_address"
 
   [[node.children]]
   kind = "text"
@@ -5529,7 +5529,7 @@ nine = [12, 12, 12, 12]
   y = 180
   bank = 17
   font = 2
-  text = "THE OTHER PLAYER TYPES THIS. SAME NETWORK, OR A FORWARDED PORT."
+  text = "@online.the_other_player_types_this_same"
 
   [[node.children]]
   kind = "text"
@@ -5537,7 +5537,7 @@ nine = [12, 12, 12, 12]
   y = 214
   bank = 17
   font = 2
-  text = "THEIR ADDRESS"
+  text = "@online.their_address"
 
   [[node.children]]
   kind = "input"
@@ -5578,7 +5578,7 @@ nine = [12, 12, 12, 12]
   y = 332
   bank = 17
   font = 2
-  text = "FIGHTERS AND STAGE COME FROM [NET] IN RUGEN.TOML."
+  text = "@online.fighters_and_stage_come_from_net"
 
   [[node.children]]
   kind = "button"
@@ -5591,7 +5591,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 3
   on_press = "direct:go"
-  text = "START"
+  text = "@common.start"
   shadow_focus = [6, 6]
   image = "ui/plaque9_dark.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -5612,7 +5612,7 @@ nine = [12, 12, 12, 12]
   bank_focus = 14
   font = 6
   on_press = "netplay"
-  text = "NETPLAY (RUGEN.TOML)"
+  text = "@online.netplay_rugen_toml"
   shadow_focus = [6, 6]
   image = "ui/plaque9.webp"
   image_focus = "ui/plaque9_lit.webp"
@@ -5898,7 +5898,7 @@ nine = [6, 6, 6, 6]
 
   [[node.children]]
   kind = "text"
-  text = "FAIR"
+  text = "@online.fair"
   x = 0
   y = 18
   w = 300
@@ -5921,7 +5921,7 @@ nine = [6, 6, 6, 6]
 
   [[node.children]]
   kind = "text"
-  text = "UNBALANCED"
+  text = "@online.unbalanced"
   x = 0
   y = 29
   w = 300
@@ -5943,7 +5943,7 @@ nine = [6, 6, 6, 6]
 
   [[node.children]]
   kind = "text"
-  text = "BLOCKED"
+  text = "@online.blocked"
   x = 0
   y = 25
   w = 300
@@ -6024,7 +6024,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "POWER"
+  text = "@online.power"
   x = 500
   y = 14
   w = 200
@@ -6145,7 +6145,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "LIFE"
+  text = "@online.life"
   x = 500
   y = 72
   w = 200
@@ -6263,7 +6263,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "ATTACK"
+  text = "@online.attack"
   x = 500
   y = 102
   w = 200
@@ -6381,7 +6381,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "DEFENCE"
+  text = "@online.defence"
   x = 500
   y = 132
   w = 200
@@ -6499,7 +6499,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "BEST HIT"
+  text = "@online.best_hit"
   x = 500
   y = 162
   w = 200
@@ -6617,7 +6617,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "COMBO"
+  text = "@online.combo"
   x = 500
   y = 192
   w = 200
@@ -6735,7 +6735,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "SUPERS"
+  text = "@online.supers"
   x = 500
   y = 222
   w = 200
@@ -6853,7 +6853,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "PROJECTILES"
+  text = "@online.projectiles"
   x = 500
   y = 252
   w = 200
@@ -6971,7 +6971,7 @@ enter_time = 14
 
   [[node.children]]
   kind = "text"
-  text = "THROWS"
+  text = "@online.throws"
   x = 500
   y = 282
   w = 200
@@ -7198,7 +7198,7 @@ gap = 12
   color = [0.831, 0.541, 0.133, 1.0]
   border = 2
   border_color = [0.341, 0.2, 0.122, 1.0]
-  text = "HIGH PING"
+  text = "@online.high_ping"
   font = 2
   bank = 14
 
@@ -7260,7 +7260,7 @@ justify = "end"
   id = "mx_change"
   visible = "mx.can_change"
   w = 290
-  text = "CHANGE FIGHTER"
+  text = "@online.change_fighter"
   bank = 14
   bank_focus = 14
   on_press = "mx:change"
@@ -7279,7 +7279,7 @@ justify = "end"
   kind = "button"
   id = "mx_leave"
   w = 120
-  text = "LEAVE"
+  text = "@online.leave"
   bank = 14
   bank_focus = 14
   on_press = "mx:leave"
@@ -7679,7 +7679,7 @@ top = true
     bank_focus = 14
     font = 6
     on_press = "toast:retry"
-    text = "RETRY"
+    text = "@online.retry"
     shadow_focus = [4, 4]
     image = "ui/plaque9_dark.webp"
     image_focus = "ui/plaque9_lit.webp"
@@ -7702,7 +7702,7 @@ top = true
     color_focus = [0.706, 0.188, 0.102, 1.0]
     font = 6
     on_press = "toast:dismiss"
-    text = "DISMISS"
+    text = "@online.dismiss"
     shadow_focus = [4, 4]
 
 # dialog: another version, remove / add a server (keeps the focus)
@@ -7805,7 +7805,7 @@ nine = [12, 12, 12, 12]
   on_change = "server_addr:{value}"
   on_press = "server_add"
   pad = 14
-  placeholder = "PLAY.EXAMPLE.COM"
+  placeholder = "@online.play_example_com"
   shadow_focus = [6, 6]
 
   [[node.children]]

@@ -38,7 +38,7 @@ enter_time = 10
 
   [[node.children]]
   kind = "text"
-  text = "PAUSE"
+  text = "@pause.pause"
   font = 1
   scale = 5
   bank = 11
@@ -47,7 +47,7 @@ enter_time = 10
   # TRAINING is longer: smaller, so it stays clear of the panel
   [[node.children]]
   kind = "text"
-  text = "TRAINING"
+  text = "@pause.training"
   y = 6
   font = 1
   scale = 3.5
@@ -554,7 +554,7 @@ visible = "show_dummy"
 
   [[node.children]]
   kind = "text"
-  text = "DUMMY"
+  text = "@pause.dummy"
   x = 24
   y = 24
   font = 1
@@ -563,7 +563,7 @@ visible = "show_dummy"
 
   [[node.children]]
   kind = "text"
-  text = "WHAT THE DUMMY DOES"
+  text = "@pause.what_the_dummy_does"
   anchor = "tr"
   x = 24
   y = 34
@@ -653,7 +653,7 @@ visible = "show_dummy"
   y = 344
   w = 240
   h = 50
-  text = "● RECORD"
+  text = "@pause.record"
   font = 1
   scale = 2
   bank = 11
@@ -673,7 +673,7 @@ visible = "show_dummy"
   y = 344
   w = 240
   h = 50
-  text = "PLAY"
+  text = "@pause.play"
   font = 1
   scale = 2
   bank = 9
@@ -693,7 +693,7 @@ visible = "show_dummy"
   y = 344
   w = 240
   h = 50
-  text = "LOOP"
+  text = "@pause.loop"
   font = 1
   scale = 2
   bank = 9
@@ -749,7 +749,7 @@ visible = "show_dummy"
 
   [[node.children]]
   kind = "text"
-  text = "PLAYBACK REPEATS THE SAME INPUTS FRAME FOR FRAME."
+  text = "@pause.playback_repeats_the_same_inputs_frame"
   x = 24
   y = 490
   font = 2
@@ -757,7 +757,7 @@ visible = "show_dummy"
 
   [[node.children]]
   kind = "text"
-  text = "REVERSAL SLOT PLAYS IT WHEN THE DUMMY RECOVERS FROM A BLOCK OR A HIT."
+  text = "@pause.reversal_slot_plays_it_when_the"
   x = 24
   y = 514
   deck = { y = 506, w = 740, h = 58, wrap = true, line_gap = -2 }
@@ -797,7 +797,7 @@ visible = "show_display"
 
   [[node.children]]
   kind = "text"
-  text = "DISPLAY"
+  text = "@pause.display"
   x = 24
   y = 24
   font = 1
@@ -806,7 +806,7 @@ visible = "show_display"
 
   [[node.children]]
   kind = "text"
-  text = "SCREEN TOOLS, LIFE AND POWER"
+  text = "@pause.screen_tools_life_and_power"
   anchor = "tr"
   x = 24
   y = 34
@@ -883,7 +883,7 @@ visible = "show_display"
 
   [[node.children]]
   kind = "text"
-  text = "F1 SWITCHES THE HITBOXES DURING THE FIGHT."
+  text = "@pause.f1_switches_the_hitboxes_during_the"
   anchor = "bl"
   x = 24
   y = 22
@@ -925,7 +925,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "PAGE   "
+  text = "@pause.page   "
   font = 2
   bank = 11
   visible = "paged"
@@ -943,7 +943,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHOOSE   "
+  text = "@common.choose   "
   font = 2
   bank = 11
   visible = "panel_open"
@@ -961,7 +961,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "CHANGE   "
+  text = "@common.change   "
   font = 2
   bank = 11
   visible = "panel_open"
@@ -978,7 +978,7 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "SELECT   "
+  text = "@common.select   "
   font = 2
   bank = 11
 
@@ -994,6 +994,6 @@ align = "center"
 
   [[node.children]]
   kind = "text"
-  text = "RESUME"
+  text = "@pause.resume"
   font = 2
   bank = 11
