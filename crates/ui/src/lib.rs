@@ -1050,6 +1050,27 @@ fn wrap_text(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32)
     lines
 }
 
+/// The scale `text` draws at to fit `width`: `scale` when it fits, else the
+/// largest smaller whole scale that does (pixel fonts stay crisp), else
+/// the fraction that makes it fit (never below a quarter of `scale`).
+fn fit_scale(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32) -> f32 {
+    if width <= 0.0 || text.is_empty() {
+        return scale;
+    }
+    let w = p.text_width(font, text, scale);
+    if w <= width {
+        return scale;
+    }
+    let mut s = libm::floorf(scale) - 1.0;
+    while s >= 1.0 {
+        if p.text_width(font, text, s) <= width {
+            return s;
+        }
+        s -= 1.0;
+    }
+    (scale * width / w).max(scale * 0.25)
+}
+
 /// `text` shortened to `width` with a trailing `...` (unchanged when it fits).
 fn ellipsize(p: &mut dyn Painter, font: i32, scale: f32, text: &str, width: f32) -> String {
     if p.text_width(font, text, scale) <= width {
@@ -3100,6 +3121,24 @@ impl Ui {
             } else {
                 text
             };
+            // a label wider than its button or sized box (a long
+            // translation) shrinks instead of running out of it
+            let sized = n.kind == Kind::Button || (n.kind == Kind::Text && n.w.is_some());
+            let (scale, y) = if sized && !n.ellipsis {
+                let fit = fit_scale(p, font, scale, &text, rect.w - 2.0 * inset);
+                if fit != scale {
+                    let th = p.text_height(font, fit);
+                    let ink = p.text_center_dy(font, fit);
+                    (
+                        fit,
+                        rect.y + (rect.h + th) / 2.0 - ink + n.text_dy.unwrap_or(0.0),
+                    )
+                } else {
+                    (scale, y)
+                }
+            } else {
+                (scale, y)
+            };
             p.draw_text(
                 font,
                 &text,
@@ -3951,6 +3990,83 @@ mask = "!show"
             "{:?}",
             p.drawn
         );
+    }
+
+    /// A button label wider than the button draws smaller: whole scales
+    /// first, then a fraction (test painter: 8 px per character per scale).
+    #[test]
+    fn wide_labels_shrink_to_their_button() {
+        struct Rec(Vec<(String, f32)>);
+        impl Painter for Rec {
+            fn image_size(&mut self, _: &str) -> Option<(u32, u32)> {
+                None
+            }
+            fn draw_image(
+                &mut self,
+                _: &str,
+                _: Option<[u32; 4]>,
+                _: Rect,
+                _: f32,
+                _: f32,
+                _: Option<Rect>,
+            ) {
+            }
+            fn draw_rect(&mut self, _: Rect, _: [f32; 4], _: f32, _: Option<Rect>) {}
+            fn text_width(&mut self, _: i32, t: &str, s: f32) -> f32 {
+                t.chars().count() as f32 * 8.0 * s
+            }
+            fn text_height(&mut self, _: i32, s: f32) -> f32 {
+                10.0 * s
+            }
+            #[allow(clippy::too_many_arguments)]
+            fn draw_text(
+                &mut self,
+                _: i32,
+                t: &str,
+                _: f32,
+                _: f32,
+                _: i32,
+                _: i32,
+                s: f32,
+                _: f32,
+                _: Option<Rect>,
+            ) {
+                self.0.push((t.to_string(), s));
+            }
+        }
+        let def = ScreenDef::parse(
+            r#"
+[[node]]
+kind = "button"
+id = "a"
+w = 100
+h = 30
+scale = 2
+text = "{a}"
+on_press = "x"
+[[node]]
+kind = "button"
+id = "b"
+w = 100
+h = 30
+text = "{b}"
+on_press = "x"
+"#,
+        )
+        .unwrap();
+        // 10 chars at scale 2 = 160 px > 100: scale 1 (80 px) fits
+        // 20 chars at scale 1 = 160 px > 100: 100 / 160 of the scale
+        let mut ui = Ui::new(
+            def,
+            serde_json::json!({ "a": "ABCDEFGHIJ", "b": "ABCDEFGHIJABCDEFGHIJ" }),
+        );
+        let mut rec = Rec(Vec::new());
+        ui.tick(Nav::default(), &mut rec);
+        ui.draw(&mut rec);
+        let a = rec.0.iter().find(|(t, _)| t == "ABCDEFGHIJ").unwrap();
+        assert_eq!(a.1, 1.0);
+        let b = rec.0.iter().find(|(t, _)| t.len() == 20).unwrap();
+        assert!((b.1 - 100.0 / 160.0).abs() < 1e-3, "{}", b.1);
     }
 
     #[test]
