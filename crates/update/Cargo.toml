@@ -1,0 +1,22 @@
+[package]
+name = "rugen-update"
+description = "In-game updater: GitHub release check, verified download, archive apply"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json = "1"
+sha2 = "0.11"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
+
+[lints]
+workspace = true
