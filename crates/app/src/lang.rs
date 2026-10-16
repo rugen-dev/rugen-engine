@@ -199,16 +199,36 @@ fn env_locale() -> Option<String> {
         .filter(|v| !v.trim().is_empty())
 }
 
-/// The language code the setting resolves to (`auto` → the OS language).
+/// The language code the setting resolves to: `auto` → the OS language,
+/// a shipped code as is, an OS-style tag (`pt_BR`) → the nearest shipped
+/// code, any other short code as written (a player's own
+/// `motif/lang/<code>.toml`; its missing keys read in English).
 pub fn resolve(setting: &str) -> &'static str {
     let s = setting.trim();
     if s.is_empty() || s.eq_ignore_ascii_case(AUTO) {
         return detect();
     }
-    LANGS
-        .iter()
-        .find(|(c, _)| c.eq_ignore_ascii_case(s))
-        .map_or_else(|| nearest(s), |(c, _)| c)
+    if let Some((c, _)) = LANGS.iter().find(|(c, _)| c.eq_ignore_ascii_case(s)) {
+        return c;
+    }
+    let near = nearest(s);
+    let plain = s.len() <= 8 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if near == "en" && plain && !s.eq_ignore_ascii_case("en") {
+        return own_code(s);
+    }
+    near
+}
+
+/// A code outside [`LANGS`], kept for the run (interned once per code).
+fn own_code(s: &str) -> &'static str {
+    static CODES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut v = CODES.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(c) = v.iter().find(|c| **c == s) {
+        return c;
+    }
+    let c: &'static str = Box::leak(s.to_string().into_boxed_str());
+    v.push(c);
+    c
 }
 
 fn read_table(dir: &Path, code: &str) -> rugen_ui::lang::Table {
@@ -269,6 +289,124 @@ pub fn font_slot(font: i32, has: impl Fn(i32) -> bool) -> i32 {
 mod tests {
     use super::*;
 
+    fn repo() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(&p, ext, out);
+            } else if p.extension().is_some_and(|x| x == ext) {
+                out.push(p);
+            }
+        }
+    }
+
+    /// Keys the sources refer to: `t("a.b")`, `tf("a.b"`, `tn(n, "a.b", "a.c")`
+    /// and `"@a.b"` literals in Rust, `"@a.b"` values in the screen TOMLs.
+    fn used_keys() -> std::collections::BTreeSet<String> {
+        let mut files = Vec::new();
+        walk(&repo().join("crates/app/src"), "rs", &mut files);
+        walk(&repo().join("crates/app/src"), "toml", &mut files);
+        walk(&repo().join("motif/themes"), "toml", &mut files);
+        let mut keys = std::collections::BTreeSet::new();
+        let key_char = |c: char| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-';
+        for f in files {
+            let text = std::fs::read_to_string(&f).unwrap();
+            // "@a.b" anywhere (Rust and TOML)
+            for (i, _) in text.match_indices("\"@") {
+                let k: String = text[i + 2..].chars().take_while(|c| key_char(*c)).collect();
+                if k.contains('.') {
+                    keys.insert(k);
+                }
+            }
+            if f.extension().is_some_and(|x| x == "rs") {
+                for pat in ["t(\"", "tf(\"", "tn(", "lang::t(\"", "lang::tf(\""] {
+                    for (i, _) in text.match_indices(pat) {
+                        if i > 0
+                            && pat.starts_with('t')
+                            && text[..i]
+                                .chars()
+                                .next_back()
+                                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                        {
+                            continue; // `format!(`, `insert(`, ...
+                        }
+                        let rest = &text[i + pat.len()..];
+                        // every "a.b" literal among the call's first arguments
+                        let args: &str = &rest[..rest.find(')').unwrap_or(rest.len()).min(200)];
+                        for (j, _) in args.match_indices('"') {
+                            let k: String =
+                                args[j + 1..].chars().take_while(|c| key_char(*c)).collect();
+                            if k.contains('.') && !k.contains("..") && !k.ends_with('.') {
+                                keys.insert(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        keys
+    }
+
+    /// `rugen lang-check`: every language file has every key of en.toml
+    /// with the same placeholders and no empty value, every key the sources
+    /// ask for exists, and en.toml carries no key nobody uses.
+    #[test]
+    fn language_files_are_complete_and_keys_exist() {
+        let dir = dir(&repo());
+        let en = read_table(&dir, "en");
+        assert!(!en.is_empty(), "motif/lang/en.toml is empty");
+        let mut problems = Vec::new();
+        for (code, _) in LANGS.iter().skip(1) {
+            let path = dir.join(format!("{code}.toml"));
+            if !path.exists() {
+                problems.push(format!("{code}: no motif/lang/{code}.toml"));
+                continue;
+            }
+            let table = read_table(&dir, code);
+            for (k, v) in &en {
+                match table.get(k) {
+                    None => problems.push(format!("{code}: missing {k}")),
+                    Some(t) if t.trim().is_empty() => problems.push(format!("{code}: empty {k}")),
+                    Some(t) => {
+                        let mut a = rugen_ui::lang::placeholders(v);
+                        let mut b = rugen_ui::lang::placeholders(t);
+                        a.sort_unstable();
+                        b.sort_unstable();
+                        if a != b {
+                            problems.push(format!("{code}: placeholders of {k}: {t:?} vs {v:?}"));
+                        }
+                    }
+                }
+            }
+            for k in table.keys() {
+                if !en.contains_key(k) {
+                    problems.push(format!("{code}: {k} is not in en.toml"));
+                }
+            }
+        }
+        let used = used_keys();
+        for k in &used {
+            if !en.contains_key(k) {
+                problems.push(format!("en: {k} is used but not defined"));
+            }
+        }
+        for k in en.keys() {
+            if !used.contains(k) {
+                problems.push(format!("en: {k} is defined but never used"));
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "{} problems:\n  {}",
+            problems.len(),
+            problems.join("\n  ")
+        );
+    }
+
     #[test]
     fn locales_map_to_the_nearest_language() {
         assert_eq!(nearest("pt_BR.UTF-8"), "pt-BR");
@@ -308,6 +446,9 @@ mod tests {
         assert!(read_table(&dir(&tmp), "xx").is_empty());
         assert_eq!(resolve("fr"), "fr");
         assert_eq!(resolve("pt_BR"), "pt-BR");
+        assert_eq!(resolve("fr-CA"), "fr");
+        assert_eq!(resolve("eo"), "eo");
+        assert_eq!(resolve("en_GB"), "en");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

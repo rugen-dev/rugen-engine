@@ -219,6 +219,9 @@ pub struct Generator<'a> {
     mult: u32,
     /// Carry [`LATIN`] beyond ASCII (the room-code font does not).
     latin: bool,
+    /// Characters beyond ASCII, the symbols and [`LATIN`] (the Japanese
+    /// font's kana and kanji).
+    extra: Vec<char>,
 }
 
 impl<'a> Generator<'a> {
@@ -237,7 +240,17 @@ impl<'a> Generator<'a> {
             px: style.size as f32,
             mult: 0,
             latin: true,
+            extra: Vec::new(),
         })
+    }
+
+    /// Also cut these characters (sorted, no repeats; ASCII is always in).
+    pub fn with_chars(mut self, chars: impl IntoIterator<Item = char>) -> Self {
+        let mut v: Vec<char> = chars.into_iter().filter(|c| *c as u32 > 126).collect();
+        v.sort_unstable();
+        v.dedup();
+        self.extra = v;
+        self
     }
 
     /// Lay the face on its own pixel grid of `unit` font units (a pixel
@@ -506,9 +519,16 @@ impl<'a> Generator<'a> {
             .flat_map(|r| r.clone())
             .filter(|_| self.latin)
             .filter(|c| !SYMBOLS.contains(*c));
+        let extra = self
+            .extra
+            .iter()
+            .filter(|c| !SYMBOLS.contains(**c))
+            .filter(|c| !self.latin || !LATIN.iter().any(|r| r.contains(c)))
+            .filter_map(|c| u16::try_from(*c as u32).ok());
         let codes = (33u16..=126)
             .chain(SYMBOLS.chars().map(|c| c as u16))
-            .chain(latin.map(|c| c as u16));
+            .chain(latin.map(|c| c as u16))
+            .chain(extra);
         for code in codes {
             let c = char::from_u32(code as u32).unwrap_or(' ');
             if let Some(g) = self.glyph(c) {
@@ -884,11 +904,51 @@ pub const CODE_FONT_SLOT: i32 = 5;
 /// drawn apart by the face itself.
 pub const CODE_FONT: &str = "rugen-code";
 
+/// The Japanese text font (`fontN.ja` in both themes): DotGothic16 on its
+/// own 16 px grid (1000 / 16 font units), 13 px capitals, ASCII plus the
+/// kana and every kanji `motif/lang/ja.toml` uses (see [`ja_chars`]).
+/// `rugen-ja2` is the same face at 2x for the dojo theme's body font.
+pub const JA_FONT: &str = "rugen-ja";
+
+fn ja_roles() -> [Role; 2] {
+    let role = |name, size| Role {
+        name,
+        file: "DotGothic16-Regular.ttf",
+        style: Style {
+            size,
+            italic: 0,
+            condense: 1.0,
+            rim: false,
+            highlight: false,
+        },
+        grid: Some(1000.0 / 16.0),
+    };
+    [role(JA_FONT, 16), role("rugen-ja2", 32)]
+}
+
+/// The characters the Japanese font carries beyond ASCII: hiragana,
+/// katakana, the common CJK punctuation and every character at or above
+/// U+3000 in `motif/lang/ja.toml` (the kanji the translation uses), so the
+/// font follows the text and stays small.
+pub fn ja_chars(motif: &Path) -> Vec<char> {
+    let mut v: Vec<char> = ('\u{3041}'..='\u{3096}')
+        .chain('\u{30A1}'..='\u{30FA}')
+        .chain(['\u{3001}', '\u{3002}', '\u{300C}', '\u{300D}', '\u{3005}'])
+        .chain(['\u{30FB}', '\u{30FC}', '\u{309B}', '\u{309C}', '\u{3000}'])
+        .collect();
+    if let Ok(text) = std::fs::read_to_string(motif.join("lang").join("ja.toml")) {
+        v.extend(text.chars().filter(|c| *c as u32 >= 0x3000));
+    }
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 /// The motif fonts: chunky display, menu, small body, HUD numbers and the
-/// room-code font, and the Steam Deck's small text. All OFL pixel fonts
-/// rendered at a whole multiple of their native pixel size (crisp, no AA);
-/// every zero is slashed.
-pub fn roles() -> [Role; 6] {
+/// room-code font, the Steam Deck's small text and the Japanese fonts. All
+/// OFL pixel fonts rendered at a whole multiple of their native pixel size
+/// (crisp, no AA); every zero is slashed.
+pub fn roles() -> [Role; 8] {
     let st = |size, italic, rim, highlight| Style {
         size,
         italic,
@@ -930,14 +990,17 @@ pub fn roles() -> [Role; 6] {
             grid: None,
         },
         deck_role(),
+        ja_roles()[0].clone(),
+        ja_roles()[1].clone(),
     ]
 }
 
 /// The dojo theme's fonts (`motif/themes/dojo/font/`): Jersey 10 at 2x,
 /// 3x and 4x its 10 px grid for captions, body and titles; Press Start for
 /// tags, HUD numbers and room codes. Slots: 1 small, 2 menu (captions),
-/// 3 title, 4 num, 5 code, 6 body; Pixelify Sans for the Steam Deck.
-pub fn dojo_roles() -> [Role; 7] {
+/// 3 title, 4 num, 5 code, 6 body; Pixelify Sans for the Steam Deck,
+/// DotGothic16 for Japanese.
+pub fn dojo_roles() -> [Role; 9] {
     let st = |size, rim, highlight| Style {
         size,
         italic: 0,
@@ -983,6 +1046,8 @@ pub fn dojo_roles() -> [Role; 7] {
             grid: None,
         },
         deck_role(),
+        ja_roles()[0].clone(),
+        ja_roles()[1].clone(),
     ]
 }
 
@@ -1039,6 +1104,10 @@ pub fn write_roles(
         }
         if role.name == CODE_FONT {
             g = g.ascii_only();
+        }
+        if role.name.starts_with(JA_FONT) {
+            // thin strokes: no dark outline on the red bank either
+            g = g.ascii_only().plain_red().with_chars(ja_chars(motif));
         }
         write_font(&g, &out_dir.join(format!("{}.def", role.name)), role.name)?;
     }

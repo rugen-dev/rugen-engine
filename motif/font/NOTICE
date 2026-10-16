@@ -12,3 +12,8 @@ the bitmap role fonts of motif/font/ and motif/themes/*/font/.
   Static Regular from upstream commit 39df74aba80df8157546034b878e8be1eb565ced
   (the commit google/fonts ships), sha256
   5436d485d1713afa376e1744911cbbcc0849eae1eb55ec9bc34c0753993ffef9.
+- DotGothic16 (DotGothic16-Regular.ttf, OFL-DotGothic16.txt): Copyright
+  2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16).
+  The Japanese text font (rugen-ja, rugen-ja2): kana plus the kanji
+  motif/lang/ja.toml uses. From google/fonts, sha256
+  3ad9af88726d42b40f7f365f0dcac785af73cf20ea6f1d5b44e57cc21150b8f1.
