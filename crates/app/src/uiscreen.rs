@@ -1594,7 +1594,7 @@ impl UiScreen {
             }
             UiKind::Practice => json!({
                 "cards": crate::practice::cards(),
-                "note": crate::practice::NOTE,
+                "note": crate::practice::note(),
                 "profile": self.profile_json(),
                 "keys": self.keys_json(),
                 "version": env!("CARGO_PKG_VERSION"),

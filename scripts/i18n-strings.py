@@ -11,6 +11,8 @@ literals into `motif/lang/en.toml`, and check the language files.
   scripts/i18n-strings.py check           every motif/lang/<code>.toml has every
                                           key of en.toml, placeholders match, no
                                           empty values (exit 1 on a problem)
+  scripts/i18n-strings.py merge frag.toml...  fold key fragments into en.toml (a
+                                          key already there must read the same)
   scripts/i18n-strings.py kanji           the kana and kanji ja.toml uses (the
                                           glyph set of the Japanese font)
 
@@ -253,6 +255,24 @@ def cmd_check() -> int:
     return 1 if bad else 0
 
 
+def cmd_merge(paths):
+    """Fold key fragments (same TOML shape) into en.toml. A key already in
+    en.toml must carry the same text."""
+    en = load_en()
+    added = 0
+    for path in paths:
+        frag = flatten(tomllib.loads(Path(path).read_text(encoding="utf-8")))
+        for k, v in frag.items():
+            if k in en and en[k] != v:
+                print(f"{path}: {k} differs from en.toml: {v!r} vs {en[k]!r}")
+                sys.exit(1)
+            if k not in en:
+                en[k] = v
+                added += 1
+    write_en(en)
+    print(f"{added} keys added, {len(en)} in motif/lang/en.toml")
+
+
 def cmd_kanji():
     p = LANG_DIR / "ja.toml"
     text = "".join(str(v) for v in flatten(tomllib.loads(p.read_text(encoding="utf-8"))).values())
@@ -270,6 +290,8 @@ def main():
         cmd_convert_toml()
     elif cmd == "check":
         sys.exit(cmd_check())
+    elif cmd == "merge":
+        cmd_merge(sys.argv[2:])
     elif cmd == "kanji":
         cmd_kanji()
     else:

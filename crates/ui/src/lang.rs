@@ -111,6 +111,15 @@ pub fn set(code: &str, en: &Table, lang: &Table) {
     missing().lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
+/// True once [`set`] installed a table.
+pub fn is_loaded() -> bool {
+    !state()
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .en
+        .is_empty()
+}
+
 /// The active language code (`en` until [`set`] is called).
 pub fn code() -> &'static str {
     state().read().unwrap_or_else(|p| p.into_inner()).code

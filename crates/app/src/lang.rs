@@ -4,7 +4,40 @@
 
 use std::path::{Path, PathBuf};
 
-pub use rugen_ui::lang::{t, tf};
+/// The string `key` names in the active language (English when the
+/// language lacks it; the key itself when nobody has it).
+pub fn t(key: &str) -> &'static str {
+    #[cfg(test)]
+    test_tables();
+    rugen_ui::lang::t(key)
+}
+
+/// [`t`] with `{name}` placeholders filled from `args`:
+/// `tf("select.by", &[("name", &author)])`.
+pub fn tf(key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+    #[cfg(test)]
+    test_tables();
+    rugen_ui::lang::tf(key, args)
+}
+
+/// `n` and the singular or plural of a counted thing:
+/// `tn(2, "online.room", "online.rooms")` → `2 ROOMS`.
+pub fn tn(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", t(if n == 1 { one } else { many }))
+}
+
+/// Tests read the English strings of the repository's `motif/lang/en.toml`
+/// (loaded once; a test switching languages must put English back).
+#[cfg(test)]
+pub fn test_tables() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if !rugen_ui::lang::is_loaded() {
+            load(&assets, "en");
+        }
+    });
+}
 
 /// `(code, name in its own language)`, in picker order. English first,
 /// then by code.

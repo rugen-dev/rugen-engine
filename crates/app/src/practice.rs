@@ -5,40 +5,42 @@
 
 use serde_json::{Value, json};
 
+use crate::lang::t;
+
 /// The cards in order. `f1` is what opens the hitboxes (always F1 today).
 pub fn cards() -> Value {
     let row = |name: &str, text: &str, hot: bool| json!({ "name": name, "text": text, "hot": hot, "cold": !hot });
     json!([
         {
             "id": "training",
-            "title": "TRAINING",
-            "desc": "FIGHT A DUMMY. EVERYTHING IS IN THE PAUSE MENU:",
+            "title": t("practice.training"),
+            "desc": t("practice.training_desc"),
             "rows": [
-                row("LESSONS", "BASICS, THEN SPECIALS", true),
-                row("DUMMY", "STANCE, BLOCK, RECORD", false),
-                row("DISPLAY", "HITBOXES, FRAMES, INPUTS", false),
+                row(t("practice.lessons"), t("practice.lessons_desc"), true),
+                row(t("practice.dummy"), t("practice.dummy_desc"), false),
+                row(t("practice.display"), t("practice.display_desc"), false),
             ],
-            "chip_l": "PICK 2 FIGHTERS · STAGE",
-            "chip_r": "F1 HITBOXES",
+            "chip_l": t("practice.pick_2_fighters_stage"),
+            "chip_r": t("practice.f1_hitboxes"),
             "new": false,
             "action": "mode:training",
         },
         {
             "id": "watch",
-            "title": "WATCH",
-            "desc": "TWO CPU FIGHTERS PLAY WHILE YOU WATCH. TEAM MODES WORK HERE TOO.",
+            "title": t("practice.watch"),
+            "desc": t("practice.watch_desc"),
             "rows": [],
-            "chip_l": "PICK 2 FIGHTERS · STAGE",
-            "chip_r": "CPU LEVEL: OPTIONS",
+            "chip_l": t("practice.pick_2_fighters_stage"),
+            "chip_r": t("practice.cpu_level_options"),
             "new": false,
             "action": "mode:watch",
         },
         {
             "id": "debugger",
-            "title": "DEBUGGER",
-            "desc": "STEP A FIGHTER FRAME BY FRAME: STATE, VARIABLES AND EVERY CONTROLLER THAT RAN OR FAILED. STEP BACK 10 S.",
+            "title": t("practice.debugger"),
+            "desc": t("practice.debugger_desc"),
             "rows": [],
-            "chip_l": "PICK 1 OR 2 FIGHTERS",
+            "chip_l": t("practice.pick_1_or_2_fighters"),
             "chip_r": "SPACE · . · ,",
             "new": true,
             "action": "mode:debugger",
@@ -47,7 +49,9 @@ pub fn cards() -> Value {
 }
 
 /// The line under the cards.
-pub const NOTE: &str = "OFFLINE ONLY · TEAM MODES IN WATCH";
+pub fn note() -> &'static str {
+    t("practice.note")
+}
 
 #[cfg(test)]
 mod tests {
