@@ -56,7 +56,10 @@ pub fn launch(lib: &Library, config: &Config, args: &[String]) {
             log::info!("update: removed {}", p.display());
         }
     }
-    if !config.update.check || args.iter().any(|a| a == "--no-update-check") {
+    // harness runs (screenshots, CI) never call GitHub unless pointed at a server
+    let harness = args.iter().any(|a| a == "--shot" || a == "--frames")
+        && std::env::var_os("RUGEN_UPDATE_URL").is_none();
+    if !config.update.check || harness || args.iter().any(|a| a == "--no-update-check") {
         log::info!("update: launch check off");
         return;
     }

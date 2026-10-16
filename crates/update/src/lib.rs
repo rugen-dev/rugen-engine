@@ -354,7 +354,7 @@ pub enum Install {
     /// A self-contained folder (zip / tarball): the binary next to `motif/`.
     Portable(PathBuf),
     /// A system package or a read-only bundle: `/usr/bin/rugen` with the
-    /// assets in `../share/rugen` (also Flatpak / Snap / `/opt` prefixes).
+    /// assets in `../share/rugen` (also Flatpak / Snap / Nix prefixes).
     Package(PathBuf),
     /// Neither: a development build or an unpacked tree without assets.
     Dev(PathBuf),
@@ -368,16 +368,11 @@ impl Install {
             return Self::Dev(exe.to_path_buf());
         };
         let s = exe.to_string_lossy().replace('\\', "/");
-        let managed = [
-            "/usr/",
-            "/opt/",
-            "/app/",
-            "/snap/",
-            "/nix/store/",
-            "/Applications/",
-        ]
-        .iter()
-        .any(|p| s.starts_with(p));
+        // a tarball unpacked in /opt or /Applications is still a portable
+        // folder (writability decides); these prefixes belong to a package
+        let managed = ["/usr/", "/app/", "/snap/", "/nix/store/"]
+            .iter()
+            .any(|p| s.starts_with(p));
         if is_dir(&dir.join("motif")) && !managed {
             return Self::Portable(dir.to_path_buf());
         }
@@ -586,6 +581,7 @@ nothex  bad.zip
             "/home/p/rugen/motif".into(),
             "/usr/share/rugen/motif".into(),
             "C:/Games/rugen/motif".into(),
+            "/opt/rugen/motif".into(),
         ];
         let is_dir = |p: &Path| {
             dirs.iter()
@@ -606,6 +602,10 @@ nothex  bad.zip
         assert_eq!(
             Install::classify(Path::new("/app/bin/rugen"), &is_dir),
             Install::Package("/app/bin/rugen".into())
+        );
+        assert_eq!(
+            Install::classify(Path::new("/opt/rugen/rugen"), &is_dir),
+            Install::Portable("/opt/rugen".into())
         );
         assert_eq!(
             Install::classify(Path::new("/home/p/src/target/debug/rugen"), &is_dir),
