@@ -1,15 +1,21 @@
-<img src="motif/brand/rugen.png" alt="rugen logo" width="96" align="right">
+<img src="brand/png/rugen-tile/rugen-tile-128.png" alt="rugen logo" width="96" align="right">
 
 # rugen
 
-A M.U.G.E.N-compatible 2D fighting game engine in Rust: your existing
-characters and stages, unchanged, with rollback netplay.
+A free, open-source M.U.G.E.N-compatible 2D fighting game engine in Rust:
+your existing MUGEN characters, stages and screenpacks, unchanged, on
+Windows, Linux, macOS and Steam Deck, with rollback netcode for online play.
+
+**[rugen.dev](https://rugen.dev)** · [docs](https://rugen.dev/docs/) ·
+[tournaments](https://rugen.dev/tournaments) ·
+[fighter catalogue](https://rugen.dev/fighters) ·
+[rugen vs MUGEN vs Ikemen GO](https://rugen.dev/docs/engine/compared/)
 
 ## Download
 
 Builds for Windows, Linux (`.rpm`, `.deb`, tarball) and macOS are on the
 [releases page](https://github.com/rugen-dev/rugen-engine/releases). The
-[install guide](https://rugen.dev/getting-started/install/) explains each one.
+[install guide](https://rugen.dev/docs/getting-started/install/) explains each one.
 
 ## Quick start
 
@@ -111,22 +117,22 @@ cargo build --release
 
 Everything else lives on **[rugen.dev](https://rugen.dev)**:
 
-- Playing: [install](https://rugen.dev/getting-started/install/),
-  [first launch](https://rugen.dev/getting-started/first-launch/),
-  [characters & stages](https://rugen.dev/getting-started/content/),
-  [controls](https://rugen.dev/getting-started/controls/),
-  [settings](https://rugen.dev/getting-started/settings/),
-  [game modes](https://rugen.dev/playing/modes/),
-  [online](https://rugen.dev/playing/online/),
-  [CLI reference](https://rugen.dev/playing/cli/)
-- Creating: [characters](https://rugen.dev/creating/characters/),
-  [stages](https://rugen.dev/creating/stages/),
-  [screenpacks & themes](https://rugen.dev/creating/screenpacks/)
-- Hosting: [running a server](https://rugen.dev/server/overview/)
-- Engine: [architecture](https://rugen.dev/engine/architecture/),
-  [compatibility status](https://rugen.dev/engine/compatibility/),
-  [building](https://rugen.dev/engine/building/),
-  [contributing](https://rugen.dev/engine/contributing/)
+- Playing: [install](https://rugen.dev/docs/getting-started/install/),
+  [first launch](https://rugen.dev/docs/getting-started/first-launch/),
+  [characters & stages](https://rugen.dev/docs/getting-started/content/),
+  [controls](https://rugen.dev/docs/getting-started/controls/),
+  [settings](https://rugen.dev/docs/getting-started/settings/),
+  [game modes](https://rugen.dev/docs/playing/modes/),
+  [online](https://rugen.dev/docs/playing/online/),
+  [CLI reference](https://rugen.dev/docs/playing/cli/)
+- Creating: [characters](https://rugen.dev/docs/creating/characters/),
+  [stages](https://rugen.dev/docs/creating/stages/),
+  [screenpacks & themes](https://rugen.dev/docs/creating/screenpacks/)
+- Hosting: [running a server](https://rugen.dev/docs/server/overview/)
+- Engine: [architecture](https://rugen.dev/docs/engine/architecture/),
+  [compatibility status](https://rugen.dev/docs/engine/compatibility/),
+  [building](https://rugen.dev/docs/engine/building/),
+  [contributing](https://rugen.dev/docs/engine/contributing/)
 
 ## Related repositories
 
@@ -139,7 +145,7 @@ Everything else lives on **[rugen.dev](https://rugen.dev)**:
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) (licence of contributions, commit
 format, checks, no copyrighted content) and the
-[contributing guide](https://rugen.dev/engine/contributing/), then
+[contributing guide](https://rugen.dev/docs/engine/contributing/), then
 [DESIGN.md](DESIGN.md) for the architecture and the rules the code follows.
 [BUILDING.md](BUILDING.md) has the system dependencies and the checks CI runs.
 
