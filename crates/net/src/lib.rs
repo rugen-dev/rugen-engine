@@ -12,6 +12,7 @@
 
 pub(crate) mod batch;
 pub mod direct;
+pub(crate) mod guard;
 pub mod online;
 pub mod path;
 pub mod predict;
@@ -56,6 +57,10 @@ pub enum Error {
     },
     #[error("rendezvous: {0}")]
     Rendezvous(String),
+    /// The session broke on what the other side sent (a ggrs panic that
+    /// the message checks did not prevent). It cannot go on.
+    #[error("the session could not process what the other side sent")]
+    PeerFault,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -249,6 +254,21 @@ pub struct Netplay {
     uplink: Option<std::sync::Arc<relay::Uplink>>,
     /// The other player's machine summary (LAN hello, relay message).
     peer_machine: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// ggrs panicked on the other side's data: the session is never
+    /// touched again, and the other player counts as gone.
+    broken: bool,
+}
+
+/// Run a piece of ggrs. It asserts on what its peer sends; the messages
+/// are checked first ([`guard`]), and a panic that still gets through ends
+/// the session instead of the game.
+fn fenced<T>(f: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok()
+}
+
+/// Bytes of one player's input as ggrs sends it.
+fn input_size() -> usize {
+    bincode::serialized_size(&NetInput::default()).map_or(2, |n| n as usize)
 }
 
 impl Netplay {
@@ -326,6 +346,16 @@ impl Netplay {
 
     /// Watch a relayed match: inputs come from P1 (slot 0), confirmed only.
     pub fn spectate(socket: RelaySocket, opts: &Options) -> Result<Self> {
+        let socket = guard::Guard::new(
+            socket,
+            guard::Rules {
+                num_players: 2,
+                local_handle: None,
+                max_prediction: opts.max_prediction,
+                input_size: input_size(),
+                peers: vec![(slot_addr(0), guard::Role::Host)],
+            },
+        );
         let session = SessionBuilder::<NetConfig>::new()
             .with_num_players(2)
             .with_max_frames_behind(10)?
@@ -358,7 +388,19 @@ impl Netplay {
             remote: None,
             uplink: None,
             peer_machine: Default::default(),
+            broken: false,
         }
+    }
+
+    /// ggrs panicked: the other player is gone, by its own doing.
+    fn fault(&mut self) {
+        if !self.broken {
+            log::error!("netplay: the session broke on the other side's data; ending it");
+        }
+        self.broken = true;
+        self.peer_lost = true;
+        self.stats.synchronized = false;
+        self.quality.interrupted = true;
     }
 
     /// The other player's machine summary as it sent it (`None` until it
@@ -394,6 +436,23 @@ impl Netplay {
         for (kind, handle) in players {
             b = b.add_player(*kind, *handle)?;
         }
+        let socket = guard::Guard::new(
+            socket,
+            guard::Rules {
+                num_players: 2,
+                local_handle: Some(local_handle),
+                max_prediction: opts.max_prediction,
+                input_size: input_size(),
+                peers: players
+                    .iter()
+                    .filter_map(|(kind, _)| match kind {
+                        PlayerType::Remote(a) => Some((*a, guard::Role::Player)),
+                        PlayerType::Spectator(a) => Some((*a, guard::Role::Watcher)),
+                        PlayerType::Local => None,
+                    })
+                    .collect(),
+            },
+        );
         let session = b.start_p2p_session(socket)?;
         Ok(Self::wrap(
             Session::P2P(Box::new(session)),
@@ -516,10 +575,16 @@ impl Netplay {
 
     /// Pump the network. Call once per tick before [`advance`](Self::advance).
     pub fn poll(&mut self) {
-        match &mut self.session {
+        if self.broken {
+            return;
+        }
+        let polled = fenced(|| match &mut self.session {
             Session::P2P(s) => s.poll_remote_clients(),
             Session::Spectator(s) => s.poll_remote_clients(),
             Session::SyncTest(_) => {}
+        });
+        if polled.is_none() {
+            self.fault();
         }
     }
 
@@ -528,6 +593,16 @@ impl Netplay {
     /// for P2P; sync tests use both.
     pub fn advance(&mut self, world: &mut World, inputs: [Buttons; 2]) -> Result<Advanced> {
         let mut out = Advanced::default();
+        if self.broken {
+            // a player's match ends as if the other had left (peer_exit);
+            // someone watching has nothing left to watch
+            if self.is_spectator() {
+                return Err(Error::PeerFault);
+            }
+            out.notices
+                .push("the other player's data broke the session".into());
+            return Ok(out);
+        }
         if self.skip_frames > 0 {
             self.skip_frames -= 1;
             self.stats.skipped += 1;
@@ -536,109 +611,122 @@ impl Netplay {
         // the other player's address (a spectator's events do not count)
         let remote = self.remote;
         let is_player = |a: SocketAddr| remote.is_none_or(|r| r == a);
-        let requests = match &mut self.session {
-            Session::P2P(s) => {
-                for ev in s.events() {
-                    match ev {
-                        GgrsEvent::Synchronizing { total, count, .. } => {
-                            out.notices.push(format!("synchronizing {count}/{total}"));
-                        }
-                        GgrsEvent::Synchronized { addr } => {
-                            self.stats.synchronized = true;
-                            out.notices.push(format!("connected to {addr}"));
-                        }
-                        // a spectator (P1 feeds them) coming and going is
-                        // not the match: only the other player counts
-                        GgrsEvent::Disconnected { addr } if !is_player(addr) => {
-                            out.notices.push(format!("spectator {addr} left"));
-                        }
-                        GgrsEvent::NetworkInterrupted { addr, .. }
-                        | GgrsEvent::NetworkResumed { addr }
-                            if !is_player(addr) => {}
-                        GgrsEvent::Disconnected { addr } => {
-                            self.stats.synchronized = false;
-                            self.quality.interrupted = true;
-                            self.peer_lost = true;
-                            out.notices.push(format!("{addr} disconnected"));
-                        }
-                        GgrsEvent::NetworkInterrupted {
-                            disconnect_timeout, ..
-                        } => {
-                            self.quality.interrupted = true;
-                            out.notices
-                                .push(format!("connection interrupted ({disconnect_timeout} ms)"))
-                        }
-                        GgrsEvent::NetworkResumed { .. } => {
-                            self.quality.interrupted = false;
-                            out.notices.push("connection resumed".into())
-                        }
-                        // time sync: we are ahead of the peer, so pause a few
-                        // frames (a brief slowdown instead of big rollbacks)
-                        // (with time dilation the pacer handles it smoothly)
-                        GgrsEvent::WaitRecommendation { skip_frames } => {
-                            if self.pacer.is_none() {
-                                self.skip_frames = skip_frames;
+        // everything ggrs does with the other side's data is fenced
+        let stepped = fenced(|| -> Result<Option<Vec<GgrsRequest<NetConfig>>>> {
+            Ok(Some(match &mut self.session {
+                Session::P2P(s) => {
+                    for ev in s.events() {
+                        match ev {
+                            GgrsEvent::Synchronizing { total, count, .. } => {
+                                out.notices.push(format!("synchronizing {count}/{total}"));
+                            }
+                            GgrsEvent::Synchronized { addr } => {
+                                self.stats.synchronized = true;
+                                out.notices.push(format!("connected to {addr}"));
+                            }
+                            // a spectator (P1 feeds them) coming and going is
+                            // not the match: only the other player counts
+                            GgrsEvent::Disconnected { addr } if !is_player(addr) => {
+                                out.notices.push(format!("spectator {addr} left"));
+                            }
+                            GgrsEvent::NetworkInterrupted { addr, .. }
+                            | GgrsEvent::NetworkResumed { addr }
+                                if !is_player(addr) => {}
+                            GgrsEvent::Disconnected { addr } => {
+                                self.stats.synchronized = false;
+                                self.quality.interrupted = true;
+                                self.peer_lost = true;
+                                out.notices.push(format!("{addr} disconnected"));
+                            }
+                            GgrsEvent::NetworkInterrupted {
+                                disconnect_timeout, ..
+                            } => {
+                                self.quality.interrupted = true;
+                                out.notices.push(format!(
+                                    "connection interrupted ({disconnect_timeout} ms)"
+                                ))
+                            }
+                            GgrsEvent::NetworkResumed { .. } => {
+                                self.quality.interrupted = false;
+                                out.notices.push("connection resumed".into())
+                            }
+                            // time sync: we are ahead of the peer, so pause a few
+                            // frames (a brief slowdown instead of big rollbacks)
+                            // (with time dilation the pacer handles it smoothly)
+                            GgrsEvent::WaitRecommendation { skip_frames } => {
+                                if self.pacer.is_none() {
+                                    self.skip_frames = skip_frames;
+                                }
+                            }
+                            GgrsEvent::DesyncDetected {
+                                frame,
+                                local_checksum,
+                                remote_checksum,
+                                ..
+                            } => {
+                                return Err(Error::Desync {
+                                    frame,
+                                    local: local_checksum,
+                                    remote: remote_checksum,
+                                });
                             }
                         }
-                        GgrsEvent::DesyncDetected {
-                            frame,
-                            local_checksum,
-                            remote_checksum,
-                            ..
-                        } => {
-                            return Err(Error::Desync {
-                                frame,
-                                local: local_checksum,
-                                remote: remote_checksum,
-                            });
+                    }
+                    if s.current_state() != SessionState::Running {
+                        return Ok(None);
+                    }
+                    s.add_local_input(self.local_handle, inputs[self.local_handle].into())?;
+                    match s.advance_frame() {
+                        Ok(r) => r,
+                        Err(GgrsError::PredictionThreshold) => {
+                            self.stats.stalls += 1;
+                            out.notices.push("waiting for remote".into());
+                            return Ok(None);
                         }
+                        Err(e) => return Err(e.into()),
                     }
                 }
-                if s.current_state() != SessionState::Running {
-                    return Ok(out);
-                }
-                s.add_local_input(self.local_handle, inputs[self.local_handle].into())?;
-                match s.advance_frame() {
-                    Ok(r) => r,
-                    Err(GgrsError::PredictionThreshold) => {
-                        self.stats.stalls += 1;
-                        out.notices.push("waiting for remote".into());
-                        return Ok(out);
+                Session::SyncTest(s) => {
+                    for (h, b) in inputs.iter().enumerate() {
+                        s.add_local_input(h, (*b).into())?;
                     }
-                    Err(e) => return Err(e.into()),
+                    s.advance_frame()?
                 }
-            }
-            Session::SyncTest(s) => {
-                for (h, b) in inputs.iter().enumerate() {
-                    s.add_local_input(h, (*b).into())?;
-                }
-                s.advance_frame()?
-            }
-            Session::Spectator(s) => {
-                for ev in s.events() {
-                    match ev {
-                        GgrsEvent::Synchronized { .. } => {
-                            self.stats.synchronized = true;
-                            out.notices.push("watching".into());
+                Session::Spectator(s) => {
+                    for ev in s.events() {
+                        match ev {
+                            GgrsEvent::Synchronized { .. } => {
+                                self.stats.synchronized = true;
+                                out.notices.push("watching".into());
+                            }
+                            GgrsEvent::Disconnected { .. } => {
+                                self.stats.synchronized = false;
+                                out.notices.push("the host disconnected".into());
+                            }
+                            GgrsEvent::Synchronizing { total, count, .. } => {
+                                out.notices.push(format!("synchronizing {count}/{total}"));
+                            }
+                            _ => {}
                         }
-                        GgrsEvent::Disconnected { .. } => {
-                            self.stats.synchronized = false;
-                            out.notices.push("the host disconnected".into());
-                        }
-                        GgrsEvent::Synchronizing { total, count, .. } => {
-                            out.notices.push(format!("synchronizing {count}/{total}"));
-                        }
-                        _ => {}
+                    }
+                    if s.current_state() != SessionState::Running {
+                        return Ok(None);
+                    }
+                    match s.advance_frame() {
+                        Ok(r) => r,
+                        Err(GgrsError::PredictionThreshold) => return Ok(None),
+                        Err(e) => return Err(e.into()),
                     }
                 }
-                if s.current_state() != SessionState::Running {
-                    return Ok(out);
-                }
-                match s.advance_frame() {
-                    Ok(r) => r,
-                    Err(GgrsError::PredictionThreshold) => return Ok(out),
-                    Err(e) => return Err(e.into()),
-                }
+            }))
+        });
+        let requests = match stepped {
+            Some(Ok(Some(r))) => r,
+            Some(Ok(None)) => return Ok(out),
+            Some(Err(e)) => return Err(e),
+            None => {
+                self.fault();
+                return self.advance(world, inputs);
             }
         };
         let mut resimulated = 0;
@@ -697,35 +785,40 @@ impl Netplay {
         self.stats.avg_rollback = self.quality.avg_rollback();
         self.stats.resimulated += u64::from(resimulated);
         self.stats.max_rollback = self.stats.max_rollback.max(resimulated);
-        if let Session::P2P(s) = &self.session {
-            // the prediction window was full: ggrs answered without a new frame
-            if out.new_frames == 0 && self.stats.synchronized {
-                self.stats.stalls += 1;
-                if out.notices.is_empty() {
-                    out.notices.push("waiting for remote".into());
+        let settled = fenced(|| {
+            if let Session::P2P(s) = &self.session {
+                // the prediction window was full: ggrs answered without a new frame
+                if out.new_frames == 0 && self.stats.synchronized {
+                    self.stats.stalls += 1;
+                    if out.notices.is_empty() {
+                        out.notices.push("waiting for remote".into());
+                    }
                 }
-            }
-            self.mispredict.confirmed(s.confirmed_frame());
-            // the server's input log: every frame both players confirmed
-            if let Some(u) = &self.uplink
-                && self.log_start == Some(0)
-            {
-                let n = (s.confirmed_frame() + 1).clamp(0, self.log.len() as i32) as usize;
-                u.confirm(&self.log[..n]);
-            }
-            self.stats.predicted = self.mispredict.predicted;
-            self.stats.mispredicted = self.mispredict.wrong;
-            self.stats.frames_ahead = s.frames_ahead();
-            if let Some(h) = s.remote_player_handles().first()
-                && let Ok(st) = s.network_stats(*h)
-            {
-                self.stats.ping_ms = st.ping;
-                if let Some(p) = self.pacer.as_mut() {
-                    p.update(st.local_frames_behind, st.remote_frames_behind);
-                    self.stats.tick_scale = p.scale();
+                self.mispredict.confirmed(s.confirmed_frame());
+                // the server's input log: every frame both players confirmed
+                if let Some(u) = &self.uplink
+                    && self.log_start == Some(0)
+                {
+                    let n = (s.confirmed_frame() + 1).clamp(0, self.log.len() as i32) as usize;
+                    u.confirm(&self.log[..n]);
                 }
+                self.stats.predicted = self.mispredict.predicted;
+                self.stats.mispredicted = self.mispredict.wrong;
+                self.stats.frames_ahead = s.frames_ahead();
+                if let Some(h) = s.remote_player_handles().first()
+                    && let Ok(st) = s.network_stats(*h)
+                {
+                    self.stats.ping_ms = st.ping;
+                    if let Some(p) = self.pacer.as_mut() {
+                        p.update(st.local_frames_behind, st.remote_frames_behind);
+                        self.stats.tick_scale = p.scale();
+                    }
+                }
+                self.stats.unstable = self.quality.unstable(self.stats.frames_ahead);
             }
-            self.stats.unstable = self.quality.unstable(self.stats.frames_ahead);
+        });
+        if settled.is_none() {
+            self.fault();
         }
         Ok(out)
     }
@@ -748,5 +841,133 @@ mod tests {
             assert_eq!(Buttons::from(back), b, "{bits:#013b}");
         }
         assert!(Buttons::from(NetInput(1 << 10)).s, "bit 10 is Start");
+    }
+
+    use guard::{Body, Input, Msg, Status};
+
+    /// The messages that crashed ggrs 0.11 (REVIEW E1), as the other
+    /// player's address would send them.
+    fn hostile() -> Vec<Body> {
+        let status = |disconnected, last_frame| Status {
+            disconnected,
+            last_frame,
+        };
+        let input = |statuses: Vec<Status>, start_frame, bytes: &[u8]| {
+            Body::Input(Input {
+                statuses,
+                disconnect_requested: false,
+                start_frame,
+                ack_frame: i32::MAX,
+                bytes: bytes.to_vec(),
+            })
+        };
+        let two = vec![status(false, -1); 2];
+        vec![
+            // "assert!(millis >= body.pong)"
+            Body::QualityReply(u128::MAX),
+            // a ping that does not fit an i32
+            Body::QualityReply(0),
+            // index out of bounds: no status per player
+            input(Vec::new(), 0, &[2 << 1, 0, 0]),
+            // "decoding failed": a number cut short, a run past the end
+            input(two.clone(), 0, &[0x80]),
+            input(two.clone(), 0, &[40 << 1, 0]),
+            // a gigabyte of zeros from six bytes
+            input(two.clone(), 0, &[0x81, 0x80, 0x80, 0x80, 0x10]),
+            // half an input
+            input(two.clone(), 0, &[1 << 1, 0]),
+            // a first input far ahead: the input queue overflows
+            input(two.clone(), 5000, &[2 << 1, 0, 0]),
+            input(two.clone(), i32::MAX, &[2 << 1, 0, 0]),
+            input(two.clone(), i32::MIN, &[2 << 1, 0, 0]),
+            // itself "disconnected" long ago: a rollback to a frame not held
+            input(
+                vec![status(true, i32::MIN), status(true, i32::MIN)],
+                0,
+                &[2 << 1, 0, 0],
+            ),
+            // 300 frames at once
+            input(two.clone(), 0, &[0xe1, 0x12]),
+            Body::ChecksumReport {
+                checksum: 1,
+                frame: i32::MIN,
+            },
+            // then a gap
+            input(two.clone(), 0, &[2 << 1, 0, 0]),
+            input(two, 90, &[2 << 1, 0, 0]),
+        ]
+    }
+
+    fn free_port() -> u16 {
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .and_then(|s| s.local_addr())
+            .map(|a| a.port())
+            .expect("a free port")
+    }
+
+    #[test]
+    fn hostile_messages_do_not_reach_ggrs() {
+        let attacker = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = free_port();
+        let mut net = Netplay::p2p(port, attacker.local_addr().unwrap(), 0, &Options::default())
+            .expect("a session");
+        let to = SocketAddr::from(([127, 0, 0, 1], port));
+        for round in 0..3 {
+            for body in hostile() {
+                let m = Msg {
+                    magic: 7 + round,
+                    body,
+                };
+                attacker
+                    .send_to(&bincode::serialize(&m).unwrap(), to)
+                    .unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                net.poll();
+                assert!(!net.broken, "ggrs panicked on {m:?}");
+            }
+        }
+        assert_eq!(net.peer_exit(), None);
+    }
+
+    #[test]
+    fn a_ggrs_panic_ends_the_session_not_the_game() {
+        // the same session without the checks: ggrs asserts, the fence
+        // holds, and the other player counts as gone
+        let attacker = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = free_port();
+        let remote = attacker.local_addr().unwrap();
+        let session = SessionBuilder::<NetConfig>::new()
+            .with_num_players(2)
+            .add_player(PlayerType::Local, 0)
+            .unwrap()
+            .add_player(PlayerType::Remote(remote), 1)
+            .unwrap()
+            .start_p2p_session(Socket::bind(port).unwrap())
+            .unwrap();
+        let mut net = Netplay::wrap(Session::P2P(Box::new(session)), 0, &Options::default());
+        let m = Msg {
+            magic: 7,
+            body: Body::QualityReply(u128::MAX),
+        };
+        attacker
+            .send_to(
+                &bincode::serialize(&m).unwrap(),
+                SocketAddr::from(([127, 0, 0, 1], port)),
+            )
+            .unwrap();
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            net.poll();
+            if net.broken {
+                break;
+            }
+        }
+        std::panic::set_hook(hook);
+        assert!(net.broken, "ggrs 0.11 asserts on a pong from the future");
+        assert_eq!(net.peer_exit(), Some(PeerExit::Lost));
+        // and it is never touched again
+        net.poll();
     }
 }
