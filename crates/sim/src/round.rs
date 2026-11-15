@@ -14,6 +14,9 @@ pub struct RoundConfig {
     pub over_waittime: i32,
     pub over_hittime: i32,
     pub over_wintime: i32,
+    /// How long the win poses wait for a fighter that is still in a move
+    /// when the round is over (`over.forcewintime`; 900 in M.U.G.E.N).
+    pub over_forcewintime: i32,
     pub over_time: i32,
     pub slow_time: i32,
     pub win_time: i32,
@@ -32,6 +35,7 @@ impl Default for RoundConfig {
             over_waittime: 45,
             over_hittime: 10,
             over_wintime: 45,
+            over_forcewintime: 900,
             over_time: 210,
             slow_time: 60,
             win_time: 60,
@@ -53,6 +57,7 @@ impl RoundConfig {
             c.over_waittime = g("over.waittime", c.over_waittime);
             c.over_hittime = g("over.hittime", c.over_hittime);
             c.over_wintime = g("over.wintime", c.over_wintime);
+            c.over_forcewintime = g("over.forcewintime", c.over_forcewintime).max(1);
             c.over_time = g("over.time", c.over_time);
             c.slow_time = g("slow.time", c.slow_time);
             c.win_time = g("win.time", c.win_time);
@@ -93,6 +98,9 @@ pub struct RoundState {
     pub win_kinds: [Vec<String>; 2],
     pub draws: i32,
     pub winposetime: i32,
+    /// Ticks the round still waits for its fighters to finish their moves
+    /// before the win poses (from `over.forcewintime`).
+    pub winwaittime: i32,
     pub match_over: bool,
     /// Players that already entered their win/lose state this round.
     over_flagged: Vec<bool>,
@@ -109,6 +117,7 @@ impl RoundState {
                 -1
             },
             winposetime: config.over_wintime,
+            winwaittime: config.over_forcewintime,
             config,
             round_no: 1,
             finish: Finish::NotYet,
@@ -200,6 +209,7 @@ impl World {
         self.round.finish = Finish::NotYet;
         self.round.win_team = -1;
         self.round.winposetime = cfg.over_wintime;
+        self.round.winwaittime = cfg.over_forcewintime;
         self.round.wins_counted = false;
         self.round.over_flagged = vec![false; self.players.len()];
         self.explods.clear();
@@ -295,6 +305,11 @@ impl World {
             self.self_state(i, 5900, Some(0), Some(false));
             self.run_current_pub(i);
         }
+        // a round opens on the middle of the stage, as the match did: the
+        // camera does not glide back from where the last round ended
+        self.cam_x = 0.0;
+        self.cam_y = 0.0;
+        self.cam_zoom = self.stage.zoom_in.min(1.0).max(self.stage.zoom_out);
         self.update_camera();
         let n = self.round.round_no;
         self.events.push(Event::RoundStart(n));
@@ -384,10 +399,33 @@ impl World {
             let roundnotover = roots
                 .iter()
                 .any(|&i| self.players[i].asserted(assert::ROUNDNOTOVER));
+            // before the win poses, a fighter still in a move finishes it
+            // (Ikemen GO: the round waits while any living fighter is not
+            // standing idle with control, up to `over.forcewintime`): a
+            // super that lands the KO plays to its end
+            if self.round.winposetime > 0
+                && self.round.winwaittime > 0
+                && self.round.intro == rs4t - 1
+            {
+                let busy = roots.iter().any(|&i| {
+                    let p = &self.players[i];
+                    p.alive()
+                        && !p.standby
+                        && !(p.ctrl
+                            && p.move_type == rugen_cns::state::MoveType::I
+                            && p.state_type == rugen_cns::state::StateType::S)
+                });
+                if busy {
+                    self.round.intro = rs4t;
+                }
+            }
             if self.round.winposetime > 0 && self.round.intro == rs4t - 1 {
                 for &i in &roots {
                     self.players[i].ctrl = false;
                 }
+            }
+            if self.round.winwaittime > 0 {
+                self.round.winwaittime -= 1;
             }
             if self.round.intro < rs4t {
                 self.round.winposetime -= 1;

@@ -147,13 +147,24 @@ fn kfm_matches_are_bit_identical() {
 // report: fighters walked past the end of HD stages' art). These zoom out
 // (ONLINE_ZOOM) and fight near the stage's ends, so the three changed then;
 // the arena run kept its value.
+//
+// Win poses wait for a fighter still in a move (`over.forcewintime`, as
+// M.U.G.E.N and Ikemen GO do: a move that lands the KO plays to its end
+// instead of being cut by the pose). Rounds that end with the winner in a
+// move now end later, so the two noise runs changed; the round state also
+// carries the wait, so every deep checksum did. Who wins did not change.
+//
+// A round opens with the camera on the middle of the stage instead of
+// gliding back from where the last one ended: the deep checksum of the
+// one run that reaches a third round with the camera away changed; its
+// fight did not.
 const GOLDEN_KFM: [(u64, u32, [u8; 2], u64); 4] = [
-    (0xeaf07d0ce97df321, 12000, [1, 0], 0x0ee7c18781d2049e),
-    (0x24a46a57967e1c02, 20000, [2, 1], 0x2dd68218a01d96e6),
-    (0x3dc3e1c20fc7b2fa, 12000, [0, 1], 0xb658b61cc084852f),
+    (0xbc99ed7de6d1dd3d, 12000, [1, 0], 0x383d1a770150871d),
+    (0x24a46a57967e1c02, 20000, [2, 1], 0xdec14bbda2970705),
+    (0xcb70ed02ef2fbe94, 12000, [0, 1], 0x7a7c082b0ae42100),
     // examples/arena has items and hazards (moving / dropping platforms,
     // wind) since those features, on purpose
-    (0xc540f0b530e524f5, 4000, [0, 0], 0x6a2d133e6d08d3b6),
+    (0xc540f0b530e524f5, 4000, [0, 0], 0x02741436fdaa2a55),
 ];
 
 /// The same with real community fighters (Naruto, Sasuke and Goku have
