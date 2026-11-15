@@ -24,6 +24,10 @@ env:
   # repository variables before releasing; the public key is required
   RUGEN_OFFICIAL_SERVER: ${{ vars.RUGEN_OFFICIAL_SERVER || 'https://play.rugen.dev' }}
   RUGEN_OFFICIAL_KEY: ${{ vars.RUGEN_OFFICIAL_KEY }}
+  # public key the in-game updater checks SHA256SUMS.sig against
+  # (BUILDING.md#update-key). Required: a build without it never updates
+  # itself, and a release without the signature is refused by every game.
+  RUGEN_UPDATE_KEY: ${{ vars.RUGEN_UPDATE_KEY }}
 
 jobs:
   windows:
@@ -34,6 +38,10 @@ jobs:
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
+      - name: Update key is set
+        if: env.RUGEN_UPDATE_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_UPDATE_KEY repository variable (rugen-update-key gen, see BUILDING.md)" && exit 1
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
@@ -77,6 +85,10 @@ jobs:
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
+      - name: Update key is set
+        if: env.RUGEN_UPDATE_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_UPDATE_KEY repository variable (rugen-update-key gen, see BUILDING.md)" && exit 1
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
@@ -130,6 +142,10 @@ jobs:
         if: env.RUGEN_OFFICIAL_KEY == ''
         shell: bash
         run: echo "::error::set the RUGEN_OFFICIAL_KEY repository variable (rugen-server --gen-key)" && exit 1
+      - name: Update key is set
+        if: env.RUGEN_UPDATE_KEY == ''
+        shell: bash
+        run: echo "::error::set the RUGEN_UPDATE_KEY repository variable (rugen-update-key gen, see BUILDING.md)" && exit 1
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
@@ -176,6 +192,41 @@ jobs:
       # an archive that does not match (crates/update)
       - name: SHA256SUMS
         run: sha256sum rugen-*.zip rugen-*.tar.gz *.deb *.rpm > SHA256SUMS && cat SHA256SUMS
+      # The game installs nothing whose SHA256SUMS is not signed by the
+      # update key (crates/update/src/sign.rs): the checksums alone are
+      # published by whoever can publish the release.
+      #
+      # The private key is the RUGEN_UPDATE_SIGNING_KEY secret. That keeps it
+      # away from the repository and the logs, but not from a compromised
+      # workflow. Signing offline is safer: leave the secret unset, and this
+      # job then publishes the release as a DRAFT without the signature;
+      # download SHA256SUMS, check it, sign it on a machine that holds the key
+      #   RUGEN_UPDATE_SIGNING_KEY_FILE=<key file> rugen-update-key sign SHA256SUMS
+      # upload SHA256SUMS.sig to the draft and publish it by hand.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+      - name: Signing tool
+        run: cargo build --release --manifest-path src/Cargo.toml -p rugen-update --bin rugen-update-key
+      - name: Sign SHA256SUMS
+        id: sign
+        env:
+          RUGEN_UPDATE_SIGNING_KEY: ${{ secrets.RUGEN_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RUGEN_UPDATE_SIGNING_KEY" ]; then
+            echo "::warning::RUGEN_UPDATE_SIGNING_KEY is not set: the release is left as a draft, to be signed offline"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          src/target/release/rugen-update-key sign SHA256SUMS
+          # the signature must be the one the builds of this release check
+          src/target/release/rugen-update-key verify SHA256SUMS
+          echo "draft=false" >> "$GITHUB_OUTPUT"
       - name: Release notes
         run: |
           v=${TAG#v}
@@ -215,8 +266,9 @@ jobs:
 
           Unsigned: the first time, right-click \`rugen\` → Open (or \`xattr -dr com.apple.quarantine <folder>\`).
 
-          \`SHA256SUMS\` lists every file's checksum. OPTIONS › UPDATE in the game
-          (or \`rugen update\`) installs a portable folder from here and checks it.
+          \`SHA256SUMS\` lists every file's checksum and \`SHA256SUMS.sig\` signs it.
+          OPTIONS › UPDATE in the game (or \`rugen update\`) installs a portable folder
+          from here, and only if both hold.
 
           Online hub: [rugen-server](https://github.com/rugen-dev/rugen-server) ·
           Docs: https://rugen.dev
@@ -228,9 +280,11 @@ jobs:
           name: rugen ${{ inputs.tag }}
           body_path: notes.md
           generate_release_notes: true
+          draft: ${{ steps.sign.outputs.draft == 'true' }}
           files: |
             rugen-*.zip
             rugen-*.tar.gz
             *.deb
             *.rpm
             SHA256SUMS
+            SHA256SUMS.sig

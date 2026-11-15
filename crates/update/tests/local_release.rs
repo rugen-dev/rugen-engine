@@ -8,7 +8,34 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rugen_update::{Install, Phase, Updater, apply};
+use rugen_update::{Install, Phase, Sources, Trust, Updater, apply, sign};
+
+/// The test release key (a seed anyone can read: tests only).
+const SEED: [u8; 32] = [42; 32];
+
+/// The game's side: the test key, GitHub and the local server at `base`.
+fn trust(base: &str) -> Trust {
+    Trust {
+        key: Some(sign::public_of(&SEED).unwrap()),
+        sources: Sources::for_release_url(base),
+    }
+}
+
+/// What is wrong with the fake release.
+#[derive(Clone, Copy, PartialEq)]
+enum Wrong {
+    Nothing,
+    /// The archive does not match its (signed) checksum.
+    Checksum,
+    /// `SHA256SUMS` is signed by somebody else.
+    Signer,
+    /// `SHA256SUMS` was changed after it was signed.
+    SumsEdited,
+    /// No `SHA256SUMS.sig` in the release.
+    NoSignature,
+    /// The archive is on another host.
+    ForeignArchive,
+}
 
 /// Serve `files` (path → body) on `listener` until `hits` requests were answered.
 fn serve_on(listener: TcpListener, files: HashMap<String, Vec<u8>>, hits: usize) {
@@ -120,9 +147,9 @@ fn fake_install(dir: &Path) {
     std::fs::write(dir.join("README.md"), b"old readme").unwrap();
 }
 
-/// The fake release: JSON, archive for this machine, SHA256SUMS (`tamper`
-/// writes a wrong checksum).
-fn release(base_hint: &str, tamper: bool) -> (HashMap<String, Vec<u8>>, String) {
+/// The fake release: JSON, archive for this machine, SHA256SUMS and its
+/// signature, with `wrong` done to it.
+fn release(base_hint: &str, wrong: Wrong) -> (HashMap<String, Vec<u8>>, String) {
     let name = rugen_update::own_asset_name("0.8.0").expect("a build for this test machine");
     let archive = if name.ends_with(".zip") {
         zip_bytes(&release_files(""))
@@ -130,37 +157,62 @@ fn release(base_hint: &str, tamper: bool) -> (HashMap<String, Vec<u8>>, String) 
         tar_gz(&release_files("rugen-0.8.0-linux-x86_64"))
     };
     let mut sha = rugen_update::sha256_hex(&archive);
-    if tamper {
+    if wrong == Wrong::Checksum {
         sha = sha.chars().rev().collect();
     }
     let sums = format!(
         "{sha}  {name}\n0000000000000000000000000000000000000000000000000000000000000000  other.zip\n"
     );
+    let seed = if wrong == Wrong::Signer {
+        [9; 32]
+    } else {
+        SEED
+    };
+    let sig = sign::sign(&seed, sums.as_bytes()).unwrap();
+    // an attacker's edit: the archive's checksum swapped after signing
+    let sums = if wrong == Wrong::SumsEdited {
+        sums.replace("  other.zip", "  another.zip")
+    } else {
+        sums
+    };
+    let archive_url = if wrong == Wrong::ForeignArchive {
+        format!("https://downloads.example/{name}")
+    } else {
+        format!("{base_hint}/{name}")
+    };
+    let mut assets = vec![
+        serde_json::json!({"name": name, "browser_download_url": archive_url, "size": archive.len()}),
+        serde_json::json!({"name": "SHA256SUMS", "browser_download_url": format!("{base_hint}/SHA256SUMS"), "size": sums.len()}),
+        serde_json::json!({"name": "rugen_0.8.0-1_amd64.deb", "browser_download_url": format!("{base_hint}/rugen_0.8.0-1_amd64.deb"), "size": 3}),
+    ];
+    if wrong != Wrong::NoSignature {
+        assets.push(serde_json::json!({"name": "SHA256SUMS.sig", "browser_download_url": format!("{base_hint}/SHA256SUMS.sig"), "size": sig.len()}));
+    }
     let json = serde_json::json!({
         "tag_name": "v0.8.0",
         "published_at": "2026-10-20T08:14:42Z",
         "html_url": format!("{base_hint}/tag/v0.8.0"),
-        "assets": [
-            {"name": name, "browser_download_url": format!("{base_hint}/{name}"), "size": archive.len()},
-            {"name": "SHA256SUMS", "browser_download_url": format!("{base_hint}/SHA256SUMS"), "size": sums.len()},
-            {"name": "rugen_0.8.0-1_amd64.deb", "browser_download_url": format!("{base_hint}/rugen_0.8.0-1_amd64.deb"), "size": 3}
-        ]
+        "assets": assets
     });
     let mut files = HashMap::new();
     files.insert("/latest".to_string(), serde_json::to_vec(&json).unwrap());
     files.insert(format!("/{name}"), archive);
     files.insert("/SHA256SUMS".to_string(), sums.into_bytes());
+    files.insert(
+        "/SHA256SUMS.sig".to_string(),
+        format!("{sig}\n").into_bytes(),
+    );
     (files, name)
 }
 
 /// Two passes: the server's port is only known after binding, so the JSON
 /// points at a placeholder host that is rewritten once the port is known.
-fn serve_release(tamper: bool, hits: usize) -> (String, String) {
+fn serve_release(wrong: Wrong, hits: usize) -> (String, String) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let base = format!("http://127.0.0.1:{port}");
-    let (files, name) = release(&base, tamper);
+    let (files, name) = release(&base, wrong);
     // bind the same port again right away
     let listener = TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();
     serve_on(listener, files, hits);
@@ -173,12 +225,13 @@ fn check_download_verify_and_swap_a_portable_install() {
     let install = root.join("install");
     std::fs::create_dir_all(&install).unwrap();
     fake_install(&install);
-    let (base, _) = serve_release(false, 8);
-    let up = Updater::new(
+    let (base, _) = serve_release(Wrong::Nothing, 8);
+    let up = Updater::with_trust(
         "0.7.2",
         Install::Portable(install.clone()),
         root.join("cache/update.json"),
         format!("{base}/latest"),
+        trust(&base),
     );
     assert_eq!(up.snapshot().phase, Phase::Idle);
     assert!(up.due());
@@ -252,12 +305,13 @@ fn a_checksum_mismatch_leaves_the_install_alone() {
     let install = root.join("install");
     std::fs::create_dir_all(&install).unwrap();
     fake_install(&install);
-    let (base, _) = serve_release(true, 4);
-    let up = Updater::new(
+    let (base, _) = serve_release(Wrong::Checksum, 5);
+    let up = Updater::with_trust(
         "0.7.2",
         Install::Portable(install.clone()),
         root.join("cache/update.json"),
         format!("{base}/latest"),
+        trust(&base),
     );
     up.check_now();
     assert_eq!(up.snapshot().phase, Phase::Available);
@@ -279,12 +333,13 @@ fn a_checksum_mismatch_leaves_the_install_alone() {
 #[test]
 fn a_package_install_never_writes() {
     let root = temp("pkg");
-    let (base, _) = serve_release(false, 2);
-    let up = Updater::new(
+    let (base, _) = serve_release(Wrong::Nothing, 2);
+    let up = Updater::with_trust(
         "0.7.2",
         Install::Package(PathBuf::from("/usr/bin/rugen")),
         root.join("cache/update.json"),
         format!("{base}/latest"),
+        trust(&base),
     );
     up.check_now();
     assert_eq!(up.snapshot().phase, Phase::Available);
@@ -309,11 +364,12 @@ fn a_package_install_never_writes() {
 fn a_failed_check_keeps_the_error() {
     let root = temp("down");
     let base = serve(HashMap::new(), 1);
-    let up = Updater::new(
+    let up = Updater::with_trust(
         "0.7.2",
         Install::Dev(root.clone()),
         root.join("cache/update.json"),
         format!("{base}/latest"),
+        trust(&base),
     );
     up.check_now();
     let snap = up.snapshot();
@@ -321,4 +377,156 @@ fn a_failed_check_keeps_the_error() {
     assert!(snap.error.as_deref().unwrap_or("").contains("404"));
     assert!(snap.latest.is_none());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A release with `wrong` done to it is not installed, and says `why`.
+fn refused(name: &str, wrong: Wrong, why: &str) {
+    let root = temp(name);
+    let install = root.join("install");
+    std::fs::create_dir_all(&install).unwrap();
+    fake_install(&install);
+    let (base, _) = serve_release(wrong, 5);
+    let up = Updater::with_trust(
+        "0.7.2",
+        Install::Portable(install.clone()),
+        root.join("cache/update.json"),
+        format!("{base}/latest"),
+        trust(&base),
+    );
+    up.check_now();
+    assert_eq!(up.snapshot().phase, Phase::Available);
+    up.apply_now();
+    let snap = up.snapshot();
+    assert_eq!(snap.phase, Phase::Failed);
+    let error = snap.error.unwrap_or_default();
+    assert!(error.contains(why), "{error:?} should say {why:?}");
+    let read = |p: &str| std::fs::read_to_string(install.join(p)).unwrap();
+    assert_eq!(read(rugen_update::exe_name()), "old binary");
+    assert_eq!(read("motif/old.txt"), "old motif");
+    assert!(!install.join(apply::STAGE_DIR).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn checksums_signed_by_another_key_are_refused() {
+    refused(
+        "signer",
+        Wrong::Signer,
+        "not signed by this build's update key",
+    );
+}
+
+#[test]
+fn checksums_changed_after_signing_are_refused() {
+    refused(
+        "edited",
+        Wrong::SumsEdited,
+        "not signed by this build's update key",
+    );
+}
+
+#[test]
+fn an_archive_on_another_host_is_not_fetched() {
+    refused(
+        "foreign",
+        Wrong::ForeignArchive,
+        "only fetches from GitHub over https",
+    );
+}
+
+#[test]
+fn a_release_without_a_signature_is_not_installed() {
+    let root = temp("nosig");
+    let install = root.join("install");
+    std::fs::create_dir_all(&install).unwrap();
+    fake_install(&install);
+    let (base, _) = serve_release(Wrong::NoSignature, 2);
+    let up = Updater::with_trust(
+        "0.7.2",
+        Install::Portable(install.clone()),
+        root.join("cache/update.json"),
+        format!("{base}/latest"),
+        trust(&base),
+    );
+    up.check_now();
+    assert_eq!(up.snapshot().phase, Phase::Available);
+    assert_eq!(
+        up.blocker().as_deref(),
+        Some("release is not signed (no SHA256SUMS.sig)")
+    );
+    assert!(!Arc::clone(&up).start_apply());
+    up.apply_now();
+    assert_eq!(up.snapshot().phase, Phase::Failed);
+    let read = |p: &str| std::fs::read_to_string(install.join(p)).unwrap();
+    assert_eq!(read(rugen_update::exe_name()), "old binary");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_build_without_an_update_key_installs_nothing() {
+    let root = temp("nokey");
+    let install = root.join("install");
+    std::fs::create_dir_all(&install).unwrap();
+    fake_install(&install);
+    // a release that is right in every way
+    let (base, _) = serve_release(Wrong::Nothing, 2);
+    let up = Updater::with_trust(
+        "0.7.2",
+        Install::Portable(install.clone()),
+        root.join("cache/update.json"),
+        format!("{base}/latest"),
+        Trust {
+            key: None,
+            sources: Sources::for_release_url(&base),
+        },
+    );
+    up.check_now();
+    assert_eq!(
+        up.snapshot().phase,
+        Phase::Available,
+        "the check still tells"
+    );
+    assert_eq!(
+        up.blocker().as_deref(),
+        Some("this build was made without an update key")
+    );
+    assert!(!Arc::clone(&up).start_apply());
+    up.apply_now();
+    let snap = up.snapshot();
+    assert_eq!(snap.phase, Phase::Failed);
+    assert!(
+        snap.error
+            .unwrap_or_default()
+            .contains("without an update key")
+    );
+    let read = |p: &str| std::fs::read_to_string(install.join(p)).unwrap();
+    assert_eq!(read(rugen_update::exe_name()), "old binary");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_redirect_to_another_host_is_not_followed() {
+    // the local server redirects /latest to a host that is not allowed
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut s, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    let base = format!("http://127.0.0.1:{port}");
+    let err = rugen_update::net::fetch_text(
+        &format!("{base}/latest"),
+        1024,
+        &Sources::for_release_url(&base),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("only fetches from GitHub over https"),
+        "{err:#}"
+    );
 }

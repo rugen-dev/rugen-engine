@@ -1,6 +1,7 @@
 //! In-game updater. The source of truth is the GitHub releases of
 //! `rugen-dev/rugen-engine`: one archive per platform plus a `SHA256SUMS`
-//! asset. This crate holds the pure parts (version compare, asset naming,
+//! asset and its signature, `SHA256SUMS.sig`: nothing is installed that
+//! the update key did not sign ([`sign`]). This crate holds the pure parts (version compare, asset naming,
 //! checksum parsing, install layout detection, the check cache), the
 //! network calls ([`net`]), the extract / apply steps ([`apply`]) and the
 //! background state machine the menus and `rugen update` drive
@@ -17,9 +18,11 @@ use serde::{Deserialize, Serialize};
 
 pub mod apply;
 pub mod net;
+pub mod sign;
 mod updater;
 
-pub use updater::{Phase, Snapshot, Updater};
+pub use sign::{SIG_ASSET, Sources};
+pub use updater::{Phase, Snapshot, Trust, Updater};
 
 /// The GitHub repository releases come from.
 pub const REPO: &str = "rugen-dev/rugen-engine";

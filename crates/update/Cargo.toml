@@ -13,10 +13,16 @@ log.workspace = true
 serde.workspace = true
 serde_json = "1"
 sha2 = "0.11"
+# Ed25519: the signature of SHA256SUMS (already in the game through rustls)
+ring = "0.17"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+
+[[bin]]
+name = "rugen-update-key"
+path = "src/bin/update_key.rs"
 
 [lints]
 workspace = true

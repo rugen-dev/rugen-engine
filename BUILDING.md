@@ -77,3 +77,51 @@ bytes, no whitespace, integers only, serde_json string escaping; the signed
 message is `rugen-signed-v1\n<purpose>\n<payload>` (purposes `truth`,
 `verdict`, `result`, `identity`). Feeds expire (3 days, at most 7) and are
 never accepted with a lower sequence than the one already held.
+
+## Update key
+
+The in-game updater (OPTIONS › UPDATE, `rugen update`) installs a release
+only if its `SHA256SUMS` is signed. The checksums alone say an archive
+arrived whole; they are published next to the archives, so whoever can
+publish a release can publish matching checksums. The signature
+(`SHA256SUMS.sig`) is made with a private key the game holds the public
+half of (`crates/update/src/sign.rs`).
+
+| variable | meaning | default |
+|---|---|---|
+| `RUGEN_UPDATE_KEY` | Ed25519 **public** key the updater checks releases against (64 hex digits), baked in at compile time | none: the build never updates itself |
+
+There is no development key and no unsigned fallback: a build made without
+`RUGEN_UPDATE_KEY` still tells that a newer release exists, and says it
+cannot install it ("this build was made without an update key").
+
+Once, before the first signed release:
+
+1. Make the key pair, on a machine you trust:
+   `cargo run -p rugen-update --bin rugen-update-key -- gen <file>`.
+   The private key goes into `<file>` (owner-only, outside any repository);
+   the command prints `RUGEN_UPDATE_KEY=<public>`. Keep a copy of the file
+   offline: without it no later release can be installed by the games
+   already out, and a new key only reaches players who download by hand.
+2. Set the **public** key as the repository variable `RUGEN_UPDATE_KEY`
+   (Settings > Secrets and variables > Actions > Variables). The Release
+   workflow refuses to build without it.
+3. Choose where releases are signed:
+   - **Offline (safer).** Do not give GitHub the private key. The workflow
+     then leaves the release as a draft. Download its `SHA256SUMS`, compare
+     it with archives you trust, then
+     `RUGEN_UPDATE_SIGNING_KEY_FILE=<file> rugen-update-key sign SHA256SUMS`,
+     upload `SHA256SUMS.sig` to the draft and publish it.
+   - **In the workflow.** Put the contents of `<file>` in the repository
+     secret `RUGEN_UPDATE_SIGNING_KEY`. The workflow signs and publishes.
+     A compromised workflow or a leaked secret can then sign a release.
+
+`rugen-update-key verify SHA256SUMS` checks a signature against
+`RUGEN_UPDATE_KEY`. The private key is never taken from the command line
+and never printed. The signed message is `rugen-update-v1\n` followed by
+the bytes of `SHA256SUMS`.
+
+The updater also fetches only from GitHub over https (`api.github.com`,
+`github.com`, `*.githubusercontent.com`), and checks every address a
+redirect points to. `RUGEN_UPDATE_URL` adds its own origin (plain http only
+on this machine); the signature is still required.

@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::{ArchiveKind, CheckCache, Install, Release, apply, net};
+use crate::{ArchiveKind, CheckCache, Install, Release, Sources, apply, net, sign};
 
 /// Where the updater stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +67,28 @@ struct State {
     snap: Snapshot,
 }
 
+/// What a release must prove before it is installed, and where it may
+/// come from.
+#[derive(Clone, Debug)]
+pub struct Trust {
+    /// The public key `SHA256SUMS` must be signed with. `None`: nothing is
+    /// ever installed (a build made without `RUGEN_UPDATE_KEY`).
+    pub key: Option<[u8; 32]>,
+    /// The addresses fetched from.
+    pub sources: Sources,
+}
+
+impl Trust {
+    /// This build's key ([`sign::UPDATE_KEY`]) and GitHub, plus the origin
+    /// of `url` when it is an override (`RUGEN_UPDATE_URL`).
+    pub fn of_build(url: &str) -> Self {
+        Self {
+            key: sign::update_key(),
+            sources: Sources::for_release_url(url),
+        }
+    }
+}
+
 /// One updater per process: the install it would replace, the cache file
 /// and the release URL it asks.
 pub struct Updater {
@@ -74,10 +96,24 @@ pub struct Updater {
     install: Install,
     cache_path: PathBuf,
     url: String,
+    trust: Trust,
 }
 
 impl Updater {
+    /// An updater that trusts this build's update key ([`Trust::of_build`]).
     pub fn new(current: &str, install: Install, cache_path: PathBuf, url: String) -> Arc<Self> {
+        let trust = Trust::of_build(&url);
+        Self::with_trust(current, install, cache_path, url, trust)
+    }
+
+    /// An updater with a given key and sources (tests, other launchers).
+    pub fn with_trust(
+        current: &str,
+        install: Install,
+        cache_path: PathBuf,
+        url: String,
+        trust: Trust,
+    ) -> Arc<Self> {
         let cache = CheckCache::load(&cache_path);
         let phase = match &cache.latest {
             Some(r) if crate::is_newer(&r.version, current) => Phase::Available,
@@ -101,6 +137,7 @@ impl Updater {
             install,
             cache_path,
             url,
+            trust,
         })
     }
 
@@ -163,7 +200,7 @@ impl Updater {
     /// The check, on this thread.
     pub fn check_now(&self) {
         self.update(|s| s.phase = Phase::Checking);
-        match net::fetch_latest(&self.url) {
+        match net::fetch_latest(&self.url, &self.trust.sources) {
             Ok(release) => {
                 let now = crate::now_secs();
                 CheckCache {
@@ -206,10 +243,15 @@ impl Updater {
             Install::Package(_) => Some("installed by your package manager".into()),
             Install::Dev(_) => Some("not a release folder".into()),
             Install::Portable(dir) => {
-                if release.own_archive().is_none() {
+                if self.trust.key.is_none() {
+                    // no key to check a release against: never install unsigned
+                    Some("this build was made without an update key".into())
+                } else if release.own_archive().is_none() {
                     Some("no build for this machine in the release".into())
                 } else if release.asset(crate::SUMS_ASSET).is_none() {
                     Some("release has no SHA256SUMS".into())
+                } else if release.asset(sign::SIG_ASSET).is_none() {
+                    Some("release is not signed (no SHA256SUMS.sig)".into())
                 } else if !crate::writable(dir) {
                     Some("install folder is read-only".into())
                 } else {
@@ -269,10 +311,17 @@ impl Updater {
         let sums = release
             .asset(crate::SUMS_ASSET)
             .ok_or_else(|| anyhow::anyhow!("release has no {}", crate::SUMS_ASSET))?;
+        let sig = release
+            .asset(sign::SIG_ASSET)
+            .ok_or_else(|| anyhow::anyhow!("release has no {}", sign::SIG_ASSET))?;
+        let key = self.trust.key.ok_or_else(|| {
+            anyhow::anyhow!("this build was made without an update key: it does not update itself")
+        })?;
         let stage = dir.join(apply::STAGE_DIR);
         let _ = std::fs::remove_dir_all(&stage);
         std::fs::create_dir_all(&stage)?;
-        let result = self.stage_and_swap(dir, &stage, &release, &archive, kind, &sums.url);
+        let signed = (key, sums.url.as_str(), sig.url.as_str());
+        let result = self.stage_and_swap(dir, &stage, &release, &archive, kind, signed);
         let _ = std::fs::remove_dir_all(&stage);
         result
     }
@@ -284,17 +333,21 @@ impl Updater {
         release: &Release,
         archive: &crate::Asset,
         kind: ArchiveKind,
-        sums_url: &str,
+        (key, sums_url, sig_url): ([u8; 32], &str, &str),
     ) -> anyhow::Result<()> {
+        let sources = &self.trust.sources;
         self.update(|s| {
             s.phase = Phase::Downloading;
             s.progress = 0.0;
             s.received = 0;
             s.total = Some(archive.size).filter(|n| *n > 0);
         });
-        // the checksums first: a release without ours is refused before
-        // the big download
-        let sums = net::fetch_text(sums_url, 1024 * 1024)?;
+        // the checksums and their signature first: a release that is not
+        // ours, or has no entry for this machine, is refused before the big
+        // download. Nothing in `sums` is read before the signature holds.
+        let sums = net::fetch_text(sums_url, 1024 * 1024, sources)?;
+        let sig = net::fetch_text(sig_url, 4096, sources)?;
+        sign::verify(&key, sums.as_bytes(), &sig)?;
         let expected = crate::expected_sha(&sums, &archive.name).ok_or_else(|| {
             anyhow::anyhow!("{} has no entry for {}", crate::SUMS_ASSET, archive.name)
         })?;
@@ -304,6 +357,7 @@ impl Updater {
             &archive.url,
             &file,
             crate::MAX_DOWNLOAD,
+            sources,
             &mut |got, total| {
                 // a snapshot per 256 KiB (and the end): the menus redraw at 60 Hz anyway
                 if got - last >= 256 * 1024 || Some(got) == total {
