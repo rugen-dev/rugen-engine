@@ -56,6 +56,8 @@
 
 use anyhow::Context;
 
+mod arenahud;
+mod arenalogos;
 mod bench;
 mod challenge;
 mod clipboard;
@@ -762,11 +764,28 @@ fn main() -> anyhow::Result<()> {
         Some("replay") => {
             let path = args.get(1).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "usage: rugen replay <file.json> [--info] [--shot out.png] [--frames n] | rugen replay --list"
+                    "usage: rugen replay <file.json> [--info] [--shot out.png] [--frames n] | rugen replay --live <file.jsonl> | rugen replay --list"
                 )
             })?;
-            let r = replay::Replay::load(std::path::Path::new(path))
-                .with_context(|| path.to_string())?;
+            // a rugen-gym match in progress: its file is followed as it grows
+            let live = args.iter().any(|a| a == "--live");
+            let path = if live {
+                args.iter()
+                    .skip(1)
+                    .find(|a| !a.starts_with("--"))
+                    .context("usage: rugen replay --live <file.jsonl>")?
+            } else {
+                path
+            };
+            let r = if live {
+                let p = std::path::PathBuf::from(path);
+                let r = replay::Replay::load_live(&p).with_context(|| path.to_string())?;
+                let _ = arenahud::LIVE.set(p);
+                r
+            } else {
+                replay::Replay::load(std::path::Path::new(path))
+                    .with_context(|| path.to_string())?
+            };
             // the header only, no window
             if args.iter().any(|a| a == "--info") {
                 println!("{:<9} {path}", "file");

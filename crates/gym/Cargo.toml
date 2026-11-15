@@ -1,0 +1,20 @@
+[package]
+name = "rugen-gym"
+description = "Headless match environment for bots and language models: observations out, input plans in, a replay at the end"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rugen-sim.workspace = true
+rugen-cns.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json = "1"
+libm.workspace = true
+rugen-formats.workspace = true
+
+[lints]
+workspace = true

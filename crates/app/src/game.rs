@@ -204,8 +204,21 @@ trait ResultSource {
 impl ResultSource for Match {
     fn result_card(&self, quick: bool, arcade: bool) -> ResultCard {
         let setup = self.setup().clone();
-        let (n1, a1) = char_card(&setup.p1);
-        let (n2, a2) = char_card(&setup.p2);
+        let (mut n1, a1) = char_card(&setup.p1);
+        let (mut n2, a2) = char_card(&setup.p2);
+        // an arena replay: the winner is the model, as its fighter
+        if let Some(arena) = &self.arena {
+            for (i, n) in [&mut n1, &mut n2].into_iter().enumerate() {
+                let w = &self.world;
+                let fighter = w
+                    .players
+                    .get(i)
+                    .and_then(|p| w.data.get(p.data))
+                    .map(|d| d.display_name.clone())
+                    .unwrap_or_default();
+                *n = format!("{} ({fighter})", arena.player(i));
+            }
+        }
         (
             setup,
             self.winner(),
@@ -2082,6 +2095,10 @@ impl Shell {
                             m.record = Some(m.lan_recording(*side));
                         }
                         if let Some(r) = self.replay.take() {
+                            m.arena = r.gym.map(crate::arenahud::ArenaHud::new);
+                            m.live = crate::arenahud::LIVE
+                                .get()
+                                .and_then(|p| crate::arenahud::LiveFeed::open(p).ok());
                             m.playback = Some((r.inputs, 0));
                             m.edit_plan = r.edits;
                         }

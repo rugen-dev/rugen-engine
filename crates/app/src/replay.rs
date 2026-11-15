@@ -371,8 +371,83 @@ pub struct Replay {
     /// from replays that stored absolute paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<ContentRefs>,
+    /// A `rugen-gym` match: the players, their decks and every answer
+    /// ([`crate::arenahud`] draws them); absent for every other match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gym: Option<Gym>,
     /// `[p1 bits, p2 bits]` per tick (see `Buttons::bits`).
     pub inputs: Vec<[u16; 2]>,
+}
+
+/// The players of a `rugen-gym` match (language models, bots), their
+/// plans and how each step of them ended, as the gym wrote it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Gym {
+    pub players: [String; 2],
+    pub decks: [Vec<GymCard>; 2],
+    pub plans: Vec<GymPlan>,
+    pub steps: Vec<GymStep>,
+}
+
+/// A card of a fighter's deck.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GymCard {
+    pub id: String,
+    pub label: String,
+    /// `stance`, `attack`, `projectile`, `special`, `super`, `boost`, `move`.
+    pub kind: String,
+    pub power: i32,
+}
+
+/// One answer of a player: a plan, or an answer that was refused.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GymPlan {
+    pub side: usize,
+    /// The frame the player was shown the state on, and the one its answer
+    /// came in on.
+    pub asked: u32,
+    pub frame: u32,
+    /// It was a plan the gym could run.
+    pub ok: bool,
+    /// The player's own words.
+    pub say: String,
+    pub steps: Vec<GymPlanStep>,
+    /// The steps are the rules of a brain (read every tick, the first that
+    /// holds decides), not a plan run in order.
+    pub brain: bool,
+    /// Why it was refused.
+    pub error: String,
+}
+
+/// A step of a plan: its card and the few words that say when it ends or
+/// where it leads.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GymPlanStep {
+    pub card: String,
+    pub note: String,
+}
+
+/// A step of a plan ended (`step` 0, `result` "start": the plan took over).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GymStep {
+    /// Its plan, as an index of [`Gym::plans`].
+    pub plan: usize,
+    pub side: usize,
+    /// From 1.
+    pub step: usize,
+    pub card: String,
+    pub frame: u32,
+    /// `done`, `hit`, `blocked`, `missed`, `failed`, `skipped`, `rule`,
+    /// `i_am_hit`, `interrupted`, `timeout`, `broken`, `start`.
+    pub result: String,
+    /// The step the plan goes to (0: it is over); absent while the fighter
+    /// is being hit.
+    pub to: Option<usize>,
 }
 
 impl Replay {
@@ -415,6 +490,7 @@ impl Replay {
                     [0, 1].map(|s| t.partners[s].iter().map(|p| ContentRef::of(p)).collect())
                 }),
             }),
+            gym: None,
             inputs: Vec::new(),
         }
     }
@@ -694,6 +770,30 @@ impl Replay {
         Ok(())
     }
 
+    /// The header of a match in progress (`rugen-gym --live`): the first
+    /// line of its file, waited for a few seconds (the gym is starting).
+    pub fn load_live(path: &Path) -> anyhow::Result<Self> {
+        let start = std::time::Instant::now();
+        loop {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            if let Some((header, _)) = text.split_once('\n') {
+                let r: Replay = serde_json::from_str(header)?;
+                anyhow::ensure!(
+                    r.version == REPLAY_VERSION,
+                    "replay version {} (expected {REPLAY_VERSION})",
+                    r.version
+                );
+                return Ok(r);
+            }
+            anyhow::ensure!(
+                start.elapsed() < std::time::Duration::from_secs(15),
+                "no match started in {}",
+                path.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let r: Replay = serde_json::from_slice(&std::fs::read(path)?)?;
         anyhow::ensure!(
@@ -777,6 +877,7 @@ mod tests {
             life: None,
             sim: Default::default(),
             content: None,
+            gym: None,
             inputs: Vec::new(),
         }
         .setup();
@@ -962,6 +1063,7 @@ mod tests {
             life: None,
             sim: Default::default(),
             content: None,
+            gym: None,
             inputs: Vec::new(),
         }
         .setup();

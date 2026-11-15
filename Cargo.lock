@@ -2853,6 +2853,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rugen-gym"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "libm",
+ "rugen-cns",
+ "rugen-formats",
+ "rugen-sim",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rugen-net"
 version = "0.8.0"
 dependencies = [
@@ -2938,6 +2951,7 @@ dependencies = [
  "anyhow",
  "flate2",
  "log",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

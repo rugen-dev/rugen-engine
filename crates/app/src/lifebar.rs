@@ -525,11 +525,16 @@ pub struct Lifebar {
     winicon_offset: [[f32; 2]; 2],
     winicon: [HashMap<String, Elem>; 2],
     shown: Vec<(Shown, i32)>,
+    /// Announcements that wait for the one on screen to end, each with its
+    /// own time (a win line after "K.O.": they share the screen's centre).
+    queued: Vec<(Shown, i32)>,
     tick: i32,
     /// Text versions of FIGHT / KO for screenpacks without animations.
     fight_text: Text,
     ko_text: Text,
     combo: [Combo; 2],
+    /// Do not draw the combo counters (the arena panels show them).
+    pub hide_combo: bool,
     /// Per team: hits shown and ticks left to keep showing them.
     combo_state: [(i32, i32); 2],
 }
@@ -712,6 +717,7 @@ impl Lifebar {
             ],
             winicon: [icons("p1"), icons("p2")],
             shown: Vec::new(),
+            queued: Vec::new(),
             tick: 0,
             fight_text: Text::parse(rd, "fight", "FIGHT!", 45),
             ko_text: Text::parse(rd, "ko", "K.O.", 90),
@@ -719,6 +725,7 @@ impl Lifebar {
                 Combo::parse(sec("combo"), "team1"),
                 Combo::parse(sec("combo"), "team2"),
             ],
+            hide_combo: false,
             combo_state: [(0, 0); 2],
         })
     }
@@ -730,12 +737,16 @@ impl Lifebar {
                 // a new round clears the last one's lines ("X WINS" ran on
                 // into the next round's FIGHT)
                 self.shown.clear();
+                self.queued.clear();
                 let t = self.round_text.clone();
                 let line = t.text.replace("%i", &n.to_string());
                 let time = t.displaytime;
                 self.shown.push((Shown::Text { text: t, line }, time));
             }
             Event::Fight => {
+                // FIGHT takes over from the round's number (a fighter with
+                // no intro starts while "ROUND 2" is still up)
+                self.shown.clear();
                 if self.fight.present() {
                     let mut e = self.fight.clone();
                     if let Some(a) = e.anim.as_mut() {
@@ -782,13 +793,14 @@ impl Lifebar {
                     (self.win.clone(), self.win.text.replace("%s", &name))
                 };
                 let time = t.displaytime;
-                self.shown.push((Shown::Text { text: t, line }, time));
+                // after "K.O." (or TIME OVER), not on top of it
+                self.queued.push((Shown::Text { text: t, line }, time));
             }
             Event::MatchOver(team) if *team < 0 => {
                 let t = self.draw.clone();
                 let line = t.text.clone();
                 let time = t.displaytime;
-                self.shown.push((Shown::Text { text: t, line }, time));
+                self.queued.push((Shown::Text { text: t, line }, time));
             }
             _ => {}
         }
@@ -831,6 +843,10 @@ impl Lifebar {
             }
         }
         self.shown.retain(|(_, t)| *t > 0);
+        // the screen's centre is free: the next announcement
+        if self.shown.is_empty() && !self.queued.is_empty() {
+            self.shown.push(self.queued.remove(0));
+        }
         for (_, timer) in &mut self.combo_state {
             if *timer > 0 {
                 *timer -= 1;
@@ -1870,6 +1886,9 @@ impl Lifebar {
         }
         // combo counters: hits the other team has taken in its current combo
         for side in 0..roots.len() {
+            if self.hide_combo {
+                break;
+            }
             let Some(&other) = roots.get(1 - side) else {
                 continue;
             };

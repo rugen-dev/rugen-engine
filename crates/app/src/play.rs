@@ -858,6 +858,11 @@ pub struct Match {
     pub sim_rules: SimRules,
     /// Inputs to replay instead of live input, with a cursor.
     pub playback: Option<(Vec<[u16; 2]>, usize)>,
+    /// A `rugen-gym` replay: the players' panels (who thinks, the cards).
+    pub arena: Option<crate::arenahud::ArenaHud>,
+    /// A `rugen-gym` match in progress (`rugen replay --live`): its inputs
+    /// and answers are added to `playback` and `arena` as they are written.
+    pub live: Option<crate::arenahud::LiveFeed>,
     /// Watching from the server's input log: the feed, the next frame, and
     /// whether the picture started (after the start buffer).
     stream: Option<(crate::watch::Feed, usize, bool)>,
@@ -1162,6 +1167,8 @@ impl Match {
             leave: false,
             record: None,
             playback: None,
+            arena: None,
+            live: None,
             stream: match &setup.net {
                 Some(NetMode::Stream(f)) => Some((f.clone(), 0, false)),
                 _ => None,
@@ -1615,6 +1622,28 @@ impl Match {
                     return false;
                 }
                 None => return false,
+            }
+        }
+        // a match followed live: what was written since the last tick; with
+        // nothing left to play the picture waits (and the game closes a
+        // moment after the match's end)
+        if let Some(feed) = self.live.as_mut() {
+            let (frames, cursor) = self.playback.get_or_insert_with(|| (Vec::new(), 0));
+            for line in feed.poll() {
+                match line {
+                    crate::arenahud::Live::Input(f) => frames.push(f),
+                    other => {
+                        if let Some(a) = self.arena.as_mut() {
+                            a.live(other);
+                        }
+                    }
+                }
+            }
+            if *cursor >= frames.len() {
+                if feed.finished() {
+                    std::process::exit(0);
+                }
+                return false;
             }
         }
         if let Some((frames, cursor)) = self.playback.as_mut() {
@@ -3237,6 +3266,23 @@ impl Match {
                 },
             );
         }
+        // the arena panels show while the fight is on: the round's own
+        // texts (ROUND 1, FIGHT, X WINS) have the middle of the screen
+        let fighting = matches!(self.world.round.round_state(), 2 | 3);
+        if let Some(a) = self.arena.as_ref().filter(|_| !self.hud_hidden && fighting) {
+            a.draw(
+                r,
+                &crate::training::Hud {
+                    at: &hud,
+                    u,
+                    screen_w,
+                    screen_h,
+                },
+                self.world.frame,
+                // each side's combo: the hits the other has taken in a row
+                [1, 0].map(|i| self.world.players.get(i).map_or(0, |p| p.received_hits)),
+            );
+        }
         if let Some(t) = self.tutorial.as_ref() {
             let lines = t.text();
             // screenpack fonts when the fight.def has them, else the built-in
@@ -3301,6 +3347,7 @@ impl Match {
                 (self.world.team_mode(s) == TeamMode::Tag && self.setup.ai[s] == 0)
                     .then(|| self.tag_labels[s].clone())
             });
+            lb.hide_combo = self.arena.is_some();
             lb.draw(
                 r,
                 &self.world,
