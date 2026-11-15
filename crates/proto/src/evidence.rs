@@ -57,7 +57,8 @@ pub fn decode_inputs(rle: &[u8], max_frames: usize) -> Option<Vec<u8>> {
         let n = get_varint(rle, &mut i)? as usize;
         let f = rle.get(i..i + 4)?;
         i += 4;
-        if n == 0 || out.len() / 4 + n > max_frames {
+        // no `len + n`: a run near `u64::MAX` would wrap past the guard
+        if n == 0 || n > max_frames.saturating_sub(out.len() / 4) {
             return None;
         }
         for _ in 0..n {
@@ -101,6 +102,26 @@ pub fn checksums_agree(a: &[(u32, u64)], b: &[(u32, u64)], below: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A run length near `u64::MAX` is refused, not added to the frames so
+    /// far (the sum wrapped past the guard and the loop never ended).
+    #[test]
+    fn huge_runs_are_refused() {
+        let mut rle = Vec::new();
+        put_varint(&mut rle, 1);
+        rle.extend([0u8; 4]);
+        put_varint(&mut rle, u64::MAX);
+        rle.extend([0u8; 4]);
+        assert_eq!(decode_inputs(&rle, 54_000), None);
+        let mut one = Vec::new();
+        put_varint(&mut one, 54_001);
+        one.extend([0u8; 4]);
+        assert_eq!(decode_inputs(&one, 54_000), None);
+        one.clear();
+        put_varint(&mut one, 54_000);
+        one.extend([0u8; 4]);
+        assert_eq!(decode_inputs(&one, 54_000).map(|v| v.len()), Some(216_000));
+    }
 
     #[test]
     fn inputs_roundtrip_and_shrink() {
