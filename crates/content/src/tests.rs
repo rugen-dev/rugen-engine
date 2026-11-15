@@ -398,3 +398,72 @@ fn user_themes_are_listed_after_the_bundled_ones() {
     }
     let _ = fs::remove_dir_all(&root);
 }
+
+/// `rgc_path` rewritten with `payload` as its compiled logic: every other
+/// section and the header's fingerprint are kept as they were.
+fn swap_logic(rgc_path: &Path, payload: &[u8]) {
+    let a = rgc::Archive::open(rgc_path).unwrap();
+    let out = rgc_path.with_extension("tmp");
+    let mut w = rgc::Writer::create(&out, a.kind).unwrap();
+    for e in &a.entries {
+        if e.kind == rgc::SectionKind::Logic {
+            continue;
+        }
+        w.add_stored(e.clone(), &a.read_raw(e).unwrap()).unwrap();
+    }
+    w.add_logic(rugen_sim::chardata::LOGIC_SCHEMA, payload)
+        .unwrap();
+    w.finish(a.fingerprint).unwrap();
+    fs::rename(&out, rgc_path).unwrap();
+    rugen_formats::vfs::forget(rgc_path);
+}
+
+// REVIEW E2: a content file's fingerprint covers its text, not the compiled
+// logic it carries. A file with honest text and another fighter's logic
+// still verifies as the honest fighter, so that logic must never be run.
+#[test]
+fn logic_carried_by_a_content_file_is_never_run() {
+    let root = tmp("logic-tamper");
+    let lib = Library::discover(Some(&root));
+    let data_dir = lib.data_dir();
+    write_folder(&root.join("src/tiny"), 1);
+    let src = convert::Source {
+        root: root.join("src/tiny"),
+        def: "tiny.def".into(),
+        kind: rgc::Kind::Char,
+        name: "Tiny".into(),
+    };
+    let rgc_path = root.join("chars/Tiny.rgc");
+    convert::convert(&src, &rgc_path, &data_dir, None).unwrap();
+    let def = rgc_path.join("tiny.def");
+
+    // the same fighter with ten times the life and damage, compiled
+    let evil = root.join("src/evil");
+    write_folder(&evil, 1);
+    fs::write(
+        evil.join("tiny.cns"),
+        b"[Data]\nlife = 9999\n[Statedef 200]\nmovetype = A\n[State 200, h]\ntype = HitDef\ntrigger1 = 1\ndamage = 400\nguardflag = MA\n",
+    )
+    .unwrap();
+    let payload = rugen_sim::chardata::compile_logic(&evil.join("tiny.def"), &data_dir).unwrap();
+    swap_logic(&rgc_path, &payload);
+
+    // the file still passes as the honest fighter...
+    let v = rugen_fair::package::verify(&rgc_path, u64::MAX).unwrap();
+    assert!(v.honest(), "the fingerprint does not see the logic section");
+    // ...and what loads is the text's logic, not the one it carries
+    let honest = rugen_sim::CharData::load_original(&def, &data_dir).unwrap();
+    let loaded = rugen_sim::CharData::load_with_data(&def, &data_dir).unwrap();
+    assert_eq!(loaded.consts.get("data.life"), Some(&1000.0));
+    assert_eq!(
+        format!("{:?}", loaded.states),
+        format!("{:?}", honest.states)
+    );
+
+    // logic that is not logic at all is not read either: no error, no panic
+    for junk in [&b""[..], &[0xff; 64][..], &payload[..payload.len() / 2]] {
+        swap_logic(&rgc_path, junk);
+        let loaded = rugen_sim::CharData::load_with_data(&def, &data_dir).unwrap();
+        assert_eq!(loaded.consts.get("data.life"), Some(&1000.0));
+    }
+}

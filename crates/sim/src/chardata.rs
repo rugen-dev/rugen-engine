@@ -2,10 +2,10 @@
 //! Loaded once, shared by every instance via `Arc`.
 //!
 //! A character loads the same from its folder or from inside an `.rgc`
-//! content file (`chars/x.rgc/x.def`, see `rugen_formats::vfs`). An `.rgc`
-//! carries its AIR / CMD / CNS compiled by the engine that converted it
-//! ([`compile_logic`]); when that engine was another build, the text is
-//! compiled again and the result kept in `cache/logic/`.
+//! content file (`chars/x.rgc/x.def`, see `rugen_formats::vfs`). The AIR /
+//! CMD / CNS of a character inside an `.rgc` are compiled once on this
+//! machine and kept in `cache/logic/`; the compiled logic an `.rgc` may
+//! carry ([`compile_logic`]) is not trusted and never run.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -290,16 +290,17 @@ impl Logic {
         bincode::deserialize(b).ok()
     }
 
-    /// The compiled logic of a character inside a content file: its own
-    /// when this engine built it, else the `cache/logic/` copy, else
+    /// The compiled logic of a character inside a content file: the
+    /// `cache/logic/` copy this machine made from the file's text, else
     /// compiled now (and cached). `None` outside content files.
+    ///
+    /// The logic an `.rgc` carries is never run. A content file's
+    /// fingerprint covers its text, not that section: a downloaded file
+    /// with honest text and altered compiled logic would pass as the
+    /// honest fighter and play something else (or crash the VM, which
+    /// trusts what the compiler wrote). What runs is always compiled here,
+    /// from the text the fingerprint was checked against.
     fn precompiled(def_path: &Path, src: &Sources) -> Option<Self> {
-        if let Some((schema, payload)) = vfs::logic(def_path)
-            && schema == LOGIC_SCHEMA
-            && let Some(l) = Self::from_bytes(&payload)
-        {
-            return Some(l);
-        }
         let cache = logic_cache_path(def_path, src)?;
         if let Ok(b) = std::fs::read(&cache)
             && let Some(l) = Self::from_bytes(&b)

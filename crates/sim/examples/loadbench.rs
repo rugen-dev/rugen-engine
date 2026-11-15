@@ -198,6 +198,14 @@ fn main() {
         drop((sff, snd, air));
     }
 
+    // `--cache <dir>`: where compiled logic is kept, as the game sets it
+    if let Some(dir) = args
+        .iter()
+        .position(|a| a == "--cache")
+        .and_then(|i| args.get(i + 1))
+    {
+        rugen_formats::vfs::set_cache_dir(Path::new(dir));
+    }
     let original = args.iter().any(|a| a == "--original");
     let rss_before = vm("VmRSS:");
     let t = Instant::now();
